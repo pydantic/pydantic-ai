@@ -22,6 +22,32 @@ The session exposes copy-on-read snapshots:
 | [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | Seeded history plus messages recorded during this session. |
 | [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only messages recorded during this session. |
 
+## When a reply joins history
+
+History is append-only: once a response is recorded, the session never changes it. A spoken reply
+finishes generating well before it finishes playing, and whether the user heard it all is only known
+at the end of playback. So a reply is recorded when that is known:
+
+- **With a single [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] view**, a
+  finished reply waits until the view has played its last chunk, and is then recorded as complete. A
+  barge-in that cuts it first records it as interrupted, with the position on
+  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms]. So does closing
+  the session or the view while it is still playing.
+- **On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband)**, where the browser plays the
+  audio, a reply the provider is still playing waits for the provider to report that its playback
+  ended ([`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent]).
+- **Otherwise**, with no view, several views, or text output, a reply is recorded as soon as it
+  finishes generating. A later `interrupt(played_ms=...)` still truncates the provider's copy, but
+  can't change the recorded reply.
+
+A reply that calls a tool is always recorded when it finishes generating, so the tool's result can
+follow it. Anything that happens while a reply waits (a user turn, a typed message, a tool round) is
+recorded after it, in order. [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent]
+and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] mark the end of
+*generation* and don't wait for playback; pair them with
+[`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before reading a reply
+from history. The reply's `chat` span ends when the reply is recorded, with the state it is recorded in.
+
 ## Seeding a session
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,

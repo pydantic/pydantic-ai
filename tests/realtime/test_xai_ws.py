@@ -567,8 +567,9 @@ async def test_handle_barge_in_over_live_speech(
     # already interrupts on speech; a client cancel racing it can kill the next reply instead).
     assert sent_frames_containing(cassette, 'conversation.item.truncate') == []
     assert sent_frames_containing(cassette, 'response.cancel') == []
+    # The session closed before the reply to the barge-in was played, so it is recorded as cut at 0 too.
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'interrupted'])
     assert [
         [part.interrupted_at_ms for part in response.parts if isinstance(part, SpeechPart)] for response in responses
-    ] == snapshot([[0], [None]])
+    ] == snapshot([[0], [0]])

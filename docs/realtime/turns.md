@@ -204,12 +204,13 @@ and should flush it on barge-in, as above.
 History records a known cutoff on
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] and marks the
 response state as interrupted. Models generate audio several times faster than it plays, so the reply
-the user speaks over has usually finished generating and is already in history as complete. The
-barge-in still truncates that reply and marks it as interrupted where playback stopped. Any reply
-generated after it, which the user never heard, is marked as cut at 0. Only the session's history
-is updated: `all_messages()` snapshots taken earlier, the reply's `chat` span and events already
-emitted keep what they recorded when the reply finished. The cutoff is not carried over to the next
-response that gets interrupted. When this history is sent to a text model, Pydantic AI adds a readable
+the user speaks over has usually finished generating already. Because history never changes a
+response after recording it, a reply that is still playing through the session's single
+`stream_audio()` view isn't recorded until the listener has heard it. Once the playhead passes its
+last chunk, it is recorded as complete. If a barge-in cuts it first, it is recorded as interrupted
+where playback stopped, and any reply generated after it, which the user never heard, is cut at 0.
+See [when a reply joins history](history.md#when-a-reply-joins-history). The cutoff is not carried
+over to the next response that gets interrupted. When this history is sent to a text model, Pydantic AI adds a readable
 interruption note to the prepared request without modifying stored history.
 
 ## Speaking first

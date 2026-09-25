@@ -293,13 +293,29 @@ class SessionInstrumentation:
             kind=SpanKind.CLIENT,
         )
 
-    def end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
-        """Close the current `chat` span, attaching the response's messages, usage, and state."""
+    def detach_chat_span(self) -> Span | None:
+        """Take the current `chat` span out of the slot, to be ended later by `end_chat_span(span=...)`.
+
+        A spoken reply joins history only once its audio has been played out, and its span ends then,
+        when its final state is known; the next response opens its own span meanwhile.
+        """
+        span, self.chat_span = self.chat_span, None
+        return span
+
+    def end_chat_span(
+        self,
+        input_messages: list[ModelMessage],
+        response: ModelResponse | None,
+        *,
+        span: Span | None = None,
+        detached: bool = False,
+    ) -> None:
+        """Close the current `chat` span (or a `detached` one), attaching the response's messages, usage, and state."""
         settings = self.settings
-        span = self.chat_span
+        if not detached:
+            span, self.chat_span = self.chat_span, None
         if settings is None or span is None:
             return
-        self.chat_span = None
         price_calculation = response_price_calculation(response) if response is not None else None
         if response is not None and span.is_recording():
             # Reuse the exact message → gen_ai serialization and response-attribute helpers the

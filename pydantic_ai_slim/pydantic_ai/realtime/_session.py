@@ -10,6 +10,7 @@ import weakref
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from itertools import takewhile
 from time import time_ns
 from types import TracebackType
@@ -19,6 +20,7 @@ import anyio
 from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
+from opentelemetry.trace import Span
 from typing_extensions import Never, TypeAliasType, assert_never
 
 from .. import _agent_graph
@@ -321,10 +323,46 @@ class _SpokenPart:
     """Offset of its first audio chunk in the emitted-audio stream; `None` until audio passes through."""
     end: int = 0
     """Offset just past its last audio chunk emitted so far."""
-    response: ModelResponse | None = None
-    """The response holding it, once that is in history."""
+    held: _HeldReply | None = None
+    """The finished reply holding it while that waits for its audio to be played out."""
     position: int = 0
-    """Its position among that response's parts."""
+    """Its position among that reply's parts."""
+
+
+@dataclass(eq=False)
+class _HeldReply:
+    """A finished spoken reply that joins history once the listener has heard it, or stopped hearing it.
+
+    Realtime history is append-only, and generation outruns playback: a reply recorded when it finished
+    generating could not later say the user cut it off. So it waits here, and is recorded once, complete
+    or interrupted where playback stopped.
+    """
+
+    response: ModelResponse
+    parts: list[ModelResponsePart]
+    """`response.parts`, kept as the list a cut marks before the reply is recorded."""
+    input_messages: list[ModelMessage]
+    """What the reply's `chat` span records as its input."""
+    speech_indexes: list[int]
+    """Streamed indexes of its speech parts."""
+    end: int | None
+    """Emitted-audio offset past its last chunk: recorded once the playhead passes it. `None` when the
+    session sees no audio (a WebRTC sideband), where the provider's playback end records it."""
+    chat_span: Span | None = None
+    settled: bool = False
+    """Whether it has been heard in full or cut, and can be recorded once everything before it is."""
+
+    @property
+    def message(self) -> ModelMessage:
+        return self.response
+
+
+@dataclass(eq=False)
+class _QueuedWrite:
+    """A history write waiting behind a held reply, so history stays in the order things happened."""
+
+    message: ModelMessage
+    write: Callable[[], None]
 
 
 @dataclass(eq=False)
@@ -808,6 +846,13 @@ class RealtimeSession:
         # `_response_parts` of the speech parts of the response being assembled.
         self._spoken: dict[int, _SpokenPart] = {}
         self._response_speech_positions: dict[int, int] = {}
+        # Finished spoken replies waiting for playback before joining history, and the history writes
+        # queued behind them (see `_HeldReply`); empty whenever nothing is held.
+        self._history_queue: list[_HeldReply | _QueuedWrite] = []
+        # Whether a WebRTC sideband's provider is playing audio to the browser.
+        self._output_speech_playing = False
+        # The playback view held replies wait on: if it goes away, what it played is all that was heard.
+        self._tracked_tap: _AudioTap | None = None
         self._response_finalized_before_terminal = False
         # User requests sent while a response is in flight are held until that response is finalized,
         # so the pump remains the sole writer for that portion of history and a caller cannot splice a
@@ -952,7 +997,7 @@ class RealtimeSession:
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
             # support because that is the mechanism, and a no-op where the provider resumes natively.
-            self._connection.set_message_history(self.all_messages)
+            self._connection.set_message_history(self._messages_so_far)
 
         self._session_instrumentation.start_session_span()
 
@@ -994,6 +1039,9 @@ class RealtimeSession:
         if self._teardown is None:
             self._pending_messages.close()
             self._closed = True
+            # The listener stops hearing here: replies still playing are cut where playback stopped.
+            if (playhead := self._playhead()) is not None:
+                self._attribute_playhead(playhead)
             self._finish_taps(discard_pending=True)
             self._release_exchange()
             # A session closed without ever sending, subscribing, or iterating never started one.
@@ -1022,6 +1070,7 @@ class RealtimeSession:
             # recorded as interrupted, and every still-running tool call gets a cancelled return. The
             # returned events are discarded — the stream is closing and has no consumer left.
             self._finalize_lost_state()
+            self._commit_held_replies()
             self._teardown = asyncio.create_task(self._finish_teardown())
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
@@ -1243,6 +1292,8 @@ class RealtimeSession:
             max_buffered_bytes=_AUDIO_TAP_SECONDS * self.audio_output_sample_rate * 2,
         )
         self._audio_taps.add(tap)
+        # A second view leaves no single playback position to wait on, so held replies are recorded.
+        self._commit_ready_history()
         if self._pump_finished:
             queue.put_nowait(self._tap_finished)
         else:
@@ -1264,9 +1315,12 @@ class RealtimeSession:
                     # makes `played_audio_bytes` an accurate playback position with no caller counting.
                     tap.played_bytes += len(item)
                     tap.progress.set()
+                    if self._history_queue:
+                        self._commit_ready_history()
             finally:
                 tap.finish()
                 self._audio_taps.discard(tap)
+                self._commit_ready_history()
 
         return _TapView(iterate(), self._audio_taps, tap, tap.finish)
 
@@ -1438,7 +1492,9 @@ class RealtimeSession:
     def all_messages(self) -> list[ModelMessage]:
         """A snapshot of the seeded history plus messages recorded during this session.
 
-        Returns a copy, so the result doesn't change as the session continues. Feed it into
+        Returns a copy, so the result doesn't change as the session continues. A spoken reply still
+        playing through the session's single `stream_audio()` view joins history once it has been played
+        out or cut off, so the history never has to change a response it already recorded. Feed it into
         [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run] to hand the
         conversation off to a standard agent run. Images streamed with `send()` are recorded according
         to `retain_images_every_n`, bounded by `retain_images_max`.
@@ -1639,7 +1695,7 @@ class RealtimeSession:
         if self._response_in_flight:
             self._pending_sent_requests.append(request)
         else:
-            self._history.append(request)
+            self._write_history(request)
 
     @property
     def _response_in_flight(self) -> bool:
@@ -1655,8 +1711,10 @@ class RealtimeSession:
 
     def _is_recorded(self, request: ModelRequest) -> bool:
         """Whether a sent request is still in history or waiting to join it. Searched newest first."""
-        return any(message is request for message in self._pending_sent_requests) or any(
-            message is request for message in reversed(self._history)
+        return (
+            any(message is request for message in self._pending_sent_requests)
+            or any(item.message is request for item in self._history_queue)
+            or any(message is request for message in reversed(self._history))
         )
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
@@ -1666,6 +1724,7 @@ class RealtimeSession:
                 if message is request:
                     messages.pop(index)
                     return
+        self._history_queue = [item for item in self._history_queue if item.message is not request]
 
     async def send_audio(self, data: bytes | AsyncIterable[bytes]) -> None:
         """Stream mono PCM16 audio to the model: a single chunk, or an async iterable of chunks.
@@ -1770,8 +1829,8 @@ class RealtimeSession:
 
         This is server-side only — it stops generation and (when a playback position is given) syncs
         the provider's transcript to what was actually heard. Generation outruns playback, so the reply
-        being heard has often finished generating already: it is still truncated, and its response in
-        history is marked interrupted at that position.
+        being heard has often finished generating already: it is still truncated, and is recorded in
+        history as interrupted at that position.
 
         With `played_ms`, the caller owns all playback accounting: flushing locally buffered
         playback is the caller's responsibility, and deciding whether to interrupt at all is too.
@@ -1826,12 +1885,11 @@ class RealtimeSession:
             frames.append(TruncateOutput(audio_end_ms=played_ms))
         if not self._server_cancelled_the_response_on_speech:
             frames.append(CancelResponse())
-        # Resolved before sending: the provider can acknowledge the cancel (a sideband's playback
-        # clear) while the send is still settling, and that retires the part the position describes.
-        cuts = self._played_ms_cuts(played_ms)
+        # Recorded before sending: the provider can acknowledge the cancel (a sideband's playback
+        # clear) while the send is still settling, which would record the held reply as heard in full.
+        self._apply_cuts(self._played_ms_cuts(played_ms))
         if frames:
             await self._send_frame(*frames)
-        self._apply_cuts(cuts)
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
@@ -1874,8 +1932,11 @@ class RealtimeSession:
                 self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
                 return True
             return False
-        # Unheard audio exists: flush what's buffered, and erase the cancelled part's stragglers as
-        # they arrive, so the stream carries nothing the barge-in already cut off.
+        # Unheard audio exists. Attributed first: flushing moves the playhead past the unheard audio,
+        # which would otherwise read as a reply heard in full. Then flush what's buffered, and erase
+        # the cancelled part's stragglers as they arrive, so the stream carries nothing the barge-in
+        # already cut off.
+        self._attribute_playhead(playhead)
         self._flush_tap(tap)
         self._interrupted_audio_part_index = self._audio_part_index
         if not self._profile.get('supports_output_truncation', False):
@@ -1884,8 +1945,6 @@ class RealtimeSession:
             # unavailable.
             if cancel:
                 await self._send_frame(CancelResponse())
-            # The provider keeps the whole reply, but history can still say where the listener stopped.
-            self._attribute_playhead(playhead)
             self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
             return True
         # The provider truncates its latest output item, the part whose audio was emitted last.
@@ -1895,7 +1954,6 @@ class RealtimeSession:
             TruncateOutput(audio_end_ms=played_ms),
             *([CancelResponse()] if cancel else []),
         )
-        self._attribute_playhead(playhead)
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
 
@@ -1903,27 +1961,34 @@ class RealtimeSession:
         """Milliseconds of output audio in `audio_bytes`; a negative span (a position before it) is 0."""
         return max(0, audio_bytes) * 1000 // (self.audio_output_sample_rate * 2)
 
-    def _attribute_playhead(self, playhead: int) -> None:
+    def _playhead(self) -> int | None:
+        """The single playback view's position in emitted-audio coordinates, if there is one view."""
+        if len(self._audio_taps) != 1:
+            return None
+        (tap,) = self._audio_taps
+        return tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes
+
+    def _attribute_playhead(self, playhead: int, *, held_only: bool = False) -> None:
         """Record a barge-in at an emitted-audio playhead on every speech part the listener didn't finish.
 
         The part the playhead is inside is cut where playback stopped, and parts generated after it, never
-        heard at all, are cut at 0 — whether their response is still being generated or, since generation
-        outruns playback, is already in history.
+        heard at all, are cut at 0 — whether their reply is still being generated or, since generation
+        outruns playback, finished and waiting to be played out. `held_only` leaves the reply in flight
+        alone, for a playback view that stops without the user interrupting anything.
         """
-        self._apply_cuts(
-            [
-                (part, self._bytes_to_ms(playhead - part.start))
-                for part in self._spoken.values()
-                if part.start is not None and part.end > playhead
-            ]
-        )
+        cuts = [
+            (part, self._bytes_to_ms(playhead - part.start))
+            for part in self._spoken.values()
+            if part.start is not None and part.end > playhead and (part.held is not None or not held_only)
+        ]
+        self._apply_cuts(cuts, replace_pending=not held_only)
 
     def _played_ms_cuts(self, played_ms: int | None) -> list[tuple[_SpokenPart, int]]:
         """Where a caller-reported playback position cuts: the part the provider truncates.
 
         That is the part whose audio was emitted last, or the last speech part when no audio passes
-        through the session (a WebRTC sideband). A reply the position says was heard in full is left
-        alone, and a position with no speech to describe is dropped.
+        through the session (a WebRTC sideband). A held reply the position says was heard in full is
+        left alone, and a position with no speech to describe is dropped.
         """
         parts = list(self._spoken.values())
         audible = [part for part in parts if part.start is not None] or parts
@@ -1931,85 +1996,89 @@ class RealtimeSession:
             return []
         target = audible[-1]
         if (
-            target.response is not None
+            target.held is not None
             and target.start is not None
             and played_ms >= self._bytes_to_ms(target.end - target.start)
         ):
             return []
         return [(target, played_ms)]
 
-    def _apply_cuts(self, cuts: list[tuple[_SpokenPart, int]]) -> None:
-        """Mark cut speech parts interrupted: in history if recorded, when finalized if still in flight.
+    def _apply_cuts(self, cuts: list[tuple[_SpokenPart, int]], *, replace_pending: bool = True) -> None:
+        """Record cut speech parts: on a held reply now, on the response in flight when it's finalized.
 
-        A new barge-in replaces any cut still pending on the response in flight.
+        A new barge-in replaces any cut still pending on the response in flight. A cut held reply has
+        been heard as far as it ever will be, so it is recorded now, interrupted, once everything
+        before it is.
         """
-        self._pending_cuts = {part.index: played_ms for part, played_ms in cuts if part.response is None}
-        by_response: dict[int, tuple[ModelResponse, dict[int, int]]] = {}
+        if replace_pending:
+            self._pending_cuts = {part.index: played_ms for part, played_ms in cuts if part.held is None}
         for part, played_ms in cuts:
-            if part.response is not None:
-                by_response.setdefault(id(part.response), (part.response, {}))[1][part.position] = played_ms
-        for response, positions in by_response.values():
-            self._replace_recorded_response(response, positions)
+            if (held := part.held) is not None:
+                speech = held.parts[part.position]
+                assert isinstance(speech, SpeechPart)
+                held.parts[part.position] = replace(speech, interrupted_at_ms=played_ms)
+                held.response.state = 'interrupted'
+                held.settled = True
+        self._commit_ready_history()
 
-    def _replace_recorded_response(self, response: ModelResponse, cuts: dict[int, int]) -> None:
-        """Replace a response already in history with its interrupted form.
-
-        Replaced rather than mutated, so a snapshot a caller took from `all_messages()` doesn't change;
-        its `chat` span and events already went out as they were. Every reference the session keeps to
-        it by identity moves to the replacement: user turns anchored after it (the user who barged in
-        usually started speaking right after it) and the speech parts it holds.
-        """
-        parts = list(response.parts)
-        for position, played_ms in cuts.items():
-            part = parts[position]
-            assert isinstance(part, SpeechPart)
-            parts[position] = replace(part, interrupted_at_ms=played_ms)
-        marked = replace(response, parts=parts, state='interrupted')
-        for index in range(len(self._history) - 1, -1, -1):
-            if self._history[index] is response:
-                self._history[index] = marked
-                break
-        else:  # pragma: no cover
-            # An invariant fallback: responses are never removed from history, only inserted around.
+    def _commit_ready_history(self) -> None:
+        """Record queued history in order, up to the first held reply the listener is still hearing."""
+        if (tracked := self._tracked_tap) is not None and tracked.ended:
+            # The view held replies waited on went away mid-reply: what it played is all that was heard.
+            self._tracked_tap = None
+            self._attribute_playhead(
+                tracked.subscribed_at_bytes + tracked.played_bytes + tracked.dropped_bytes, held_only=True
+            )
             return
-
-        def follow(anchor: ModelMessage | None) -> ModelMessage | None:
-            return marked if anchor is response else anchor
-
-        self._pending_anonymous_user_turn_anchors = deque(map(follow, self._pending_anonymous_user_turn_anchors))
-        self._pending_user_turn_anchors = {
-            item_id: (follow(anchor),) for item_id, (anchor,) in self._pending_user_turn_anchors.items()
-        }
-        self._user_turn_anchors = {item_id: follow(anchor) for item_id, anchor in self._user_turn_anchors.items()}
-        for spoken in self._spoken.values():
-            if spoken.response is response:
-                spoken.response = marked
-
-    def _retire_spoken_parts(self, *, playback_ended: bool = False) -> None:
-        """Forget recorded speech parts the listener can no longer be hearing.
-
-        Run as a new speech part starts, so the set stays as small as what is still queued for
-        playback. A part with no audio in the session (a WebRTC sideband) is only ever cut as the
-        latest part, so a newer one retires it; so does the provider reporting its playback ended.
-        """
-        playhead: int | None = None
-        if len(self._audio_taps) == 1:
-            (tap,) = self._audio_taps
-            playhead = tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes
-        latest_audible = max((part.index for part in self._spoken.values() if part.start is not None), default=None)
-        for part in list(self._spoken.values()):
-            if part.response is None:
-                continue
-            if playback_ended or part.start is None:
-                heard = True
-            elif playhead is not None:
-                heard = part.end <= playhead
+        playhead = self._playhead()
+        for item in self._history_queue:
+            if isinstance(item, _HeldReply) and item.end is not None:
+                # Without a single playback view there is no position left to wait on.
+                item.settled = item.settled or playhead is None or playhead >= item.end
+        while self._history_queue:
+            head = self._history_queue[0]
+            if isinstance(head, _QueuedWrite):
+                del self._history_queue[0]
+                head.write()
+            elif head.settled:
+                del self._history_queue[0]
+                self._record_reply(head.response, head.speech_indexes)
+                self._session_instrumentation.end_chat_span(
+                    head.input_messages, head.response, span=head.chat_span, detached=True
+                )
             else:
-                # Without a single playback view only a caller-reported position can cut it, and that
-                # targets the latest audible part.
-                heard = part.index != latest_audible
-            if heard:
-                del self._spoken[part.index]
+                return
+
+    def _commit_held_replies(self) -> None:
+        """Record every held reply as it stands: the session or its playback is ending."""
+        for item in self._history_queue:
+            if isinstance(item, _HeldReply):
+                item.settled = True
+        self._commit_ready_history()
+
+    def _record_reply(self, response: ModelResponse, speech_indexes: list[int]) -> None:
+        """Append a reply to history; its speech parts can no longer be cut."""
+        self._history.append(response)
+        for index in speech_indexes:
+            self._spoken.pop(index).held = None
+
+    def _write_history(self, message: ModelMessage, write: Callable[[], None] | None = None) -> None:
+        """Append to history (or run `write`), behind any held reply, so history stays in order."""
+        write = write or partial(self._history.append, message)
+        if self._history_queue:
+            self._history_queue.append(_QueuedWrite(message, write))
+        else:
+            write()
+
+    def _history_tail(self) -> ModelMessage | None:
+        """The last message history holds or will hold once what is queued is recorded."""
+        if self._history_queue:
+            return self._history_queue[-1].message
+        return self._history[-1] if self._history else None
+
+    def _messages_so_far(self) -> list[ModelMessage]:
+        """`all_messages()` plus what is queued behind held replies: the conversation the provider has."""
+        return [*self.all_messages(), *(item.message for item in self._history_queue)]
 
     def _flush_tap(self, tap: _AudioTap) -> None:
         """Discard the tap's buffered chunks, counting them as dropped for position mapping."""
@@ -2188,7 +2257,6 @@ class RealtimeSession:
         self._active_assistant_item_id = item_id
         self._active_assistant_index = self._take_part_index()
         if isinstance(part, SpeechPart):
-            self._retire_spoken_parts()
             self._spoken[self._active_assistant_index] = _SpokenPart(self._active_assistant_index)
         self._assistant_transcript = ''
         events.append(PartStartEvent(index=self._active_assistant_index, part=part))
@@ -2302,17 +2370,16 @@ class RealtimeSession:
             for index, position in self._response_speech_positions.items()
         }
         response: ModelResponse | None = None
+        held: _HeldReply | None = None
         # The chat span's input is the history the response replied to, captured before we append it.
-        input_messages = self.all_messages()
+        input_messages = self._messages_so_far()
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
         # speech), matching the classic `GoogleModel`, which prepends them ahead of the assistant's text.
         parts = [*self._native_tool_parts, *self._response_parts]
         for index, position in speech_positions.items():
             if index in cuts:
-                part = parts[position]
-                assert isinstance(part, SpeechPart)
-                parts[position] = replace(part, interrupted_at_ms=cuts[index])
-                interrupted = True
+                parts[position] = replace(cast(SpeechPart, parts[position]), interrupted_at_ms=cuts[index])
+        interrupted = interrupted or any(index in cuts for index in speech_positions)
         # Parts prove a response happened. For an output-less response, only terminal/pending provider
         # metadata (or an interruption) does; a bare logical turn boundary must not invent a response.
         response_occurred = bool(
@@ -2371,11 +2438,7 @@ class RealtimeSession:
                 # Tokens were added as `SessionUsage` events arrived; only add the price calculated
                 # at this response boundary. A provider-reported cost arrived in those events too.
                 self.usage.incr(RequestUsage(cost=response.usage.cost))  # usage-attribution: the session owns its spans
-            self._history.append(response)
-            for index, position in speech_positions.items():
-                spoken = self._spoken[index]
-                spoken.response = response
-                spoken.position = position
+            held = self._record_or_hold(response, parts, input_messages, speech_positions, interrupted)
             if not any(isinstance(part, ToolCallPart) for part in parts):
                 # The model has said what it had to say (a tool call means its answer is still to come),
                 # so audio from here on can be the user's next turn again.
@@ -2391,10 +2454,14 @@ class RealtimeSession:
                     self._insert_tool_return(call_part, request)
                 if self._asap_drain_deferred:
                     self._asap_drain_ready = True
-        if self._pending_sent_requests:
-            self._history.extend(self._pending_sent_requests)
-            self._pending_sent_requests = []
-        self._session_instrumentation.end_chat_span(input_messages, response)
+        for request in self._pending_sent_requests:
+            self._write_history(request)
+        self._pending_sent_requests = []
+        if held is not None:
+            # Ended when the reply is recorded, with the state it is recorded in.
+            held.chat_span = self._session_instrumentation.detach_chat_span()
+        else:
+            self._session_instrumentation.end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
         self._response_speech_positions = {}
@@ -2404,6 +2471,53 @@ class RealtimeSession:
         self._response_limit_checked = False
         if response is not None:
             self._check_response_boundary_limits()
+
+    def _record_or_hold(
+        self,
+        response: ModelResponse,
+        parts: list[ModelResponsePart],
+        input_messages: list[ModelMessage],
+        speech_positions: dict[int, int],
+        interrupted: bool,
+    ) -> _HeldReply | None:
+        """Record a finished response in history, or hold it while its audio is still being played."""
+        if (held_until := self._hold_until(speech_positions, parts, interrupted)) is False:
+            self._write_history(response)
+            for index in speech_positions:
+                del self._spoken[index]
+            return None
+        held = _HeldReply(response, parts, input_messages, list(speech_positions), held_until)
+        if held_until is not None:
+            (self._tracked_tap,) = self._audio_taps
+        for index, position in speech_positions.items():
+            spoken = self._spoken[index]
+            spoken.held = held
+            spoken.position = position
+        self._history_queue.append(held)
+        return held
+
+    def _hold_until(
+        self, speech_positions: dict[int, int], parts: list[ModelResponsePart], interrupted: bool
+    ) -> int | None | Literal[False]:
+        """Whether a finished reply waits for playback before joining history, and until when.
+
+        It waits while the listener is still hearing it: until the single playback view's playhead
+        passes its last audio byte, or, on a WebRTC sideband, until the provider reports its playback
+        ended. Returns `False` to record it now: nothing of it is left to hear, it was already cut, it
+        calls a tool (the model's answer is still to come, and its results must pair with it), or there
+        is no playback to follow — no view, several, or a session that is closing.
+        """
+        if not speech_positions or interrupted or self._closed:
+            return False
+        if any(isinstance(part, ToolCallPart) for part in parts):
+            return False
+        if not self._owns_media:
+            return None if self._output_speech_playing else False
+        playhead = self._playhead()
+        ends = [self._spoken[index].end for index in speech_positions if self._spoken[index].start is not None]
+        if playhead is None or not ends or playhead >= max(ends):
+            return False
+        return max(ends)
 
     def _check_response_boundary_limits(self) -> None:
         """Check the usage limits against a response that has just been finalized.
@@ -2598,6 +2712,15 @@ class RealtimeSession:
                     insert_at += 1
                 self._history.insert(insert_at, request)
                 return
+        if any(
+            isinstance(part, ToolCallPart) and part.tool_call_id == call_part.tool_call_id
+            for item in self._history_queue
+            if isinstance(item.message, ModelResponse)
+            for part in item.message.parts
+        ):
+            # The calling response is queued behind a reply still being played: pair with it once recorded.
+            self._history_queue.append(_QueuedWrite(request, partial(self._insert_tool_return, call_part, request)))
+            return
         if call_part.tool_call_id in self._tool_calls_awaiting_usage:
             # OpenAI-protocol tool execution starts before `response.done` supplies usage and finalizes
             # the calling response. Preserve the streamed completion now and insert it once that lands.
@@ -2605,7 +2728,7 @@ class RealtimeSession:
         else:
             # The calling response is otherwise finalized before execution begins, so this is an
             # invariant fallback: keep the history complete rather than dropping the tool result.
-            self._history.append(request)
+            self._write_history(request)
 
     def _handle_input_transcript(
         self, text: str, is_final: bool, *, item_id: str | None = None, cumulative: bool = False
@@ -2740,7 +2863,7 @@ class RealtimeSession:
         unprompted. So the turn's position is taken when it starts (audio begins flowing, or the provider
         reports speech started), and `_record_user_request` inserts there however late the transcript is.
         """
-        anchor = self._history[-1] if self._history else None
+        anchor = self._history_tail()
         if item_id is None:
             # Audio or a speech-start frame unambiguously opens the next anonymous turn, so later
             # transcript and speech-end frames must no longer be treated as stragglers for the last one.
@@ -2767,11 +2890,19 @@ class RealtimeSession:
             has_anchor = pending_anchor is not None
         # No anchor when the first thing we ever hear about the turn is its transcript (text-only sessions
         # seeded with audio, or a provider that reports nothing before it); the turn starts here instead.
-        self._user_turn_anchors[item_id] = anchor if has_anchor else (self._history[-1] if self._history else None)
+        self._user_turn_anchors[item_id] = anchor if has_anchor else self._history_tail()
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
         """Record a finalized user turn at the position it held when it started."""
         anchor = self._user_turn_anchors.pop(item_id)
+        if any(item.message is anchor for item in self._history_queue):
+            # It started after a reply still being played: it lands once that reply is recorded.
+            self._history_queue.append(_QueuedWrite(request, partial(self._insert_user_request, anchor, request)))
+        else:
+            self._insert_user_request(anchor, request)
+
+    def _insert_user_request(self, anchor: ModelMessage | None, request: ModelRequest) -> None:
+        """Insert a user turn after the message that was last when it started."""
         insert_at = 0
         if anchor is not None:
             for index in range(len(self._history) - 1, -1, -1):
@@ -2880,7 +3011,7 @@ class RealtimeSession:
         part = SpeechPart(speaker='user', transcript=None, audio=audio)
         self._input_audio.clear()
         self._user_turn_active = False
-        self._history.append(self._new_request([part]))
+        self._write_history(self._new_request([part]))
         # No deltas to stream (there's no transcript), so bracket the turn with just start/end so a
         # streaming consumer still sees the user turn boundary.
         index = self._take_part_index()
@@ -2929,6 +3060,10 @@ class RealtimeSession:
             # than running until session close or being merged into the next utterance
             # (`start_playback_span` no-ops while a span is already open). No-op off a sideband.
             self._session_instrumentation.end_playback_span()
+            if not self._owns_media:
+                # Nor will the provider report the end of that playback, so what it held is recorded.
+                self._output_speech_playing = False
+                self._commit_held_replies()
         return [*events, event]
 
     def _finalize_lost_state(self) -> list[RealtimeEvent]:
@@ -2986,11 +3121,13 @@ class RealtimeSession:
         # The playback boundary brackets the `speak` span and is otherwise passed straight through.
         if isinstance(event, RealtimeOutputSpeechStartEvent):
             self._session_instrumentation.start_playback_span()
+            self._output_speech_playing = True
             return [event]
         if isinstance(event, RealtimeOutputSpeechEndEvent):
             self._session_instrumentation.end_playback_span()
-            # The provider played everything out (a WebRTC sideband), so no recorded reply is still heard.
-            self._retire_spoken_parts(playback_ended=True)
+            # The provider played everything out (a WebRTC sideband): what it held has been heard.
+            self._output_speech_playing = False
+            self._commit_held_replies()
             return [event]
         # A reported speech start is a turn boundary even mid-stream, so it re-anchors: with a continuously
         # open microphone the previous turn may not have finalized yet, leaving `_user_turn_active` set.

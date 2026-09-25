@@ -1390,9 +1390,11 @@ async def test_handle_barge_in_over_live_speech(
     assert sent_frames_containing(cassette, 'response.cancel') == []
 
     # The provider accepted it: the first reply settles as interrupted with the truncation point on
-    # its speech part, and the barged-in utterance still got a completed reply.
+    # its speech part, and the barged-in utterance still got a reply generated in full. That reply was
+    # never played before the session closed, so it is recorded as cut where playback stopped.
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'interrupted'])
+    assert responses[1].finish_reason == 'stop'
     speech = next(part for part in responses[0].parts if isinstance(part, SpeechPart))
     assert speech.interrupted_at_ms == 0
 
@@ -1435,8 +1437,9 @@ async def test_interrupt_after_the_reply_finished_generating(
     assert 'conversation.item.truncated' in received
     assert 'error' not in received
 
+    # Neither reply was played before the session closed: the second is recorded as cut at 0 too.
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'interrupted'])
     assert [
         [part.interrupted_at_ms for part in response.parts if isinstance(part, SpeechPart)] for response in responses
-    ] == snapshot([[0], [None]])
+    ] == snapshot([[0], [0]])
