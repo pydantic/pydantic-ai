@@ -9904,3 +9904,94 @@ async def test_a_reconnect_mid_stall_keeps_the_spoken_filler_complete() -> None:
         for m in session.all_messages()
         if isinstance(m, ModelResponse)
     ] == [('complete', ['Let me check.']), ('interrupted', []), ('complete', ['Here you go.'])]
+
+
+# --- context window ----------------------------------------------------------------------------
+
+
+def _reply(tokens: RequestUsage) -> list[RealtimeCodecEvent]:
+    return [OutputTranscript(text='hi', is_final=True), SessionUsage(tokens), ResponseDone()]
+
+
+async def test_context_window_used_is_derived_from_the_latest_response() -> None:
+    """Without a provider-reported fraction, the session computes it as a standard run does."""
+    conn = FakeRealtimeConnection(
+        [
+            *_reply(RequestUsage(input_tokens=100, output_tokens=20)),
+            *_reply(RequestUsage(input_tokens=200, output_tokens=50)),
+        ]
+    )
+    session = RealtimeSession(conn, profile=RealtimeModelProfile({**_profile(), 'context_window': 1000}))
+    assert session.context_window_used is None
+    await collect_events(session)
+    assert session.context_window_used == 0.25
+
+
+@pytest.mark.parametrize(
+    'profile',
+    [
+        pytest.param(_profile(), id='unknown-window'),
+        pytest.param(RealtimeModelProfile({**_profile(), 'context_window': 0}), id='empty-window'),
+        pytest.param(
+            RealtimeModelProfile({**_profile(), 'context_window': 1000, 'response_usage_covers_context': False}),
+            id='usage-not-context',
+        ),
+    ],
+)
+async def test_context_window_used_is_none_when_it_cannot_be_derived(profile: RealtimeModelProfile) -> None:
+    """An unknown window, or response usage that doesn't measure the context (xAI, GPT-Live), gives `None`."""
+    session = RealtimeSession(
+        FakeRealtimeConnection(_reply(RequestUsage(input_tokens=200, output_tokens=50))), profile=profile
+    )
+    await collect_events(session)
+    assert session.context_window_used is None
+
+
+async def test_context_window_used_is_none_without_response_tokens() -> None:
+    session = RealtimeSession(
+        FakeRealtimeConnection(_reply(RequestUsage())),
+        profile=RealtimeModelProfile({**_profile(), 'context_window': 1000}),
+    )
+    await collect_events(session)
+    assert session.context_window_used is None
+
+
+async def test_reported_context_window_used_is_the_latest_snapshot() -> None:
+    """A provider-reported fraction wins over the derived one, and is replaced, not summed: it can go down
+    after the provider compacts. A usage report that says nothing about it leaves it as it was."""
+    conn = FakeRealtimeConnection(
+        [
+            SessionUsage(RequestUsage(), response_scoped=False, context_window_used=0.5),
+            *_reply(RequestUsage(input_tokens=900, output_tokens=50)),
+            SessionUsage(RequestUsage(), response_scoped=False, context_window_used=0.2),
+            SessionUsage(RequestUsage(audio_seconds=1), response_scoped=False),
+        ]
+    )
+    session = RealtimeSession(conn, profile=RealtimeModelProfile({**_profile(), 'context_window': 1000}))
+    await collect_events(session)
+    assert session.context_window_used == 0.2
+    assert session.usage.audio_seconds == 1
+
+
+async def test_run_context_context_window_used_in_a_session() -> None:
+    """Inside a session, `ctx.context_window_used` is the session's value, not one computed from the run."""
+    observed: list[float | None] = []
+    agent = Agent(deps_type=type(None))
+
+    @agent.tool
+    async def check_context(ctx: RunContext[None]) -> str:
+        observed.append(ctx.context_window_used)
+        return 'done'
+
+    conn = FakeRealtimeConnection(
+        [
+            SessionUsage(RequestUsage(), response_scoped=False, context_window_used=0.4),
+            ToolCall(tool_call_id='tc', tool_name='check_context', args='{}'),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        async for _ in session:
+            pass
+
+    assert observed == [0.4]

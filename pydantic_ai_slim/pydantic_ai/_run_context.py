@@ -479,7 +479,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         context window, usage, or message history is unavailable, or before the first model response.
         A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest
         of its candidates' windows.
+
+        Inside a [realtime session](https://pydantic.dev/docs/ai/realtime/history#context-window), this is
+        the session's [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
         """
+        if self.realtime_session is not None:
+            return self.realtime_session.context_window_used
         try:
             model, messages = self.model, self.messages
         except UserError:
