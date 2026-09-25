@@ -53,6 +53,7 @@ from .workspace_fakes import (
     FakeWorkspace,
     FakeWorkspaceResult,
     FilesystemOnlyWorkspaceBackend,
+    InMemoryProvider,
     RunOnlyWorkspaceBackend,
     WorkspaceCapability,
 )
@@ -814,6 +815,30 @@ async def test_an_unrecognized_history_ref_is_an_error_when_the_agent_has_worksp
 
     fresh = await agent.run('go', message_history=[historical], workspace='new')
     assert fresh.workspace.attached
+
+
+async def test_a_gone_workspace_fails_on_first_use_and_new_recovers() -> None:
+    def probe_each_turn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('probe', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    provider = InMemoryProvider()
+    agent = Agent(FunctionModel(probe_each_turn), capabilities=[provider.capability()])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        return await ctx.workspace.working_dir()
+
+    first = await agent.run('go')
+    provider.environments.clear()  # the environment is destroyed between turns
+
+    with pytest.raises(WorkspaceUnavailableError, match="environment 'env-1' does not exist"):
+        await agent.run('go', message_history=first.all_messages())
+
+    fresh = await agent.run('go', message_history=first.all_messages(), workspace='new')
+    assert fresh.workspace.ref == WorkspaceRef(provider='fake', id='env-1')
+    assert provider.log == ['create:env-1', 'create:env-1']
 
 
 async def test_a_history_ref_is_offered_to_a_workspace_capability_that_exists_only_after_for_run(
