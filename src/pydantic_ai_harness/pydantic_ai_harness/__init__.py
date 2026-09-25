@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from .dynamic_workflow import DynamicWorkflow
     from .exa import ExaAgent, ExaSearch
     from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
+    from .grain import Grain
     from .guardrails import (
         GuardrailError,
         GuardrailResult,
@@ -79,6 +80,7 @@ __all__ = [
     'ExaSearch',
     'FallbackCompaction',
     'FileSystem',
+    'Grain',
     'GuardrailError',
     'GuardrailResult',
     'HarnessDeprecationWarning',
@@ -139,6 +141,7 @@ _CAPABILITY_EXPORTS = {
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
+    'Grain': 'grain',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',
