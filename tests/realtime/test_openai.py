@@ -2414,6 +2414,8 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
     assert [type(event).__name__ for event in events] == ['ResponseStarted', 'SessionUsage', 'AudioDelta']
     assert events[0] == ResponseStarted(provider_response_id='B')
     assert isinstance(events[1], SessionUsage) and events[1].provider_response_id == 'A'
+    # A's `cancelled` status doesn't ride along: the session may be recording B when this usage lands.
+    assert events[1].provider_details is None
     assert events[2] == AudioDelta(data=b'\x02', item_id='b-item')
     assert not any(isinstance(event, ResponseDone) for event in events)
 
