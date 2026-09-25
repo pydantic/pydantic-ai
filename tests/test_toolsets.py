@@ -1257,6 +1257,27 @@ async def test_handle_call_raw_mode_propagates_tool_failed_from_hooks(hook_name:
         )
 
 
+@pytest.mark.parametrize('timeout', [0, -1])
+def test_function_toolset_rejects_non_positive_timeout(timeout: float):
+    with pytest.raises(UserError, match='timeout must be > 0'):
+        FunctionToolset(timeout=timeout)
+
+
+@pytest.mark.parametrize('timeout', [None, 5])
+def test_function_toolset_accepts_valid_timeout(timeout: float | None):
+    assert FunctionToolset(timeout=timeout).timeout == timeout
+
+
+def test_function_toolset_rejects_negative_max_retries():
+    with pytest.raises(UserError, match='max_retries must be >= 0'):
+        FunctionToolset(max_retries=-1)
+
+
+@pytest.mark.parametrize('max_retries', [None, 0])
+def test_function_toolset_accepts_valid_max_retries(max_retries: int | None):
+    assert FunctionToolset(max_retries=max_retries).max_retries == max_retries
+
+
 async def test_toolset_max_retries_inherits_from_agent():
     """Agent(retries=...) should propagate to user-provided toolsets that don't set max_retries explicitly."""
     attempts: list[int] = []
