@@ -975,7 +975,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # The callable form's result bypasses `merge_profile`, so translate deprecated key
             # spellings here too. It starts from `resolved`, so a current spelling it carries
             # over unchanged doesn't count as set.
-            resolved = _translate_legacy_profile_keys(user(resolved), resolved)
+            base = ModelProfile(**resolved)  # the callable may mutate its argument in place
+            resolved = _translate_legacy_profile_keys(user(resolved), base)
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)

@@ -99,3 +99,15 @@ def test_legacy_provider_key_from_callable_profile_wins_over_carried_over_defaul
     with pytest.warns(PydanticAIDeprecationWarning, match='`openai_supports_tool_choice_required` is deprecated'):
         model = TestModel(profile=lambda profile: {**profile, 'openai_supports_tool_choice_required': False})  # pyright: ignore[reportArgumentType]
         assert model.profile.get('supports_forced_tool_choice') is False
+
+
+def test_legacy_provider_key_from_mutating_callable_profile():
+    """A callable that updates the profile it's given in place, rather than returning a copy, gets the same result."""
+
+    def disable_forcing(profile: ModelProfile) -> ModelProfile:
+        profile.update({'openai_supports_tool_choice_required': False})  # pyright: ignore[reportCallIssue,reportArgumentType]
+        return profile
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='`openai_supports_tool_choice_required` is deprecated'):
+        model = TestModel(profile=disable_forcing)
+        assert model.profile.get('supports_forced_tool_choice') is False
