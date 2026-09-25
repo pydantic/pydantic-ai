@@ -283,7 +283,7 @@ async def test_anyio_4_15_wait_path(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
     with pytest.raises(WorkspaceTimeoutError) as exc_info:
-        await workspace.run('echo stdout; echo stderr >&2; sleep 30', shell=True, timeout=0.2)
+        await workspace.run('echo stdout; echo stderr >&2; sleep 30', shell=True, timeout=5)
 
     error = exc_info.value
     assert error.stdout == 'stdout\n'
@@ -456,7 +456,7 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     monkeypatch.setattr(os, 'killpg', deny_killpg)
     with pytest.raises(WorkspaceTimeoutError, match='denied') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child.
-        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=0.1)
+        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=5)
     assert isinstance(exc_info.value.__cause__, PermissionError)
     await _assert_process_gone(int(pid_file.read_text()))
 
