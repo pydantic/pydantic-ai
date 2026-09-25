@@ -2264,12 +2264,13 @@ class RealtimeSession:
     def _record_response(self, response: ModelResponse) -> None:
         """Add a finalized response to history, as its own or as the rest of the tool-call response it continues."""
         if (continued := self._tool_call_response_to_continue(response.parts)) is not None:
-            # One turn, not two responses: it already counts as a request.
             self._replace_in_history(continued, _continue_tool_call_response(continued, response))
         else:
             self._history.append(response)
-            self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
         self._early_tool_call_response = None
+        # Counted either way: the continuation was assembled, checked against the request limit, and
+        # instrumented as a response of its own, and only its place in history changes.
+        self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
 
     def _tool_call_response_to_continue(self, parts: Sequence[ModelResponsePart]) -> ModelResponse | None:
         """The tool-call response that a response with `parts` continues, if any.

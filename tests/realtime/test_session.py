@@ -3388,12 +3388,13 @@ async def test_speech_while_tool_runs_stays_before_its_result() -> None:
     )
     response = session.all_messages()[0]
     assert isinstance(response, ModelResponse)
-    # One turn, so one response carrying the turn's usage, and one request.
+    # One response carrying the turn's usage. Request counting is unchanged: the speech was assembled,
+    # limit-checked and instrumented as a response of its own, so it still counts as one.
     assert response.usage.input_tokens == 10
     assert response.usage.output_tokens == 5
     assert response.finish_reason == 'stop'
     assert response.state == 'complete'
-    assert session.usage.requests == 1
+    assert session.usage.requests == 2
 
 
 async def test_interrupted_speech_while_tool_runs_marks_the_calling_response() -> None:

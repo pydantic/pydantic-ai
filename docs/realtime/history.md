@@ -24,8 +24,10 @@ The session exposes copy-on-read snapshots:
 
 ## Tool calls in history
 
-A tool round is recorded as in a standard run: a `ModelResponse` with the
-[`ToolCallPart`][pydantic_ai.messages.ToolCallPart], then a `ModelRequest` with its
+A tool round is recorded as in a standard run: a
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] with the
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart], then a
+[`ModelRequest`][pydantic_ai.messages.ModelRequest] with its
 [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. Realtime tools
 [run in the background](tools.md#concurrent-tool-execution), so the conversation can move on before
 a result arrives. History still records each result directly after its call, because request-response

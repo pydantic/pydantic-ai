@@ -152,8 +152,9 @@ Gemini-specific control is needed.
 Gemini normally pauses generation while a function tool is outstanding. Set
 `google_async_tool_calls=True` on supported models to let it continue speaking. This is best for slow
 tools; a fast result can interrupt speech that barely started and leave an empty interrupted turn in
-history. What the model says while the tool runs is recorded in the calling `ModelResponse`, after the
-call; see [Tool calls in history](history.md#tool-calls-in-history). Models that don't support it ignore the setting, and
+history. What the model says while the tool runs is recorded in the calling
+[`ModelResponse`][pydantic_ai.messages.ModelResponse], after the call; see
+[Tool calls in history](history.md#tool-calls-in-history). Models that don't support it ignore the setting, and
 `gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every tool call this way
 regardless — see [Extended thinking](#extended-thinking).
 
