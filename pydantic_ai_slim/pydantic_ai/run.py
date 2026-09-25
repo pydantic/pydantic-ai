@@ -230,21 +230,20 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Once the run returns an [`End`][pydantic_graph.basenode.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
-        if self._result_override is not None:
-            return self._result_override
-        graph_run_output = self._graph_run.output
-        if graph_run_output is None:
-            return None
-        result = AgentRunResult(
-            graph_run_output.output,
-            graph_run_output.tool_name,
-            self._graph_run.state,
-            self._graph_run.deps.new_message_index,
-            self._traceparent(required=False),
-        )
-        # Set outside the constructor because `workspace` is deliberately not a dataclass field: see
-        # the property on `AgentRunResult`.
-        result.__dict__['_workspace'] = self._graph_run.deps.workspace
+        result = self._result_override
+        if result is None:
+            graph_run_output = self._graph_run.output
+            if graph_run_output is None:
+                return None
+            result = AgentRunResult(
+                graph_run_output.output,
+                graph_run_output.tool_name,
+                self._graph_run.state,
+                self._graph_run.deps.new_message_index,
+                self._traceparent(required=False),
+            )
+        # Not a dataclass field: Temporal serializes a result's dataclass fields, and a live workspace can't be.
+        result.__dict__.setdefault('_workspace', self._graph_run.deps.workspace)
         return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
@@ -743,15 +742,9 @@ class AgentRunResult(Generic[OutputDataT]):
         A result that did not come from a run — one deserialized from JSON, or built by hand — has
         a placeholder whose operations explain that no workspace is attached.
         """
-        # Deliberately not a dataclass field. Temporal serializes a whole result through
-        # `pydantic_core.to_json`, which walks `__dataclass_fields__` and cannot be told to skip a
-        # field (`Field(exclude=True)` needs a `TypeAdapter`/core schema, which that path does not
-        # build), so a declared field — even excluded — makes it try to serialize the live handle and
-        # fail. Storing it in `__dict__`, off `__dataclass_fields__`, keeps it out of every serializer.
+        # Set by `AgentRun.result`; see there.
         workspace = self.__dict__.get('_workspace')
-        if workspace is None:
-            workspace = self.__dict__['_workspace'] = unattached_workspace()
-        return workspace
+        return workspace if workspace is not None else unattached_workspace()
 
     @model_validator(mode='before')
     @classmethod
