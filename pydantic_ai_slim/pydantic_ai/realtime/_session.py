@@ -3184,7 +3184,10 @@ class RealtimeSession:
         """
         if tool_call_id in self._tool_result_reservations:
             self._tool_result_reservations.discard(tool_call_id)
-            self._release_response_reservation()
+            # Reservations are a count, not tied to a request: a response that started while the send was
+            # parked has already taken this one, and there is nothing left to give back.
+            if self._pending_response_requests:
+                self._release_response_reservation()
 
     # --- streaming --------------------------------------------------------------------------------
 

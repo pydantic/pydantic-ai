@@ -5044,6 +5044,31 @@ async def test_parked_send_waits_out_a_second_drop() -> None:
     assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [b'\x01', b'\x02']
 
 
+async def test_cancelling_a_parked_tool_result_after_a_response_took_its_reservation() -> None:
+    # Reservations are a count, so a response that starts while a tool result is parked on the dropped
+    # connection takes that result's reservation. Cancelling the call afterwards has nothing left to give
+    # back; releasing anyway drove the count negative and `wait_for_reply()` waited forever.
+    conn = _DroppingConnection()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'sunny'
+
+    session = RealtimeSession(conn, runner, model_name='gpt-realtime')
+    async with session:
+        await session.wait_for_reply()
+        conn.dropped = True
+        conn.inbox.put_nowait(ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'))
+        conn.inbox.put_nowait(ResponseDone())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert session._tool_result_reservations == {'c1'}  # pyright: ignore[reportPrivateUsage]
+        conn.inbox.put_nowait(OutputTranscript(text='Meanwhile.', is_final=True))
+        conn.inbox.put_nowait(ToolCallCancelled(tool_call_ids=['c1']))
+        conn.inbox.put_nowait(ResponseDone())
+        await asyncio.wait_for(session.wait_for_reply(), _LIVENESS_TIMEOUT)
+        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_parked_send_fails_when_receiving_ends_right_after_the_reconnect() -> None:
     # The pump can handle the reconnect and then end before the parked send resumes. Nothing would read
     # the reply to a frame sent then, so the send fails instead of going out.
