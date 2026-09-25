@@ -48,6 +48,7 @@ with try_import() as anthropic_imports_successful:
         omit as OMIT,
     )
     from anthropic.types.beta import (
+        BetaInputTransformation,
         BetaMessage,
         BetaMessageDeltaUsage,
         BetaMessageTokensCount,
@@ -827,7 +828,7 @@ def dropped_thinking_transformation(path: str = 'messages.1.content.0') -> BetaT
 
 def dropped_thinking_stream(
     start_transformation: BetaThinkingDroppedInputTransformation | None = None,
-    delta_transformations: list[BetaThinkingDroppedInputTransformation] | None = None,
+    delta_transformations: list[BetaInputTransformation] | None = None,
 ) -> list[BetaRawMessageStreamEvent]:
     return [
         BetaRawMessageStartEvent(
@@ -1055,13 +1056,27 @@ _STALE_THINKING_BLOCK_PREFIX_CHANGE = pytest.mark.moves_cache_prefix(
 )
 
 
+# Opus 5.5 answers a trivial prompt at its default `medium` effort without thinking, which would leave
+# no block to invalidate. Opus 5 runs at the same effort so it stays a like-for-like control for 5.5.
+_HISTORY_EFFORT_MODELS = frozenset({'claude-opus-5-5', 'claude-opus-5'})
+
+
 async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessage]:
     """A conversation whose thinking block is bound to a prefix the next request will not match."""
-    agent = Agent(model, instructions='You are a helpful assistant. Answer briefly.')
+    agent = Agent(
+        model,
+        instructions='You are a helpful assistant. Answer briefly.',
+        model_settings=AnthropicModelSettings(anthropic_effort='high')
+        if model.model_name in _HISTORY_EFFORT_MODELS
+        else None,
+    )
     result = await agent.run('Think about it, then say what 17*23 is.')
     thought = message(result.all_messages(), ModelResponse, index=-1)
     assert any(isinstance(part, ThinkingPart) for part in thought.parts), 'no thinking block to invalidate'
     return result.all_messages()
+
+
+_BINDING_MODELS = pytest.mark.parametrize('model_name', ['claude-fable-5-1', 'claude-opus-5-5'])
 
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
@@ -1097,9 +1112,10 @@ async def test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_ac
 
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
+@_BINDING_MODELS
 @pytest.mark.vcr()
-async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+async def test_anthropic_drops_a_stale_thinking_block(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture, model_name: str
 ):
     """Asking for `drop_block` drops the stale block and lets the run continue.
 
@@ -1110,7 +1126,7 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(
     so the recorded `thinking_dropped` replays even if the setting stopped reaching the wire. The
     outbound body and the beta header are what tie the transformation to what we actually sent.
     """
-    m = anthropic_model('claude-fable-5-1', capture=True)
+    m = anthropic_model(model_name, capture=True)
     history = await stale_thinking_block_history(m)
 
     settings = AnthropicModelSettings(
@@ -1135,6 +1151,43 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(
         {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
     )
     assert 'thinking-binding-controls-2026-08-01' in request_capture.headers[-1]['anthropic-beta']
+
+
+@_STALE_THINKING_BLOCK_PREFIX_CHANGE
+@pytest.mark.parametrize(
+    ('model_name', 'binds'),
+    [('claude-opus-5-5', True), ('claude-opus-5', False)],
+)
+@pytest.mark.vcr()
+async def test_anthropic_explicit_error_rejects_a_stale_thinking_block_on_binding_models(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    model_name: str,
+    binds: bool,
+):
+    """Claude Opus 5.5 binds thinking blocks like Claude Fable 5.1, and Claude Opus 5 does not.
+
+    This is the recorded evidence behind `anthropic_binds_thinking_blocks`. The account these were
+    recorded against predates enforcement, so asking for `'error'` is what runs the check: Opus 5.5
+    rejects the replay after the instructions change, while Opus 5 accepts it. An explicit `'error'`
+    is a caller asking to fail, so it is never retried.
+    """
+    m = anthropic_model(model_name, capture=True)
+    history = await stale_thinking_block_history(m)
+
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
+    )
+    second = Agent(
+        m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.', model_settings=settings
+    )
+    if binds:
+        with pytest.raises(ModelHTTPError, match='bound to a different conversation'):
+            await second.run('And times two?', message_history=history)
+    else:
+        await second.run('And times two?', message_history=history)
+    assert len(request_capture.bodies('/v1/messages')) == 2
 
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE

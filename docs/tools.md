@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent function tools for LLM tool calling with @agent.tool, validating arguments from type hints and using docstrings as descriptions."
+---
+
 # Function Tools
 
 Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.
@@ -346,6 +350,7 @@ test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
 print(result.output)
 #> {"foobar":"x=0 y='a' z=3.14"}
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [

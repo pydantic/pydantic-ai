@@ -1,3 +1,7 @@
+---
+description: "Make sure a Pydantic AI agent's system prompt is always sent, even when message history from a UI or database has dropped it, with ReinjectSystemPrompt."
+---
+
 # Reinject System Prompt
 
 [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] is a [capability](overview.md) that ensures the agent's configured [`system_prompt`](../agent.md#system-prompts) is at the head of the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] on every model request. By default, if any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is already present in the history, the capability is a no-op (so multi-agent handoff and user-managed system prompts remain authoritative). Set `replace_existing=True` to instead strip any existing `SystemPromptPart`s before prepending the agent's configured prompt — useful when the history comes from an untrusted source and the server's prompt must win.
@@ -9,7 +13,13 @@ Useful when `message_history` comes from a source that doesn't round-trip system
 ```python {title="reinject_system_prompt.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ReinjectSystemPrompt
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 
 agent = Agent('test', system_prompt='You are a helpful assistant.', capabilities=[ReinjectSystemPrompt()])
 
@@ -24,7 +34,9 @@ history = [
 result = agent.run_sync('Follow up', message_history=history)
 first_request = result.all_messages()[0]
 assert isinstance(first_request, ModelRequest)
-assert first_request.parts[0].content == 'You are a helpful assistant.'
+system_prompt = first_request.parts[0]
+assert isinstance(system_prompt, SystemPromptPart)
+assert system_prompt.content == 'You are a helpful assistant.'
 ```
 
 _(This example is complete, it can be run "as is")_

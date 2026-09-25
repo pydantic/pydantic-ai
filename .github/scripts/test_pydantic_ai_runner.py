@@ -264,6 +264,33 @@ def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
     assert '$GITHUB_WORKSPACE/.review-context/' in shim.INSTRUCTIONS
 
 
+def test_prewarm_leaves_the_runner_lock_as_checked_out(tmp_path: Path):
+    """CI Review's `git checkout --detach` of the PR head aborts if the pre-warm left the lock dirty."""
+    workspace = tmp_path / 'workspace'
+    lock = workspace / '.github' / 'scripts' / 'pydantic-ai-runner.lock'
+    lock.parent.mkdir(parents=True)
+    lock.write_text('checked out\n', encoding='utf-8')
+    git = ['git', '-C', str(workspace), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+    subprocess.run([*git, 'init', '-q'], check=True)
+    subprocess.run([*git, 'add', '.'], check=True)
+    subprocess.run([*git, 'commit', '-q', '-m', 'init'], check=True)
+
+    # `uv sync --script` rewrites the adjacent lock when it is stale.
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    fake_uv = bin_dir / 'uv'
+    fake_uv.write_text('#!/bin/sh\necho relocked > "$3.lock"\n', encoding='utf-8')
+    fake_uv.chmod(0o755)
+
+    env = {**os.environ, 'PATH': f'{bin_dir}:{os.environ["PATH"]}', 'GITHUB_WORKSPACE': str(workspace)}
+    script = Path(__file__).with_name('prewarm-pydantic-ai-runner.sh')
+    result = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
+
+    assert result.returncode == 0
+    assert f'using uv={fake_uv}' in result.stdout
+    assert lock.read_text(encoding='utf-8') == 'checked out\n'
+
+
 @pytest.mark.parametrize(
     'prompt_name',
     [
@@ -407,8 +434,7 @@ def test_harness_backed_tools_are_async_and_pin_the_remaining_gaps():
 
     The harness-backed tools delegate to pydantic-ai-harness and are async:
     `Bash`/`Read`/`Write`/`Edit`/`Grep`/`Glob`/`LS` to `FileSystemToolset` /
-    `ShellToolset`, and `TodoWrite` to the experimental `planning` capability's
-    `write_plan` (experimental is acceptable; the warning is silenced at import).
+    `ShellToolset`, and `TodoWrite` to the `planning` capability's `render_plan`.
 
     The remaining tools have no harness equivalent and stay sync:
 
@@ -777,7 +803,7 @@ def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatc
 
 def test_todo_write_renders_plan_via_harness():
     # TodoWrite maps Claude's todo schema onto the harness `planning` capability
-    # and returns its `write_plan` rendering (a checklist with a progress line).
+    # and returns its `render_plan` checklist (with a progress line).
     out = asyncio.run(pkg.todo_write([{'content': 'do x', 'status': 'in_progress', 'activeForm': 'doing x'}]))
     assert 'do x' in out and '[~]' in out and '(0/1 completed)' in out
     # A completed step shows as done; an unknown status falls back to pending.
@@ -786,10 +812,12 @@ def test_todo_write_renders_plan_via_harness():
             [
                 {'content': 'a', 'status': 'completed', 'activeForm': ''},
                 {'content': 'b', 'status': 'bogus', 'activeForm': ''},
+                # `blocked` is a harness status Claude's schema doesn't have.
+                {'content': 'c', 'status': 'blocked', 'activeForm': ''},
             ]
         )
     )
-    assert '[x] a' in out2 and '[ ] b' in out2 and '(1/2 completed)' in out2
+    assert '[x] a' in out2 and '[ ] b' in out2 and '[ ] c' in out2 and '(1/3 completed)' in out2
 
 
 def test_exit_plan_mode_returns_ack():

@@ -1,3 +1,7 @@
+---
+description: "Use Cohere models with Pydantic AI: install the cohere optional group, set your API key, configure the provider and SDK retries, and pass Cohere model settings."
+---
+
 # Cohere
 
 ## Install

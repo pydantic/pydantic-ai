@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import importlib.util
 import os
 import signal
@@ -17,7 +18,7 @@ import pydantic_ai
 import pydantic_ai._display as _display
 from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart, __version__
 from pydantic_ai.agent import _registered_capability_count  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -586,13 +587,24 @@ def test_the_banner_asks_the_terminal_itself_how_wide_it_is(monkeypatch: pytest.
     """
     reader, terminal = os.openpty()
     try:
-        fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 70, 0, 0))
-        with open(terminal, 'w', encoding='utf-8', closefd=False) as stderr:
+        with open(terminal, 'w', encoding='utf-8') as stderr:
+            fcntl.ioctl(stderr, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 70, 0, 0))
             monkeypatch.setattr(sys, 'stderr', stderr)
             display_banner()
-        output = os.read(reader, 1 << 16).decode()
+
+        chunks: list[bytes] = []
+        while True:
+            try:
+                chunk = os.read(reader, 1 << 16)
+            except OSError as e:
+                if e.errno != errno.EIO:
+                    raise
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+        output = b''.join(chunks).decode()
     finally:
-        os.close(terminal)
         os.close(reader)
 
     # Laid out for the pane it was written to, rather than for the 100 columns nobody promised.
@@ -900,6 +912,15 @@ def test_instrumented_agent_run_is_silent(monkeypatch: pytest.MonkeyPatch, stder
     agent.instrument = True
 
     agent.run_sync('hello')
+
+    assert stderr.getvalue() == ''
+
+
+def test_run_instrumented_by_an_explicit_capability_is_silent(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """The banner defers to the `Instrumentation` capability that instruments the run, not just `instrument`."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    Agent(TestModel()).run_sync('hello', capabilities=[Instrumentation()])
 
     assert stderr.getvalue() == ''
 

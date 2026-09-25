@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with Prefect, running model requests and tool calls as cached, retryable tasks in a flow you can deploy and run on a schedule."
+---
+
 # Durable Execution with Prefect
 
 [Prefect](https://www.prefect.io/) is a workflow orchestration framework for building resilient data pipelines in Python, natively integrated with Pydantic AI.
@@ -191,11 +195,11 @@ from pydantic_ai.toolsets import FunctionToolset
 toolset = FunctionToolset(id='research')
 
 
-@toolset.tool(metadata={'prefect': TaskConfig(timeout_seconds=10.0)})  # (1)!
+@toolset.tool_plain(metadata={'prefect': TaskConfig(timeout_seconds=10.0)})  # (1)!
 def fetch_data(url: str) -> str: ...
 
 
-@toolset.tool(metadata={'prefect': False})  # (2)!
+@toolset.tool_plain(metadata={'prefect': False})  # (2)!
 def simple_tool() -> str: ...
 
 

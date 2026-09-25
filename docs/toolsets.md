@@ -1,3 +1,7 @@
+---
+description: "Group tools into reusable Pydantic AI toolsets that you can register in one go, swap at runtime or in tests, and compose to filter, rename or wrap tool calls."
+---
+
 
 # Toolsets
 
@@ -37,6 +41,7 @@ test_model = TestModel() # (2)!
 agent = Agent(test_model, toolsets=[agent_toolset])
 
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['agent_tool']
 
@@ -102,6 +107,7 @@ test_model = TestModel()  # (1)!
 agent = Agent(test_model)
 
 result = agent.run_sync('What tools are available?', toolsets=[weather_toolset])
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['temperature_celsius', 'temperature_fahrenheit', 'conditions']
 
@@ -121,7 +127,7 @@ A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instruct
 Instructions can be provided as strings, functions (sync or async, with or without [`RunContext`][pydantic_ai.tools.RunContext]), or a mix of both:
 
 ```python {title="toolset_instructions.py"}
-from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai import Agent, FunctionToolset, ModelRequest
 from pydantic_ai.models.test import TestModel
 
 search_toolset = FunctionToolset(
@@ -138,7 +144,9 @@ def search(query: str) -> str:
 test_model = TestModel()
 agent = Agent(test_model, toolsets=[search_toolset])
 result = agent.run_sync('What is the capital of France?')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> Always use the search tool before answering factual questions.
 ```
 
@@ -147,7 +155,7 @@ _(This example is complete, it can be run "as is")_
 You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context:
 
 ```python {title="toolset_instructions_decorator.py"}
-from pydantic_ai import Agent, FunctionToolset, RunContext
+from pydantic_ai import Agent, FunctionToolset, ModelRequest, RunContext
 from pydantic_ai.models.test import TestModel
 
 math_toolset = FunctionToolset[str]()
@@ -167,7 +175,9 @@ def calculator(expression: str) -> str:
 test_model = TestModel()
 agent = Agent(test_model, toolsets=[math_toolset], deps_type=str)
 result = agent.run_sync('What is 2+2?', deps='Alice')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> You are helping: Alice. Always show your work when using the calculator.
 ```
 
@@ -176,7 +186,7 @@ _(This example is complete, it can be run "as is")_
 When a toolset with instructions is used alongside agent-level [`instructions`][pydantic_ai.agent.Agent.__init__], the toolset instructions are appended after the agent instructions:
 
 ```python {title="toolset_instructions_combined.py"}
-from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai import Agent, FunctionToolset, ModelRequest
 from pydantic_ai.models.test import TestModel
 
 toolset = FunctionToolset(instructions='Use the greeting tool for all greetings.')
@@ -195,7 +205,9 @@ agent = Agent(
     toolsets=[toolset],
 )
 result = agent.run_sync('Hi there!')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 """
 You are a friendly assistant.
 
@@ -208,7 +220,7 @@ _(This example is complete, it can be run "as is")_
 When multiple toolsets with instructions are registered on an agent, all their instructions are combined:
 
 ```python {title="toolset_instructions_multiple.py"}
-from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai import Agent, FunctionToolset, ModelRequest
 from pydantic_ai.models.test import TestModel
 
 weather_toolset = FunctionToolset(instructions='Use weather tools for forecasts.')
@@ -232,7 +244,9 @@ def schedule(event: str) -> str:
 test_model = TestModel()
 agent = Agent(test_model, toolsets=[weather_toolset, calendar_toolset])
 result = agent.run_sync('Plan my day')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 """
 Use weather tools for forecasts.
 
@@ -261,6 +275,7 @@ combined_toolset = CombinedToolset([weather_toolset, datetime_toolset])
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[combined_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['temperature_celsius', 'temperature_fahrenheit', 'conditions', 'now']
 ```
@@ -286,6 +301,7 @@ filtered_toolset = combined_toolset.filtered(lambda ctx, tool_def: 'fahrenheit' 
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[filtered_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['weather_temperature_celsius', 'weather_conditions', 'datetime_now']
 ```
@@ -316,6 +332,7 @@ combined_toolset = CombinedToolset(
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[combined_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 """
 [
@@ -354,6 +371,7 @@ renamed_toolset = combined_toolset.renamed(
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[renamed_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 """
 ['temperature_celsius', 'temperature_fahrenheit', 'weather_conditions', 'current_time']
@@ -403,6 +421,7 @@ prepared_toolset = renamed_toolset.prepared(add_descriptions)
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[prepared_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
@@ -702,7 +721,7 @@ from deferred_toolset_agent import PersonalizedGreeting, agent
 
 def run_agent(
     messages: list[ModelMessage] = [],
-    frontend_tools: list[ToolDefinition] = {},
+    frontend_tools: list[ToolDefinition] = [],
     deferred_tool_results: DeferredToolResults | None = None,
 ) -> tuple[PersonalizedGreeting | DeferredToolRequests, list[ModelMessage]]:
     deferred_toolset = ExternalToolset(frontend_tools)
@@ -842,6 +861,7 @@ def toggle(ctx: RunContext[ToggleableDeps]):
 deps = ToggleableDeps('weather')
 
 result = agent.run_sync('Toggle the toolset', deps=deps)
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])  # (3)!
 #> ['toggle', 'now']
 
@@ -890,9 +910,7 @@ Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting t
 
 ### Agent Skills
 
-Toolsets that implement [Agent Skills](https://agentskills.io) support help agents efficiently discover and perform specific tasks:
-
-* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsToolset` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
+[Agent Skills](https://agentskills.io) are loaded as [on-demand capabilities](capabilities/on-demand.md) rather than as toolsets, so each skill can stay collapsed to a catalog entry until the model needs it. See [Agent Skills](capabilities/third-party.md#agent-skills) on the third-party capabilities page.
 
 ### Task Management
 
@@ -919,7 +937,7 @@ If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/conc
 
 You will need to install the `langchain-community` package and any others required by the tools in question.
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - langchain-community is not installed in the test environment"}
 from langchain_community.agent_toolkits import SlackToolkit
 
 from pydantic_ai import Agent

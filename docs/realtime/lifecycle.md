@@ -1,3 +1,7 @@
+---
+description: "Manage a Pydantic AI realtime session's connection: reconnect after drops and session limits, hang up on idle timeouts, and handle realtime errors."
+---
+
 # Connection lifecycle
 
 A realtime model uses one persistent provider connection. Your backend owns that session and the
@@ -188,14 +192,20 @@ for provider operations and
 [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] for one failed
 user transcription. The session remains usable after either event.
 
-Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
-Receive-loop and tool failures surface according to how the session is consumed:
+A `RealtimeSessionErrorEvent` can be the provider refusing something you sent: OpenAI Realtime refuses
+a text longer than 256,000 characters, for example. When the error identifies the refused input, as
+OpenAI-protocol providers do by echoing the client event's id for a malformed or oversized one, the
+session takes back what the send assumed, the way it does when the send itself raises: refused content
+is removed from history, and a refused request for a response stops
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waiting for it. An error
+that doesn't identify an input changes neither, because the reply can still come: on OpenAI and xAI,
+a request for a response sent after a refused item is still answered.
 
-- While the event stream is being iterated, the failure is raised from `async for`.
-- When the event stream was never iterated (only the audio or transcript views are consumed), the
-  views end and the failure is raised when the `async with` block exits (from
-  [`close()`][pydantic_ai.realtime.RealtimeSession.close]).
-- A consumer that started iterating and then stopped has chosen to stop listening: a later failure
-  is not raised on its behalf.
+Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
+Receive-loop and tool failures are raised from `async for` while the event stream is being
+iterated. Otherwise the audio and transcript views end, and the failure is raised when the `async
+with` block exits (from [`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side
+has already failed, the next outbound session method raises that failure instead; it is delivered
+only once.
 
 For symptom-first debugging, see [Troubleshooting](troubleshooting.md).

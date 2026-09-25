@@ -1,3 +1,7 @@
+---
+description: "Use tools from third-party libraries such as LangChain and from MCP servers in your Pydantic AI agents, as toolsets or as capabilities."
+---
+
 # Third-Party Tools
 
 Pydantic AI supports integration with various third-party tool libraries, allowing you to leverage existing tool ecosystems in your agents. Third-party tools are also available as [capabilities](capabilities/third-party.md) — see [Extensibility](extensibility.md) for the full ecosystem.
@@ -14,7 +18,7 @@ You will need to install the `langchain-community` package and any others requir
 
 Here is how you can use the LangChain `DuckDuckGoSearchRun` tool, which requires the `ddgs` package:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - langchain-community is not installed in the test environment"}
 from langchain_community.tools import DuckDuckGoSearchRun
 
 from pydantic_ai import Agent
@@ -37,7 +41,7 @@ print(result.output)
 
 If you'd like to use multiple LangChain tools or a LangChain [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits), you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] [toolset](toolsets.md) which takes a list of LangChain tools:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - langchain-community is not installed in the test environment"}
 from langchain_community.agent_toolkits import SlackToolkit
 
 from pydantic_ai import Agent

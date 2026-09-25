@@ -1,3 +1,7 @@
+---
+description: "Make low-level requests to any LLM with the Pydantic AI direct API when you only need input and output schema translation, not the full Agent machinery."
+---
+
 # Direct Model Requests
 
 The `direct` module provides low-level methods for making imperative requests to LLMs where the only abstraction is input and output schema translation, enabling you to use all models with the same API.
@@ -25,7 +29,7 @@ model_response = model_request_sync(
     [ModelRequest.user_text_prompt('What is the capital of France?')]
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 print(model_response.usage)
 #> RequestUsage(input_tokens=56, output_tokens=7)
@@ -124,7 +128,7 @@ model_response = model_request_sync(
     [ModelRequest.user_text_prompt('What is the capital of France?')],
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 ```
 
@@ -147,7 +151,7 @@ model_response = model_request_sync(
     instrument=True
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 ```
 

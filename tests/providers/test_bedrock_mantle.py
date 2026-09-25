@@ -202,9 +202,10 @@ def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
 
 def test_bedrock_converse_rejects_proprietary_openai() -> None:
     # Proprietary GPT models Converse doesn't serve (GPT-5.4, GPT-5.5, GPT-5.6 Cyber — and future GPT
-    # generations until AWS lists them) are flagged by the profile (`bedrock_supported_on_converse=False`)
+    # generations until verified on Converse) are flagged by the profile (`bedrock_supported_on_converse=False`)
     # and `BedrockConverseModel` raises at construction with a pointer to `BedrockMantleProvider`.
-    # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra are served on Converse; `gpt-5.6-cyber` is not.
+    # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra and GPT-6 Sol/Luna/Astra are served on Converse;
+    # `gpt-5.6-cyber` is not.
     for model_name in (
         'openai.gpt-5.6-cyber',
         'openai.gpt-5.4',
@@ -218,12 +219,14 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
     assert isinstance(infer_model('bedrock:openai.gpt-oss-safeguard-20b'), BedrockConverseModel)
 
 
-def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
-    # #7793: AWS model cards list GPT-5.6 Sol/Luna/Terra on the Converse API — unlike every other
-    # proprietary GPT model, they construct on `BedrockConverseModel`. No Pydantic AI profile overrides
-    # have been verified for them, so the effective profile keeps the relevant defaults.
-    for base_name in ('gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'):
-        assert BedrockProvider.model_profile(f'openai.{base_name}') is None
+def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
+    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793) and GPT-6 Sol/Luna/Astra on the Converse API (see
+    # `test_bedrock_openai_converse`) — unlike every other proprietary GPT model, they construct on
+    # `BedrockConverseModel`. Converse rejects their sampling settings; the rest of the profile keeps the defaults.
+    for base_name in ('gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'):
+        assert BedrockProvider.model_profile(f'openai.{base_name}') == snapshot(
+            {'bedrock_disallows_sampling_settings': True}
+        )
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
         assert {
             'supports_json_schema_output': model.profile.get('supports_json_schema_output', False),

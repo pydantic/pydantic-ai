@@ -92,7 +92,7 @@ async def test_github_copilot_model_simple(allow_model_requests: None, github_co
                 timestamp=IsDatetime(),
                 provider_name='github-copilot',
                 provider_url='https://api.githubcopilot.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),

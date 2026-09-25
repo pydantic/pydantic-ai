@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '338'
+      - '340'
       content-type:
       - application/json
       host:
@@ -19,8 +19,8 @@ interactions:
       - parts:
         - text: Explain me this video in a few sentences
         - fileData:
-            fileUri: https://m.youtube.com/watch?v=lCdaVNyHtjU
-            mimeType: video/mp4
+            file_uri: https://m.youtube.com/watch?v=lCdaVNyHtjU
+            mime_type: video/mp4
         role: user
       generationConfig:
         responseModalities:
@@ -35,11 +35,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1077'
+      - '963'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=6189
+      - gfet4t7; dur=17862
       transfer-encoding:
       - chunked
       vary:
@@ -50,25 +50,18 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: This video demonstrates an AI assistant within a code editor analyzing recent 404 HTTP responses from a
-              logfile database. The AI queries the database, identifies common patterns related to specific endpoints, request
-              types, timeline issues, and authentication problems. Finally, it provides a detailed analysis of these patterns
-              along with actionable recommendations to resolve the identified issues.
+          - text: This video showcases an AI assistant diagnosing recent HTTP 404 errors. The assistant queries a logging
+              database (LogLine) to identify patterns in the error responses, such as common problematic endpoints, request
+              patterns, and issues related to timeline queries or authentication. Finally, the AI provides a detailed analysis
+              of the identified problems and offers specific recommendations for resolution, interactively highlighting relevant
+              sections in the code editor.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: JiyGasHJHe-wjMcP4aqWmQg
+      responseId: V9Gzar-_A8vRjuMPkJGC-Q0
       usageMetadata:
-        cacheTokensDetails:
-        - modality: AUDIO
-          tokenCount: 1881
-        - modality: TEXT
-          tokenCount: 15
-        - modality: VIDEO
-          tokenCount: 15483
-        cachedContentTokenCount: 17379
-        candidatesTokenCount: 68
+        candidatesTokenCount: 80
         promptTokenCount: 17713
         promptTokensDetails:
         - modality: TEXT
@@ -78,8 +71,8 @@ interactions:
         - modality: AUDIO
           tokenCount: 1917
         serviceTier: standard
-        thoughtsTokenCount: 821
-        totalTokenCount: 18602
+        thoughtsTokenCount: 1091
+        totalTokenCount: 18884
     status:
       code: 200
       message: OK

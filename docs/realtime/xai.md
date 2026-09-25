@@ -1,3 +1,7 @@
+---
+description: "Connect a Pydantic AI agent to xAI Grok Voice with XaiRealtimeModel: setup, grok-voice model names, voices, turn detection, reasoning and session resumption."
+---
+
 # xAI Grok Voice
 
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] brings Grok Voice into the typed,

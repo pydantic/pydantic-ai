@@ -1,3 +1,7 @@
+---
+description: "Define Pydantic AI agents declaratively in YAML or JSON (model, instructions, capabilities) and load them with one line, without agent construction code."
+---
+
 # Agent Specs
 
 Agent specs let you define agents declaratively in YAML or JSON — [model](models/overview.md), [instructions](agent.md#instructions), [capabilities](capabilities/overview.md), and all. One line to load, no Python agent construction code required.
@@ -180,10 +184,12 @@ capabilities:
 ```python {title="save_spec_example.py"}
 from pydantic_ai import AgentSpec
 
-spec = AgentSpec(
-    model='anthropic:claude-opus-4-6',
-    instructions='You are a helpful assistant.',
-    capabilities=[{'WebSearch': {'local': 'duckduckgo'}}],
+spec = AgentSpec.model_validate(
+    {
+        'model': 'anthropic:claude-opus-4-6',
+        'instructions': 'You are a helpful assistant.',
+        'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
+    }
 )
 spec.to_file('agent.yaml')
 # Also generates ./agent_schema.json for editor autocompletion

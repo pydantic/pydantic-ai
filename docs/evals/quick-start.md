@@ -1,4 +1,8 @@
-# Pydantic Evals
+---
+description: "Install Pydantic Evals and run your first eval in Python: define test cases and evaluators, add an LLM judge or latency check, and print the evaluation report."
+---
+
+# Pydantic Evals quickstart
 
 **Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications.
 

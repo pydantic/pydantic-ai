@@ -6,8 +6,7 @@ output function — because that is the surface a user meets first and the one t
 [docs](../../docs/models/typesafe.md) describe.
 
 **Every refusal below is what the model does today, not what it ought to do.** Several rows are
-candidates to be made to work: `X | None` as an output type, a pick-one of something other than
-strings, a union of models as a field. When one of those changes, its row moves from `REFUSED` to
+candidates to be made to work: `X | None` as an output type, a union of models as a field. When one of those changes, its row moves from `REFUSED` to
 `ACCEPTED`; a row that disappears is a user-facing behaviour that went unnoticed. The refusals that
 are not about a composed shape — `str`, `NativeOutput`, `PromptedOutput`, a field of plain text —
 stay in `test_typesafe.py` beside the rest of the field shapes.
@@ -35,6 +34,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 from .test_typesafe import answers, mock_model
 
@@ -91,6 +91,15 @@ class Codes(IntEnum):
     security = 30
 
 
+class Statuses(UseEnumMemberDocstrings, IntEnum):
+    """Which status the service returned."""
+
+    ok = 200
+    """The request worked."""
+    missing = 404
+    """Nothing is at that address."""
+
+
 def probe(name: str, annotation: Any, **field: Any) -> Any:
     """An output type whose one field carries `annotation`, so a row is the annotation and its message."""
     namespace: dict[str, Any] = {'__annotations__': {name: annotation}, '__doc__': 'Triage the ticket.'}
@@ -101,9 +110,9 @@ def probe(name: str, annotation: Any, **field: Any) -> Any:
 
 # The remedy every "not supported" message ends with, spelled out once: a rewording is one failure, not twenty.
 SUPPORTED_FIELDS = (
-    'Use `bool`, a `Literal` or `Enum` of two or more strings, a `float` bounded with `ge=0` and `le=1`, a `list` of '
-    'a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its schema, or a model '
-    'of these.'
+    'Use `bool`, a `Literal` or `Enum` of two or more strings or whole numbers, a `float` bounded with `ge=0` and '
+    '`le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its '
+    'schema, or a model of these.'
 )
 
 
@@ -114,7 +123,7 @@ def unsupported(field: str, because: str = '') -> str:
 def says_nothing(route: str, *, alone: bool = False) -> str:
     # With one output type left the agent's `instructions` can describe it, so the message offers that too.
     return (
-        f'Jev weighs each route by what it is for, and {route!r} says nothing about itself. '
+        f'A decision model weighs each route by what it is for, and {route!r} says nothing about itself. '
         'Give the output type a docstring that says what filling it does'
         + (', or the agent `instructions`.' if alone else '.')
     )
@@ -123,14 +132,12 @@ def says_nothing(route: str, *, alone: bool = False) -> str:
 def contains_itself(field: str) -> str:
     return (
         f'Output field {field!r} is not supported by this model: a model that contains itself has no end '
-        'to fill, and Jev asks a fixed set of questions. Give the field a type that does not contain itself.'
+        'to fill, and every question is asked up front. Give the field a type that does not contain itself.'
     )
 
 
-NOT_OPTIONAL = ': only a `Literal` or `Enum` of strings can be optional, since `None` is one more option to pick'
+NOT_OPTIONAL = ': only a pick-one of strings or whole numbers can be optional, since `None` is one more option to pick'
 NOT_A_LIST = ': a list must be of two or more string options'
-NOT_A_RUBRIC = ': a rubric must be the whole numbers from 0 upwards, in order, and there must be at least two of them'
-NOT_STRINGS = ': its options are not two or more strings'
 
 
 class OneArea(str, Enum):
@@ -168,7 +175,7 @@ class Refused:
 REFUSED = [
     # `None` is a route, so what is left here is the route that cannot describe itself: a bare `Literal` has
     # no docstring, and `None` no longer counts towards the union that would have ruled out `instructions`.
-    Refused('pick-one | None', Area | None, says_nothing('final_result_Literal', alone=True)),
+    Refused('pick-one | None', Area | None, says_nothing('Literal', alone=True)),
     # As a *field*, `None` is still one more option on a pick-one and nothing else.
     Refused('field: model | None', probe('inner', Ticket | None), unsupported('inner', NOT_OPTIONAL)),
     Refused(
@@ -188,27 +195,13 @@ REFUSED = [
         unsupported('nothing'),
     ),
     # A route is weighed by what it says about itself, and a `Literal` has nowhere to write that down.
-    Refused('union with a pick-one', [Ticket, Area], says_nothing('final_result_Literal')),
+    Refused('union with a pick-one', [Ticket, Area], says_nothing('Literal')),
     # A union of structured types is a route set; the same union as a *field* is not a question.
     Refused('field: union of models', probe('animal', Cat | Dog, description='Which animal?'), unsupported('animal')),
     Refused(
         'field: discriminated union',
         probe('animal', Annotated[Cat | Dog, Field(discriminator='kind')], description='Which animal?'),
         unsupported('animal'),
-    ),
-    # A pick-one is a pick between strings; numbers are read as a rubric's levels instead.
-    Refused(
-        'field: pick-one of ints',
-        probe('status', Literal[200, 404, 500], description='Which?'),
-        unsupported('status', NOT_A_RUBRIC),
-    ),
-    Refused(
-        'field: IntEnum of codes', probe('area', Codes, description='Which area?'), unsupported('area', NOT_A_RUBRIC)
-    ),
-    Refused(
-        'field: pick-one of mixed types',
-        probe('which', Literal['a', 1], description='Which?'),
-        unsupported('which', NOT_STRINGS),
     ),
     Refused(
         'field: pick-one of one option',
@@ -268,7 +261,6 @@ def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
 # writing values, and most of these are things only a model that writes can do. It is a list to decide against
 # on purpose: `None` as a route was on it, and was worth closing. Anything joining it is worth the same look.
 GAPS = [
-    'field: IntEnum of codes',
     'field: None | None',
     'field: bounded int',
     'field: list with a size limit',
@@ -276,8 +268,6 @@ GAPS = [
     'field: mapping of anything',
     'field: mapping of free keys',
     'field: model | None',
-    'field: pick-one of ints',
-    'field: pick-one of mixed types',
     'field: pick-one of one option',
     'field: stepped number',
     'field: tuple of pick-ones',
@@ -342,6 +332,16 @@ class DescribedNoneArea(BaseModel):
     area: Area | Annotated[None, Field(description='Nothing to route.')] = Field(description='Which area, if any?')
 
 
+class Refunded(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    """Money was returned to the customer."""
+
+    no = False
+    """No refund was issued."""
+
+
 class Clarity(UseEnumMemberDocstrings, IntEnum):
     """How clearly is the problem stated?"""
 
@@ -404,6 +404,16 @@ def scripted(picks: str | None) -> tuple[TypeSafeModel, list[dict[str, Any]]]:
     return mock_model(respond), sent
 
 
+# `True` and `False` are a yes/no's own two options, so either spelling of them is one.
+TrueFalse = probe('which', Literal[True, False], description='Which?')
+
+
+class Settled(BaseModel):
+    """Review the transcript."""
+
+    refunded: Refunded = Field(description='Was a refund issued?')
+
+
 @dataclass(frozen=True)
 class Accepted:
     """An output type Jev fills, what it answers, and what the shape costs in requests."""
@@ -414,6 +424,32 @@ class Accepted:
     requests: int = 1
     picks: str | None = None
     """The route Jev takes, where there is one to take: the first on offer unless a row says otherwise."""
+    questions: dict[str, Any] | None = None
+    """What the last request asked, where the shape of the question is the point of the row."""
+
+
+class Status(BaseModel):
+    """Report what the service returned."""
+
+    status: Literal[200, 404, 500] = Field(description='Which status did the service return?')
+
+
+class Checked(BaseModel):
+    """Check the service."""
+
+    check: Status
+
+
+CodedArea = probe('area', Codes, description='Which area?')
+Mixed = probe('which', Literal['a', 1], description='Which?')
+Described = probe('status', Statuses, description='Which status?')
+OptionalStatus = probe('status', Literal[200, 404] | None, description='Which status, if any?')
+DefaultedStatus = probe('status', Literal[200, 404] | None, default=200, description='Which status, if any?')
+DescribedNoneStatus = probe(
+    'status',
+    Literal[200, 404] | Annotated[None, Field(description='The service did not answer.')],
+    description='Which status, if any?',
+)
 
 
 ACCEPTED = [
@@ -422,32 +458,33 @@ ACCEPTED = [
     Accepted('a list of options', list[Area], ['billing', 'shipping', 'security']),
     Accepted('an optional pick-one field', OptionalArea, OptionalArea(area='billing')),
     Accepted('a rubric field', Graded, Graded(clarity=Clarity.partial)),
-    # A union is a route set: one request picks the member, a second asks only that member's fields.
+    Accepted('field: yes/no from two options', TrueFalse, TrueFalse(which=True)),
+    Accepted('field: yes/no with each answer described', Settled, Settled(refunded=Refunded.yes)),
+    # A union is a route set: each member's fields are asked beside the route question, and only the picked
+    # member's answers are read back.
     Accepted(
         'a union of output types',
         [Ticket, Escalation],
         Escalation(security=True),
-        requests=2,
-        picks='final_result_Escalation',
+        picks='Escalation',
     ),
     # With one output type and one output function the route question rides along with the fields, so the
     # pick and the answer arrive together.
     Accepted('an output type beside an output function', [Ticket, escalate], Ticket(urgent=True)),
-    Accepted('an output function picked as the route', [Ticket, escalate], 'escalated', picks='final_result_escalate'),
+    Accepted('an output function picked as the route', [Ticket, escalate], 'escalated', picks='escalate'),
     Accepted('an output function Jev can fill', [summarise], 'summary for billing'),
     # `None` is a route like any other: one more option on the route question, described as "None of these.",
     # taken on the pick alone because there is nothing to fill.
-    Accepted('model | None, declined', Ticket | None, None, picks='final_result_None'),
-    Accepted('model | None, filled', Ticket | None, Ticket(urgent=True), picks='final_result_Ticket'),
-    Accepted('union | None, declined', Ticket | Escalation | None, None, picks='final_result_None'),
+    Accepted('model | None, declined', Ticket | None, None, picks='None'),
+    Accepted('model | None, filled', Ticket | None, Ticket(urgent=True), picks='Ticket'),
+    Accepted('union | None, declined', Ticket | Escalation | None, None, picks='None'),
     Accepted(
         'union | None, filled',
         Ticket | Escalation | None,
         Escalation(security=True),
-        requests=2,
-        picks='final_result_Escalation',
+        picks='Escalation',
     ),
-    Accepted('output function | None', [escalate, None], None, picks='final_result_None'),
+    Accepted('output function | None', [escalate, None], None, picks='None'),
     # `Literal[True, False]` spells out what a `bool` already is, so it asks the same yes/no.
     Accepted('field: pick-one of booleans', BoolLiteral, BoolLiteral(which=True)),
     # A bounded number asks for a probability; the bound is the units it comes back in.
@@ -467,9 +504,174 @@ ACCEPTED = [
         'model | described None, declined',
         [Ticket, Annotated[None, Field(description='Nothing needs doing.')]],
         None,
-        picks='final_result_Annotated',
+        picks='None',
     ),
     Accepted('a described `None` option', DescribedNoneArea, DescribedNoneArea(area='billing')),
+    # Whole numbers that are not a rubric -- not 0 upwards, or with nothing said about each -- are labels, so
+    # they are a pick-one of their digits, and the answer is the number itself.
+    Accepted(
+        'field: pick-one of ints',
+        Status,
+        Status(status=200),
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, '500': None},
+                    'instructions': {
+                        'field': 'status',
+                        'question': 'Which status did the service return?',
+                        'goal': 'Report what the service returned.',
+                    },
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: IntEnum of codes',
+        CodedArea,
+        CodedArea(area=Codes.billing),
+        questions=snapshot(
+            {
+                'area': {
+                    'type': 'choice',
+                    'criteria': {'10': None, '20': None, '30': None},
+                    'instructions': {
+                        'field': 'area',
+                        'context': ['Codes: Which area, as codes.'],
+                        'question': 'Which area?',
+                        'goal': 'Triage the ticket.',
+                    },
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: pick-one of mixed types',
+        Mixed,
+        Mixed(which=1),
+        picks='1',
+        questions=snapshot(
+            {
+                'which': {
+                    'type': 'choice',
+                    'criteria': {'a': None, '1': None},
+                    'instructions': {'field': 'which', 'question': 'Which?', 'goal': 'Triage the ticket.'},
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: described IntEnum of codes',
+        Described,
+        Described(status=Statuses.ok),
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': 'The request worked.', '404': 'Nothing is at that address.'},
+                    'instructions': {'field': 'status', 'question': 'Which status?', 'goal': 'Triage the ticket.'},
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: optional pick-one of ints',
+        OptionalStatus,
+        OptionalStatus(status=None),
+        picks='none',
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, 'none': 'None of these.'},
+                    'instructions': {
+                        'field': 'status',
+                        'question': 'Which status, if any?',
+                        'goal': 'Triage the ticket.',
+                    },
+                }
+            }
+        ),
+    ),
+    # "None of these" on a field with a default leaves it to the default, a number as much as a string.
+    Accepted(
+        'field: optional pick-one of ints with a default', DefaultedStatus, DefaultedStatus(status=200), picks='none'
+    ),
+    # What the user wrote about `None` describes the extra option on a pick-one of numbers as on one of strings.
+    Accepted(
+        'field: optional pick-one of ints with a described None',
+        DescribedNoneStatus,
+        DescribedNoneStatus(status=None),
+        picks='none',
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, 'none': 'The service did not answer.'},
+                    'instructions': {
+                        'field': 'status',
+                        'question': 'Which status, if any?',
+                        'goal': 'Triage the ticket.',
+                    },
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: nested pick-one of ints',
+        Checked,
+        Checked(check=Status(status=200)),
+        questions=snapshot(
+            {
+                'check.status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, '500': None},
+                    'instructions': {
+                        'field': 'check.status',
+                        'context': ['Status: Report what the service returned.'],
+                        'question': 'Which status did the service return?',
+                        'goal': 'Check the service.',
+                    },
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'a union member with a pick-one of ints',
+        [Ticket, Status],
+        Status(status=200),
+        picks='Status',
+        questions=snapshot(
+            {
+                'Ticket.urgent': {
+                    'type': 'noul',
+                    'instructions': {
+                        'field': 'urgent',
+                        'premise': "If the user's request calls for Ticket: Triage the ticket.",
+                        'question': 'Is this urgent?',
+                    },
+                },
+                'Status.status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, '500': None},
+                    'instructions': {
+                        'field': 'status',
+                        'premise': "If the user's request calls for Status: Report what the service returned.",
+                        'question': 'Which status did the service return?',
+                    },
+                },
+                'route': {
+                    'type': 'choice',
+                    'criteria': {
+                        Ticket.__qualname__: 'Triage the ticket.',
+                        Status.__qualname__: 'Report what the service returned.',
+                    },
+                    'instructions': 'Which of these does this call for?',
+                },
+            }
+        ),
+    ),
 ]
 
 
@@ -485,5 +687,7 @@ async def test_an_accepted_output_type_and_what_it_costs(allow_model_requests: N
     result = await Agent(model, output_type=case.output_type).run('anything')
 
     assert result.output == case.output
+    if case.questions is not None:
+        assert sent[-1]['questions'] == case.questions
     assert len(sent) == case.requests
     assert (result.response.provider_details or {}).get('requests') == (case.requests if case.requests > 1 else None)

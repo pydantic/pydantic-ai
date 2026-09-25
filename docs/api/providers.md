@@ -52,6 +52,12 @@
 
 ::: pydantic_ai.providers.github_copilot.GitHubCopilotProvider
 
+::: pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow
+
+::: pydantic_ai.providers.github_copilot.GitHubCopilotDeviceAuthorization
+
+::: pydantic_ai.providers.github_copilot.GitHubCopilotCredentials
+
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
 ::: pydantic_ai.providers.vercel.VercelProvider

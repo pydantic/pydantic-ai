@@ -1058,7 +1058,8 @@ async def test_session_captures_transcript_messages() -> None:
 
 async def test_session_span_counts_dropped_audio_chunks() -> None:
     settings, exporter = _settings()
-    chunks = [bytes([index]) for index in range(40)]
+    # Minute-long chunks of 24 kHz PCM16, so seven of them overflow the view's five-minute window by two.
+    chunks = [bytes([index]) * 60 * 48000 for index in range(7)]
     session = RealtimeSession(
         _Connection([AudioDelta(chunk) for chunk in chunks]),
         _ok_runner,
@@ -1067,11 +1068,11 @@ async def test_session_span_counts_dropped_audio_chunks() -> None:
     )
 
     async with session:
-        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-5:]
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
-    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 8
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 2
     assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 0
 
 
@@ -1718,3 +1719,29 @@ async def test_second_agent_level_instrumentation_wins_for_session_spans() -> No
 
     assert not first_exporter.get_finished_spans(), 'the superseded capability must not export'
     assert second_exporter.get_finished_spans(), 'the capability the run keeps is the one that exports'
+
+
+async def test_stalled_utterances_get_a_chat_span_each() -> None:
+    """Two provider responses in one stalled exchange are two model requests, and so two `chat` spans.
+
+    The exchange stays open across them — the first says more is coming — but a span that spanned both
+    would report the sum of two requests' usage as one.
+    """
+    settings, exporter = _settings()
+    conn = _Connection(
+        [
+            OutputTranscript(text='Let me think.', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=60, output_tokens=4)),
+            ResponseDone(more_expected=True),
+            OutputTranscript(text='The answer is 42.', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=70, output_tokens=5)),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(
+        conn, _ok_runner, instrumentation=settings, model_name='gemini-3.8-live-extended-thinking'
+    )
+    await collect_events(session)
+
+    chat_spans = [s for s in exporter.get_finished_spans() if s.name.startswith('chat ')]
+    assert [(s.attributes or {}).get('gen_ai.usage.input_tokens') for s in chat_spans] == [60, 70]

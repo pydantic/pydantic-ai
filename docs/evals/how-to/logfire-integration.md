@@ -1,3 +1,7 @@
+---
+description: "Send Pydantic Evals experiments to Pydantic Logfire to view results, inspect each case and its full trace, and compare evaluation runs over time."
+---
+
 # Logfire Integration
 
 Visualize and analyze evaluation results using Pydantic Logfire.
@@ -184,10 +188,10 @@ Check:
 
 1. **Token is set**: `echo $LOGFIRE_TOKEN`
 2. **Configuration is correct**:
-   ```python
+   ```python {test="skip"}
    import logfire
 
-   logfire.configure(send_to_logfire='always')  # Force sending
+   logfire.configure(send_to_logfire=True)  # Force sending
    ```
 3. **Network connectivity**: Check firewall settings
 4. **Project exists**: Verify project name in Logfire UI

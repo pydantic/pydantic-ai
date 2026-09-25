@@ -1,3 +1,7 @@
+---
+description: "Serve Pydantic AI agents to CopilotKit and other AG-UI frontends, with streamed events, frontend tools, shared state, tool approval interrupts and Slack bots."
+---
+
 # Agent-User Interaction (AG-UI) Protocol
 
 The [Agent-User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction) is an open standard introduced by the
@@ -298,7 +302,7 @@ def authenticated_workspace(request: Request) -> str:
 
 @app.post('/')
 async def run_agent(request: Request) -> Response:
-    adapter = await AGUIAdapter.from_request(request, agent=agent)
+    adapter = await AGUIAdapter[ChannelDeps, str].from_request(request, agent=agent)
     deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.run_input.context)
     return adapter.streaming_response(adapter.run_stream(deps=deps))
 ```

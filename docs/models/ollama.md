@@ -1,3 +1,7 @@
+---
+description: "Run local models or Ollama Cloud with Pydantic AI through Ollama's OpenAI-compatible API, with native structured output on self-hosted Ollama servers."
+---
+
 # Ollama
 
 ## Install

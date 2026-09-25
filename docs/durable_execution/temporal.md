@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with Temporal, running model requests and tool calls as activities so agents recover from crashes and resume long-running work."
+---
+
 # Durable Execution with Temporal
 
 [Temporal](https://temporal.io) is a popular [durable execution](https://docs.temporal.io/evaluate/understanding-temporal#durable-execution) platform that's natively supported by Pydantic AI.
@@ -567,7 +571,7 @@ reasoning_model = GoogleModel('gemini-3-pro-preview')
 
 
 # Optional: customize how model-name strings are built.
-def resolve_model(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+def resolve_model(ctx: ModelResolutionContext, model_id: str) -> Model | None:
     if model_id.startswith('openai:'):
         provider = OpenAIProvider(api_key=os.environ['OPENAI_API_KEY'])
         return infer_model(model_id, provider_factory=lambda _: provider)
@@ -648,12 +652,12 @@ from pydantic_ai.toolsets import FunctionToolset
 toolset = FunctionToolset(id='research')
 
 
-@toolset.tool(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(minutes=5))})  # (1)!
+@toolset.tool_plain(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(minutes=5))})  # (1)!
 async def fetch_paper(arxiv_id: str) -> str:
     ...
 
 
-@toolset.tool(metadata={'temporal': False})  # (2)!
+@toolset.tool_plain(metadata={'temporal': False})  # (2)!
 async def now() -> str:
     ...
 
@@ -712,6 +716,8 @@ async def main():
 By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. Temporal metrics are exported every 60 seconds. You can change the interval by passing a `datetime.timedelta` as `metric_periodicity` to the `LogfirePlugin` constructor.
 
 If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`).
+
+A [decision model](../models/decision.md)'s [`decide` spans](../logfire.md#decision-model-spans) are recorded inside the model activity only when the worker can see the agent's own instrumentation: `Agent.instrument_all()` (which the `LogfirePlugin` sets up), `agent.instrument`, or an `Instrumentation` capability on the agent. A run instrumented only through `agent.run(..., capabilities=[Instrumentation(...)])` gets no `decide` spans.
 
 To disable sending Temporal metrics to Logfire, pass `metrics=False` to the `LogfirePlugin` constructor. This also lets you supply your own [`Runtime`](https://python.temporal.io/temporalio.runtime.Runtime.html) to `Client.connect()` when you need to configure other Temporal telemetry options; the plugin will still configure tracing.
 

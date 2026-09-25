@@ -25,7 +25,7 @@ import json
 import os
 import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -57,6 +57,21 @@ _MAX_AUDIO_BYTES = 32
 
 # OpenAI names its output-audio delta event differently on the GA vs beta surfaces.
 _OPENAI_AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.audio.delta'})
+
+
+def _gemini_realtime_audio(frame: dict[str, Any]) -> dict[str, Any] | None:
+    """The `realtime_input.audio` blob of an outbound Gemini microphone frame, if it is one."""
+    realtime_input = frame.get('realtime_input')
+    if not isinstance(realtime_input, dict):
+        return None
+    audio = cast('dict[str, Any]', realtime_input).get('audio')
+    return cast('dict[str, Any]', audio) if isinstance(audio, dict) else None
+
+
+def _is_audio_send(frame: dict[str, Any]) -> bool:
+    """Whether an outbound frame is microphone audio, on the OpenAI or Gemini protocol."""
+    return frame.get('type') == 'input_audio_buffer.append' or _gemini_realtime_audio(frame) is not None
+
 
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
@@ -129,12 +144,22 @@ class RealtimeCassette:
     version: int = 1
     interactions: list[RealtimeCassetteInteraction] = field(default_factory=list['RealtimeCassetteInteraction'])
     _disconnect: Callable[[], Awaitable[None]] | None = field(default=None, init=False, repr=False, compare=False)
+    _replay: ReplayWebSocket | None = field(default=None, init=False, repr=False, compare=False)
 
     async def disconnect(self) -> None:
         """Force the active recorded connection to drop; replay consumes the recorded close next."""
         if self._disconnect is None:
             raise RuntimeError('The realtime cassette has no active WebSocket connection.')
         await self._disconnect()
+
+    async def before_audio_send(self) -> None:
+        """Hold a microphone frame until it is the next thing the recording has happen. A no-op when recording.
+
+        Call it before each `send_audio()` in a test that streams a microphone alongside other traffic:
+        see `ReplayWebSocket.wait_for_audio_send_turn`.
+        """
+        if self._replay is not None:
+            await self._replay.wait_for_audio_send_turn()
 
     def bind_disconnect(self, disconnect: Callable[[], Awaitable[None]]) -> None:
         """Bind the active transport's test-only disconnect operation."""
@@ -210,7 +235,8 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
 
     Handles the OpenAI inbound shape (`{'type': 'response.output_audio.delta', 'delta': <b64>}`), the
     OpenAI outbound shape (`{'type': 'input_audio_buffer.append', 'audio': <b64>}`), and the Gemini
-    shape (`inlineData.data`, used in both directions). Transcript deltas (also keyed `delta` on
+    shape (`inlineData.data`, used in both directions, and the `realtime_input.audio.data` the SDK sends
+    for microphone audio). Transcript deltas (also keyed `delta` on
     OpenAI, but on non-audio event types) are left untouched.
 
     Outbound audio matters as much as inbound: a test that streams a microphone for several turns
@@ -222,6 +248,9 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
         return {**frame, 'delta': _truncate_b64_audio(frame['delta'])}
     if frame.get('type') == 'input_audio_buffer.append' and isinstance(frame.get('audio'), str):
         return {**frame, 'audio': _truncate_b64_audio(frame['audio'])}
+    if (audio := _gemini_realtime_audio(frame)) is not None and isinstance(audio.get('data'), str):
+        audio = {**audio, 'data': _truncate_b64_audio(audio['data'])}
+        return {**frame, 'realtime_input': {**frame['realtime_input'], 'audio': audio}}
 
     def _walk(value: Any) -> Any:
         if isinstance(value, dict):
@@ -260,6 +289,13 @@ class _SentFrameNormalizer:
         return value
 
 
+# How long replay waits for someone else's move (the reader consuming a recorded inbound frame, or
+# another sender sending the frame recorded before a microphone frame) before concluding it won't
+# come. Generous, because it only bounds how long a real mismatch takes to report; replay that is
+# making progress never comes near it.
+_REPLAY_PROGRESS_GRACE = 2.0
+
+
 class ReplayWebSocket:
     """Replay a recorded WebSocket conversation, validating outbound frames as they are sent.
 
@@ -268,12 +304,15 @@ class ReplayWebSocket:
     consuming a future inbound frame.
     """
 
-    def __init__(self, cassette: RealtimeCassette) -> None:
+    def __init__(self, cassette: RealtimeCassette, *, hold_open: bool = False) -> None:
         self._interactions = cassette.interactions
+        self._hold_open = hold_open
         self._position = 0
+        cassette._replay = self  # pyright: ignore[reportPrivateUsage]
         self._normalizer = _SentFrameNormalizer()
         self._condition = asyncio.Condition()
         self._readers = 0
+        self._closed = False
         # Mirrors the `websockets` attributes a connection exposes once closed, so code that inspects
         # the close after iteration ends (a normal close doesn't raise) sees what was recorded.
         self.close_code: int | None = None
@@ -298,10 +337,43 @@ class ReplayWebSocket:
                 )
             self._position += 1
             self._condition.notify_all()
-        assert actual == interaction.data, (
+        # Truncated on this side too: cassettes recorded before Gemini's microphone frames were
+        # truncated hold them in full.
+        expected = _truncate_audio(interaction.data)
+        if 'event_id' not in expected:
+            # Recorded before OpenAI-protocol client frames carried an `event_id` (the id a refusal
+            # echoes, see `client_event_id`); the rest of the frame is still pinned.
+            actual.pop('event_id', None)
+        assert actual == expected, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
-            f'expected={interaction.data!r}\nactual={actual!r}'
+            f'expected={expected!r}\nactual={actual!r}'
         )
+
+    async def wait_for_audio_send_turn(self) -> None:
+        """Wait until the recording's next interaction is a microphone frame.
+
+        A recording made at a microphone's pace interleaves the microphone with everything else: the
+        frames the provider sent in between, and the session's own sends (a tool result, say). Replay
+        streams the microphone as fast as it can, so without this a microphone frame would take the slot
+        of a frame another sender was recorded sending, and the session would handle it before the
+        provider frames that preceded it on the wire. The wait has to happen here, before the audio send,
+        because the session holds its send lock for the whole of a send: an audio send waiting inside
+        `send()` would block the very frame it waits for. Returns once no progress is being made, leaving
+        `send()` to report the mismatch.
+        """
+        async with self._condition:
+            while (upcoming := self._peek()) is not None and not (
+                isinstance(upcoming, CassetteMessage) and upcoming.direction == 'sent' and _is_audio_send(upcoming.data)
+            ):
+                if not await self._progressed():
+                    return
+
+    async def _progressed(self) -> bool:
+        """Wait for the replay position to move, reporting whether it did within the grace period."""
+        position = self._position
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._condition.wait(), timeout=_REPLAY_PROGRESS_GRACE)
+        return self._position != position
 
     async def recv(self, *, decode: bool | None = None) -> str | bytes:
         async with self._condition:
@@ -314,6 +386,9 @@ class ReplayWebSocket:
         while True:
             interaction = self._peek()
             if interaction is None:
+                if self._hold_open and not self._closed:
+                    await self._condition.wait()
+                    continue
                 # The recording ran out: the session outlived what was captured, which replays as
                 # the ordinary end-of-conversation close.
                 self.close_code, self.close_reason = 1000, ''
@@ -349,6 +424,9 @@ class ReplayWebSocket:
 
     async def close(self, *args: Any, **kwargs: Any) -> None:
         del args, kwargs
+        async with self._condition:
+            self._closed = True
+            self._condition.notify_all()
 
     def _peek(self) -> RealtimeCassetteInteraction | None:
         if self._position >= len(self._interactions):
@@ -428,11 +506,13 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
 
 
 @contextmanager
-def patched_ws_connect(provider: ProviderName, cassette: RealtimeCassette, plan: CassettePlan) -> Generator[None]:
+def patched_ws_connect(
+    provider: ProviderName, cassette: RealtimeCassette, plan: CassettePlan, *, hold_open: bool = False
+) -> Generator[None]:
     """Patch the provider's WebSocket `connect` to replay from (or record into) `cassette`."""
     target, attr = _connect_target(provider)
     real_connect = getattr(target, attr)
-    replay = ReplayWebSocket(cassette) if plan == 'replay' else None
+    replay = ReplayWebSocket(cassette, hold_open=hold_open) if plan == 'replay' else None
 
     @asynccontextmanager
     async def connect(*args: Any, **kwargs: Any) -> AsyncGenerator[ReplayWebSocket | RecordingWebSocket]:
