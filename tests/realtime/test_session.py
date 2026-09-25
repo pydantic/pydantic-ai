@@ -6547,26 +6547,30 @@ async def test_agent_realtime_session_rejects_text_output_when_unsupported() -> 
 
 async def test_agent_realtime_session_warns_on_tool_choice() -> None:
     # A session applies `tool_choice` to every response, so a forcing choice never lets the model answer.
-    # Deprecated rather than rejected, so the setting keeps reaching the model for now; a model-level
-    # default warns just like a per-session value.
+    # Deprecated rather than rejected, so the setting keeps reaching the model for now.
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([ResponseDone()])
-    model = FakeRealtimeModel(conn)
-    with pytest.warns(PydanticAIDeprecationWarning, match='Setting `tool_choice` for a realtime session is deprecated'):
-        async with agent.realtime(model, model_settings=RealtimeModelSettings(tool_choice='required')).session():
-            pass
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match='Setting `tool_choice` for a realtime session is deprecated'
+    ) as record:
+        realtime = agent.realtime(model, model_settings=RealtimeModelSettings(tool_choice='required'))
+    # Attributed to the caller's line, not to library or `contextlib` frames.
+    assert record[0].filename == __file__
+    async with realtime.session():
+        pass
     assert (model.last_model_settings or {}).get('tool_choice') == 'required'
 
+    # A model-level default warns just like a per-session value...
     model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
     model.settings = RealtimeModelSettings(tool_choice='none')
     with pytest.warns(PydanticAIDeprecationWarning, match='filter the agent.s tools instead'):
-        async with agent.realtime(model).session():
-            pass
+        agent.realtime(model)
 
-    # Leaving it unset, or explicitly `None` (the default), stays silent.
-    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    # ...unless the session overrides it with `None`, the default, which stays silent like leaving it unset.
     async with agent.realtime(model, model_settings=RealtimeModelSettings(tool_choice=None)).session():
         pass
+    # A model given by name carries no defaults until the session resolves it.
+    agent.realtime('openai:gpt-realtime')
 
 
 async def test_agent_realtime_session_allows_text_output_by_default() -> None:

@@ -80,7 +80,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     tool_choice: ToolChoice
     """Control which function tools the model can use.
 
-    Deprecated: starting a realtime session with `tool_choice` set emits a
+    Deprecated: setting it for [`agent.realtime()`][pydantic_ai.agent.AbstractAgent.realtime] emits a
     [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning], and the
     next major version will raise an error instead. A session applies it to every response, including
     the one after a tool result, so `'required'` or a list of tool names never lets the model answer.

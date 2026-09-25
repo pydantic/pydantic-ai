@@ -48,9 +48,9 @@ with a [filtered toolset](../toolsets.md#filtering-tools) or
 [`prepare_tools`](../tools-advanced.md#prepare-tools). A session's tools are fixed when it connects.
 
 Don't use the [`tool_choice`](../tools-advanced.md#tool-choice) setting for this: it is deprecated
-for realtime sessions, emits a
-[`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning] when a session
-starts, and will raise an error in the next major version. A session applies it to every response,
+for realtime sessions, so [`agent.realtime()`][pydantic_ai.agent.AbstractAgent.realtime] emits a
+[`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning] when it is set,
+and the next major version will raise an error instead. A session applies it to every response,
 including the one after a tool result, so `'required'` or a list of tool names never lets the model
 answer: it keeps calling tools until the [request limit](../agent.md#usage-limits) ends the session.
 Gemini Live has no tool-choice configuration at all.

@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -39,6 +40,7 @@ from .. import (
 from .._cancel import CancellationToken, RunBinding, provide_run_binding
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AgentCapability
 from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec
@@ -1796,6 +1798,20 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         # generic fallback — the name is what backends use to tell agent runs apart.
         if self.name is None:
             self._infer_name(inspect.currentframe())
+        # Warned here, the one synchronous entry point, so the warning points at the caller's code rather
+        # than at the `contextlib` frames that open the session.
+        # A model given by name has no defaults yet; a per-session value overrides the model's default.
+        model_defaults = None if isinstance(model, str) else model.settings
+        if {**(model_defaults or {}), **(model_settings or {})}.get('tool_choice') is not None:
+            warnings.warn(
+                'Setting `tool_choice` for a realtime session is deprecated and will raise an error in the '
+                'next major version. A session applies it to every response, including the one after a tool '
+                "result, so `'required'` or a list of tool names never lets the model answer, and Gemini "
+                "can't express it at all. To limit which tools the model can use, filter the agent's tools "
+                'instead, e.g. with `FilteredToolset` or `prepare_tools`.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
         return AgentRealtime(
             _agent=self,
             _model=model,
