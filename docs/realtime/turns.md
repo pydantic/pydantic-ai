@@ -110,9 +110,7 @@ on ordinary user turns. A reply that has not reached its first audio chunk is st
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
-itself without reporting speech onset (Gemini) only the local flush is performed. On both, the
-reply still being generated records where playback stopped in `interrupted_at_ms`, since the session
-knows the playback position even when the provider can't truncate. The events still
+itself without reporting speech onset (Gemini) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
 chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
@@ -208,16 +206,11 @@ response state as interrupted. When this history is sent to a text model, Pydant
 interruption note to the prepared request without modifying stored history.
 
 Models generate audio several times faster than it plays, so the reply the user speaks over has
-usually finished generating already. A reply joins history when it finishes generating, and history
-is append-only. That reply therefore keeps its full transcript and its `complete` state in history,
-even though the user heard only part of it. The barge-in still truncates the provider's copy where
-playback stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
-`handle_barge_in=True`), the session resolves the playback position against every reply still
-queued for playback. The reply being played is cut where playback stopped, and any reply generated
-after it, which the user never heard, is cut at 0. On a WebRTC sideband, `interrupt(played_ms=...)`
-cuts the oldest reply the provider hasn't reported as played out, and later ones at 0. The `interrupt`
-span in the trace records the position. Only a reply that is still being generated is recorded as interrupted, and the position
-is never carried over to a later response.
+usually finished generating already. History is append-only, so that reply keeps its full
+transcript and `complete` state. The barge-in still truncates the provider's copy where playback
+stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
+`handle_barge_in=True`), the session truncates the reply actually being played, and any reply
+generated after it, which the user never heard, at 0.
 
 ## Speaking first
 

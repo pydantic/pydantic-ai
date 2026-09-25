@@ -328,8 +328,7 @@ Key facts for building realtime agents:
 - **Barge-in** (the user speaking over the model): pass `handle_barge_in=True` to `.session()` and
   the session owns the local half — flushing the audio the user will never hear, truncating the
   provider's transcript to what was played, and adding a client cancel only on providers whose own
-  turn detection isn't already cancelling. A reply that already finished generating is truncated
-  provider-side only: history is append-only, so it stays `complete`. Off by default, and it needs playback to drain a single
+  turn detection isn't already cancelling. Off by default, and it needs playback to drain a single
   device-paced `stream_audio()` iterator (the position it tracks); with none or several it stands
   down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
   gets the same treatment on your own signal. A playback layer that buffers ahead of the device

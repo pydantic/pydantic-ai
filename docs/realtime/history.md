@@ -22,11 +22,6 @@ The session exposes copy-on-read snapshots:
 | [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | Seeded history plus messages recorded during this session. |
 | [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only messages recorded during this session. |
 
-A response joins history when the model finishes generating it, and is never changed after that. A
-spoken reply the user cuts off after it finished generating, while its audio was still playing, stays
-`complete` with its full transcript. The provider's copy is still truncated to what was heard. See
-[Barge-in](turns.md#barge-in).
-
 ## Seeding a session
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,
