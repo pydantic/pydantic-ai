@@ -155,5 +155,8 @@ async def main():
   when the session closes.
 - A provider can report response-level usage at a different point from the local tool or turn
   boundary. Use the session total for billing and limits.
+- A reply cut off by closing the session or by a dropped connection is recorded as an interrupted
+  response with no usage. Providers report a response's usage when it completes, and this one never
+  does, even though the provider may still bill for what it generated.
 - Dropped-stream counters represent each slow consumer independently; two lagging audio iterators
   can both contribute drops for the same produced audio.
