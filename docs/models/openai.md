@@ -517,7 +517,7 @@ Find services in the [provider directory](overview.md#provider-directory), or us
 - <span id="deepseek"></span>[DeepSeek](deepseek.md)
 - <span id="alibaba-cloud-model-studio-dashscope"></span>[Alibaba Cloud Model Studio (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope)
 - <span id="ollama"></span>[Ollama](ollama.md)
-- <span id="azure-ai-foundry"></span>[Azure AI Foundry](azure.md)
+- <span id="azure-ai-foundry"></span>[Microsoft Azure / Foundry](azure.md)
 - <span id="connecting-to-an-existing-api-version-based-deployment"></span>[Connecting to an existing `api-version`-based deployment](azure.md#connecting-to-an-existing-api-version-based-deployment)
 - <span id="using-azure-with-the-responses-api"></span>[Using Azure with the Responses API](azure.md#using-azure-with-the-responses-api)
 - <span id="vercel-ai-gateway"></span>[Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway)
