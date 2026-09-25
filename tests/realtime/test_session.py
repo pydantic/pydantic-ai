@@ -5819,8 +5819,9 @@ async def test_response_cut_off_by_close_keeps_its_started_id() -> None:
     )
     async with RealtimeSession(conn) as session:
         async for event in session:  # pragma: no branch
-            if isinstance(event, PartStartEvent):
-                break
+            # The reply's first event: close with it in flight.
+            assert isinstance(event, PartStartEvent)
+            break
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
