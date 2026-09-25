@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import anyio
 import pytest
 from pydantic import ValidationError
+from pytest_mock import MockerFixture
 from typing_extensions import Self
 
 if sys.version_info < (3, 11):
@@ -3245,3 +3246,32 @@ async def test_dynamic_toolset_delegates_get_tool_for_tool_def():
     tool = await resolved.get_tool_for_tool_def(tool_def, ctx)
     assert rebuilt == ['echo']
     assert await resolved.call_tool('echo', {'text': 'hi'}, ctx, tool) == 'hi'
+
+
+@pytest.mark.anyio
+async def test_combined_toolset_nested_reentrancy_lifecycle(mocker: MockerFixture):
+    """Test CombinedToolset safely handles nested async with without leaking or double-closing."""
+    from pydantic_ai.toolsets.combined import CombinedToolset
+
+    mock_child = mocker.MagicMock()
+    mock_child.__aenter__ = mocker.AsyncMock(return_value=mock_child)
+    mock_child.__aexit__ = mocker.AsyncMock(return_value=None)
+
+    combined = CombinedToolset(toolsets=[mock_child])
+
+    # Outer context (e.g. server lifespan)
+    async with combined:
+        mock_child.__aenter__.assert_awaited_once()
+        mock_child.__aexit__.assert_not_awaited()
+
+        # Inner nested context (e.g. per-request dispatch)
+        async with combined:
+            assert mock_child.__aenter__.await_count == 1
+            mock_child.__aexit__.assert_not_awaited()
+
+        # Inner exit should NOT teardown child stack
+        assert mock_child.__aenter__.await_count == 1
+        mock_child.__aexit__.assert_not_awaited()
+
+    # Outer exit tears down child stack
+    mock_child.__aexit__.assert_awaited_once()

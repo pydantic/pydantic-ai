@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 import anyio
 import anyio.to_thread
 import pytest
+from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.capabilities import ResolveModelId
@@ -1228,3 +1229,263 @@ def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
     with TestClient(app, base_url=LOCAL_BASE_URL, raise_server_exceptions=True) as client:
         with pytest.raises(httpx2.HTTPStatusError):
             client.get('/')
+
+
+@pytest.mark.anyio
+async def test_create_web_app_toolsets_lifespan():
+    """Test that toolsets passed to create_web_app are entered and exited during app lifespan."""
+    entered = False
+    exited = False
+
+    class DummyAsyncContextManager:
+        async def __aenter__(self):
+            nonlocal entered
+            entered = True
+            return self
+
+        async def __aexit__(self, *args: Any):
+            nonlocal exited
+            exited = True
+
+    dummy_toolset = DummyAsyncContextManager()
+
+    agent = Agent(TestModel())
+    app = create_web_app(agent, toolsets=[dummy_toolset])  # type: ignore[list-item]
+
+    assert not entered
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        assert entered
+        assert not exited
+        response = client.get('/health')
+        assert response.status_code == 200
+
+    assert exited
+
+
+def test_agent_to_web_with_toolsets(mocker: MockerFixture):
+    """Test Agent.to_web passes toolsets to create_web_app."""
+    mock_create_app = mocker.patch('pydantic_ai.ui._web.create_web_app')
+    agent = Agent(TestModel())
+    dummy_toolsets = [mocker.Mock()]
+
+    agent.to_web(toolsets=dummy_toolsets)
+    mock_create_app.assert_called_once_with(
+        agent,
+        models=None,
+        toolsets=dummy_toolsets,
+        native_tools=None,
+        deps=None,
+        model_settings=None,
+        instructions=None,
+        html_source=None,
+        allowed_hosts=None,
+        lifespan=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_web_app_mcp_real_stdio_lifecycle_and_multiple_requests(tmp_path: Path):
+    """Test real stdio MCP server: startup, multiple chat requests, streamed I/O, and shutdown."""
+    import sys
+
+    from pydantic_ai.mcp import load_mcp_toolsets
+
+    config = {
+        'mcpServers': {
+            'test_server': {
+                'command': sys.executable,
+                'args': ['-m', 'tests.mcp_server'],
+            }
+        }
+    }
+    config_file = tmp_path / 'mcp_servers.json'
+    config_file.write_text(json.dumps(config))
+
+    toolsets = load_mcp_toolsets(config_file)
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        has_tool_return = False
+        for msg in messages:
+            for part in getattr(msg, 'parts', []):
+                if getattr(part, 'part_kind', None) == 'tool-return':
+                    has_tool_return = True
+                    yield f'Result: {part.content}'
+        if not has_tool_return:
+            yield {0: DeltaToolCall(name='test_server_celsius_to_fahrenheit', json_args=json.dumps({'celsius': 100}))}
+
+    model = FunctionModel(stream_function=stream_fn)
+    agent = Agent(model)
+    app = create_web_app(agent, models=[model], toolsets=toolsets)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        cfg = client.get('/api/configure').json()
+        model_id = cfg['models'][0]['id']
+
+        # Turn 1: Streamed MCP tool call and execution
+        res1 = client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'turn-1',
+                'messages': [{'id': 'm1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Convert 100C'}]}],
+                'model': model_id,
+                'builtinTools': [],
+            },
+        )
+        assert res1.status_code == 200
+        text1 = res1.text
+        assert 'tool-input-available' in text1
+        assert 'test_server_celsius_to_fahrenheit' in text1
+        assert 'tool-output-available' in text1
+        assert '212.0' in text1
+        assert 'Result: 212.0' in text1
+
+        # Turn 2: Second request on persistent connection
+        res2 = client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'turn-2',
+                'messages': [{'id': 'm2', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Convert again'}]}],
+                'model': model_id,
+                'builtinTools': [],
+            },
+        )
+        assert res2.status_code == 200
+        text2 = res2.text
+        assert 'tool-output-available' in text2
+        assert '212.0' in text2
+
+
+@pytest.mark.anyio
+async def test_web_app_mcp_composition_with_agent_tools(tmp_path: Path):
+    """Test composition of real stdio MCP tools with an agent's custom tools."""
+    import sys
+
+    from pydantic_ai.mcp import load_mcp_toolsets
+
+    config = {
+        'mcpServers': {
+            'test_server': {
+                'command': sys.executable,
+                'args': ['-m', 'tests.mcp_server'],
+            }
+        }
+    }
+    config_file = tmp_path / 'mcp_servers.json'
+    config_file.write_text(json.dumps(config))
+
+    toolsets = load_mcp_toolsets(config_file)
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        tool_returns = [
+            part.content
+            for msg in messages
+            for part in getattr(msg, 'parts', [])
+            if getattr(part, 'part_kind', None) == 'tool-return'
+        ]
+        if not tool_returns:
+            # First call agent's custom tool
+            yield {0: DeltaToolCall(name='custom_prefix', json_args=json.dumps({'text': 'hello'}))}
+        elif len(tool_returns) == 1:
+            # Then call MCP tool
+            yield {0: DeltaToolCall(name='test_server_celsius_to_fahrenheit', json_args=json.dumps({'celsius': 0}))}
+        else:
+            yield f'Done: {tool_returns[0]} and {tool_returns[1]}'
+
+    model = FunctionModel(stream_function=stream_fn)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def custom_prefix(text: str) -> str:
+        return f'prefixed_{text}'
+
+    app = create_web_app(agent, models=[model], toolsets=toolsets)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        cfg = client.get('/api/configure').json()
+        model_id = cfg['models'][0]['id']
+
+        res = client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'turn-1',
+                'messages': [{'id': 'm1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Run tools'}]}],
+                'model': model_id,
+                'builtinTools': [],
+            },
+        )
+        assert res.status_code == 200
+        assert 'custom_prefix' in res.text
+        assert 'prefixed_hello' in res.text
+        assert 'test_server_celsius_to_fahrenheit' in res.text
+        assert '32.0' in res.text
+
+
+def test_create_web_app_custom_lifespan():
+    """Test create_web_app composes custom lifespan with toolsets lifespan and preserves state."""
+    from contextlib import asynccontextmanager
+
+    agent = Agent(TestModel())
+
+    # 1. Stateful custom lifespan (yields a Mapping)
+    stateful_events: list[str] = []
+
+    @asynccontextmanager
+    async def stateful_lifespan(app: Starlette):
+        stateful_events.append('stateful_startup')
+        yield {'custom_key': 'custom_value'}
+        stateful_events.append('stateful_shutdown')
+
+    app = create_web_app(agent, lifespan=stateful_lifespan)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL):
+        assert stateful_events == ['stateful_startup']
+        assert getattr(app.state, 'custom_key', None) == 'custom_value'
+
+    assert stateful_events == ['stateful_startup', 'stateful_shutdown']
+
+    # 2. Stateless custom lifespan (yields None)
+    stateless_events: list[str] = []
+
+    @asynccontextmanager
+    async def stateless_lifespan(app: Starlette):
+        stateless_events.append('stateless_startup')
+        yield
+        stateless_events.append('stateless_shutdown')
+
+    stateless_app = create_web_app(agent, lifespan=stateless_lifespan)
+
+    with TestClient(stateless_app, base_url=LOCAL_BASE_URL):
+        assert stateless_events == ['stateless_startup']
+
+    assert stateless_events == ['stateless_startup', 'stateless_shutdown']
+
+
+@pytest.mark.anyio
+async def test_web_toolset_lifespan(mocker: MockerFixture):
+    """Test web_toolset_lifespan enters and exits toolsets."""
+    from pydantic_ai.ui import web_toolset_lifespan
+
+    mock_toolset = mocker.MagicMock()
+    mock_toolset.__aenter__ = mocker.AsyncMock(return_value=mock_toolset)
+    mock_toolset.__aexit__ = mocker.AsyncMock(return_value=None)
+
+    async with web_toolset_lifespan([mock_toolset]):
+        mock_toolset.__aenter__.assert_awaited_once()
+        mock_toolset.__aexit__.assert_not_awaited()
+
+    mock_toolset.__aexit__.assert_awaited_once()
+
+
+def test_ui_lazy_exports():
+    """Test lazy module attribute access in pydantic_ai.ui."""
+    from pydantic_ai import ui
+
+    assert ui.web_toolset_lifespan is not None
+    assert ui.DEFAULT_HTML_URL is not None
+    assert ui.OFFLINE_HTML_URL is not None
+
+    with pytest.raises(AttributeError, match="has no attribute 'non_existent'"):
+        _ = getattr(ui, 'non_existent')

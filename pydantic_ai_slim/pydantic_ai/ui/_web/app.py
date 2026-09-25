@@ -4,9 +4,10 @@ import hashlib
 import os
 import tempfile
 import threading
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 import anyio
 import anyio.to_thread
@@ -15,6 +16,7 @@ import httpx2
 from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import AbstractToolset
 
 from ._hosts import HostValidationMiddleware, normalized_pattern
 from .api import BUNDLED_UI_SDK_VERSION, ModelsParam, create_api_app
@@ -25,6 +27,7 @@ try:
     from starlette.requests import Request
     from starlette.responses import HTMLResponse, Response
     from starlette.routing import Mount
+    from starlette.types import Lifespan
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `starlette` package to use `Agent.web()` method, '
@@ -162,9 +165,58 @@ async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
     return content
 
 
+@asynccontextmanager
+async def web_toolset_lifespan(
+    toolsets: Sequence[AbstractToolset[Any]] | None,
+) -> AsyncGenerator[None, None]:
+    """Enter the given toolsets for the lifetime of the context.
+
+    When `Agent.to_web()`'s app is mounted into a parent ASGI application via `Mount`, the
+    sub-app's own lifespan is never invoked by the ASGI server — only the root application
+    receives startup/shutdown events. To keep MCP toolset connections persistent in that case,
+    call this context manager from the parent application's lifespan with the same toolset
+    instances passed to `to_web(toolsets=...)`:
+
+    ```python {test="skip" lint="skip"}
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from pydantic_ai import Agent
+    from pydantic_ai.ui._web import web_toolset_lifespan
+
+    agent = Agent('openai:gpt-5.2')
+    toolsets = []
+
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async with web_toolset_lifespan(toolsets):
+            yield
+
+
+    parent_app = FastAPI(lifespan=lifespan)
+    parent_app.mount('/chat', agent.to_web(toolsets=toolsets))
+    ```
+
+    MCP toolsets are ref-counted (e.g. `MCPToolset` keeps its session open across nested enters),
+    so entering them here and again per-request inside the mounted app is safe and maintains the
+    open connection without reconnecting. Other `AbstractToolset` implementations are entered and
+    exited around each request's agent run, so they should tolerate per-run enter/exit cycles.
+
+    Args:
+        toolsets: Sequence of toolsets to enter and keep active.
+    """
+    async with AsyncExitStack() as stack:
+        for toolset in toolsets or ():
+            await stack.enter_async_context(toolset)
+        yield
+
+
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     native_tools: Sequence[AbstractNativeTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
@@ -172,6 +224,7 @@ def create_web_app(
     html_source: str | Path | None = None,
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
     allowed_hosts: Sequence[str] | None = None,
+    lifespan: Lifespan[Starlette] | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -186,6 +239,7 @@ def create_web_app(
             - A dict mapping display labels to model names/instances
                 (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
             If not provided, the UI will have no model options.
+        toolsets: Optional sequence of toolsets to make available to the agent.
         native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
@@ -206,6 +260,8 @@ def create_web_app(
             with a `421`, so that a website cannot reach the UI on your machine by pointing a
             hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host, only
             if something in front of the app already authenticates requests.
+        lifespan: Optional custom Starlette lifespan context manager to run alongside the
+            internal toolset lifespan.
 
     Returns:
         A configured Starlette application ready to be served
@@ -218,9 +274,22 @@ def create_web_app(
     # idempotent, so the middleware doing it again over the same list is a no-op.
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
 
+    @asynccontextmanager
+    async def app_lifespan(app: Starlette) -> AsyncGenerator[Mapping[str, Any] | None, None]:
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(web_toolset_lifespan(toolsets))
+            state: Mapping[str, Any] | None = None
+            if lifespan is not None:
+                state = await stack.enter_async_context(lifespan(app))
+                if isinstance(state, Mapping):
+                    for k, v in state.items():
+                        setattr(app.state, str(k), v)
+            yield state
+
     api_app = create_api_app(
         agent=agent,
         models=models,
+        toolsets=toolsets,
         native_tools=native_tools,
         deps=deps,
         model_settings=model_settings,
@@ -233,7 +302,7 @@ def create_web_app(
     # hostname we don't answer to is misdirected whatever it asks for, and guarding every route
     # means a route added later is covered without anyone having to remember to opt it in.
     middleware = [Middleware(HostValidationMiddleware, allowed_hosts=allowed_hosts)]
-    app = Starlette(routes=routes, middleware=middleware)
+    app = Starlette(routes=routes, middleware=middleware, lifespan=app_lifespan)  # pyright: ignore[reportArgumentType]
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
