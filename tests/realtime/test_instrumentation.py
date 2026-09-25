@@ -18,6 +18,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -1343,6 +1344,43 @@ def test_chat_span_without_response_ends_without_metrics() -> None:
 
     assert [span.name for span in exporter.get_finished_spans()] == ['chat']
     assert metric_reader.get_metrics_data() is None
+
+
+@pytest.mark.parametrize('model_name', ['gpt-live-1', 'gpt-realtime'])
+async def test_chat_span_reports_a_cost_the_response_already_carries(model_name: str) -> None:
+    """A cost set on the usage is reported as is, not recalculated from the response's model name.
+
+    OpenAI GPT-Live's responses carry the tokens of the backend it delegated to, priced at the
+    backend's rates, while the response names the Live model. Re-pricing from that name charged the
+    backend's tokens at the Live model's rate: nothing while genai-prices has no Live price, and $0
+    once it prices Live by the second only. `gpt-realtime` is priced by token, so it shows a
+    recalculation would differ.
+    """
+    settings, exporter, metric_reader = _settings_with_metrics()
+    conn = _Connection(
+        [
+            OutputTranscript(text='It will rain.'),
+            SessionUsage(usage=RequestUsage(input_tokens=805, output_tokens=19, cost=Decimal('0.0044'))),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name=model_name)
+    _ = await collect_events(session)
+
+    chat = next(s for s in exporter.get_finished_spans() if s.name == f'chat {model_name}')
+    assert chat.attributes is not None
+    assert chat.attributes['operation.cost'] == 0.0044
+    metrics = metric_reader.get_metrics_data()
+    assert metrics is not None
+    cost_points = [
+        point
+        for resource in metrics.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        if metric.name == 'operation.cost' and isinstance(metric.data, Histogram)
+        for point in metric.data.data_points
+    ]
+    assert [point.sum for point in cost_points] == [0.0044]
 
 
 async def test_chat_span_closed_for_contentless_response() -> None:
