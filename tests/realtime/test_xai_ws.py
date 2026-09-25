@@ -508,6 +508,7 @@ def test_profile_allow_seeding() -> None:
     profile = XaiRealtimeModel(MODEL, provider=XaiProvider(api_key='xai-test-key')).profile
     assert profile == RealtimeModelProfile(
         supports_image_input=False,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=False,
@@ -521,6 +522,8 @@ def test_profile_allow_seeding() -> None:
         supports_tool_return_schema=False,
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=None,

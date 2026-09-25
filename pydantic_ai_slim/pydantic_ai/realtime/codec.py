@@ -319,12 +319,8 @@ class SessionUsage:
     """Normalized completion reason for the response this usage belongs to, when available."""
 
     provider_details: dict[str, Any] | None = None
-    """Provider-specific details for the response this usage belongs to, when available.
-
-    Recorded on the `ModelResponse` when the usage is what finalizes it, as it is for a response that
-    called a tool; otherwise the response's [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone]
-    supplies them.
-    """
+    """Provider-specific details about how this usage was incurred, merged into the response's
+    `ModelResponse.provider_details`. Only applies to response-scoped usage."""
 
     response_scoped: bool = True
     """Whether this usage belongs to a specific model response.

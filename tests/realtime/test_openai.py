@@ -95,7 +95,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.realtime.profiles import merge_realtime_profile
 from pydantic_ai.realtime.xai import map_conversation_event as _map_conversation_wire_event
-from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
+from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -1278,13 +1278,13 @@ def test_session_config_noise_reduction_and_speed_and_modalities() -> None:
 
 
 def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
-    settings = rt_openai.OpenAIRealtimeModelSettings(parallel_tool_calls=True, tool_choice='required')
+    settings = rt_openai.OpenAIRealtimeModelSettings(parallel_tool_calls=True, tool_choice='auto')
     model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
     config = model._session_config('hi', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config['parallel_tool_calls'] is True
-    assert config['tool_choice'] == 'required'
+    assert config['tool_choice'] == 'auto'
 
 
 def test_session_config_merges_model_defaults_and_connection_overrides() -> None:
@@ -1308,24 +1308,39 @@ def test_session_config_forwards_custom_voice_id() -> None:
     assert config['audio']['output']['voice'] == {'id': 'voice_custom'}
 
 
-def test_session_config_tool_choice_single_function() -> None:
+@pytest.mark.parametrize('tool_choice', ['required', ['get_weather'], ['get_weather', 'other']])
+def test_session_config_rejects_forced_tool_choice(tool_choice: ToolChoice) -> None:
+    # The session config applies `tool_choice` to every response, including the one after a tool
+    # result, so a forced tool call never lets the model answer: live, `gpt-realtime-mini` called the
+    # tool again after every result until the request limit ended the session.
     model = OpenAIRealtimeModel('gpt-realtime')
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('get_weather', 'other')]
-    config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=['get_weather'])
-    )
-    assert config['tool_choice'] == {'type': 'function', 'name': 'get_weather'}
-    assert [tool['name'] for tool in config['tools']] == ['get_weather']
+    with pytest.raises(UserError, match="A realtime session can't force a tool call"):
+        model._session_config(  # pyright: ignore[reportPrivateUsage]
+            'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=tool_choice)
+        )
 
 
-def test_session_config_tool_choice_multi_tool_restricts_advertised_tools() -> None:
-    model = OpenAIRealtimeModel('gpt-realtime')
-    tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('a', 'b', 'excluded')]
-    config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=['a', 'b'])
+async def test_forced_tool_choice_fails_before_dialing() -> None:
+    # Raised at session open from the resolved model and merged settings, before any connection is
+    # made: the model default here is overridden per session, and only the final value counts.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return city  # pragma: no cover
+
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='test-key'),
+        settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice='auto'),
     )
-    assert config['tool_choice'] == 'required'
-    assert [tool['name'] for tool in config['tools']] == ['a', 'b']
+    with patch.object(rt_openai.websockets, 'connect', side_effect=AssertionError('dialed')):
+        with pytest.raises(UserError, match="A realtime session can't force a tool call"):
+            async with agent.realtime(
+                model, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice='required')
+            ).session():
+                pass  # pragma: no cover
 
 
 def test_session_config_tool_choice_tool_or_output_restricts_advertised_tools() -> None:
