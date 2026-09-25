@@ -3156,6 +3156,83 @@ async def test_barge_in_user_turn_follows_the_response_it_interrupted(
     ]
 
 
+_BARGE_IN_OPENING: list[RealtimeCodecEvent] = [
+    RealtimeInputSpeechStartEvent(item_id='u1'),
+    RealtimeInputSpeechEndEvent(item_id='u1'),
+    InputTranscript(text='Tell me a story.', is_final=True, item_id='u1'),
+    AudioDelta(data=b'\x01\x00'),
+    OutputTranscript(text='Once upon a time'),
+    RealtimeInputSpeechStartEvent(item_id='u2'),
+    RealtimeInputSpeechEndEvent(item_id='u2'),
+    InputTranscript(text='Stop, what is two plus two?', is_final=True, item_id='u2'),
+]
+
+
+async def test_barge_in_user_turn_is_recorded_when_the_interrupted_response_never_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A barge-in turn waits for the response it interrupted only so long: then it's recorded where history stands."""
+    monkeypatch.setattr('pydantic_ai.realtime._session._BARGE_IN_TURN_HOLD_SECONDS', 0.01)
+    seen: list[list[str]] = []
+
+    async def look_after_the_hold(session: _RealtimeSession) -> None:
+        await asyncio.sleep(0.05)
+        seen.append(_user_transcripts(session))
+
+    conn = _ContinuousMicrophoneConnection(
+        [
+            *_BARGE_IN_OPENING,
+            RealtimeInputSpeechStartEvent(item_id='u3'),
+            RealtimeInputSpeechEndEvent(item_id='u3'),
+            InputTranscript(text='Hello?', is_final=True, item_id='u3'),
+            _UserAction(look_after_the_hold),
+            OutputTranscript(text=' there was'),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert seen == [['Tell me a story.', 'Stop, what is two plus two?', 'Hello?']]
+    assert [type(message).__name__ for message in session.all_messages()] == [
+        'ModelRequest',
+        'ModelRequest',
+        'ModelRequest',
+        'ModelResponse',
+    ]
+
+
+async def test_held_barge_in_user_turn_is_recorded_after_its_response_on_close() -> None:
+    """Closing while a barge-in turn waits on the response it interrupted records both, in order."""
+    conn = BlockingRealtimeConnection(_BARGE_IN_OPENING)
+    session = RealtimeSession(conn)
+    async with session:
+        events_task = asyncio.create_task(drain_events(session))
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            while not session._held_user_turns:  # pyright: ignore[reportPrivateUsage]
+                await asyncio.sleep(0)
+        await session.close()
+        await events_task
+
+    assert [(type(message).__name__, getattr(message, 'state', None)) for message in session.all_messages()] == [
+        ('ModelRequest', 'complete'),
+        ('ModelResponse', 'interrupted'),
+        ('ModelRequest', 'complete'),
+    ]
+    assert _user_transcripts(session) == ['Tell me a story.', 'Stop, what is two plus two?']
+
+
+def _user_transcripts(session: _RealtimeSession) -> list[str]:
+    return [
+        part.transcript or ''
+        for message in session.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart) and part.speaker == 'user'
+    ]
+
+
 @pytest.mark.parametrize('audio_retention', ['transcript_only', 'input_audio'])
 async def test_untranscribed_continuous_microphone_records_one_user_turn_per_utterance(
     audio_retention: Literal['transcript_only', 'input_audio'],

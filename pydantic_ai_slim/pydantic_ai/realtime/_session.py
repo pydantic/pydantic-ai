@@ -259,6 +259,11 @@ _FULL_PROFILE = RealtimeModelProfile(
 # 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
 # the text a user is reading, so they get a deep window for a trivial cost.
 _AUDIO_TAP_SECONDS = 300
+# How long a user turn that barged in waits for the response it interrupted to be recorded, so it can
+# follow that response in history. The provider's terminal for a cut-off response normally arrives within
+# a second of the user starting to speak; past this, the turn is recorded where history stands instead of
+# staying out of `all_messages()` for as long as a provider keeps talking.
+_BARGE_IN_TURN_HOLD_SECONDS = 5.0
 # The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
 # also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
 _AUDIO_TAP_MAX_CHUNKS = 30_000
@@ -844,6 +849,10 @@ class RealtimeSession:
         self._pending_anonymous_user_turn_anchors: deque[_UserTurnAnchor] = deque()
         self._pending_user_turn_anchors: dict[str, tuple[_UserTurnAnchor]] = {}
         self._user_turn_anchors: dict[str | None, _UserTurnAnchor] = {}
+        # User turns held in `_pending_sent_requests` until the response they interrupted is recorded, and
+        # the watchdog that records them anyway if it never is (see `_BARGE_IN_TURN_HOLD_SECONDS`).
+        self._held_user_turns: list[ModelRequest] = []
+        self._held_user_turn_watchdog: asyncio.TimerHandle | None = None
         # Whether audio was sent since the last `commit_audio()` or `clear_audio()`: committing an empty
         # buffer is no user turn.
         self._audio_uncommitted = False
@@ -1061,6 +1070,7 @@ class RealtimeSession:
             queue_dropped_structural=self._queue_dropped_structural,
         )
         self._loop = None
+        self._stop_held_user_turn_watchdog()
 
         # Do not hide the caller's own exception, but make sure every receive-side failure has one
         # delivery point even when iteration stopped early or was never started. Stored rather than
@@ -2287,6 +2297,7 @@ class RealtimeSession:
         if self._pending_sent_requests:
             self._history.extend(self._pending_sent_requests)
             self._pending_sent_requests = []
+            self._stop_held_user_turn_watchdog()
         self._session_instrumentation.end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
@@ -2298,6 +2309,21 @@ class RealtimeSession:
         self._response_limit_checked = False
         if response is not None:
             self._check_response_boundary_limits()
+
+    def _release_held_user_turns(self) -> None:
+        """Record the barge-in user turns still waiting on the response they interrupted, which never came."""
+        self._held_user_turn_watchdog = None
+        # Still waiting in `_pending_sent_requests`: the response that would have flushed them also ends the hold.
+        for request in self._held_user_turns:
+            self._remove_sent_request(request)
+            self._history.append(request)
+        self._held_user_turns = []
+
+    def _stop_held_user_turn_watchdog(self) -> None:
+        if self._held_user_turn_watchdog is not None:
+            self._held_user_turn_watchdog.cancel()
+            self._held_user_turn_watchdog = None
+        self._held_user_turns = []
 
     def _resolve_in_flight_user_turn_anchors(self, response: ModelResponse) -> None:
         """Anchor the user turns that began while `response` was being produced to it, now that it's recorded."""
@@ -2707,8 +2733,13 @@ class RealtimeSession:
         anchor = self._user_turn_anchors.pop(item_id)
         if isinstance(anchor, _InFlightResponse):
             # The response this turn began during is still being produced: the turn follows it, in the
-            # same place as a request sent meanwhile.
+            # same place as a request sent meanwhile, for as long as `_BARGE_IN_TURN_HOLD_SECONDS` allows.
             self._pending_sent_requests.append(request)
+            self._held_user_turns.append(request)
+            if self._held_user_turn_watchdog is None:
+                self._held_user_turn_watchdog = asyncio.get_running_loop().call_later(
+                    _BARGE_IN_TURN_HOLD_SECONDS, self._release_held_user_turns
+                )
             return
         insert_at = 0
         if anchor is not None:
