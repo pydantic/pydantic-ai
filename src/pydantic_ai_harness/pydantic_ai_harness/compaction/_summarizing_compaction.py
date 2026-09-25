@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
@@ -154,6 +155,18 @@ def _model_family(model: str | AbstractModel | None) -> str | None:
     for sep in ('/', '-'):
         tail = tail.split(sep)[0]
     return tail or None
+
+
+def _writes_text(model: AbstractModel) -> bool:
+    """Whether *model* can answer with text, judged by the model a request reaches first.
+
+    A decision model such as TypeSafe's Jev answers only structured questions, so its profile
+    sets `supports_text_output=False`. `FallbackModel` has no profile of its own and tries its
+    first model first, which is where a text-less model would fail.
+    """
+    while isinstance(model, WrapperModel | FallbackModel):
+        model = model.models[0] if isinstance(model, FallbackModel) else model.wrapped
+    return not isinstance(model, Model) or model.profile.get('supports_text_output', True)
 
 
 def _truncate_with_marker(text: str, max_chars: int) -> str:
@@ -699,6 +712,15 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 'SummarizingCompaction needs a request-response model to write the summary, but '
                 f'the run uses {type(model).__name__}, which is not one. Set `model=` on '
                 'SummarizingCompaction to the model to summarize with when the run uses a realtime model.'
+            )
+        # Without `model=`, the summarizer is the run's model, which may be one that cannot write
+        # text at all, such as a decision model. Say so here rather than letting the summary run
+        # fail on core's generic "text output is not supported".
+        if self.model is None and not _writes_text(ctx.model):
+            raise UserError(
+                f'SummarizingCompaction writes its summary with a language model, but the run uses '
+                f'{ctx.model.model_name!r}, which cannot produce text. Set `model=` on SummarizingCompaction '
+                'to a language model to summarize with.'
             )
         # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
         # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.

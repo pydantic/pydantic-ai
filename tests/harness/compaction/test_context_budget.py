@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     SpeechPart,
+    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -27,6 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -66,9 +68,10 @@ except ImportError:  # pragma: no cover
 
 @dataclasses.dataclass
 class _FakeModel:
-    """Stands in for a `Model`; only `model_id` is read by window resolution."""
+    """Stands in for a `Model` with no window of its own, so resolution falls through to the registry."""
 
     model_id: str = 'anthropic:claude-sonnet-4-6'
+    context_window: int | None = None
 
 
 class _FakeRealtimeModel(AbstractModel):
@@ -221,8 +224,8 @@ class TestResolveContextWindow:
     def test_model_without_an_id(self):
         assert resolve_context_window(_FakeModel(model_id='')) is None  # type: ignore[arg-type]
 
-    def test_a_fallback_model_does_not_resolve(self):
-        """`FallbackModel.model_id` is a composite no registry entry matches.
+    def test_a_fallback_model_without_known_windows_does_not_resolve(self):
+        """No candidate has a window, and the composite `fallback:...` id matches no registry entry.
 
         Built from a real `FallbackModel` rather than a hand-written id, so the test tracks
         whatever composite core actually emits.
@@ -230,6 +233,22 @@ class TestResolveContextWindow:
         fallback = FallbackModel(TestModel(), TestModel())
         assert fallback.model_id.startswith('fallback:')
         assert resolve_context_window(fallback) is None
+
+    def test_the_model_profile_window_wins_over_the_registry(self, monkeypatch: pytest.MonkeyPatch):
+        """A window set on the model's profile, here a user override, is the one the model accepts."""
+        _fixed_window(monkeypatch, 1_000_000)
+        model = FunctionModel(
+            lambda _, __: ModelResponse(parts=[]), model_name='gpt-4.1', profile={'context_window': 32_000}
+        )
+        assert resolve_context_window(model) == 32_000
+
+    def test_a_fallback_model_resolves_to_its_smallest_candidate_window(self):
+        """Any candidate may answer, so core reports the smallest window, and a fraction must fit it."""
+        fallback = FallbackModel(
+            FunctionModel(lambda _, __: ModelResponse(parts=[]), profile={'context_window': 32_000}),
+            FunctionModel(lambda _, __: ModelResponse(parts=[]), profile={'context_window': 400_000}),
+        )
+        assert resolve_context_window(fallback) == 32_000
 
     def test_a_test_model_does_not_resolve(self):
         """`TestModel` is what every downstream suite runs against, and `test:test` is unknown."""
@@ -434,6 +453,17 @@ class TestThroughAnAgentRun:
         await agent.run('go')
 
         assert (seen[0].window_tokens, seen[0].resolved) == (DEFAULT_CONTEXT_WINDOW, False)
+
+    async def test_a_model_profile_window_resolves(self):
+        seen: list[ContextUsage] = []
+        agent = Agent(
+            FunctionModel(lambda _, __: ModelResponse(parts=[TextPart('ok')]), profile={'context_window': 32_000}),
+            capabilities=[ReportContextUsage(on_usage=seen.append)],
+        )
+
+        await agent.run('go')
+
+        assert (seen[0].window_tokens, seen[0].resolved) == (32_000, True)
 
     async def test_a_real_fallback_model_uses_the_configured_fallback(self):
         """A real `FallbackModel` reports a composite id, so resolution fails and the fallback stands in."""
@@ -1533,6 +1563,64 @@ class TestRealtimeModelSkipsTokenTriggers:
 
         with pytest.raises(UserError, match='needs a request-response model'):
             await capability._summarize(_history(2), ctx)  # pyright: ignore[reportPrivateUsage]
+
+
+def _textless_model() -> FunctionModel:
+    """A model that answers only structured output, like a decision model such as TypeSafe's Jev."""
+
+    def answer(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': True})])
+
+    return FunctionModel(answer, model_name='textless', profile={'supports_text_output': False})
+
+
+class TestSummarizerMustWriteText:
+    """Without `model=`, `SummarizingCompaction` summarizes with the run's model, which must write text."""
+
+    @pytest.fixture
+    def anyio_backend(self) -> str:
+        # These run a real `agent.run`; trio hits a TestModel event-loop quirk in core
+        # unrelated to compaction.
+        return 'asyncio'
+
+    @pytest.mark.parametrize(
+        'model',
+        [
+            pytest.param(_textless_model(), id='plain'),
+            pytest.param(FallbackModel(_textless_model(), TestModel()), id='fallback'),
+            pytest.param(InstrumentedModel(FallbackModel(_textless_model(), TestModel())), id='instrumented-fallback'),
+        ],
+    )
+    async def test_a_textless_run_model_asks_for_a_summarizer(self, model: Model):
+        agent = Agent(
+            model,
+            output_type=bool,
+            capabilities=[SummarizingCompaction(max_messages=3, keep_messages=1)],
+        )
+
+        with pytest.raises(UserError, match=r'cannot produce text\. Set `model=` on SummarizingCompaction'):
+            await agent.run('go', message_history=_history(2))
+
+    async def test_a_summarizer_model_lets_a_textless_run_compact(self):
+        agent = Agent(
+            _textless_model(),
+            output_type=bool,
+            capabilities=[
+                SummarizingCompaction(
+                    model=TestModel(custom_output_text='Summary.'),
+                    max_messages=3,
+                    keep_messages=1,
+                    preserve_first_user_message=False,
+                )
+            ],
+        )
+
+        result = await agent.run('go', message_history=_history(2))
+
+        assert result.output is True
+        first = result.all_messages()[0]
+        assert isinstance(first, ModelRequest)
+        assert any(isinstance(part, SystemPromptPart) and 'Summary.' in part.content for part in first.parts)
 
 
 pytestmark = pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')

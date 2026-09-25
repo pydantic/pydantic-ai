@@ -57,13 +57,13 @@ agent = Agent(
 
 That compacts at 900K on a 1M model and at 115K on a 128K one. `WarnNearLimits` takes the same shape as `max_context_fraction`, and `TieredCompaction` as `target_fraction`. `max_tokens` and `max_fraction` are mutually exclusive -- a strategy taking both would have to pick one and discard the other, leaving the caller unable to tell which budget was in force.
 
-The window comes from [`genai-prices`](https://github.com/pydantic/genai-prices), already a dependency of `pydantic-ai-slim`; `resolve_context_window` is exported if you want the number yourself. Pydantic AI does not expose it yet (`ModelProfile` has no `context_window` field), so when it does, that one function switches over. Nothing is cached: only a registry-confirmed number is ever treated as the real window.
+The window is the model's own [`context_window`](https://pydantic.dev/docs/ai/models/overview/#inspecting-a-models-profile): the value its profile sets, including one you pass as `profile={'context_window': ...}`, filled from [`genai-prices`](https://github.com/pydantic/genai-prices) when no profile does. A `FallbackModel` reports the smallest window among its models, since any of them may answer. `resolve_context_window` is exported if you want the number yourself. Nothing is cached: only a window the model or the registry states is ever treated as the real one.
 
 The model consulted is `ModelRequestContext.model`, the one the request will be sent to, not the one the run started with. A capability ordered earlier may replace it, and the budget follows.
 
 ### When the window does not resolve
 
-Not every model is in the registry. A local endpoint, a bespoke deployment, a Bedrock-prefixed reference such as `bedrock:us.anthropic.claude-sonnet-5`, a model the registry knows without a recorded window, and any `FallbackModel` (its `model_id` is a composite `fallback:...`) all resolve to nothing. The fraction is then taken of `fallback_context_window`, which defaults to a conservative 200K (`DEFAULT_CONTEXT_WINDOW`): compacting earlier than necessary costs one summary, overestimating costs the whole request.
+Not every model has a known window. A local endpoint, a bespoke deployment, a model the registry knows without a recorded window, and a `FallbackModel` none of whose models has a window all resolve to nothing. The fraction is then taken of `fallback_context_window`, which defaults to a conservative 200K (`DEFAULT_CONTEXT_WINDOW`): compacting earlier than necessary costs one summary, overestimating costs the whole request.
 
 Every capability that takes a fraction takes the fallback too, so you are not stuck with 200K on a model you know the size of:
 
@@ -72,8 +72,8 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-5',
-    capabilities=[SummarizingCompaction(max_fraction=0.9, fallback_context_window=1_000_000)],
+    'ollama:qwen3',
+    capabilities=[SummarizingCompaction(max_fraction=0.9, fallback_context_window=40_000)],
 )
 ```
 
@@ -359,7 +359,7 @@ agent = Agent(
 )
 ```
 
-`model` accepts a model name or a `Model`; when left `None` it inherits the running agent's model. Its nested summary run inherits the parent usage limits and reserves one request from a finite request limit for the pending parent request. Pass `model_settings` to give the dedicated summary call settings that differ from defaults carried by that model; the supplied settings merge over the model defaults without mutating the model or the settings dictionary. Pass `summarization_capabilities` to attach capabilities to the summary agent; capabilities on the outer agent do not run on the summary call. By default `incremental=True` updates the newest existing summary as an anchor. This changes the summary-call prompt from earlier releases; set `incremental=False` to retain the prior regeneration behavior.
+`model` accepts a model name or a `Model`; when left `None` it inherits the running agent's model. That model has to write text, so an agent running a model that can't, such as a decision model like TypeSafe's Jev, needs `model=` set to a language model; without it, the first compaction raises a `UserError` saying so. Its nested summary run inherits the parent usage limits and reserves one request from a finite request limit for the pending parent request. Pass `model_settings` to give the dedicated summary call settings that differ from defaults carried by that model; the supplied settings merge over the model defaults without mutating the model or the settings dictionary. Pass `summarization_capabilities` to attach capabilities to the summary agent; capabilities on the outer agent do not run on the summary call. By default `incremental=True` updates the newest existing summary as an anchor. This changes the summary-call prompt from earlier releases; set `incremental=False` to retain the prior regeneration behavior.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it must contain a `{messages}` placeholder), and `instructions` sets the internal agent's static instructions, which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer endpoint requires a fixed leading instruction.
 

@@ -5,10 +5,10 @@ can only supply as a constant.  That constant is wrong for every model it was no
 measured against.  This module turns a model into its real window, so a *fraction*
 can stand in for the constant.
 
-Pydantic AI does not carry the number yet (`ModelProfile` has no `context_window`
-field as of 2.18; see pydantic/pydantic-ai#4538), but `genai-prices` -- already a
-transitive dependency via `pydantic-ai-slim` -- does.  When core grows the field,
-`resolve_context_window` is the single place that switches over.
+A model reports its own window as `Model.context_window`: the value its profile sets,
+filled from `genai-prices` when no profile layer does, and for a `FallbackModel` the
+smallest among its candidates.  A model id given as a string is looked up in
+`genai-prices` directly.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ Deliberately conservative.  Compacting earlier than necessary costs one summary;
 overestimating the window costs the whole request.
 
 Every capability that resolves a fraction takes a `fallback_context_window` defaulting to
-this, so a deployment the registry cannot resolve -- a local endpoint, a Bedrock-prefixed
-reference, a `FallbackModel` -- can supply the number it knows instead.
+this, so a deployment whose window is unknown -- a local endpoint, a model neither its
+profile nor the registry has a window for -- can supply the number it knows instead.
 """
 
 
@@ -45,15 +45,21 @@ def split_model_id(model_id: str) -> tuple[str | None, str]:
 def resolve_context_window(model: AbstractModel | str) -> int | None:
     """Return the model's context window in tokens, or `None` when it is not known.
 
+    A model instance reports its own `context_window` first: the value its profile sets
+    (including a user's `profile=` override), filled from `genai-prices` when no profile
+    layer does.  `WrapperModel` (and so `InstrumentedModel`) forwards the wrapped model's,
+    and `FallbackModel` reports the smallest among its candidates.  When the model has no
+    window of its own, and for a model id given as a string, `genai-prices` is consulted
+    directly.
+
     `None` is returned both for models `genai-prices` has no entry for and for models
     it knows without a recorded window, so callers cannot mistake "unknown" for a
     number.  Pair it with `DEFAULT_CONTEXT_WINDOW` to get a usable budget.
-
-    A wrapping model resolves to whatever `model_id` it reports: `WrapperModel` (and so
-    `InstrumentedModel`) forwards the wrapped model's, while `FallbackModel` reports a
-    composite `fallback:...` id that no registry entry matches, so it resolves to `None`.
     """
     from genai_prices.data_snapshot import get_snapshot
+
+    if not isinstance(model, str) and (window := model.context_window) is not None and window > 0:
+        return window
 
     provider_id, model_ref = split_model_id(model if isinstance(model, str) else model.model_id)
     try:
