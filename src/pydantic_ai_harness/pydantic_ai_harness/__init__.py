@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from .modal_sandbox import ModalSandbox
     from .ordinal import Ordinal
     from .planning import Planning
+    from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
     from .repo_context import RepoContext
@@ -100,6 +101,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'Planning',
+    'PostHog',
     'PromptInjectionDefender',
     'PydanticAIDocs',
     'READ_ONLY_TOOL_NAMES',
@@ -152,6 +154,7 @@ _CAPABILITY_EXPORTS = {
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
     'Planning': 'planning',
+    'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'ReportContextUsage': 'compaction',

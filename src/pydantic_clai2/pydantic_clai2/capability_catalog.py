@@ -42,6 +42,7 @@ _FACTORIES = (
     ('ordinal', 'ordinal:Ordinal'),
     ('planning', 'planning:Planning'),
     ('playwright', 'playwright:PlaywrightBrowser'),
+    ('posthog', 'posthog:PostHog'),
     ('prompt_injection_defender', 'prompt_injection_defender:PromptInjectionDefender'),
     ('pydantic_ai_docs', 'pydantic_ai_docs:PydanticAIDocs'),
     ('repair_tool_arguments', 'repair_tool_arguments:RepairToolArguments'),
