@@ -50,6 +50,7 @@ from .exceptions import (
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
+    UsageLimitUnavailableWarning,
     UserError,
 )
 from .format_prompt import format_as_xml
@@ -244,6 +245,7 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
+    'UsageLimitUnavailableWarning',
     'ModelRetry',
     'ToolFailed',
     'ModelAPIError',

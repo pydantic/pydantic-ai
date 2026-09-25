@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ from pydantic_ai import (
     ToolDefinition,
     ToolReturnPart,
     UsageLimitExceeded,
+    UsageLimitUnavailableWarning,
     UserError,
     UserPromptPart,
 )
@@ -1480,6 +1482,37 @@ async def test_response_handler_rejected_cost_counts_toward_limit() -> None:
 
     with pytest.raises(UsageLimitExceeded, match=r"`usage.cost`=Decimal\('0.011'\)"):
         await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+
+@pytest.mark.parametrize(
+    'usage_limits',
+    [UsageLimits(total_tokens_limit=100), UsageLimits(cost_limit=Decimal('1'))],
+    ids=['token-limit', 'cost-limit'],
+)
+async def test_response_handler_preserves_usage_extraction_failure(usage_limits: UsageLimits) -> None:
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=1)
+        usage._usage_extraction_failed = True  # pyright: ignore[reportPrivateUsage]
+        return ModelResponse(parts=[TextPart('rejected')], usage=usage)
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('accepted')], usage=RequestUsage(input_tokens=2, output_tokens=1))
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(fallback, model_name='fallback'),
+        fallback_on=reject_primary,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        result = await Agent(model).run('test', usage_limits=usage_limits)
+
+    assert result.output == 'accepted'
+    assert len([w for w in caught if issubclass(w.category, UsageLimitUnavailableWarning)]) == 1
 
 
 async def test_response_handler_preserves_successful_model_usage_for_pricing() -> None:
