@@ -331,6 +331,15 @@ class SessionUsage:
     but attributed to no `ModelResponse`.
     """
 
+    context_window_used: float | None = None
+    """The fraction of the model's context window in use, when the provider reports it.
+
+    A snapshot rather than an amount to accumulate: the session keeps the latest reported value and
+    exposes it as [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
+    It can go down after the provider compacts or truncates the conversation. `None`, the default,
+    means this report says nothing about the context window.
+    """
+
     event_kind: Literal['session_usage'] = 'session_usage'
     """Event type identifier, used as a discriminator."""
 
