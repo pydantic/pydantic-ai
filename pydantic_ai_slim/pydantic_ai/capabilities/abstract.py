@@ -590,8 +590,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Called synchronously on each run, before `for_run`, so `for_run` can read from the workspace.
         A capability that exists only after `for_run` (one a capability function returns) is asked
-        afterwards. Several workspace capabilities may be attached: they are asked in order and the
-        first that returns a workspace wins. Return `None` for a `ref` this capability does not own.
+        afterwards. Several workspace capabilities may be attached: those passed to the run are asked
+        before the agent's, each list in order, and the first that returns a workspace wins. Return
+        `None` for a `ref` this capability does not own.
 
         It must have no side effects, including bookkeeping: return a backend configured from this
         capability's own settings, carrying `ref` when one was recovered or passed in. The backend
