@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '586'
+      - '589'
       content-type:
       - application/json
       host:
@@ -27,9 +27,9 @@ interactions:
             goal: Triage an incoming support ticket.
             question: How quickly does this ticket need a response?
           type: choice
-        tool:
+        route:
           criteria:
-            final_result: Triage an incoming support ticket.
+            TicketPriority: Triage an incoming support ticket.
             send_sign_in_link: Send the customer a one-time link to sign in with.
           instructions: Which of these does this call for?
           type: choice
@@ -38,32 +38,32 @@ interactions:
   response:
     headers:
       content-length:
-      - '371'
+      - '372'
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d55501497a479430a06d216259a5
+      - req_01a0d5dd0c4d7bc7ae7fccda85c2c007
     parsed_body:
       answers:
         priority:
           choice: urgent
-          confidence: 0.62
+          confidence: 0.65
           probabilities:
             low: 0.01
-            normal: 0.25
-            urgent: 0.74
+            normal: 0.23
+            urgent: 0.76
           type: choice
-        tool:
+        route:
           choice: send_sign_in_link
-          confidence: 0.5
+          confidence: 0.8
           probabilities:
-            final_result: 0.25
-            send_sign_in_link: 0.75
+            TicketPriority: 0.1
+            send_sign_in_link: 0.9
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 416
-        output_tokens: 73
+        input_tokens: 419
+        output_tokens: 76
     status:
       code: 200
       message: OK
@@ -103,15 +103,15 @@ interactions:
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d55501df7f7c941c5ecb1b387e3a
+      - req_01a0d5dd0ce473e1b9f93b7601f4a8db
     parsed_body:
       answers:
         channel:
           choice: sms
-          confidence: 0.94
+          confidence: 0.95
           probabilities:
-            email: 0.03
-            sms: 0.97
+            email: 0.02
+            sms: 0.98
           type: choice
       model: jev-1.13.0
       usage:
@@ -166,16 +166,16 @@ interactions:
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d55502617893b15f0c13201c0f71
+      - req_01a0d5dd0d9472dd92651347f3493f12
     parsed_body:
       answers:
         priority:
           choice: urgent
-          confidence: 0.44
+          confidence: 0.49
           probabilities:
             low: 0.01
-            normal: 0.36
-            urgent: 0.63
+            normal: 0.33
+            urgent: 0.66
           type: choice
       model: jev-1.13.0
       usage:

@@ -101,7 +101,7 @@ def issue(
 
 
 def test_snapshot_is_demand_ranked_bounded_and_excerpted(tmp_path: Path):
-    items = [
+    items: list[dict[str, Any]] = [
         {
             'number': 7,
             'title': 'Add   streaming\nhooks',
@@ -131,7 +131,7 @@ def test_snapshot_is_demand_ranked_bounded_and_excerpted(tmp_path: Path):
     assert candidate_value['title'] == 'Add streaming hooks'
     assert len(candidate_value['excerpt']) <= 600
     assert '\n' not in candidate_value['excerpt']
-    search_path = next(path for method, path, _ in client.calls if path.startswith('/search/issues?'))
+    search_path = next(path for _, path, _ in client.calls if path.startswith('/search/issues?'))
     terms = urllib.parse.parse_qs(urllib.parse.urlparse(search_path).query)
     assert terms['q'][0] == digest.eligible_query()
     assert terms['sort'] == ['interactions']
@@ -172,7 +172,7 @@ def test_pick_parsing_rejects_malformed_entries(tmp_path: Path, value: dict[str,
     path = picks_file(tmp_path, [value])
 
     with pytest.raises(ValueError):
-        digest.agent_items(path, digest.Pick, tag='record_feature_pick', limit=digest._PICK_LIMIT)
+        digest.agent_items(path, digest.Pick, tag='record_feature_pick', limit=digest._PICK_LIMIT)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_pick_parsing_rejects_too_many_and_duplicates(tmp_path: Path):
@@ -181,7 +181,7 @@ def test_pick_parsing_rejects_too_many_and_duplicates(tmp_path: Path):
             picks_file(tmp_path, [pick(number) for number in range(1, 7)]),
             digest.Pick,
             tag='record_feature_pick',
-            limit=digest._PICK_LIMIT,
+            limit=digest._PICK_LIMIT,  # pyright: ignore[reportPrivateUsage]
         )
 
     with pytest.raises(ValueError, match='too many or duplicate'):
@@ -189,7 +189,7 @@ def test_pick_parsing_rejects_too_many_and_duplicates(tmp_path: Path):
             picks_file(tmp_path, [pick(7), pick(7)]),
             digest.Pick,
             tag='record_feature_pick',
-            limit=digest._PICK_LIMIT,
+            limit=digest._PICK_LIMIT,  # pyright: ignore[reportPrivateUsage]
         )
 
 
@@ -200,7 +200,7 @@ def test_pick_parsing_ignores_foreign_output_types(tmp_path: Path):
     # cannot drift silently along with the validator under test.
     assert [
         parsed.model_dump()
-        for parsed in digest.agent_items(path, digest.Pick, tag='record_feature_pick', limit=digest._PICK_LIMIT)
+        for parsed in digest.agent_items(path, digest.Pick, tag='record_feature_pick', limit=digest._PICK_LIMIT)  # pyright: ignore[reportPrivateUsage]
     ] == [{'item_number': 7, 'reason': pick(7)['reason']}]
 
 
@@ -230,7 +230,7 @@ def test_apply_rejects_an_injection_shaped_pick_before_any_write(tmp_path: Path)
     [
         ([candidate(7), candidate(7)], 'unique numbers'),
         ([{**candidate(7), 'number': '7'}], r'number\s+Input should be a valid integer'),
-        ([candidate(number) for number in range(1, digest._CANDIDATE_LIMIT + 2)], 'at most'),
+        ([candidate(number) for number in range(1, digest._CANDIDATE_LIMIT + 2)], 'at most'),  # pyright: ignore[reportPrivateUsage]
     ],
 )
 def test_apply_rejects_a_tampered_snapshot(tmp_path: Path, candidates: list[dict[str, Any]], message: str):
@@ -348,7 +348,7 @@ def test_apply_with_no_picks_posts_nothing(tmp_path: Path):
 def test_cli_apply_writes_the_workflow_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
     client = FakeClient(issues={7: issue(7)})
-    monkeypatch.setattr(digest.attention, 'GitHubClient', lambda token: client)
+    monkeypatch.setattr(digest.attention, 'GitHubClient', lambda token: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
     monkeypatch.setenv('GITHUB_REPOSITORY', digest.REPO)
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))

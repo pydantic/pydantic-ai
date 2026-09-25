@@ -389,6 +389,62 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
         assert output == 'The country is: France'
 
 
+# --- `RunContext.in_durable_context` ---
+
+
+def _in_durable_context_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'activity: {part.content}')])
+    return ModelResponse(parts=[ToolCallPart(tool_name='tool_in_durable_context', args='{}')])
+
+
+async def tool_in_durable_context(ctx: RunContext[None]) -> bool:
+    return ctx.in_durable_context
+
+
+class _ReportInDurableContext(AbstractCapability[Any]):
+    async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        return replace(result, output=f'workflow: {ctx.in_durable_context}, {result.output}')
+
+
+_in_durable_context_agent = Agent(
+    FunctionModel(_in_durable_context_model_fn),
+    name='durability_in_durable_context',
+    toolsets=[FunctionToolset(tools=[tool_in_durable_context], id='in_durable_context')],
+    capabilities=[_ReportInDurableContext(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InDurableContextWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _in_durable_context_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_run_context_in_durable_context(client: Client):
+    """`ctx.in_durable_context` is `True` in workflow code only, not in activities or outside a workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[InDurableContextWorkflow],
+        plugins=[AgentPlugin(_in_durable_context_agent)],
+    ):
+        output = await client.execute_workflow(
+            InDurableContextWorkflow.run,
+            args=['Hello'],
+            id=InDurableContextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'workflow: True, activity: False'
+
+    result = await _in_durable_context_agent.run('Hello')
+    assert result.output == 'workflow: False, activity: False'
+
+
 # --- Durability outside workflow (transparent passthrough) ---
 
 

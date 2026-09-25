@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '346'
+      - '321'
       content-type:
       - application/json
       host:
@@ -17,10 +17,10 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        tool:
+        route:
           criteria:
-            final_result_Escalation: Hand the ticket to a specialist team.
-            final_result_Reply: Write back to the customer.
+            Escalation: Hand the ticket to a specialist team.
+            Reply: Write back to the customer.
           instructions: Which of these does this call for?
           type: choice
       state: Please just write back to the customer and apologise that we are running late.
@@ -28,24 +28,24 @@ interactions:
   response:
     headers:
       content-length:
-      - '246'
+      - '208'
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d552422b7f139dc7dc30bb37c3c7
+      - req_01a0d5dd0ec07202943c468e1fbb3ffc
     parsed_body:
       answers:
-        tool:
-          choice: final_result_Reply
+        route:
+          choice: Reply
           confidence: 1.0
           probabilities:
-            final_result_Escalation: 0.0
-            final_result_Reply: 1.0
+            Escalation: 0.0
+            Reply: 1.0
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 343
-        output_tokens: 42
+        input_tokens: 337
+        output_tokens: 33
     status:
       code: 200
       message: OK

@@ -54,6 +54,10 @@ _EXCLUDING_PYPROJECT = _PYPROJECT.replace(
 
 _FULL_RUN = [['make', 'typecheck-pyright']]
 
+_PYRIGHT = [sys.executable, '-m', 'pyright']
+
+_NESTED_RUN = [*_PYRIGHT, '-p', '.github/scripts']
+
 # What a fallback decided locally checks: every file Pyright reports on, minus the `tests/`
 # files that did not change.
 _EVERY_FILE_OUTSIDE_TESTS = sorted(_MODULES)
@@ -122,6 +126,14 @@ def _edit(project: Path, name: str) -> None:
 
 def _stage(project: Path) -> None:
     subprocess.run(['git', 'add', '--all'], cwd=project, check=True, capture_output=True)
+
+
+def _add_nested_project(project: Path) -> None:
+    # Pyright skips anything under a dot directory from the root project, so this is only
+    # checked through its own `pyrightconfig.json`, as `.github/scripts` is in the real one.
+    _write(project, '.github/scripts/pyrightconfig.json', '{"extends": "../../pyproject.toml", "include": ["."]}\n')
+    _write(project, '.github/scripts/tool.py', 'from pkg.aside import ASIDE\n\nTOOL = ASIDE\n')
+    _stage(project)
 
 
 def _typecheck(*, fails: bool = False, seconds: float = 0.0) -> _Recorder:
@@ -248,19 +260,19 @@ def test_a_stub_stands_in_for_the_module_beside_it(project: Path):
     assert _typecheck().checked == ['pkg_src/pkg/reader.py', 'pkg_src/pkg/stub.pyi']
 
 
-def test_a_dot_directory_is_checked_when_exclude_is_set(project: Path):
-    # Pyright's built-in `**/.*` exclusion only applies while `exclude` is unset.
-    include = 'include = ["pkg_src", "tests"]'
-    _write(project, 'pyproject.toml', _PYPROJECT.replace(include, f'{include}\nexclude = ["nothing.py"]'))
-    _write(project, 'pkg_src/pkg/.skill/helper.py', 'HELPER = 1\n')
-    _stage(project)
-    _typecheck()
-    _edit(project, 'pkg_src/pkg/.skill/helper.py')
-
-    assert _typecheck().checked == ['pkg_src/pkg/.skill/helper.py']
-
-
-def test_a_dot_directory_is_skipped_when_exclude_is_unset(project: Path):
+@pytest.mark.parametrize(
+    'include',
+    [
+        'include = ["pkg_src", "tests"]',
+        'include = ["pkg_src", "tests"]\nexclude = ["nothing.py"]',
+        'include = ["pkg_src", "tests", "pkg_src/pkg/.skill/helper.py"]',
+    ],
+    ids=['swept-up', 'exclude-set', 'named'],
+)
+def test_a_dot_directory_is_skipped(project: Path, include: str):
+    # Pyright adds its built-in `**/.*` exclusion to any `exclude`, and it wins over an `include`
+    # entry naming the file, so handing Pyright the file would check nothing.
+    _write(project, 'pyproject.toml', _PYPROJECT.replace('include = ["pkg_src", "tests"]', include))
     _write(project, 'pkg_src/pkg/.skill/helper.py', 'HELPER = 1\n')
     _stage(project)
     _typecheck()
@@ -478,6 +490,90 @@ def test_pyright_reports_an_error_only_the_closure_reveals(project: Path, capsys
 
     assert typecheck_changed.main() == 1
     assert 'Type-checking 3 of 9 files' in capsys.readouterr().out
+
+
+def test_the_first_run_checks_the_nested_project_too(project: Path):
+    _add_nested_project(project)
+
+    assert _typecheck().commands == [[*_PYRIGHT, *sorted(_TRACKED)], _NESTED_RUN]
+
+
+def test_an_edit_inside_the_nested_project_checks_only_that_project(project: Path, capsys: pytest.CaptureFixture[str]):
+    _add_nested_project(project)
+    _typecheck()
+    _edit(project, '.github/scripts/tool.py')
+    capsys.readouterr()
+
+    assert _typecheck().commands == [_NESTED_RUN]
+    assert capsys.readouterr().out == 'Type-checking the `.github/scripts` project.\n'
+
+
+def test_an_edit_the_nested_project_imports_checks_that_project_too(project: Path):
+    _add_nested_project(project)
+    _typecheck()
+    _edit(project, 'pkg_src/pkg/aside.py')
+
+    assert _typecheck().commands == [[*_PYRIGHT, 'pkg_src/pkg/aside.py'], _NESTED_RUN]
+
+
+def test_an_edit_the_nested_project_does_not_import_leaves_it_alone(project: Path):
+    _add_nested_project(project)
+    _typecheck()
+    _edit(project, 'pkg_src/pkg/leaf.py')
+
+    assert _typecheck().commands == [[*_PYRIGHT, 'pkg_src/pkg/leaf.py', 'pkg_src/pkg/middle.py', 'pkg_src/pkg/top.py']]
+
+
+def test_a_nested_project_configuration_change_checks_everything_outside_tests(project: Path):
+    _add_nested_project(project)
+    _typecheck()
+    _edit(project, '.github/scripts/pyrightconfig.json')
+
+    assert _typecheck().commands == [[*_PYRIGHT, *_EVERY_FILE_OUTSIDE_TESTS], _NESTED_RUN]
+
+
+def test_a_failing_nested_project_fails_the_run_after_the_root_one(project: Path):
+    _add_nested_project(project)
+    _typecheck()
+    recorded = _checkpoint(project).read_bytes()
+    _edit(project, 'pkg_src/pkg/aside.py')
+
+    recorder = _typecheck(fails=True)
+
+    # Both run, so the root project's errors are not hidden behind the nested one's.
+    assert recorder.commands == [[*_PYRIGHT, 'pkg_src/pkg/aside.py'], _NESTED_RUN]
+    assert recorder.exit_code == 1
+    assert _checkpoint(project).read_bytes() == recorded
+
+
+def test_the_time_budget_covers_the_root_and_nested_runs_together(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    # Each run fits the budget on its own, but the two together do not.
+    _add_nested_project(project)
+    _typecheck()
+    recorded = _checkpoint(project).read_bytes()
+    _edit(project, 'pkg_src/pkg/aside.py')
+    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
+    clock = _Clock(0.0)
+
+    def run(command: Sequence[str]) -> int:
+        clock.now += 6.0
+        return 0
+
+    assert typecheck_changed.main(run, clock) == 1
+    assert 'Pyright passed in 12.0s, over the 10.0s `PYRIGHT_TIME_BUDGET`.' in capsys.readouterr().out
+    assert _checkpoint(project).read_bytes() == recorded
+
+
+def test_pyright_reports_an_error_in_the_nested_project(project: Path, capfd: pytest.CaptureFixture[str]):
+    # A root-project run hands Pyright nothing under `.github/`, so only `-p` reaches this error.
+    _add_nested_project(project)
+    _write(project, '.github/scripts/tool.py', "TOOL: int = 'one'\n")
+    _stage(project)
+
+    assert typecheck_changed.main() == 1
+    assert '.github/scripts/tool.py:1:13 - error' in capfd.readouterr().out
 
 
 def test_a_run_inside_the_time_budget_passes(project: Path, monkeypatch: pytest.MonkeyPatch):

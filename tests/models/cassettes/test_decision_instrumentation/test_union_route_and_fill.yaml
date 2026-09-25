@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '356'
+      - '331'
       content-type:
       - application/json
       host:
@@ -17,10 +17,10 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        tool:
+        route:
           criteria:
-            final_result_Escalation: Hand the ticket to a specialist team.
-            final_result_Refund: Refund the customer for a charge.
+            Escalation: Hand the ticket to a specialist team.
+            Refund: Refund the customer for a charge.
           instructions: Which of these does this call for?
           type: choice
       state: I was charged twice for my March subscription. Please put the second charge back.
@@ -28,24 +28,24 @@ interactions:
   response:
     headers:
       content-length:
-      - '248'
+      - '210'
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d06d1c17732ba445a7c0c48c9d7b
+      - req_01a0d5dd0a1378dfbe9fa2fbab78febc
     parsed_body:
       answers:
-        tool:
-          choice: final_result_Refund
+        route:
+          choice: Refund
           confidence: 1.0
           probabilities:
-            final_result_Escalation: 0.0
-            final_result_Refund: 1.0
+            Escalation: 0.0
+            Refund: 1.0
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 347
-        output_tokens: 44
+        input_tokens: 341
+        output_tokens: 35
     status:
       code: 200
       message: OK
@@ -90,15 +90,15 @@ interactions:
   response:
     headers:
       content-length:
-      - '306'
+      - '305'
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d06d1cac7619a7c02643587517ea
+      - req_01a0d5dd0ab77124af705204f6fd2bf8
     parsed_body:
       answers:
         full_refund:
-          noul: 0.56
+          noul: 0.6
           type: noul
         reason:
           choice: duplicate_charge

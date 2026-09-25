@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '543'
+      - '538'
       content-type:
       - application/json
       host:
@@ -17,9 +17,9 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        tool:
+        route:
           criteria:
-            final_result: Classify a message that does not request a navigation action.
+            output: Classify a message that does not request a navigation action.
             set_direction: Set the navigation direction requested in the message.
           instructions: Which of these does this call for?
           type: choice
@@ -34,25 +34,25 @@ interactions:
   response:
     headers:
       content-length:
-      - '266'
+      - '262'
       content-type:
       - application/json
     parsed_body:
       answers:
-        tool:
+        route:
           choice: set_direction
           confidence: 1.0
           probabilities:
-            final_result: 0.0
+            output: 0.0
             set_direction: 1.0
           type: choice
         urgent:
-          noul: 0.1
+          noul: 0.09
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 390
-        output_tokens: 50
+        input_tokens: 389
+        output_tokens: 49
     status:
       code: 200
       message: OK
@@ -65,7 +65,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '344'
+      - '371'
       content-type:
       - application/json
       host:
@@ -79,6 +79,7 @@ interactions:
             left: null
             right: null
           instructions:
+            chosen: set_direction
             field: direction
             goal: Set the navigation direction requested in the message.
             question: Which direction should be taken?
@@ -102,7 +103,7 @@ interactions:
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 332
+        input_tokens: 341
         output_tokens: 31
     status:
       code: 200

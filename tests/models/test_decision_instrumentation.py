@@ -184,8 +184,8 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                         'name': 'chat jev-latest',
                         'attributes': {
                             'gen_ai.response.model': 'jev-1.13.0',
-                            'gen_ai.usage.input_tokens': 756,
-                            'gen_ai.usage.output_tokens': 109,
+                            'gen_ai.usage.input_tokens': 750,
+                            'gen_ai.usage.output_tokens': 100,
                         },
                         'children': [
                             {
@@ -197,20 +197,20 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                                     'server.address': 'api.typesafe.ai',
                                     'gen_ai.request.model': 'jev-latest',
                                     'pydantic_ai.decision.questions': {
-                                        'tool': {
+                                        'route': {
                                             'type': 'choice',
                                             'criteria': {
-                                                'final_result_Refund': 'Refund the customer for a charge.',
-                                                'final_result_Escalation': 'Hand the ticket to a specialist team.',
+                                                'Refund': 'Refund the customer for a charge.',
+                                                'Escalation': 'Hand the ticket to a specialist team.',
                                             },
                                             'instructions': 'Which of these does this call for?',
                                         }
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route_question': 'tool',
+                                    'pydantic_ai.decision.route_question': 'route',
                                     'pydantic_ai.decision.route_options': [
-                                        'final_result_Refund',
-                                        'final_result_Escalation',
+                                        'Refund',
+                                        'Escalation',
                                     ],
                                     'pydantic_ai.decision.state': 'I was charged twice for my March subscription. Please put the second charge back.',
                                     'logfire.json_schema': {
@@ -224,21 +224,18 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                                     },
                                     'gen_ai.agent.name': 'support',
                                     'gen_ai.response.model': 'jev-1.13.0',
-                                    'pydantic_ai.decision.usage.input_tokens': 347,
-                                    'pydantic_ai.decision.usage.output_tokens': 44,
-                                    'gen_ai.response.id': 'req_01a0d06d1c17732ba445a7c0c48c9d7b',
+                                    'pydantic_ai.decision.usage.input_tokens': 341,
+                                    'pydantic_ai.decision.usage.output_tokens': 35,
+                                    'gen_ai.response.id': 'req_01a0d5dd0a1378dfbe9fa2fbab78febc',
                                     'pydantic_ai.decision.answers': {
-                                        'tool': {
+                                        'route': {
                                             'type': 'choice',
-                                            'choice': 'final_result_Refund',
+                                            'choice': 'Refund',
                                             'confidence': 1.0,
-                                            'probabilities': {
-                                                'final_result_Escalation': 0.0,
-                                                'final_result_Refund': 1.0,
-                                            },
+                                            'probabilities': {'Escalation': 0.0, 'Refund': 1.0},
                                         }
                                     },
-                                    'pydantic_ai.decision.route_taken': 'final_result_Refund',
+                                    'pydantic_ai.decision.route_taken': 'Refund',
                                     'pydantic_ai.decision.route_reason': 'selected',
                                 },
                             },
@@ -276,7 +273,7 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                                         },
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route': 'final_result_Refund',
+                                    'pydantic_ai.decision.route': 'Refund',
                                     'pydantic_ai.decision.state': 'I was charged twice for my March subscription. Please put the second charge back.',
                                     'logfire.json_schema': {
                                         'type': 'object',
@@ -291,7 +288,7 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                                     'gen_ai.response.model': 'jev-1.13.0',
                                     'pydantic_ai.decision.usage.input_tokens': 409,
                                     'pydantic_ai.decision.usage.output_tokens': 65,
-                                    'gen_ai.response.id': 'req_01a0d06d1cac7619a7c02643587517ea',
+                                    'gen_ai.response.id': 'req_01a0d5dd0ab77124af705204f6fd2bf8',
                                     'pydantic_ai.decision.answers': {
                                         'reason': {
                                             'type': 'choice',
@@ -303,11 +300,11 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                                                 'cancelled_order': 0.0,
                                             },
                                         },
-                                        'full_refund': {'type': 'noul', 'noul': 0.56},
+                                        'full_refund': {'type': 'noul', 'noul': 0.6},
                                     },
                                     'pydantic_ai.decision.confidence': {
                                         'reason': 1.0,
-                                        'full_refund': 0.1200000000000001,
+                                        'full_refund': 0.2,
                                     },
                                 },
                             },
@@ -594,8 +591,8 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                         'name': 'chat jev-latest',
                         'attributes': {
                             'gen_ai.response.model': 'jev-1.13.0',
-                            'gen_ai.usage.input_tokens': 756,
-                            'gen_ai.usage.output_tokens': 104,
+                            'gen_ai.usage.input_tokens': 759,
+                            'gen_ai.usage.output_tokens': 107,
                         },
                         'children': [
                             {
@@ -616,19 +613,19 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                                 'goal': 'Triage an incoming support ticket.',
                                             },
                                         },
-                                        'tool': {
+                                        'route': {
                                             'type': 'choice',
                                             'criteria': {
-                                                'final_result': 'Triage an incoming support ticket.',
+                                                'TicketPriority': 'Triage an incoming support ticket.',
                                                 'send_sign_in_link': 'Send the customer a one-time link to sign in with.',
                                             },
                                             'instructions': 'Which of these does this call for?',
                                         },
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route': 'final_result',
-                                    'pydantic_ai.decision.route_question': 'tool',
-                                    'pydantic_ai.decision.route_options': ['final_result', 'send_sign_in_link'],
+                                    'pydantic_ai.decision.route': 'TicketPriority',
+                                    'pydantic_ai.decision.route_question': 'route',
+                                    'pydantic_ai.decision.route_options': ['TicketPriority', 'send_sign_in_link'],
                                     'pydantic_ai.decision.state': "I can't sign in. Can you text me a sign-in link? My email is not working.",
                                     'logfire.json_schema': {
                                         'type': 'object',
@@ -642,24 +639,23 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                     },
                                     'gen_ai.agent.name': 'support',
                                     'gen_ai.response.model': 'jev-1.13.0',
-                                    'pydantic_ai.decision.usage.input_tokens': 416,
-                                    'pydantic_ai.decision.usage.output_tokens': 73,
-                                    'gen_ai.response.id': 'req_01a0d55501497a479430a06d216259a5',
+                                    'pydantic_ai.decision.usage.input_tokens': 419,
+                                    'pydantic_ai.decision.usage.output_tokens': 76,
+                                    'gen_ai.response.id': 'req_01a0d5dd0c4d7bc7ae7fccda85c2c007',
                                     'pydantic_ai.decision.answers': {
                                         'priority': {
                                             'type': 'choice',
                                             'choice': 'urgent',
-                                            'confidence': 0.62,
-                                            'probabilities': {'low': 0.01, 'normal': 0.25, 'urgent': 0.74},
+                                            'confidence': 0.65,
+                                            'probabilities': {'low': 0.01, 'normal': 0.23, 'urgent': 0.76},
                                         },
-                                        'tool': {
+                                        'route': {
                                             'type': 'choice',
                                             'choice': 'send_sign_in_link',
-                                            'confidence': 0.5,
-                                            'probabilities': {'final_result': 0.25, 'send_sign_in_link': 0.75},
+                                            'confidence': 0.8,
+                                            'probabilities': {'TicketPriority': 0.1, 'send_sign_in_link': 0.9},
                                         },
                                     },
-                                    'pydantic_ai.decision.confidence': {'priority': 0.62},
                                     'pydantic_ai.decision.route_taken': 'send_sign_in_link',
                                     'pydantic_ai.decision.route_reason': 'selected',
                                 },
@@ -699,16 +695,16 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                     'gen_ai.response.model': 'jev-1.13.0',
                                     'pydantic_ai.decision.usage.input_tokens': 340,
                                     'pydantic_ai.decision.usage.output_tokens': 31,
-                                    'gen_ai.response.id': 'req_01a0d55501df7f7c941c5ecb1b387e3a',
+                                    'gen_ai.response.id': 'req_01a0d5dd0ce473e1b9f93b7601f4a8db',
                                     'pydantic_ai.decision.answers': {
                                         'channel': {
                                             'type': 'choice',
                                             'choice': 'sms',
-                                            'confidence': 0.94,
-                                            'probabilities': {'email': 0.03, 'sms': 0.97},
+                                            'confidence': 0.95,
+                                            'probabilities': {'email': 0.02, 'sms': 0.98},
                                         }
                                     },
-                                    'pydantic_ai.decision.confidence': {'channel': 0.94},
+                                    'pydantic_ai.decision.confidence': {'channel': 0.95},
                                 },
                             },
                         ],
@@ -770,16 +766,16 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                     'gen_ai.response.model': 'jev-1.13.0',
                                     'pydantic_ai.decision.usage.input_tokens': 428,
                                     'pydantic_ai.decision.usage.output_tokens': 38,
-                                    'gen_ai.response.id': 'req_01a0d55502617893b15f0c13201c0f71',
+                                    'gen_ai.response.id': 'req_01a0d5dd0d9472dd92651347f3493f12',
                                     'pydantic_ai.decision.answers': {
                                         'priority': {
                                             'type': 'choice',
                                             'choice': 'urgent',
-                                            'confidence': 0.44,
-                                            'probabilities': {'low': 0.01, 'normal': 0.36, 'urgent': 0.63},
+                                            'confidence': 0.49,
+                                            'probabilities': {'low': 0.01, 'normal': 0.33, 'urgent': 0.66},
                                         }
                                     },
-                                    'pydantic_ai.decision.confidence': {'priority': 0.44},
+                                    'pydantic_ai.decision.confidence': {'priority': 0.49},
                                 },
                             }
                         ],
@@ -841,20 +837,20 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
                                     'server.address': 'api.typesafe.ai',
                                     'gen_ai.request.model': 'jev-latest',
                                     'pydantic_ai.decision.questions': {
-                                        'tool': {
+                                        'route': {
                                             'type': 'choice',
                                             'criteria': {
-                                                'final_result_Escalation': 'Hand the ticket to a specialist team.',
-                                                'final_result_Reply': 'Write back to the customer.',
+                                                'Escalation': 'Hand the ticket to a specialist team.',
+                                                'Reply': 'Write back to the customer.',
                                             },
                                             'instructions': 'Which of these does this call for?',
                                         }
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route_question': 'tool',
+                                    'pydantic_ai.decision.route_question': 'route',
                                     'pydantic_ai.decision.route_options': [
-                                        'final_result_Escalation',
-                                        'final_result_Reply',
+                                        'Escalation',
+                                        'Reply',
                                     ],
                                     'pydantic_ai.decision.state': 'Please just write back to the customer and apologise that we are running late.',
                                     'logfire.json_schema': {
@@ -868,21 +864,18 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
                                     },
                                     'gen_ai.agent.name': 'support',
                                     'gen_ai.response.model': 'jev-1.13.0',
-                                    'pydantic_ai.decision.usage.input_tokens': 343,
-                                    'pydantic_ai.decision.usage.output_tokens': 42,
-                                    'gen_ai.response.id': 'req_01a0d552422b7f139dc7dc30bb37c3c7',
+                                    'pydantic_ai.decision.usage.input_tokens': 337,
+                                    'pydantic_ai.decision.usage.output_tokens': 33,
+                                    'gen_ai.response.id': 'req_01a0d5dd0ec07202943c468e1fbb3ffc',
                                     'pydantic_ai.decision.answers': {
-                                        'tool': {
+                                        'route': {
                                             'type': 'choice',
-                                            'choice': 'final_result_Reply',
+                                            'choice': 'Reply',
                                             'confidence': 1.0,
-                                            'probabilities': {
-                                                'final_result_Reply': 1.0,
-                                                'final_result_Escalation': 0.0,
-                                            },
+                                            'probabilities': {'Escalation': 0.0, 'Reply': 1.0},
                                         }
                                     },
-                                    'pydantic_ai.decision.route_taken': 'final_result_Reply',
+                                    'pydantic_ai.decision.route_taken': 'Reply',
                                     'pydantic_ai.decision.route_reason': 'handed_off',
                                 },
                             }
