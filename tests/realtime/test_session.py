@@ -3702,7 +3702,9 @@ async def _speech_while_tool_ran_history() -> list[ModelMessage]:
     return messages
 
 
-@pytest.mark.vcr
+# The body is part of the match, so a history that serializes differently (the result no longer right after
+# its call, say) can't replay this recording, which the provider accepted.
+@pytest.mark.vcr(additional_matchers=['body'])
 @pytest.mark.parametrize(
     'provider',
     [
