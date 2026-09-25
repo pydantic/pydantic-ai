@@ -241,7 +241,7 @@ Every input to the agent ends up in one of two places: the state, which is judge
 | Agent input | Where it ends up |
 |---|---|
 | the run's prompt | the whole state when there is no history, otherwise its `text` |
-| the message history | the state's `history`, as user prompts, answers, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
+| the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
@@ -794,7 +794,7 @@ Watch how often the fallback fires, not only how accurate the pair is. A chain t
 
 ## Judging a conversation
 
-A run's message history goes to the model as `history`: user prompts, answers, tool calls and their results, and retry prompts, from whichever model produced them. With no new prompt, the conversation is the whole state, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
+A run's message history goes to the model as `history`: user prompts, answers, thinking, tool calls and their results, and retry prompts, from whichever model produced them. With no new prompt, the conversation is the whole state, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
 
 ```python
 from pydantic_ai import Agent
@@ -808,7 +808,9 @@ print(result.output)
 #> True
 ```
 
-A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a model's private thinking and a `CachePoint` are left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness](https://github.com/pydantic/pydantic-ai-harness)'s compaction does.
+A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness](https://github.com/pydantic/pydantic-ai-harness)'s compaction does.
+
+A model's thinking goes along as a `thinking` entry, where it was in the response, so a question can be about the reasoning itself, such as whether the model considered getting around its tests. Thinking a provider returned only in encrypted form, as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] with a `signature` and no text, has nothing to judge and is left out.
 
 Accuracy falls as the state grows with detail the question does not need, and a backend has a limit on how large the state can be; past it the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], which a `FallbackModel` hands to the model behind it like any API error, so an over-long conversation quietly becomes a language model call. Compact earlier than a language model would need, since the decision model is being asked to *judge* the whole of it, not to continue from it. Jev's limits are on the [TypeSafe page](typesafe.md#limits).
 
