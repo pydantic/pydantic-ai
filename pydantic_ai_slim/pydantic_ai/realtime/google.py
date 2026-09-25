@@ -219,7 +219,7 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     google_affective_dialog: bool
     """Whether to enable emotion-aware delivery.
 
-    Not supported by the Gemini 3.x Live models, so `connect` raises
+    Not supported by the Gemini 3.1 Flash Live and 3.8 Live models, so `connect` raises
     [`UserError`][pydantic_ai.exceptions.UserError] if it's enabled for one of them (see
     [`google_supports_affective_dialog`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_supports_affective_dialog])."""
     google_proactive_audio: bool
@@ -360,10 +360,10 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     """Whether the model takes [`google_affective_dialog`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_affective_dialog]. Default: `True`.
 
     When `False`, `connect` raises [`UserError`][pydantic_ai.exceptions.UserError] for a session that
-    enables it, rather than opening one the provider rejects. The Gemini 3.x Live models don't support
-    affective dialog: `gemini-3.1-flash-live-preview` refuses the handshake with `1007 Request contains
-    an invalid argument`, and the 3.8 models open the session and then close it with the same error on
-    the first send.
+    enables it, rather than opening one the provider rejects. `False` for the `gemini-3.1-flash-live` and
+    `gemini-3.8-live` families, which don't support affective dialog: `gemini-3.1-flash-live-preview`
+    refuses the handshake with `1007 Request contains an invalid argument`, and the 3.8 models open the
+    session and then close it with the same error on the first send.
     """
 
 
@@ -1121,7 +1121,7 @@ class GoogleRealtimeModel(RealtimeModel):
         ):
             raise UserError(
                 f'`google_affective_dialog=True` is not supported by {self.model!r}; Gemini Live rejects it. '
-                'Affective dialog is available on the Gemini 2.5 Live models.'
+                'Leave it unset for this model.'
             )
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.

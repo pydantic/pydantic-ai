@@ -345,7 +345,11 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # handshake with `1007 Request contains an invalid argument`, and `gemini-3.8-live` and
     # `gemini-3.8-live-extended-thinking` accept it and then close the session with that same `1007` on the
     # first send. `gemini-2.5-flash-native-audio-latest` and the Vertex `gemini-live-2.5-flash` take it.
-    profile['google_supports_affective_dialog'] = not model_name.startswith('gemini-3')
+    # Only the families verified to reject it are refused, so a newer Live model isn't turned away before
+    # its profile is updated.
+    profile['google_supports_affective_dialog'] = not model_name.startswith(
+        ('gemini-3.1-flash-live', 'gemini-3.8-live')
+    )
     return profile
 
 

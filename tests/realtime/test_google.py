@@ -2628,10 +2628,14 @@ def test_profile_recognizes_snapshot_variants_of_3_8_live(model_name: str, is_ex
         ('gemini-3.1-flash-live-preview', False),
         ('gemini-3.8-live', False),
         ('gemini-3.8-live-extended-thinking', False),
+        ('gemini-3.8-live-preview-09-2026', False),
+        ('gemini-3.1-flash-live-preview-09-2026', False),
+        # A Gemini 3.x Live family nobody has checked isn't refused ahead of its profile being updated.
+        ('gemini-3.9-flash-live-preview', True),
     ],
 )
 async def test_connect_rejects_affective_dialog_where_unsupported(model_name: str, supported: bool) -> None:
-    """The Gemini 3.x Live models reject affective dialog, so `connect` fails before dialing.
+    """The Gemini 3.1 Flash Live and 3.8 Live models reject affective dialog, so `connect` fails before dialing.
 
     Verified live: `gemini-3.1-flash-live-preview` refuses the handshake, and the 3.8 models open the
     session and then close it with `1007 Request contains an invalid argument` on the first send.
