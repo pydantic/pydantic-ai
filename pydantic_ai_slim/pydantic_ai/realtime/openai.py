@@ -93,6 +93,7 @@ from ._openai_protocol import (
     resolve_base_turn_detection,
     resolve_transcription_model,
     response_finish_reason,
+    response_provider_details,
     seed_items,
     tool_choice_config,
     tool_def_to_openai,
@@ -112,6 +113,7 @@ from .codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    ResponseStarted,
     SessionUsage,
     TextContext,
     ToolResult,
@@ -694,6 +696,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._response_active = True
             self._response_started = True
             self._active_response_id = created.response.id or None
+            events.append(ResponseStarted(provider_response_id=self._active_response_id))
             if self._cancel_sent and self._cancelled_response_id is None:
                 # A cancel raced ahead of this `response.created`: it was sent while the response the
                 # client asked for had no server-assigned id yet, so the suppression id could not be
@@ -813,12 +816,18 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # frame (its `response.usage` is empty), so fall back to it.
         frame_usage = done.usage if isinstance(done, ProtocolResponseDoneEvent) else None
         usage = self._map_response_usage(response.usage) or self._map_response_usage(frame_usage)
+        # The response's `provider_details` ride along too: a response that called a tool is recorded
+        # from this usage rather than from its `ResponseDone` (suppressed for a function-call-only
+        # response, and arriving after the response is already recorded otherwise), so without them a
+        # tool-call response would lack the `status` every other response carries.
+        provider_details = response_provider_details(response)
         if usage is not None:
             events.append(
                 SessionUsage(
                     usage=usage,
                     provider_response_id=response_id or None,
                     finish_reason=finish_reason,
+                    provider_details=provider_details,
                 )
             )
         elif matches_active_response and finish_reason == 'tool_call':
@@ -827,6 +836,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     usage=RequestUsage(),
                     provider_response_id=response_id or None,
                     finish_reason='tool_call',
+                    provider_details=provider_details,
                 )
             )
         return events, superseded

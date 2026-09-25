@@ -101,6 +101,7 @@ from .codec import (
     RealtimeInput,
     RealtimeSessionInput,
     ResponseDone,
+    ResponseStarted,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -742,6 +743,10 @@ class RealtimeSession:
         self._response_active = False
         self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
+        # The id a provider reported when the current response started (`ResponseStarted`), for a
+        # response that never gets the terminal that would otherwise carry it: one cut off by a dropped
+        # connection or by closing the session.
+        self._started_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
         self._response_finalized_before_terminal = False
@@ -2119,6 +2124,9 @@ class RealtimeSession:
             self._response_limit_checked = False
             return
         if response_occurred:
+            response_id = provider_response_id or self._pending_provider_response_id or self._started_response_id
+            if response_id == self._started_response_id:
+                self._started_response_id = None
             response = ModelResponse(
                 parts=parts,
                 usage=self._pending_response_usage,
@@ -2129,7 +2137,7 @@ class RealtimeSession:
                 provider_name=self._provider_name,
                 provider_url=self._provider_url,
                 provider_details=provider_details,
-                provider_response_id=provider_response_id or self._pending_provider_response_id,
+                provider_response_id=response_id,
                 finish_reason=finish_reason or self._pending_finish_reason,
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
@@ -3092,6 +3100,7 @@ class RealtimeSession:
             self._finalize_response(
                 provider_response_id=event.provider_response_id,
                 finish_reason=event.finish_reason,
+                provider_details=event.provider_details,
             )
             # OpenAI emits this usage immediately before `response.done`; the response is complete
             # already, so that terminal must not append a second, empty `ModelResponse`.
@@ -3305,6 +3314,9 @@ class RealtimeSession:
         assert not isinstance(event, ToolCall)
         self._settle_deferred_response()
         if isinstance(event, ConversationCreated):
+            return False
+        if isinstance(event, ResponseStarted):
+            self._started_response_id = event.provider_response_id
             return False
         if isinstance(event, ConversationItemCreated):
             self._handle_conversation_item(event)

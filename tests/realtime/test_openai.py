@@ -86,6 +86,7 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
+    ResponseStarted,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -2326,6 +2327,7 @@ async def test_connection_drops_deltas_from_a_cancelled_response() -> None:
             finish_reason=None,
             provider_details={'status': 'cancelled'},
         ),
+        ResponseStarted(provider_response_id='resp-2'),
         AudioDelta(data=b'\x02', item_id='item-2'),  # the next response is unaffected
     ]
     assert conn._cancelled_response_id is None  # pyright: ignore[reportPrivateUsage]
@@ -2356,9 +2358,10 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
 
     events = await collect_codec_events(conn)
     # A's usage is recorded, B keeps streaming, and no `ResponseDone` fired for the superseded A.
-    assert [type(event).__name__ for event in events] == ['SessionUsage', 'AudioDelta']
-    assert isinstance(events[0], SessionUsage) and events[0].provider_response_id == 'A'
-    assert events[1] == AudioDelta(data=b'\x02', item_id='b-item')
+    assert [type(event).__name__ for event in events] == ['ResponseStarted', 'SessionUsage', 'AudioDelta']
+    assert events[0] == ResponseStarted(provider_response_id='B')
+    assert isinstance(events[1], SessionUsage) and events[1].provider_response_id == 'A'
+    assert events[2] == AudioDelta(data=b'\x02', item_id='b-item')
     assert not any(isinstance(event, ResponseDone) for event in events)
 
 
@@ -2558,6 +2561,7 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
             usage=RequestUsage(input_tokens=3, output_tokens=2),
             provider_response_id='resp-1',
             finish_reason='stop',
+            provider_details={'status': 'completed'},
         ),
         ResponseDone(
             interrupted=False,
@@ -2584,12 +2588,14 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
-    # function-call-only → no ResponseDone, but usage is still surfaced
+    # function-call-only → no ResponseDone, but usage is still surfaced, carrying the details the
+    # suppressed `ResponseDone` would have
     assert events == [
         SessionUsage(
             usage=RequestUsage(output_tokens=5),
             provider_response_id='resp-tool',
             finish_reason='tool_call',
+            provider_details={'status': 'completed'},
         )
     ]
 
@@ -3409,6 +3415,7 @@ async def test_sideband_barge_in_clear_keeps_item_while_response_active() -> Non
     )
     conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
     assert await collect_codec_events(conn, sideband=True) == [
+        ResponseStarted(provider_response_id='resp_active'),
         RealtimeOutputSpeechStartEvent(),
         RealtimeOutputSpeechEndEvent(),
     ]
@@ -3720,7 +3727,7 @@ async def test_connect_applies_max_tokens_without_temperature(monkeypatch: pytes
 
 @pytest.mark.anyio
 async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyPatch) -> None:
-    unmapped = json.dumps({'type': 'response.created'})
+    unmapped = json.dumps({'type': 'rate_limits.updated', 'rate_limits': []})
     done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
     ws = FakeWebSocket([_created(), _updated(), unmapped, done])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))

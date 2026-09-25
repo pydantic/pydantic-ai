@@ -549,6 +549,7 @@ async def test_response_done_maps_xai_usage_extras() -> None:
         usage=expected,
         provider_response_id='resp-xai',
         finish_reason='stop',
+        provider_details={'status': 'completed'},
     )
 
 

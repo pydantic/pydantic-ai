@@ -100,6 +100,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeConnection,
     RealtimeInput,
     ResponseDone,
+    ResponseStarted,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -5712,6 +5713,53 @@ async def test_reconnect_response_state(
         expected_state_restored
     ]
     assert session.new_messages() == expected
+
+
+async def test_response_cut_off_by_a_reconnect_keeps_its_started_id() -> None:
+    """A reply the drop cut off is recorded with the id its `ResponseStarted` gave it.
+
+    Its `ResponseDone` never arrives, so that id is the only one the session will ever see. The next
+    response gets its own id rather than inheriting the cut one.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            ResponseStarted(provider_response_id='resp_cut'),
+            OutputTranscript(text='One, two, three'),
+            RealtimeSessionReconnectEvent(state_restored=True),
+            ResponseStarted(provider_response_id='resp_next'),
+            OutputTranscript(text='after', is_final=True),
+            ResponseDone(provider_response_id='resp_next'),
+        ],
+        reconnect_restores_in_flight_state=False,
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
+    assert [(r.state, r.provider_response_id) for r in responses] == [
+        ('interrupted', 'resp_cut'),
+        ('complete', 'resp_next'),
+    ]
+
+
+async def test_response_cut_off_by_close_keeps_its_started_id() -> None:
+    """Closing the session mid-reply records the partial reply with the id its `ResponseStarted` gave it."""
+    conn = BlockingRealtimeConnection(
+        [ResponseStarted(provider_response_id='resp_cut'), OutputTranscript(text='One, two, three')]
+    )
+    async with RealtimeSession(conn) as session:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartStartEvent):
+                break
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='One, two, three')],
+                timestamp=IsDatetime(),
+                provider_response_id='resp_cut',
+                state='interrupted',
+            )
+        ]
+    )
 
 
 async def test_reconnect_while_idle_on_replay_provider_keeps_state_restored() -> None:

@@ -681,7 +681,7 @@ def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
     return None
 
 
-def _response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
+def response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
     """Retain the raw response status and incomplete reason for provider fidelity."""
     details: dict[str, Any] = {'status': response.status}
     if (reason := _response_status_reason(response)) is not None:
@@ -707,7 +707,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
         finish_reason=response_finish_reason(response),
-        provider_details=_response_provider_details(response),
+        provider_details=response_provider_details(response),
     )
 
 

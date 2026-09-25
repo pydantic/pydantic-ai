@@ -287,6 +287,25 @@ class ResponseDone:
 
 
 @dataclass(repr=False)
+class ResponseStarted:
+    """The provider started a model response.
+
+    Optional: a provider that assigns response IDs up front reports one here so the session can stamp it
+    on a response that never reaches its [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone], such
+    as one cut off by a dropped connection or by closing the session.
+    """
+
+    _: KW_ONLY
+    provider_response_id: str | None = None
+    """Provider-assigned ID for the response, when available."""
+
+    event_kind: Literal['response_started'] = 'response_started'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class SessionUsage:
     """Usage reported by the provider for a model response or another run-level operation."""
 
@@ -299,6 +318,14 @@ class SessionUsage:
 
     finish_reason: FinishReason | None = None
     """Normalized completion reason for the response this usage belongs to, when available."""
+
+    provider_details: dict[str, Any] | None = None
+    """Provider-specific details for the response this usage belongs to, when available.
+
+    Recorded on the `ModelResponse` when the usage is what finalizes it, as it is for a response that
+    called a tool; otherwise the response's [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone]
+    supplies them.
+    """
 
     response_scoped: bool = True
     """Whether this usage belongs to a specific model response.
@@ -356,6 +383,7 @@ RealtimeCodecEvent = TypeAliasType(
     | InputTranscript
     | ToolCall
     | ToolCallCancelled
+    | ResponseStarted
     | ResponseDone
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
@@ -497,6 +525,7 @@ __all__ = (
     'ToolCall',
     'ToolResult',
     'ToolCallCancelled',
+    'ResponseStarted',
     'ResponseDone',
     'ConversationCreated',
     'ConversationItemCreated',
