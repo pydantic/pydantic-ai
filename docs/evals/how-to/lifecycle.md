@@ -78,6 +78,7 @@ cleaned_up: list[str] = []
 
 class ConditionalCleanup(CaseLifecycle[str, str, dict]):
     async def setup(self) -> None:
+        assert self.case.name is not None
         self.resource_id = self.case.name
 
     async def teardown(

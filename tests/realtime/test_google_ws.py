@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.realtime import RealtimeModelProfile, RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -44,7 +44,7 @@ from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
-    from pydantic_ai.realtime.google import GoogleRealtimeModel
+    from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelProfile
 
 pytestmark = [
     pytest.mark.anyio,
@@ -54,6 +54,11 @@ pytestmark = [
 # The Gemini Developer API only exposes the native-audio Live model to the recording key, and it only
 # produces audio output — so every scenario below runs audio-out (transcripts drive the assertions).
 _MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025'
+
+# The reasoning Live model, which differs from every other one in three ways the adapter has to
+# handle: it requires a thinking level, rejects blocking function declarations, and rejects the
+# function-response scheduling the async path otherwise sends.
+_EXTENDED_THINKING_MODEL = 'gemini-3.8-live-extended-thinking'
 
 
 async def test_audio_in_server_vad_turn(
@@ -473,7 +478,7 @@ def test_profile_allow_seeding() -> None:
     interruption (automatic VAD only).
     """
     profile = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest').profile
-    assert profile == RealtimeModelProfile(
+    assert profile == GoogleRealtimeModelProfile(
         supports_image_input=True,
         image_input_requires_response=False,
         supports_manual_turn_control=False,
@@ -497,6 +502,11 @@ def test_profile_allow_seeding() -> None:
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
         context_window=None,
+        # Thinking is optional, tool calls block unless opted in, and an async result can be scheduled.
+        google_thinking_always_enabled=False,
+        google_async_tool_calls_by_default=False,
+        google_requires_async_tool_calls=False,
+        google_supports_async_tool_call_scheduling=True,
     )
 
 
@@ -505,15 +515,16 @@ async def test_handle_barge_in_over_live_speech(
 ) -> None:
     """`handle_barge_in=True` against Gemini Live: only the local flush is left to do.
 
-    Gemini reports no speech onset; it interrupts its own generation when the user speaks over it
-    and says so with `RealtimeResponseInterruptedEvent`. The session's half is purely local —
+    Gemini reports no speech onset; it interrupts its own reply when the user speaks over it and
+    says so with `RealtimeResponseInterruptedEvent`. The session's half is purely local —
     flushing buffered playback audio — so nothing barge-in-related goes out on the wire, and the
     barged-in utterance still gets a reply.
     """
     provider, _ = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
-    # A long reply keeps the model mid-generation when the user speaks over it, so the recording
-    # actually captures the provider interrupting itself.
+    # A long reply is still playing when the user speaks over it, so the recording actually captures
+    # the provider interrupting itself. Gemini generates faster than real time, so the cassette has
+    # `generationComplete` before `interrupted`: the interruption lands during playback.
     agent = Agent(instructions='Reply with several full sentences; be expansive.')
     pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()
 
@@ -538,3 +549,112 @@ async def test_handle_barge_in_over_live_speech(
     assert any(isinstance(event, RealtimeResponseInterruptedEvent) for event in events)
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert 'interrupted' in [response.state for response in responses]
+
+
+async def test_extended_thinking_async_tool_round(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`gemini-3.8-live-extended-thinking` speaks a filler, runs the tool in the background, then answers.
+
+    The model has no blocking mode, so the session is async whether or not it asked, and the tool result
+    goes back *without* a `scheduling` field — the two things this model rejects outright. It also
+    requires a thinking level, which the session supplies on its behalf.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(_EXTENDED_THINKING_MODEL, provider=provider)
+    agent = Agent(instructions='You are a flight booking assistant. Always use search_flights before answering.')
+
+    @agent.tool_plain
+    async def search_flights(origin: str, destination: str) -> str:
+        """Search flights between two cities. Takes several seconds."""
+        await anyio.sleep(5)
+        return 'KLM at 120 dollars'
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Find me a flight from Amsterdam to Lisbon, then tell me the cheapest one.')
+        with anyio.fail_after(90):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    # Exactly one, at the end: the filler's `turn_complete` arrives with `interaction_status: IN_PROGRESS`,
+    # and the exchange isn't over until the model says `IDLE`. Breaking on the first one above is what
+    # pins this — a premature boundary would have ended the loop before the tool ever ran.
+    assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
+    assert [type(event.part).__name__ for event in events if isinstance(event, FunctionToolCallEvent)] == [
+        'ToolCallPart'
+    ]
+
+    assert sent_frames_containing(cassette, 'Search flights between two cities.') == snapshot(
+        [
+            {
+                'setup': {
+                    'model': 'models/gemini-3.8-live-extended-thinking',
+                    'generationConfig': {'responseModalities': ['AUDIO'], 'thinkingConfig': {'thinking_level': 'LOW'}},
+                    'systemInstruction': {
+                        'parts': [
+                            {'text': 'You are a flight booking assistant. Always use search_flights before answering.'}
+                        ],
+                        'role': 'user',
+                    },
+                    'tools': [
+                        {
+                            'functionDeclarations': [
+                                {
+                                    'description': 'Search flights between two cities. Takes several seconds.',
+                                    'name': 'search_flights',
+                                    'parameters': {
+                                        'properties': {'origin': {'type': 'STRING'}, 'destination': {'type': 'STRING'}},
+                                        'required': ['origin', 'destination'],
+                                        'type': 'OBJECT',
+                                    },
+                                    'behavior': 'NON_BLOCKING',
+                                }
+                            ]
+                        }
+                    ],
+                    'inputAudioTranscription': {},
+                    'outputAudioTranscription': {},
+                }
+            }
+        ]
+    )
+    assert sent_frames_containing(cassette, 'KLM at 120 dollars') == snapshot(
+        [
+            {
+                'tool_response': {
+                    'functionResponses': [
+                        {
+                            'id': 'call_3850_fc_0_0',
+                            'name': 'search_flights',
+                            'response': {'output': 'KLM at 120 dollars'},
+                        }
+                    ]
+                }
+            }
+        ]
+    )
+    messages = session.all_messages()
+    assert [type(m).__name__ for m in messages] == snapshot(
+        # One `ModelResponse` for the whole stalled exchange: the model's `turn_complete` after the filler
+        # came with `interaction_status: IN_PROGRESS`, so the utterance and the tool call it was stalling
+        # for stay together rather than splitting into two responses.
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    stalled = messages[1]
+    assert isinstance(stalled, ModelResponse)
+    filler_part = stalled.parts[0]
+    assert isinstance(filler_part, SpeechPart)
+    assert filler_part.transcript == snapshot('Let me check the available flights for you.')
+    assert stalled.parts[1] == ToolCallPart(tool_name='search_flights', args=IsStr(), tool_call_id=IsStr())
+    # The filler's reasoning is billed against the response that carries it; Gemini's tool-call frame has
+    # no usage of its own to merge in.
+    assert stalled.usage.details['thoughts_tokens'] == snapshot(71)
+
+    final = messages[3]
+    assert isinstance(final, ModelResponse)
+    final_part = final.parts[0]
+    assert isinstance(final_part, SpeechPart)
+    assert final_part.transcript is not None and 'KLM' in final_part.transcript

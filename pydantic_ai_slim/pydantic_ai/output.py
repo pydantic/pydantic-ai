@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Generic, Literal, Protocol, cast, overload
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
@@ -57,7 +57,9 @@ StructuredOutputMode = Literal['tool', 'native', 'prompted']
 
 
 OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', type[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
+    'OutputTypeOrFunction',
+    type[T_co] | TypeForm[T_co] | Callable[..., Awaitable[T_co] | T_co],
+    type_params=(T_co,),
 )
 """Definition of an output type or function.
 
@@ -74,6 +76,8 @@ class _NoneOutput(Protocol[T_co]):
     and would not add `None` to the output type if it did. Matching `None` structurally binds `T` to `None` through
     `__class__`, while `__bool__` returning `Literal[False]` keeps other values out (a class annotating its own
     `__bool__` that way would also match). A list of only `None` still type-checks, though it is refused at run time.
+
+    Pyright 1.1.412 and later also matches `None` as a `TypeForm`, so this is for older Pyright versions.
     """
 
     @property
@@ -749,9 +753,11 @@ _OutputSpecItem = TypeAliasType(
 )
 
 
+# `_NoneOutput` stays out of the recursive sequence: in there, mypy can't solve `T_co` when a generic `OutputSpec[T]`
+# is passed on, so a list with a bare `None` has its own branch, one level deep.
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co] | _NoneOutput[T_co]'],
+    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co]'] | Sequence[_OutputSpecItem[T_co] | _NoneOutput[T_co]],
     type_params=(T_co,),
 )
 """Specification of the agent's output data.

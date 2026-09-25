@@ -462,7 +462,7 @@ Each sanitization can be turned off individually when the corresponding parts we
 
 ## Persisting sessions
 
-[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Storage](storage.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
+[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Persistence](persistence.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
 
 For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
 
@@ -692,13 +692,13 @@ agent = Agent('anthropic:claude-opus-4-7')
 
 
 @agent.tool
-def trigger_alert(ctx: RunContext[None]) -> str:
+def trigger_alert(ctx: RunContext) -> str:
     ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
 
 
 @agent.tool
-def enter_incident_mode(ctx: RunContext[None]) -> str:
+def enter_incident_mode(ctx: RunContext) -> str:
     # Enqueue a `SystemPromptPart` to adjust the agent's standing instructions mid-run.
     ctx.enqueue(SystemPromptPart(content='You are now in incident mode: be terse and action-oriented.'))
     return 'incident mode enabled'

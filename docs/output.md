@@ -49,7 +49,7 @@ Structured outputs (like tools) use Pydantic to build the JSON schema used for t
 
     Specifically, there are three valid uses of `output_type` where you'll need to do this:
 
-    1. When using a union of types, e.g. `output_type=Foo | Bar`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`. Alternatively, you can use a list: `output_type=[Foo, Bar]`.
+    1. With mypy or Pyright before 1.1.412: when using a type expression that isn't a plain class, like a union `output_type=Foo | Bar`, a `Literal['a', 'b']`, or a constrained `Annotated[float, Field(ge=0, le=1)]`. Pyright 1.1.412 and later accepts these as [PEP 747](https://peps.python.org/pep-0747/) type forms and infers the type they spell, but mypy and older Pyright versions do not consider them a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the type expression to `output_type`. For a union, you can alternatively use a list: `output_type=[Foo, Bar]`.
     2. With mypy: When using a list, as a functionally equivalent alternative to a union, or because you're passing in [output functions](#output-functions). Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19142) with mypy to try and get this fixed.
     3. With mypy: when using an async output function. Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19143) with mypy to try and get this fixed.
 
@@ -87,7 +87,7 @@ print(result.output)
 #> width=10 height=20 depth=30 units='cm'
 ```
 
-1. This could also have been a union: `output_type=Box | str`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Box | str`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -98,7 +98,7 @@ from pydantic_ai import Agent
 
 agent = Agent[object, list[str] | list[int]](
     'openai:gpt-5-mini',
-    output_type=list[str] | list[int],  # type: ignore # (1)!
+    output_type=list[str] | list[int],  # (1)!
     instructions='Extract either colors or sizes from the shapes provided.',
 )
 
@@ -111,7 +111,7 @@ print(result.output)
 #> [10, 20, 30]
 ```
 
-1. As explained in the "Type checking considerations" section above, using a union rather than a list requires explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. As explained in the "Type checking considerations" section above, with mypy or older Pyright versions, using a union rather than a list requires explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -245,7 +245,7 @@ If desired, this marker class can be used alongside one or more [`ToolOutput`](#
 
 Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
-Some models cannot write text at all, and say so through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on their profile — [TypeSafe's Jev](models/typesafe.md) is one. On those, any `output_type` that leaves text output available is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent: the default `str`, a `str` among several output types, a `TextOutput` function, and [`PromptedOutput`](#prompted-output), which asks for its structured data as text. Give such a model one structured `output_type`, such as a `BaseModel`, instead.
+Some models cannot write text at all, and say so through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on their profile — [decision models](models/decision.md) such as [TypeSafe's Jev](models/typesafe.md) are. On those, any `output_type` that leaves text output available is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent: the default `str`, a `str` among several output types, a `TextOutput` function, and [`PromptedOutput`](#prompted-output), which asks for its structured data as text. Give such a model a structured `output_type`, such as a `BaseModel` or a union of them, instead.
 
 !!! note
     When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does **not** apply the `TextOutput` function. To stream the value it produces, use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead. See [Streaming Text](#streaming-text) for details.
@@ -390,7 +390,7 @@ print(repr(result.output))
 #> Vehicle(name='Ford Explorer', wheels=4)
 ```
 
-1. This could also have been a union: `output_type=Fruit | Vehicle`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Fruit | Vehicle`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -441,7 +441,7 @@ print(repr(result.output))
 #> Vehicle(name='Ford Explorer', wheels=4)
 ```
 
-1. This could also have been a union: `output_type=Vehicle | Device`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Vehicle | Device`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -739,7 +739,7 @@ class InvalidRequest(BaseModel):
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
     'google:gemini-3-flash-preview',
-    output_type=Output,  # type: ignore
+    output_type=Output,
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
 )
