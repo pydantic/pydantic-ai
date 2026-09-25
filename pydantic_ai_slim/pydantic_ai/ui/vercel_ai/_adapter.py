@@ -1239,6 +1239,8 @@ def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePar
     parts: list[UIMessagePart] = []
     for chunk in iter_metadata_chunks(tool_result):
         if isinstance(chunk, DataChunk):
+            if chunk.transient:
+                continue
             parts.append(DataUIPart(type=chunk.type, id=chunk.id, data=chunk.data))
         elif isinstance(chunk, SourceUrlChunk):
             parts.append(
