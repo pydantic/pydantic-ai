@@ -45,8 +45,9 @@ Resolve base and per-tool configuration with `OperationConfigRole` and `DurableO
 Handle known ID variants and retain a default branch because the public union grows in minor
 releases. The union includes model requests, suspended-response
 cancellation, message compaction, event handling, discovery, validation, calls, and
-`CapabilityOperationId`. Capability methods marked with
-`@durable_operation` arrive through the same backend and config resolver as framework operations.
+`CapabilityOperationId`. Capability methods marked with `@durable_operation` arrive through the
+same backend and config resolver as framework operations, so do not maintain a second registration
+path for them.
 
 A toolset the run holds reaches the durable unit through the run context, so an engine that
 serializes it (or dispatches the unit elsewhere) sees none and the unit enters its own, as every unit
@@ -69,7 +70,9 @@ locked fallback on first dispatch. A `DurableWorkspace` never reaches a unit: in
 get the run's live wrapped workspace through `_unit_workspace`, and engines that serialize the run
 context (Temporal) rebuild `ctx.workspace` from the serialized ref through the worker's
 construction-time capabilities, without re-running `for_run`, which is why `workspace_rebuilt_in_unit`
-engines reject a per-run wrapper-chain change. `in_durable_unit()` (a `ContextVar` set by
+engines reject a per-run wrapper-chain change. A live `workspace=` argument inside the container is
+claimed through the capabilities by its ref (`_claim_explicit_workspace`), dropping any caller-side
+wrapper, and raises `UserError` when no capability recognizes it. `in_durable_unit()` (a `ContextVar` set by
 `CallableOperationBackend`) is the "already inside a unit" answer for engines whose own
 `in_durable_context` stays true inside a unit (Prefect). Expected workspace errors cross as data
 (`WorkspaceOperationError`) and are re-raised as their original types; Temporal additionally lists

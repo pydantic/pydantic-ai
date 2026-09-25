@@ -158,29 +158,33 @@ persisted operation names.
 
 ### Workspace operations
 
-When a construction-time capability supplies a [workspace](../workspace.md), the base binds one
-operation per [`Workspace`][pydantic_ai.workspaces.Workspace] method called from container code,
-identified by [`WorkspaceOperationId`][pydantic_ai.durable_exec.WorkspaceOperationId] with the
-[`WorkspaceMethod`][pydantic_ai.durable_exec.WorkspaceMethod] as its `method`, plus an `'ensure'`
-operation that runs at the start of every run in the container to create or attach the environment
-and journal its `WorkspaceRef` and canonical working directory. Nothing is bound for an agent without
-a workspace supplier, so its persisted name set does not change.
+When a capability attached at construction supplies a [workspace](../workspace.md), the base binds
+one operation per [`Workspace`][pydantic_ai.workspaces.Workspace] method, identified by
+[`WorkspaceOperationId`][pydantic_ai.durable_exec.WorkspaceOperationId] with a
+[`WorkspaceMethod`][pydantic_ai.durable_exec.WorkspaceMethod] as its `method`. It also binds an
+`'ensure'` operation, which runs at the start of every run to create or attach the environment and
+journal its `WorkspaceRef` and working directory. An agent without a workspace gets no workspace operations, so its persisted
+names do not change.
 
-These operations use the `'workspace'` config role.
-[`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig] takes an optional
-`workspace=` config and falls back to the `capability` config without one. A namer must handle the
-new ID; [`JournalOperationNamer`][pydantic_ai.durable_exec.JournalOperationNamer] names it
-`{agent}__workspace__{method}`. Hash-keyed engines must add a per-container sequence to these
-operations' cache identity, as they do for event handling: two identical reads with a write between
-them are two operations, not one cached result.
+What your backend must handle:
 
-The parameters and results are pydantic dataclasses whose `bytes` fields serialize as base64, so
-they cross both codecs and an engine's own converter unchanged. A failure a workspace is expected
-to raise (`WorkspaceError` and its subclasses, `FileNotFoundError`, `PermissionError`,
-`UnicodeDecodeError`, and the other builtin file errors, plus `UserError`, `TypeError` and
-`ValueError`) crosses as data and is re-raised as the same type in container code; the unit only
-fails, and is retried, for anything else. Commands and writes are at-least-once under retries, so
-engines default `run`, `write_bytes`, `write_text`, `make_dir` and `remove` to a single attempt.
+- **Config.** These operations use the `'workspace'` role.
+  [`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig] takes an optional
+  `workspace=` config and falls back to the `capability` config without one.
+- **Names.** A custom namer must name the new ID;
+  [`JournalOperationNamer`][pydantic_ai.durable_exec.JournalOperationNamer] uses
+  `{agent}__workspace__{method}`.
+- **Caching.** Hash-keyed engines must add a per-container sequence to the cache identity, as for
+  event handling: two identical reads with a write between them are two operations, not one cached
+  result.
+- **Retries.** Default `run`, `write_bytes`, `write_text`, `make_dir` and `remove` to a single
+  attempt. A retry repeats the command or write.
+
+Parameters and results are pydantic dataclasses (`bytes` fields serialize as base64), so they cross
+both codecs and an engine's own converter unchanged. Errors a workspace
+is expected to raise, such as a missing file or a read-only refusal, come back as data and are
+re-raised as the same type in container code. The unit itself fails, and is retried, only for other
+errors.
 
 ### API evolution
 

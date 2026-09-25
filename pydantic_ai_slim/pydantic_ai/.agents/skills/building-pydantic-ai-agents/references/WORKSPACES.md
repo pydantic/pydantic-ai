@@ -21,35 +21,45 @@ or a security boundary. Use it only for trusted work. `working_dir` is required;
 such as `'.'` resolves against the current directory at construction, and a leading `~` is
 expanded; the caller owns that directory. Commands inherit only `PATH` and
 `HOME` from the agent process, with `env` and then the per-call `env` layered on top. Never pass `os.environ` wholesale: it hands the
-model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`. It has the default id
-`local_workspace`, so a second one replaces the first unless it gets its own `id`. Its ref is
-`WorkspaceRef(provider='local', id=<working_dir, ~ expanded>)` from construction (the directory
-must exist; the first operation raises `WorkspaceUnavailableError` otherwise), and the capability
+model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`. An agent has one workspace capability: two
+`LocalWorkspace`s share the default id `local_workspace` and combine into the last one (none of
+the earlier one's settings carry over), and any two suppliers left after combining (different
+classes, or `LocalWorkspace`s with distinct `id`s) raise `UserError` at construction or run start.
+Its ref is `WorkspaceRef(provider='local', id=<absolute working_dir>)` from construction (the
+directory is not checked then; the first operation raises `WorkspaceUnavailableError` if it is
+missing), and the capability
 claims only that exact ref: a foreign ref, or a local ref for another directory, gets `None`, so message history
 cannot redirect the agent to another host directory (pass `workspace='new'` to start over in the
 configured one). For a single run, pass the backend instead:
-`agent.run(..., workspace=LocalWorkspaceBackend('.'))`.
+`agent.run(..., workspace=LocalWorkspaceBackend('.'))`, or
+`workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))` for a read-only run (outside
+durable execution; see below).
 Without an attached workspace, operations raise `UserError`; a capability that needs one checks
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
-and file methods for every backend; wrappers can override primitives and
-`ReadOnlyWorkspace` blocks commands and changes.
+and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override
+operations, delegate the rest to `self.wrapped`), `ReadOnlyWorkspace` blocks commands and changes,
+and `workspace.read_only` lets a tool provider leave write tools out. To disable workspace access
+for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`.
 
 `resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
-components (native through `SupportsRealpath`, `readlink -f` in the shell otherwise).
+components (native through `SupportsRealpath`, `readlink` in the shell otherwise).
 
-An explicit backend passed through `workspace=` is used directly, and a `Workspace` facade or
-wrapper (`ReadOnlyWorkspace(...)`, `result.workspace`, `ctx.workspace`) is kept as-is. An explicit
+Outside a durable container, an explicit backend passed through `workspace=` is used directly, and
+a `Workspace` facade or wrapper (`ReadOnlyWorkspace(...)`, `result.workspace`, `ctx.workspace`) is
+kept as-is (inside one, see below). An explicit
 `WorkspaceRef` is offered to configured capabilities, and raises if none recognizes it.
 `workspace='new'` ignores any ref in message history and asks capabilities with `ref=None` for a
-fresh workspace, raising if none supplies one. With
-`workspace=None`, capabilities receive the latest `ModelResponse.workspace_ref` from message
-history, or `None` when there is no reference. A latest `None` suppresses older references. History
-supplies identity, not provider configuration. The first capability, in order, whose
-`get_workspace` returns a backend wins and later ones are not asked, so attaching several workspace
-capabilities lets an agent pick up a ref from any of their providers; without a ref the first one
-creates the fresh workspace. With no supplier, the unavailable default explains how to attach a
-workspace without raising. `get_workspace` runs after `for_run`, is synchronous, and must have no
-side effects. A capability should return `None` for references it does not own.
+fresh workspace, raising if none supplies one. With `workspace=None`, capabilities receive the
+latest `ModelResponse.workspace_ref` from message history; a latest `None` suppresses older ones. History
+supplies identity, not provider configuration. Precedence is: explicit `workspace=`, then the
+history ref, then a fresh workspace from the capability. When nothing supplies a workspace (no
+capability, or a history ref the capability declines) the run gets an unattached placeholder
+instead of raising; its operations raise `UserError` explaining how to attach one. Moving a
+conversation to another provider therefore needs `workspace='new'`: the new provider's capability
+declines the old provider's ref. `get_workspace` runs before `for_run` (a capability that only a
+`for_run` contributes is asked afterwards, and `for_run` may not change a selection made before
+it), is synchronous, and must have no side effects or I/O. A capability should return `None` for
+references it does not own.
 
 A `WorkspaceRef` names an environment that exists, and exists only once it does. A backend built
 without a ref reports `ref is None`, creates the environment on its first operation, and sets `ref`
@@ -63,10 +73,13 @@ recorded as `workspace_ref` on its last `ModelResponse` (`None` if no environmen
 run on an agent without that provider's capability records `None`, which hides the older ref, so pass
 `workspace=result.workspace` (or its ref) to continue after it.
 
-A provider backend keeps credentials and its SDK client, exposes a typed awaitable native handle as
-`workspace`, and owns a lock/cache plus private `_create_or_attach(ref)`. The core does not manage
-provider lifecycle at run boundaries. The application owns SDK retries, cleanup, TTL, and pause/stop
-operations.
+The core does not create or destroy environments at run boundaries; the application owns
+SDK retries (outside durable execution), cleanup, TTL and pause/stop through the provider's SDK or run hooks. `Workspace.backend` reaches
+the concrete backend for provider-specific methods (not from workflow code under durable
+execution). Sandbox providers (Modal, E2B, Daytona, Sprites) ship as capabilities in the
+[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). Check a custom backend by
+subclassing `pydantic_ai.workspaces.testing.WorkspaceBackendSuite` and providing its `backend`
+fixture.
 
 Exception contract a backend must follow: `WorkspaceUnavailableError` when the environment is gone
 or unreachable (ends the run; never reaches the model); `WorkspaceTimeoutError` for a command over
@@ -86,12 +99,13 @@ tool) `ctx.workspace` is the plain workspace, rebuilt on Temporal from the seria
 same capabilities (policy wrappers included). One `ensure` unit at run start creates or attaches the
 environment and records its ref and working directory, so all units share one environment and
 `working_dir()`/`resolve()` need no unit. Inside a container `workspace=` takes `None`, `'new'`, a
-`WorkspaceRef`, a previous `result.workspace`, or a live instance whose ref a capability recognizes;
-other live backends and wrappers raise `UserError` (put policy on the capability, e.g.
-`LocalWorkspace(..., read_only=True)`). `run`/writes/`make_dir`/`remove` are attempted once by
+`WorkspaceRef`, a previous `result.workspace`, or a live instance whose ref a capability recognizes,
+which is rebuilt through that capability. Any wrapper around it, such as `ReadOnlyWorkspace`, is
+silently dropped, so put policy on the capability (e.g. `LocalWorkspace(..., read_only=True)`). A
+live instance without a recognized ref raises `UserError`. `run`/writes/`make_dir`/`remove` are attempted once by
 default; configure with `workspace_activity_config`, `workspace_step_config` or
 `workspace_task_config`. The deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` wrappers refuse
 workspaces in their container.
 
-See the [workspace guide](https://pydantic.dev/docs/ai/workspace/) for protocol details and lifecycle
+See the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/) for protocol details and lifecycle
 examples.

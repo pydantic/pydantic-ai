@@ -4,23 +4,24 @@
     options:
         members:
             - Workspace
-            - FileEntry
-            - WorkspaceBackend
-            - WorkspaceError
-            - WorkspaceReadOnlyError
+            - WrapperWorkspace
+            - ReadOnlyWorkspace
+            - LocalWorkspaceBackend
+            - UnavailableWorkspace
             - WorkspaceRef
-            - WorkspaceTimeoutError
-            - WorkspaceUnavailableError
+            - WorkspaceBackend
             - SupportsCommands
             - SupportsFilesystem
             - SupportsRealpath
-            - WrapperWorkspace
-            - LocalWorkspaceBackend
-            - ReadOnlyWorkspace
-            - UnavailableWorkspace
             - WorkspaceCommand
-            - WorkspaceFileEntry
             - WorkspaceResult
+            - CommandResult
+            - WorkspaceFileEntry
+            - FileEntry
+            - WorkspaceError
+            - WorkspaceUnavailableError
+            - WorkspaceTimeoutError
+            - WorkspaceReadOnlyError
 
 # `pydantic_ai.workspaces.testing`
 

@@ -187,9 +187,11 @@ You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQ
 
 ### Workspaces
 
-A [workspace](../workspace.md) supplied by a capability works inside a workflow without further setup. Every workspace operation called from workflow code — a capability hook, a function tool (which DBOS runs inline in the workflow), an output function, or `result.workspace` — runs as its own step, named `{name}__workspace__{method}`, and one `{name}__workspace__ensure` step at the start of the run creates or attaches the environment and records its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] and working directory. On recovery the workflow function re-executes with every step's recorded output, so the rebuilt workspace reattaches to the same environment instead of creating a second one; `working_dir()` and `resolve()` answer from the recorded value. Inside a step (an MCP tool, a `@durable_operation` hook) the workspace's calls reach the provider directly.
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent with `Agent(capabilities=[...])`, not per run with `agent.run(capabilities=[...])`. [Durable execution](../workspace.md#durable-execution) covers the rules shared by every engine.
 
-Inside a workflow, `workspace=` accepts `None`, `'new'`, a `WorkspaceRef`, a previous result's workspace, or a live instance whose ref an attached capability recognizes; any other live backend or wrapper raises a `UserError`, since recovery could not rebuild it. Attach the workspace capability when the agent is constructed, so its steps are registered. The deprecated `DBOSAgent` wrapper has no durability capability and refuses workspaces inside a workflow altogether.
+Each workspace call made in workflow code runs as its own step, named `{name}__workspace__{method}`. Under DBOS that includes calls from plain function tools, which run in the workflow, as well as capability hooks, output functions and `result.workspace`. A `{name}__workspace__ensure` step at the start of each run creates the environment even if no tool uses it. Inside a step, such as an MCP tool or a [`@durable_operation`][pydantic_ai.capabilities.durable_operation] hook, workspace calls reach the provider directly.
+
+DBOS records each workspace step's arguments and result, so the [size guidance above](#agent-run-context-and-dependencies) applies to file contents and command output your tools move through `ctx.workspace`. Move large files inside an MCP tool or a `@durable_operation` hook instead.
 
 ### Model Selection at Runtime
 
@@ -250,7 +252,7 @@ You can customize DBOS step behavior, such as retries, by passing [`StepConfig`]
 - `mcp_step_config`: The DBOS step config to use for MCP server communication. No retries if omitted.
 - `model_step_config`: The DBOS step config to use for model request steps. No retries if omitted. The model request step carries the [durable-execution retry layer](../retries.md#the-layers) — see [Retry multiplication](../retries.md#retry-multiplication) for how `StepConfig` retries stack with the SDK client's and transport's retries.
 - `event_stream_handler_step_config`: The DBOS step config to use for event stream handler steps (`DBOSDurability` only). No retries if omitted.
-- `workspace_step_config`: The DBOS step config to use for [workspace](#workspaces) steps (`DBOSDurability` only). No retries if omitted, so a command or write is never repeated by a retry; enabling `retries_allowed` applies to every workspace step, reads and writes alike.
+- `workspace_step_config`: The DBOS step config to use for [workspace](#workspaces) steps (`DBOSDurability` only). No retries if omitted, so a retry never repeats a command or write. Setting `retries_allowed` retries every workspace step, reads and writes alike.
 
 Unlike the [Temporal](temporal.md#per-tool-activity-config) and [Prefect](prefect.md#tool-wrapping) integrations, DBOS takes no per-tool config: tool metadata (a `'dbos'` key or otherwise) is ignored, and there's no way to opt an individual tool out of step wrapping.
 

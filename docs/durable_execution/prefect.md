@@ -160,9 +160,9 @@ Unlike Temporal and DBOS, Prefect creates a task per call rather than registerin
 
 ### Workspaces
 
-A [workspace](../workspace.md) supplied by a capability works inside a flow without further setup. Every workspace operation called from flow code — a capability hook, an output function, or `result.workspace` — runs as its own task, named `Workspace: {method}`, and one `Workspace: ensure` task at the start of the run creates or attaches the environment and records its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] and working directory. On a flow retry those tasks replay their cached results, so the rebuilt workspace reattaches to the same environment instead of creating a second one; `working_dir()` and `resolve()` answer from the recorded value. Inside a task (a tool, a `@durable_operation` hook) the workspace's calls reach the provider directly rather than starting nested tasks. Repeated identical operations get distinct cache keys, so a read after a write is not served the earlier read's result.
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent with `Agent(capabilities=[...])`, not per run with `agent.run(capabilities=[...])`. [Durable execution](../workspace.md#durable-execution) covers the rules shared by every engine.
 
-Inside a flow, `workspace=` accepts `None`, `'new'`, a `WorkspaceRef`, a previous result's workspace, or a live instance whose ref an attached capability recognizes; any other live backend or wrapper raises a `UserError`, since a retry could not rebuild it. Attach the workspace capability when the agent is constructed. The deprecated `PrefectAgent` wrapper has no durability capability and refuses workspaces inside a flow altogether.
+Each workspace call made in flow code (capability hooks, output functions, `result.workspace`) runs as its own task, named `Workspace: {method}`. A `Workspace: ensure` task at the start of each run creates the environment even if no tool uses it. Inside a task, such as a tool or a [`@durable_operation`][pydantic_ai.capabilities.durable_operation] hook, workspace calls reach the provider directly.
 
 ### Model Selection at Runtime
 
@@ -271,7 +271,7 @@ You can customize Prefect task behavior, such as retries and timeouts, by passin
 - `model_task_config`: Configuration for model request tasks
 - `event_stream_handler_task_config`: Configuration for event stream handler tasks
 - `tool_task_config`: Default configuration for all tool calls (per-tool overrides go on the tool's `'prefect'` metadata — see [Tool Wrapping](#tool-wrapping) above)
-- `workspace_task_config`: Configuration for [workspace](#workspaces) tasks. No retries by default, so a command or write is never repeated by a retry; setting `retries` applies to every workspace task, reads and writes alike.
+- `workspace_task_config`: Configuration for [workspace](#workspaces) tasks. No retries by default, so a retry never repeats a command or write. Setting `retries` retries every workspace task, reads and writes alike.
 
 Available `TaskConfig` options:
 
