@@ -2160,9 +2160,8 @@ class RealtimeSession:
                 # so audio from here on can be the user's next turn again.
                 self._anonymous_user_turn_awaiting_answer = False
             # Counted here unless the profile says the requests are reported with usage instead.
-            self.usage.requests += int(
-                self._responses_are_requests
-            )  # usage-attribution: the session owns its spans; `wrap_run` opens none
+            requests = int(self._responses_are_requests)
+            self.usage.requests += requests  # usage-attribution: the session owns its spans; `wrap_run` opens none
             self._tool_run_step += 1
             for part in parts:
                 if isinstance(part, ToolCallPart):
