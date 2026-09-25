@@ -3928,6 +3928,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     '`message_history`.'
                 )
 
+            if (resolved.model_settings or {}).get('tool_choice') is not None:
+                warnings.warn(
+                    'Setting `tool_choice` for a realtime session is deprecated and will raise an error in the '
+                    'next major version. A session applies it to every response, including the one after a tool '
+                    "result, so `'required'` or a list of tool names never lets the model answer, and Gemini "
+                    "can't express it at all. To limit which tools the model can use, filter the agent's tools "
+                    'instead, e.g. with `FilteredToolset` or `prepare_tools`.',
+                    PydanticAIDeprecationWarning,
+                    stacklevel=2,
+                )
+
             output_modality = (resolved.model_settings or {}).get('output_modality', 'audio')
             # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
             # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway

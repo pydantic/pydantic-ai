@@ -27,6 +27,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelAPIError,
+    PydanticAIDeprecationWarning,
     RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
@@ -6541,6 +6542,30 @@ async def test_agent_realtime_session_rejects_text_output_when_unsupported() -> 
 
     # The same model is fine for the default audio modality, so the guard is scoped to the request.
     async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='audio')).session():
+        pass
+
+
+async def test_agent_realtime_session_warns_on_tool_choice() -> None:
+    # A session applies `tool_choice` to every response, so a forcing choice never lets the model answer.
+    # Deprecated rather than rejected, so the setting keeps reaching the model for now; a model-level
+    # default warns just like a per-session value.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    with pytest.warns(PydanticAIDeprecationWarning, match='Setting `tool_choice` for a realtime session is deprecated'):
+        async with agent.realtime(model, model_settings=RealtimeModelSettings(tool_choice='required')).session():
+            pass
+    assert (model.last_model_settings or {}).get('tool_choice') == 'required'
+
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    model.settings = RealtimeModelSettings(tool_choice='none')
+    with pytest.warns(PydanticAIDeprecationWarning, match='filter the agent.s tools instead'):
+        async with agent.realtime(model).session():
+            pass
+
+    # Leaving it unset, or explicitly `None` (the default), stays silent.
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(model, model_settings=RealtimeModelSettings(tool_choice=None)).session():
         pass
 
 

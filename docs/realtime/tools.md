@@ -41,6 +41,20 @@ If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
 
+### Limiting the available tools
+
+To limit which tools the model can use, filter the agent's tools as you would for a standard run,
+with a [filtered toolset](../toolsets.md#filtering-tools) or
+[`prepare_tools`](../tools-advanced.md#prepare-tools). A session's tools are fixed when it connects.
+
+Don't use the [`tool_choice`](../tools-advanced.md#tool-choice) setting for this: it is deprecated
+for realtime sessions, emits a
+[`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning] when a session
+starts, and will raise an error in the next major version. A session applies it to every response,
+including the one after a tool result, so `'required'` or a list of tool names never lets the model
+answer: it keeps calling tools until the [request limit](../agent.md#usage-limits) ends the session.
+Gemini Live has no tool-choice configuration at all.
+
 ### Concurrent tool execution
 
 Every tool runs in the background, so a slow tool does not block session events, other tools, or

@@ -179,7 +179,7 @@ A partial dict is merged over the resolved profile; pass a callable
 Realtime sessions have their own settings type, playing the role that
 [model run settings](../agent.md#model-run-settings) play for standard runs:
 [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] defines the settings shared
-across realtime providers, from `tool_choice` to
+across realtime providers, from `max_tokens` to
 [`turn_detection`][pydantic_ai.realtime.TurnDetection]. Set defaults with `settings=` on the
 realtime model constructor, or pass `realtime(model_settings=...)` for one session; per-session
 values override model defaults:
@@ -206,6 +206,9 @@ models, with one deliberate exception:
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
     (Gemini Live and xAI) raises a `UserError` before connecting: silently answering with speech
     would be worse than not starting.
+
+Setting `tool_choice` for a realtime session is deprecated: see
+[Limiting the available tools](tools.md#limiting-the-available-tools) for why and what to use instead.
 
 ## Relationship to standard agent runs
 
