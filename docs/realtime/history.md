@@ -113,7 +113,7 @@ token usage over the model's
 The value is `None` until it can be calculated, and it can go down during a session: providers
 compact or truncate the conversation server-side as it grows, and none of them report when that
 happens. To control how the provider manages a long conversation, use
-[`openai_truncation`](openai.md#settings) on OpenAI and Azure OpenAI or
+[`openai_truncation`](openai.md#settings) on OpenAI Realtime and Azure OpenAI or
 [`google_context_compression`](gemini.md#settings) on Gemini. To carry a long conversation on
 elsewhere, [hand it off to a text agent](#handing-off-to-a-text-agent) or seed a new session with a
 summary.
