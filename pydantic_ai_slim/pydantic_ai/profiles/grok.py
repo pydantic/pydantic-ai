@@ -124,6 +124,9 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # and a pinned list would have silently dropped reasoning for anyone who moved to it.
         'supports_thinking': model_name == 'grok-voice-latest' or model_name.startswith('grok-voice-think-'),
         'emits_input_speech_events': True,
+        # A response's `input_tokens` counts only the input added since the previous response, not the
+        # whole conversation, so it can't measure how full the context window is.
+        'response_usage_covers_context': False,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
     }

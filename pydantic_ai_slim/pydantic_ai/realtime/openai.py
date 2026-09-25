@@ -98,6 +98,7 @@ from ._openai_protocol import (
     resolve_transcription_model,
     response_failed_error,
     response_finish_reason,
+    response_provider_details,
     seed_items,
     tool_choice_config,
     tool_def_to_openai,
@@ -895,12 +896,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # frame (its `response.usage` is empty), so fall back to it.
         frame_usage = done.usage if isinstance(done, ProtocolResponseDoneEvent) else None
         usage = self._map_response_usage(response.usage) or self._map_response_usage(frame_usage)
+        # The response's `provider_details` ride along too: a response that called a tool is recorded
+        # from this usage rather than from its `ResponseDone` (suppressed for a function-call-only
+        # response, and arriving after the response is already recorded otherwise), so without them a
+        # tool-call response would lack the `status` every other response carries. Not for a superseded
+        # response, though: the session may be recording the newer one when this usage lands, and the
+        # older response's status (typically `cancelled`) doesn't describe it.
+        provider_details = None if superseded else response_provider_details(response)
         if usage is not None:
             events.append(
                 SessionUsage(
                     usage=usage,
                     provider_response_id=response_id or None,
                     finish_reason=finish_reason,
+                    provider_details=provider_details,
                 )
             )
         elif matches_active_response and finish_reason == 'tool_call':
@@ -909,6 +918,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     usage=RequestUsage(),
                     provider_response_id=response_id or None,
                     finish_reason='tool_call',
+                    provider_details=provider_details,
                 )
             )
         # Reported even for a superseded response: its failure is real, and it's the only report of it.

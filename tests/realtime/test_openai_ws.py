@@ -856,6 +856,13 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(tool_response, ModelResponse)
     assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
     assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (63, 22)
+    # Recorded from the function-call-only `response.done`'s usage, it carries the same provider fields
+    # as every other response rather than dropping the `status` its suppressed `ResponseDone` held.
+    assert (tool_response.provider_details, tool_response.provider_response_id, tool_response.finish_reason) == (
+        {'status': 'completed'},
+        IsStr(),
+        'tool_call',
+    )
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -919,6 +926,7 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                provider_response_id='resp_EKSmUJpNeUEiyalwKu31r',
                 run_id=run_id,
                 conversation_id=conversation_id,
                 state='interrupted',
@@ -986,6 +994,7 @@ async def test_tool_error_ends_transcript_only_session(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                provider_response_id='resp_EKSoZDrBYT3y3OzgBEMya',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1101,6 +1110,7 @@ def test_profile_allow_seeding() -> None:
         emits_input_speech_events=True,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
+        response_usage_covers_context=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=None,
