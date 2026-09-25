@@ -952,9 +952,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # A fresh socket also drops anything the old one was still holding for us.
             self._cancelled_response_id = None
             if replay_response:
-                # Queued as deferred until it is on the wire, so a failed send is replayed next attempt.
-                self._pending_response = True
-                self._deferred_response_inputs[:] = replay_inputs
                 await self._create_response(replay_inputs)
             # Cleared only once the replay is on the wire, so a send that failed above leaves the
             # request queued for the next attempt instead of losing it.
