@@ -8,6 +8,7 @@ translation rules that only show up under conditions a recorded call doesn't rel
 
 from __future__ import annotations as _annotations
 
+import base64
 import json
 from contextlib import contextmanager
 from dataclasses import replace
@@ -40,7 +41,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.realtime import RealtimeError, RealtimeModelProfile, RealtimeTurnCompleteEvent, infer_realtime_model
+from pydantic_ai.realtime import (
+    RealtimeError,
+    RealtimeModelProfile,
+    RealtimeSession,
+    RealtimeTurnCompleteEvent,
+    infer_realtime_model,
+)
 from pydantic_ai.realtime.codec import (
     CancelResponse,
     ClearAudio,
@@ -625,9 +632,11 @@ def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
     events = connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
     assert events[0] == SessionUsage(RequestUsage())
-    # Only the response that asked for calls owes usage; the next one reports only what it has.
+    # Every backend response is reported exactly once, calls or not: each is a request the backend made.
+    # A backend that gave up closed its delegation, so a later terminal isn't one of its responses.
     later = connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
-    assert not any(isinstance(event, SessionUsage) for event in later)
+    expected = [SessionUsage(RequestUsage())] if nested_type == 'response.completed' else []
+    assert [event for event in later if isinstance(event, SessionUsage)] == expected
 
 
 @pytest.mark.parametrize(
@@ -659,11 +668,13 @@ def test_a_backend_that_gives_up_is_reported(nested: dict[str, Any], code: str, 
     events = connection._map_response_event(nested, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
     assert events == [
+        # Reported without usage, it is still a request the backend made.
+        SessionUsage(RequestUsage()),
         RealtimeSessionErrorEvent(
             message=f'The delegated OpenAI Responses backend did not finish ({reason}).', code=code
-        )
+        ),
     ]
-    error = events[0]
+    error = events[1]
     assert isinstance(error, RealtimeSessionErrorEvent) and error.recoverable is True
 
 
@@ -1545,7 +1556,7 @@ async def test_a_turn_completes_after_a_failed_handoff() -> None:
                 break
 
     assert [type(event).__name__ for event in events] == snapshot(
-        ['OutputTranscript', 'RealtimeSessionErrorEvent', 'ResponseDone']
+        ['OutputTranscript', 'SessionUsage', 'RealtimeSessionErrorEvent', 'ResponseDone']
     )
 
 
@@ -1645,22 +1656,29 @@ def test_a_new_transcript_segment_is_spaced_from_the_last() -> None:
     assert fragment('Sorry', speaker='input')[-1] == InputTranscript('Sorry')
 
 
-def test_a_quiet_stretch_after_speech_is_forwarded_only_as_a_pause(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Live's track never stops, so forwarding every quiet frame of a reply ended each with seconds of silence."""
-    clock = [100.0]
-    monkeypatch.setattr(live_module, '_now', lambda: clock[0])
+def _audio_frame(pcm: bytes) -> ServerEvent:
+    return _event({'type': 'session.output_audio.delta', 'delta': base64.b64encode(pcm).decode()})
+
+
+def test_a_quiet_stretch_after_speech_is_forwarded_only_as_a_pause() -> None:
+    """Live's track never stops, so forwarding every quiet frame of a reply ended each with seconds of silence.
+
+    The pause is measured by how much audio it is, not by when it arrives: a stalled network delivers
+    seconds of buffered quiet at once, and a stalled event loop reads a short pause late.
+    """
     connection = _connection()
-    silence = _event({'type': 'session.output_audio.delta', 'delta': 'AAAAAAAAAAA='})
-    voice = _event({'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='})
+    voice = _audio_frame(b'\x00\x10' * 2400)
+    quiet = _audio_frame(b'\x00' * 4800)  # 100 ms at 24 kHz
 
     connection._map_event(voice)  # pyright: ignore[reportPrivateUsage]
-    clock[0] += 0.3
-    assert [type(e).__name__ for e in connection._map_event(silence)] == ['AudioDelta']  # pyright: ignore[reportPrivateUsage]
-    clock[0] += 0.3
-    assert connection._map_event(silence) == []  # pyright: ignore[reportPrivateUsage]
-    # Speech resuming is a pause after all, and the next one is timed from it.
+    forwarded = [bool(connection._map_event(quiet)) for _ in range(8)]  # pyright: ignore[reportPrivateUsage]
+    assert forwarded == [True] * 5 + [False] * 3
+    # Speech resuming is a pause after all, and the next one is measured from it.
     connection._map_event(voice)  # pyright: ignore[reportPrivateUsage]
-    assert [type(e).__name__ for e in connection._map_event(silence)] == ['AudioDelta']  # pyright: ignore[reportPrivateUsage]
+    assert connection._map_event(quiet) != []  # pyright: ignore[reportPrivateUsage]
+    # One frame holding more than the whole allowance is not a pause either.
+    connection._map_event(voice)  # pyright: ignore[reportPrivateUsage]
+    assert connection._map_event(_audio_frame(b'\x00' * 48_000)) == []  # pyright: ignore[reportPrivateUsage]
 
 
 def test_the_wait_after_a_delegated_call_is_not_spoken() -> None:
@@ -1750,24 +1768,121 @@ async def test_request_limit_is_checked_as_backend_responses_arrive() -> None:
             _backend_completion('d2'),
         )
     )
+    realtime = Agent().realtime(
+        OpenAILiveModel('gpt-live-1', provider='openai'), usage_limits=UsageLimits(request_limit=1)
+    )
+    sessions: list[RealtimeSession] = []
     with _patched_connect(ws):
         with pytest.raises(UsageLimitExceeded, match='request_limit of 1'):
-            async with (
-                Agent()
-                .realtime(OpenAILiveModel('gpt-live-1', provider='openai'), usage_limits=UsageLimits(request_limit=1))
-                .session() as session
-            ):
+            async with realtime.session() as session:
+                sessions.append(session)
                 with anyio.fail_after(5):
                     async for _ in session:
                         pass
+
+    # The request past the limit had already run: it is recorded before the session ends, tokens and all.
+    assert sessions[0].usage.requests == 2
+    assert sessions[0].usage.input_tokens == 20
+
+
+async def test_a_backend_response_without_usage_is_still_a_request() -> None:
+    """A backend response that fails before reporting usage was still a request the backend made."""
+    failed = {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': 'd1',
+        'event': _backend_terminal('response.failed', status='failed'),
+    }
+    ws = _FakeWebSocket(_live_frames(_delegation_created('d1'), failed, _delegation_created('d2'), _HANDOFF_INCOMPLETE))
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            with anyio.fail_after(5):
+                errors = 0
+                async for event in session:  # pragma: no branch
+                    errors += isinstance(event, RealtimeSessionErrorEvent)
+                    if errors == 2:
+                        break
+
+    # One for the response that failed, one for the response the handoff error ended.
+    assert session.usage.requests == 2
 
 
 def test_closing_punctuation_after_the_reply_began_is_not_a_new_turn() -> None:
     """Live transcribes the user's closing punctuation after the model has started answering over it.
 
-    Recorded live over an always-on microphone: `' Alice'`, then the reply's `' Hi Alice'`, then the
-    user's `'.'`. Opening a turn for it recorded a request holding nothing but the full stop.
+    Recorded live over an always-on microphone: `' Alice'` (ending at 2000 ms), then the reply's
+    `' Hi Alice'`, then the user's `'.'` starting at 2000 ms. Opening a turn for it recorded a request
+    holding nothing but the full stop.
     """
+    connection = _connection()
+
+    def fragment(delta: str, speaker: str, start_ms: int) -> list[Any]:
+        return connection._map_event(  # pyright: ignore[reportPrivateUsage]
+            _event(
+                {
+                    'type': f'session.{speaker}_transcript.delta',
+                    'delta': delta,
+                    'start_ms': start_ms,
+                    'end_ms': start_ms + 200,
+                    'event_id': 'e',
+                }
+            )
+        )
+
+    fragment(' Alice', 'input', 1800)
+    assert fragment(' Hi Alice', 'output', 1800) == [
+        InputTranscript('', is_final=True),
+        OutputTranscript(' Hi Alice'),
+    ]
+    assert fragment('.', 'input', 2000) == []
+    # Later on the timeline, a fragment of symbols is the user saying something new: a `'?'`, say.
+    assert fragment('?', 'input', 4000) == [InputTranscript('?')]
+    # Words while the model is talking are always the user's.
+    fragment(' Sure', 'output', 4200)
+    assert fragment(' Wait', 'input', 4200) == [InputTranscript(' Wait')]
+
+
+def test_an_unrelated_error_leaves_delegated_work_running() -> None:
+    """Only an error known to end a handoff settles the delegations in flight; the frame names none.
+
+    Settling on any error abandoned work that went on to complete, and lost the calls it asked for.
+    """
+    connection = _connection()
+    _open_delegation(connection)
+    # Recorded live, for a context append over the cap.
+    frame = {
+        'type': 'error',
+        'event_id': 'event_ERodY3WFXhnyRbzdG03oB',
+        'error': {
+            'type': 'invalid_request_error',
+            'code': 'invalid_value',
+            'message': 'Context append text must not exceed 500 tokens.',
+            'param': 'content',
+        },
+    }
+
+    events = connection._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert events == [
+        RealtimeSessionErrorEvent(message='Context append text must not exceed 500 tokens.', code='invalid_value')
+    ]
+    assert 'd1' in connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_an_explicit_tool_choice_of_none_is_unset(model: OpenAILiveModel) -> None:
+    """Settings shared across providers may say `tool_choice=None`, which asks for nothing."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    with _patched_connect(_FakeWebSocket([started])):
+        async with model.connect(
+            messages=[],
+            model_settings=OpenAILiveModelSettings(tool_choice=None),
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass
+
+
+def test_transcript_spacing_does_not_carry_across_turns() -> None:
+    """A segment boundary is only within a turn: the next reply or user turn starts as Live sent it."""
     connection = _connection()
 
     def fragment(delta: str, speaker: str) -> list[Any]:
@@ -1783,9 +1898,28 @@ def test_closing_punctuation_after_the_reply_began_is_not_a_new_turn() -> None:
             )
         )
 
-    fragment(' Alice', 'input')
-    assert fragment(' Hi Alice', 'output') == [InputTranscript('', is_final=True), OutputTranscript(' Hi Alice')]
-    assert fragment('.', 'input') == []
-    assert fragment(' ', 'input') == []
-    # Words while the model is talking are still the user's.
-    assert fragment(' Wait', 'input') == [InputTranscript(' Wait')]
+    fragment('Done.', 'output')
+    fragment('Is it?', 'input')
+    connection._settle_open_turns()  # pyright: ignore[reportPrivateUsage]
+
+    assert fragment('Hello', 'output') == [OutputTranscript('Hello')]
+    connection._settle_open_turns()  # pyright: ignore[reportPrivateUsage]
+    assert fragment('Yes', 'input') == [InputTranscript('Yes')]
+
+
+async def test_special_token_text_is_counted_as_live_counts_it() -> None:
+    """tiktoken refuses special-token text such as `<|endoftext|>` by default, which raised its own error.
+
+    Live counts it as the single token it is (checked live: 499 words plus it are accepted, 500 refused).
+    """
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(_text_of(499) + '<|endoftext|>')
+    with pytest.raises(UserError, match='and this is 501'):
+        await connection.send(_text_of(500) + '<|endoftext|>')
+    assert len(sent) == 1

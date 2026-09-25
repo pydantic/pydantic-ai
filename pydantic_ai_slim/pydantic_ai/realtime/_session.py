@@ -3199,10 +3199,8 @@ class RealtimeSession:
         if event.response_scoped:
             self._begin_response()
             if not self._responses_are_requests:
-                # Each report is a request the model has already made, so the one past the limit is
-                # caught as it arrives rather than before it starts.
-                if self._usage_limits is not None:
-                    self._usage_limits.check_before_request(self.usage)
+                # Each report is a request the model has already made: it is recorded in full, and the
+                # one past the limit ends the session below, once it is.
                 self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
         self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
         if event.response_scoped:
@@ -3214,6 +3212,16 @@ class RealtimeSession:
                 self._usage_limits.check_per_request_input_tokens(response_input_tokens)
         # Response pricing happens at finalization, so cost is provisionally unavailable here.
         self._check_usage_limits(warn_if_cost_unavailable=False)
+        if (
+            event.response_scoped
+            and not self._responses_are_requests
+            and self._usage_limits is not None
+            and (request_limit := self._usage_limits.request_limit) is not None
+            and self.usage.requests > request_limit
+        ):
+            raise UsageLimitExceeded(
+                f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
+            )
         if self._asap_drain_ready:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')
