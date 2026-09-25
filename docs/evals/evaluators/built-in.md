@@ -465,7 +465,9 @@ analyze entire experiment results. These are passed via the `report_evaluators` 
 | Report Evaluator | Purpose | Output |
 |------------------|---------|--------|
 | [`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] | Classification confusion matrix | `ConfusionMatrix` |
-| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` |
+| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` + `ScalarResult` |
+| [`ROCAUCEvaluator`][pydantic_evals.evaluators.ROCAUCEvaluator] | ROC curve with AUC | `LinePlot` + `ScalarResult` |
+| [`KolmogorovSmirnovEvaluator`][pydantic_evals.evaluators.KolmogorovSmirnovEvaluator] | KS plot with KS statistic | `LinePlot` + `ScalarResult` |
 
 **See:** [Report Evaluators](report-evaluators.md) for full documentation, parameters, and examples,
 including how to write custom report evaluators that produce `ScalarResult` and `TableResult` analyses.
