@@ -4110,3 +4110,104 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
 
     assert events[0] == RealtimeSessionReconnectEvent(state_restored=False)
     assert not [frame for frame in fresh.sent if 'conversation.item.create' in frame]
+
+
+class _DroppableWebSocket:
+    """A socket fed live: `drop()` closes it, after which sends raise like a closed `websockets` socket."""
+
+    close_code: int | None = 1006
+    close_reason: str = ''
+
+    def __init__(self) -> None:
+        self._inbox: asyncio.Queue[str | None] = asyncio.Queue()
+        for frame in (_created(), _updated()):
+            self._inbox.put_nowait(json.dumps(sdk_frame(json.loads(frame))))
+        self.sent: list[dict[str, Any]] = []
+        self.dropped = False
+
+    async def recv(self) -> Any:
+        return await self._inbox.get()
+
+    async def send(self, data: str) -> None:
+        if self.dropped:
+            raise rt_openai.websockets.ConnectionClosed(None, None)
+        self.sent.append(json.loads(data))
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        while (frame := await self._inbox.get()) is not None:
+            yield frame  # pragma: no cover - nothing is pushed after the handshake here
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+
+    def drop(self) -> None:
+        self.dropped = True
+        self._inbox.put_nowait(None)
+
+
+class _GatedConnectSequence:
+    """Hands out `sockets` in order; every dial after the first waits for `release`."""
+
+    def __init__(self, sockets: list[_DroppableWebSocket]) -> None:
+        self._sockets = iter(sockets)
+        self._dials = 0
+        self.redialing = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _GatedConnectSequence:
+        return self
+
+    async def __aenter__(self) -> _DroppableWebSocket:
+        self._dials += 1
+        if self._dials > 1:
+            self.redialing.set()
+            await self.release.wait()
+        return next(self._sockets)
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+@pytest.mark.anyio
+async def test_sends_during_a_reconnect_go_out_on_the_new_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A send landing while the socket is re-dialed waits for the new one instead of failing.
+
+    It used to write to the dead socket and raise `RealtimeError`, which killed an always-on microphone
+    task on every reconnect. Audio goes out on the new socket. A typed turn is already in the history
+    the re-dial replays, so only its response is asked for again: sending the text too would give the
+    model the question twice.
+    """
+    first, second = _DroppableWebSocket(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(model).session() as session:
+        await session.send_audio(b'\x00\x01')
+        first.drop()
+        await connect.redialing.wait()
+        microphone = asyncio.create_task(session.send_audio(b'\x02\x03'))
+        typed = asyncio.create_task(session.send('still there?'))
+        await _settle()
+        assert not microphone.done() and not typed.done()
+
+        connect.release.set()
+        await asyncio.wait_for(asyncio.gather(microphone, typed), 5)
+
+    assert [frame['type'] for frame in first.sent] == ['session.update', 'input_audio_buffer.append']
+    assert second.sent[1:] == snapshot(
+        [
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': 'still there?'}],
+                },
+            },
+            {'type': 'input_audio_buffer.append', 'audio': 'AgM='},
+            {'type': 'response.create'},
+        ]
+    )

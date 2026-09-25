@@ -4882,6 +4882,86 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     assert exc_info.value.model_name == 'unknown'
 
 
+class _DroppingConnection(FakeRealtimeConnection):
+    """A live-fed connection whose sends fail with a declared transport error while `dropped` is set."""
+
+    transport_errors = (ConnectionResetError,)
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.inbox: asyncio.Queue[RealtimeCodecEvent | None] = asyncio.Queue()
+        self.dropped = False
+
+    async def send(self, content: RealtimeInput) -> None:
+        if self.dropped:
+            raise ConnectionResetError('connection reset by peer')
+        self.sent.append(content)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        while (event := await self.inbox.get()) is not None:
+            yield event
+
+
+async def _parked(task: asyncio.Task[Any]) -> None:
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert not task.done()
+
+
+async def test_send_on_a_dropped_connection_waits_for_the_reconnect() -> None:
+    # A send that hits a dropped connection parks until the pump has handled the reconnect, then goes
+    # out on the new link; and a failure while receiving goes on without a reconnect still fails it.
+    conn = _DroppingConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.dropped = True
+        retried = asyncio.create_task(session.send_audio(b'\x02'))
+        await _parked(retried)
+        conn.dropped = False
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        await asyncio.wait_for(retried, _LIVENESS_TIMEOUT)
+        assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [b'\x01', b'\x02']
+
+        conn.dropped = True
+        failed = asyncio.create_task(session.send_audio(b'\x03'))
+        await _parked(failed)
+        conn.inbox.put_nowait(None)  # receiving ends: no reconnect is coming
+        with pytest.raises(RealtimeError, match='failed while sending: connection reset by peer'):
+            await asyncio.wait_for(failed, _LIVENESS_TIMEOUT)
+
+
+async def test_send_parked_on_a_dropped_connection_fails_when_the_session_closes() -> None:
+    conn = _DroppingConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.dropped = True
+        parked = asyncio.create_task(session.send_audio(b'\x02'))
+        await _parked(parked)
+        await session.close()
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            await asyncio.wait_for(parked, _LIVENESS_TIMEOUT)
+
+
+async def test_a_send_the_pump_makes_on_a_dropped_connection_still_fails() -> None:
+    # The pump is what delivers a reconnect, so a send it makes itself (draining a queued message at a
+    # turn boundary) can't wait for one: it fails as before rather than deadlocking the session.
+    conn = _DroppingConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.inbox.put_nowait(OutputTranscript(text='Hel', is_final=False))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        session.enqueue('by the way')
+        conn.dropped = True
+        conn.inbox.put_nowait(ResponseDone())
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            async for _ in session:
+                pass
+
+
 async def test_undeclared_send_failure_is_left_alone() -> None:
     # A connection that fails for a reason it didn't declare as a transport error is reporting a bug,
     # not a lost connection; dressing it up as a `RealtimeError` would hide that.

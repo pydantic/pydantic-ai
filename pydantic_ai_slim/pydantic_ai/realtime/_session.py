@@ -836,6 +836,9 @@ class RealtimeSession:
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
+        # Calls whose result send holds a response reservation (see `_send_tool_result`), so cancelling
+        # one can give its reservation back at once rather than when the task gets round to unwinding.
+        self._tool_result_reservations: set[str] = set()
         # Tool execution is gated inside each task so the receive pump remains free to deliver audio,
         # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
         # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
@@ -861,6 +864,10 @@ class RealtimeSession:
         self._asap_drain_deferred = False
         self._asap_drain_ready = False
         self._pump_task: asyncio.Task[None] | None = None
+        # Counts reconnects the pump has handled, and wakes a send parked on a dropped connection (see
+        # `_send_frame`) once the replacement is ready, receiving has ended, or the session closed.
+        self._reconnects_handled = 0
+        self._link_changed = asyncio.Event()
         self._pump_error: Exception | None = None
         self._pump_finished = False
         self._receive_ending = False
@@ -930,6 +937,7 @@ class RealtimeSession:
         if self._teardown is None:
             self._pending_messages.close()
             self._closed = True
+            self._link_changed.set()
             self._finish_taps(discard_pending=True)
             self._release_exchange()
             # A session closed without ever sending, subscribing, or iterating never started one.
@@ -1449,7 +1457,10 @@ class RealtimeSession:
         request = self._new_request([UserPromptPart(content=content)])
         self._record_sent_request(request)
         try:
-            await self._send_frame(content if respond else TextContext(content))
+            # A connection that replays local history on re-dial carries this recorded turn over itself.
+            await self._send_frame(
+                content if respond else TextContext(content), replayed=[CreateResponse()] if respond else []
+            )
         except BaseException:
             if respond:
                 self._release_response_reservation()
@@ -1853,34 +1864,65 @@ class RealtimeSession:
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index
 
-    async def _send_frame(self, *contents: RealtimeInput) -> None:
+    async def _send_frame(self, *contents: RealtimeInput, replayed: Sequence[RealtimeInput] | None = None) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
 
         A single input can expand to several protocol frames (a `ToolResult` creates the conversation
         item and then asks for a response), so the lock is what makes each input indivisible on the
         wire, not just ordered. Passing several inputs extends that indivisibility across them, for
         the cases where an interleaved frame would change what they mean.
+
+        A send that hits a dropped connection waits for the connection's reconnect policy to replace it
+        and then goes out on the new one, so the caller (an always-on microphone task, a tool delivering
+        its result) outlives a reconnect instead of failing on the dead socket. It fails only once
+        receiving ends without a replacement. `replayed` is what to send instead when the connection
+        rebuilds the conversation from local history on re-dial: the inputs already recorded in that
+        history (a text turn) arrived with the replay, so sending them again would duplicate them.
         """
         self._ensure_not_closed()
         self._start_pump()
-        # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
-        # the lock when a background failure ends receiving is one already underway, not the "next
-        # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
-        # session that is ending anyway. Re-taking the full guard under the lock would also raise that
-        # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
-        # which is a caller that asked to send.
-        async with self._send_lock:
-            try:
-                for content in contents:
-                    await self._connection.send(content)
-            except self._connection.transport_errors as e:
+        remaining = list(contents)
+        while True:
+            reconnects = self._reconnects_handled
+            # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
+            # the lock when a background failure ends receiving is one already underway, not the "next
+            # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
+            # session that is ending anyway. Re-taking the full guard under the lock would also raise that
+            # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
+            # which is a caller that asked to send.
+            async with self._send_lock:
+                try:
+                    while remaining:
+                        await self._connection.send(remaining[0])
+                        del remaining[0]
+                    return
+                except self._connection.transport_errors as e:
+                    error = e
+            # Parked outside the lock: the pump that notices the drop and runs the reconnect may itself
+            # be waiting on the lock to send (draining queued messages at a turn boundary). Only a running
+            # pump can deliver a reconnect, and it can't wait on its own, so without one (a session never
+            # entered) or from the pump itself a send fails as it always has.
+            pump = self._pump_task
+            if pump is None or asyncio.current_task() is pump or not await self._await_reconnect(reconnects):
                 # A send that fails because the link is gone is the same failure the receive side
                 # reports; surface it as the same typed error rather than leaking a `websockets` or
                 # provider-SDK exception from what looks like an ordinary method call.
                 raise RealtimeError(
                     model_name=self._error_model_name,
-                    message=f'Realtime connection failed while sending: {e}',
-                ) from e
+                    message=f'Realtime connection failed while sending: {error}',
+                ) from error
+            if replayed is not None and not self._connection.reconnect_restores_in_flight_state:
+                remaining = list(replayed)
+                replayed = None
+
+    async def _await_reconnect(self, reconnects: int) -> bool:
+        """Wait until the pump has handled a reconnect after `reconnects`; `False` if none will come."""
+        while self._reconnects_handled == reconnects:
+            if self._closed or self._pump_finished:
+                return False
+            self._link_changed.clear()
+            await self._link_changed.wait()
+        return not self._closed
 
     @property
     def _error_model_name(self) -> str:
@@ -2683,6 +2725,11 @@ class RealtimeSession:
         nothing and stays `True`. Whether the settlement *emitted* events is not the test: an in-flight
         response carried only by pending provider metadata is finalized into history without any.
         """
+        # Wake any send parked on the dropped connection (see `_send_frame`). It resumes only after this
+        # handling returns, so a tool still running for a call the reconnect lost is cancelled below
+        # before its result could go out.
+        self._reconnects_handled += 1
+        self._link_changed.set()
         if event.state_restored and self._connection.reconnect_restores_in_flight_state:
             return [event]
         lost_in_flight = self._response_in_flight or bool(self._pending_tool_calls)
@@ -2730,6 +2777,7 @@ class RealtimeSession:
         for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
             self._pending_tool_calls.pop(tool_call_id, None)
             task.cancel()
+            self._release_tool_result_reservation(tool_call_id)
             cancelled_part = ToolReturnPart(
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
@@ -2975,18 +3023,27 @@ class RealtimeSession:
         return result_part, user_content
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
+        tool_call_id = call_part.tool_call_id
         self._reserve_response_request()
+        self._tool_result_reservations.add(tool_call_id)
         try:
-            await self._send_frame(
-                ToolResult(
-                    tool_call_id=call_part.tool_call_id,
-                    output=output,
-                    content=wire_content or None,
-                )
-            )
+            await self._send_frame(ToolResult(tool_call_id=tool_call_id, output=output, content=wire_content or None))
         except BaseException:
-            self._release_response_reservation()
+            self._release_tool_result_reservation(tool_call_id)
             raise
+        self._tool_result_reservations.discard(tool_call_id)
+
+    def _release_tool_result_reservation(self, tool_call_id: str) -> None:
+        """Give back the reservation of a tool result that won't be sent, if it still holds one.
+
+        A result send parked on a dropped connection (see `_send_frame`) is cancelled when the reconnect
+        loses its call. The release happens right at that cancellation, not once the task unwinds: the
+        reconnect's own response boundary is processed in between and would otherwise claim the stale
+        reservation as its own, leaving the count one short when the task then gives it back.
+        """
+        if tool_call_id in self._tool_result_reservations:
+            self._tool_result_reservations.discard(tool_call_id)
+            self._release_response_reservation()
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -3315,6 +3372,7 @@ class RealtimeSession:
                     continue
                 task, call_part = pending
                 task.cancel()
+                self._release_tool_result_reservation(tool_call_id)
                 # Record a cancelled result so the call still has a matching return in history (kept
                 # valid for a handoff), and deliberately don't send a `ToolResult` back to the model —
                 # it abandoned the call.
@@ -3358,6 +3416,7 @@ class RealtimeSession:
         finally:
             self._pump_finished = True
             self._exchange_progress.set()
+            self._link_changed.set()
             if not self._closed:
                 self._finish_taps()
             self._queue_put(self._queue_changed)

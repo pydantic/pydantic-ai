@@ -17,7 +17,7 @@ Application Default Credentials.
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal, cast
 
@@ -40,6 +40,7 @@ from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AudioUrl,
     BinaryAudio,
     BinaryContent,
@@ -1224,6 +1225,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # Gemini requires. Calls Gemini sends without an id get a synthetic one so parallel id-less
         # calls don't collide.
         self._tool_calls: dict[str, tuple[str, str | None]] = {}
+        # Outstanding calls issued since the last resumption handle: a session resumed from an earlier
+        # handle doesn't answer their results (verified live: 2.5 ignores one, 3.8 closes the turn
+        # without speaking). Gemini issues no handle while a call is executing, so a call still running
+        # at a drop is always one of them.
+        self._tool_calls_since_handle: set[str] = set()
         self._native_part_index = 0
         # The `tool_call_id` generated for the most recent `executable_code` part, reused to pair the
         # following `code_execution_result` return with its call — mirroring the classic `GoogleModel`
@@ -1277,7 +1283,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 video=genai_types.Blob(data=content.data, mime_type=content.media_type)
             )
         elif isinstance(content, ToolResult):
-            name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
+            # Forgotten only once sent: a send that hits a dropped connection is retried on the next one.
+            name, gemini_id = self._tool_calls.get(content.tool_call_id, ('', None))
             # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
             # output and binary attachments raise — loudly, with the tool result unsent, never a
             # silent placeholder. Every live delivery channel was probed and fails: content in a
@@ -1323,6 +1330,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     else None,
                 )
             )
+            self._tool_calls.pop(content.tool_call_id, None)
+            self._tool_calls_since_handle.discard(content.tool_call_id)
         else:
             raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
 
@@ -1347,16 +1356,27 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         message=f'{self._provider_label} connection closed: {e}', recoverable=False
                     )
                     return
-                state_restored = self._resumption_handle is not None
+                # The re-dialed session resumes from the latest handle, or starts fresh without one, and
+                # won't answer a result for a call made since: a tool task still running for one would
+                # send its result into a reply that never comes.
+                lost_tool_calls = [
+                    call_id
+                    for call_id in self._tool_calls
+                    if self._resumption_handle is None or call_id in self._tool_calls_since_handle
+                ]
+                state_resumed = self._resumption_handle is not None
+                # Losing a call loses the exchange it belongs to, so that isn't a restored state either.
+                state_restored = state_resumed and not lost_tool_calls
                 if await self._try_reconnect():
-                    if not state_restored and self._tool_calls:
-                        # Without a resumption handle the re-dialed session is a fresh one that never
-                        # issued these calls, so a tool task still running for the lost session would
-                        # send its result back against an id Gemini doesn't know. Abandon them the way
-                        # Gemini's own `tool_call_cancellation` does: the tasks are cancelled and each
-                        # call still gets a matching return in history.
-                        yield ToolCallCancelled(tool_call_ids=list(self._tool_calls))
-                        self._tool_calls.clear()
+                    if lost_tool_calls:
+                        if state_resumed:
+                            await self._settle_lost_tool_calls(lost_tool_calls)
+                        # Abandon them the way Gemini's own `tool_call_cancellation` does: the tasks are
+                        # cancelled and each call still gets a matching return in history.
+                        for call_id in lost_tool_calls:
+                            del self._tool_calls[call_id]
+                        self._tool_calls_since_handle.clear()
+                        yield ToolCallCancelled(tool_call_ids=lost_tool_calls)
                     if self._turn_open:
                         # The dropped connection was mid-turn. Gemini never continues an in-flight
                         # generation on the re-dialed connection (resumption restores conversation
@@ -1374,6 +1394,22 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 )
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
+
+    async def _settle_lost_tool_calls(self, call_ids: list[str]) -> None:
+        """Answer calls a resumed session lost with an error, so they don't swallow the next input.
+
+        The session resumes still waiting on the exchange the calls belong to, but no longer accepts
+        their results. Verified live: on `gemini-3.8-live` the next input only closes that stale
+        exchange, so the user's next turn goes unanswered. Answering the calls closes it instead, with
+        an empty `turn_complete`. Gemini 2.5 ignores the response. If the new socket drops again, the
+        next reconnect handles it like any other drop.
+        """
+        responses = [
+            genai_types.FunctionResponse(id=gemini_id, name=name, response={'error': INTERRUPTED_TOOL_RETURN_CONTENT})
+            for name, gemini_id in (self._tool_calls[call_id] for call_id in call_ids)
+        ]
+        with suppress(*self.transport_errors):
+            await self._session.send_tool_response(function_responses=responses)
 
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff, resuming from the latest handle; return whether it worked."""
@@ -1475,6 +1511,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # never issued is what "Gemini rejects unknown ids" is about.
                 call_id = call.id or generate_tool_call_id()
                 self._tool_calls[call_id] = (name, call.id)
+                self._tool_calls_since_handle.add(call_id)
                 # A tool call opens the turn like audio output does: the session holds a partial
                 # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
                 self._turn_open = True
@@ -1486,6 +1523,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # or every barge-in leaks an entry for the life of the connection.
             for call_id in cancelled_ids:
                 self._tool_calls.pop(call_id, None)
+                self._tool_calls_since_handle.discard(call_id)
             events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
         if message.usage_metadata is not None:
             events.append(
@@ -1522,4 +1560,5 @@ class GoogleRealtimeConnection(RealtimeConnection):
         update = message.session_resumption_update
         if update is not None and update.new_handle:
             self._resumption_handle = update.new_handle
+            self._tool_calls_since_handle.clear()
         return events

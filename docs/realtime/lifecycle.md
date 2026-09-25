@@ -68,6 +68,12 @@ realtime = agent.realtime(
 session, preventing an endpoint that repeatedly accepts and closes connections from redialing
 forever.
 
+While a reconnect is under way, anything you send (microphone audio, a typed turn, a tool's result)
+waits for the new connection and goes out on it, so a `send_audio()` microphone task survives the
+drop. The send raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] only if the reconnect fails.
+On OpenAI and Azure OpenAI a typed turn is already in the replayed history (see
+[State restoration](#state-restoration)), so only its reply is requested again.
+
 Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
@@ -100,7 +106,10 @@ completes with the response terminal as usual, and `state_restored` stays `True`
 reports `False` and cancels running tools) but closes the cut reply as an interrupted response
 (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input.
+quiet until the next input. Gemini issues no handle while a tool call is running, and a session
+resumed from an earlier handle never answers that call's result. So a tool still running at the drop
+is cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
+the call was interrupted, and `state_restored` is `False`.
 
 Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply
