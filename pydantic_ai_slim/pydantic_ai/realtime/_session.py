@@ -238,10 +238,14 @@ _FULL_PROFILE = RealtimeModelProfile(
     audio_output_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
 )
 
-# Audio chunks are kilobytes apiece, so a slow player is bounded tightly. Transcript items are short
-# strings, and dropping one silently corrupts the text a user is reading rather than causing an
-# audible glitch, so they get a far deeper window for the same trivial cost.
-_AUDIO_TAP_SIZE = 32
+# Providers generate speech several times faster than it plays (OpenAI 6-9x, Gemini 3-4x), so a
+# device-paced player routinely has most of a reply queued before it has heard the first seconds of it.
+# The audio window is therefore measured in playback time rather than chunks (whose size varies from
+# ~40 ms on Gemini to 400 ms on OpenAI) and sized to hold any realistic reply generated ahead of
+# playback; drop-oldest is only a memory cap for a view that stopped being consumed. Five minutes of
+# 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
+# the text a user is reading, so they get a deep window for a trivial cost.
+_AUDIO_TAP_SECONDS = 300
 _TRANSCRIPT_TAP_SIZE = 512
 _SESSION_DELTA_QUEUE_SIZE = 512
 # Structural events are some five per turn against one delta per audio frame, so they are not what
@@ -310,6 +314,10 @@ class _AudioTap:
 
     queue: asyncio.Queue[bytes | object]
     subscribed_at_bytes: int
+    max_buffered_bytes: int
+    """How much audio the queue may hold before the oldest chunks are dropped to make room."""
+    buffered_bytes: int = 0
+    """Audio currently queued for the consumer."""
     dropped_bytes: int = 0
     """Gaps the consumer has already moved past, which its playback position no longer accounts for."""
     pending_dropped_bytes: int = 0
@@ -324,6 +332,25 @@ class _AudioTap:
     progress: asyncio.Event = field(default_factory=asyncio.Event)
     """Set when playback advances or the view ends, waking `wait_for_playback()`."""
     ended: bool = False
+
+    def put(self, chunk: bytes) -> int:
+        """Queue a chunk without blocking the pump, dropping the oldest to stay within the byte budget.
+
+        The newest chunk is always kept, even on its own over budget. Returns how many chunks were
+        dropped; their bytes become a gap ahead of the consumer.
+        """
+        dropped = 0
+        while self.buffered_bytes and self.buffered_bytes + len(chunk) > self.max_buffered_bytes:
+            # The sentinel can't be dropped: it is only enqueued once the pump has finished, after
+            # which nothing publishes.
+            oldest = self.queue.get_nowait()
+            assert isinstance(oldest, bytes)
+            self.buffered_bytes -= len(oldest)
+            self.pending_dropped_bytes += len(oldest)
+            dropped += 1
+        self.queue.put_nowait(chunk)
+        self.buffered_bytes += len(chunk)
+        return dropped
 
     def finish(self) -> None:
         self.ended = True
@@ -1155,8 +1182,10 @@ class RealtimeSession:
         The subscription starts when this method is called, so audio the model produces between
         the call and the consumer's first iteration is buffered rather than missed. A view handed
         to `asyncio.create_task` therefore misses nothing while waiting for its first turn on the
-        event loop. Each iterator has a 32-chunk buffer. If its consumer falls behind (or never
-        starts), the oldest chunk is dropped so audio playback cannot stall tool execution, turn
+        event loop. Models generate speech several times faster than it plays, so each iterator
+        buffers up to five minutes of audio: a consumer that plays each chunk before pulling the next
+        receives a long reply in full. Past that bound (a consumer that stopped iterating, or never
+        started), the oldest chunk is dropped so audio playback cannot stall tool execution, turn
         tracking, or the main event stream; an unconsumed view keeps that bounded buffer until it
         is collected. A device-paced consumer also feeds
         [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes], and on
@@ -1168,10 +1197,14 @@ class RealtimeSession:
         """
         self._require_media_ownership('stream_audio')
         self._ensure_streamable()
-        # The extra slot is reserved for the completion sentinel, so ending a full tap does not
-        # discard one of its 32 data items or block the pump during teardown.
-        queue: asyncio.Queue[bytes | object] = asyncio.Queue(maxsize=_AUDIO_TAP_SIZE + 1)
-        tap = _AudioTap(queue=queue, subscribed_at_bytes=self._emitted_audio_bytes)
+        # The queue itself is unbounded: `_AudioTap.put` bounds it by bytes, and the completion
+        # sentinel always fits behind a full buffer without discarding audio or blocking teardown.
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue()
+        tap = _AudioTap(
+            queue=queue,
+            subscribed_at_bytes=self._emitted_audio_bytes,
+            max_buffered_bytes=_AUDIO_TAP_SECONDS * self.audio_output_sample_rate * 2,
+        )
         self._audio_taps.add(tap)
         if self._pump_finished:
             queue.put_nowait(self._tap_finished)
@@ -1182,6 +1215,7 @@ class RealtimeSession:
             try:
                 while (item := await queue.get()) is not self._tap_finished:
                     assert isinstance(item, bytes)
+                    tap.buffered_bytes -= len(item)
                     # Taking this chunk steps over every gap that opened before it, so those now sit
                     # behind the playback position and belong in the mapping.
                     tap.dropped_bytes += tap.pending_dropped_bytes
@@ -1826,6 +1860,7 @@ class RealtimeSession:
                 break
             assert isinstance(item, bytes)
             tap.dropped_bytes += len(item)
+        tap.buffered_bytes = 0
         # Every change to the playback accounting wakes `wait_for_playback()`, so it re-checks against
         # the flushed queue rather than waiting for audio that will never come.
         tap.progress.set()
@@ -3392,12 +3427,7 @@ class RealtimeSession:
                         self._turn_audio_start_bytes = self._emitted_audio_bytes
                     self._emitted_audio_bytes += len(delta.audio_chunk)
                     for tap in self._audio_taps:
-                        if (dropped := _put_tap(tap.queue, delta.audio_chunk)) is not None:
-                            # The sentinel can't be dropped: it is only enqueued once the pump has
-                            # finished, after which nothing publishes.
-                            assert isinstance(dropped, bytes)
-                            self._audio_tap_drops += 1
-                            tap.pending_dropped_bytes += len(dropped)
+                        self._audio_tap_drops += tap.put(delta.audio_chunk)
             if delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs.
