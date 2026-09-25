@@ -1373,9 +1373,10 @@ async def test_workspace_ref_forwards_backend_identity() -> None:
     assert workspace.ref == WorkspaceRef(provider='fake', id='fake-ref')
 
 
-async def test_run_rejects_relative_cwd() -> None:
-    with pytest.raises(ValueError, match='absolute'):
-        await Workspace(FakeWorkspace('cwd')).run(['true'], cwd='relative')
+async def test_run_resolves_a_relative_cwd_against_the_working_directory(tmp_path: Path) -> None:
+    (tmp_path / 'sub').mkdir()
+    result = await Workspace(LocalWorkspaceBackend(tmp_path)).run(['pwd', '-P'], cwd='sub')
+    assert result.stdout == f'{(tmp_path / "sub").resolve()}\n'
 
 
 async def test_declining_capability_leaves_the_run_workspace_unavailable() -> None:

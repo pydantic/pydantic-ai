@@ -413,19 +413,16 @@ class Workspace(WorkspaceBackend):
     ) -> WorkspaceResult:
         """Execute a command and wait for it to complete.
 
-        Delegates to [`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run]. Raises
-        `UserError` when the backend is filesystem-only.
+        A relative `cwd` resolves against [`working_dir`][pydantic_ai.workspaces.Workspace.working_dir],
+        like every path the facade takes. Delegates to
+        [`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run]. Raises `UserError` when
+        the backend is filesystem-only.
         """
-        # Checked here as well as in the backend: a relative cwd has no workspace meaning, and the
-        # wrapper is the seam every tool call goes through, so the error is the same whichever
-        # backend is attached.
-        if cwd is not None and not posixpath.isabs(cwd):
-            raise ValueError(
-                f'cwd must be an absolute POSIX path, got {cwd!r}; resolve relative paths with `workspace.resolve()` first'
-            )
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
+        if cwd is not None:
+            cwd = await self.resolve(cwd)
         return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
