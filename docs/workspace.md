@@ -7,8 +7,9 @@ through [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace].
 Here is an agent that can run commands in the current directory:
 
 ```python {title="workspace_agent.py"}
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import WorkspaceError
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
@@ -19,7 +20,10 @@ agent = Agent(
 @agent.tool
 async def execute(ctx: RunContext, command: list[str]) -> str:
     """Run a command in the project directory."""
-    result = await ctx.workspace.run(command, timeout=60)
+    try:
+        result = await ctx.workspace.run(command, timeout=60)
+    except WorkspaceError as error:  # e.g. a timeout, or a read-only workspace
+        raise ModelRetry(str(error))
     return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
 
 
@@ -31,9 +35,10 @@ async def main() -> None:
   Commands start there, and relative file paths resolve against it.
 - `ctx.workspace.run(...)` runs a command and returns its `exit_code`, `stdout` and `stderr`. A command
   that fails is a normal result, so the tool can show the model what went wrong.
-- `timeout=60` stops a command that runs too long and raises
-  [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError], which ends the run unless
-  the tool catches it.
+- `timeout=60` stops a command that runs too long with a
+  [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]. The tool turns it, like any
+  [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError], into a `ModelRetry`, so the model can try
+  something else instead of the run ending.
 
 You rarely need to write these tools yourself: the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)
 capabilities, such as `Coder`, `FileSystem` and `Shell`, give the model file, search and shell tools
@@ -133,10 +138,10 @@ To make a single run read-only, wrap its workspace in
 [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] and pass it to the run (not under
 [durable execution](#durable-execution)):
 
-```python {requires="workspace_agent.py"}
+```python {requires="workspace_agent.py,file_tools.py"}
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 
-from workspace_agent import agent
+from file_tools import agent  # with the `read_source` tool from above
 
 
 async def main() -> None:
