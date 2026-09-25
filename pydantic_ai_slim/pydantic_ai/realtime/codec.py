@@ -158,6 +158,12 @@ class AudioDelta:
     _: KW_ONLY
     item_id: str | None = None
     """Provider item ID for the spoken output this chunk belongs to, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -177,6 +183,12 @@ class OutputTranscript:
     an audio transcript becomes a [`SpeechPart`][pydantic_ai.messages.SpeechPart]."""
     item_id: str | None = None
     """Provider item ID for the spoken output, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -229,14 +241,20 @@ class ToolCall:
     uses this signal to keep all calls and their usage on the same `ModelResponse`."""
     item_id: str | None = None
     """Provider conversation-item ID for this call, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
     runs_asynchronously: bool = False
     """Whether the model can keep generating the same response while this call runs.
 
     Gemini Live's `NON_BLOCKING` calls do: the model goes on talking ("this might take a moment") in
     the turn that called the tool. A provider that reports several calls at once flags all of them when
-    any is asynchronous, since they share that response. The session then keeps that response open instead of recording it at
-    the call, so what the model says before the result goes back is recorded with the call, ahead of the
-    result, rather than after it."""
+    any is asynchronous, since they share that response. The session then keeps that response open
+    instead of recording it at the call, so what the model says before the result goes back is recorded
+    with the call, ahead of the result, rather than after it."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
