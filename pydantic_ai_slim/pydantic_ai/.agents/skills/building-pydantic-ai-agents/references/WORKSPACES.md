@@ -60,7 +60,8 @@ all (a summarizer given the history), which ignores it. With no ref and no suppl
 unattached placeholder whose operations raise `UserError` explaining how to attach one.
 `get_workspace` runs before `for_run` (a capability that only a `for_run` contributes is asked
 afterwards, and `for_run` may not change a selection made before it), is synchronous, and must have
-no side effects or I/O. A capability must return `None` for references it does not own.
+no side effects or I/O. A capability must return `None` for references it does not own. A
+workspace capability can't be deferred: `defer_loading=True` on one raises `UserError`.
 
 A `WorkspaceRef` names an environment that exists, and exists only once it does. A backend built
 without a ref reports `ref is None`, creates the environment on its first operation, and sets `ref`

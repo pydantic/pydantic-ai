@@ -445,14 +445,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def has_get_workspace(self) -> bool:
-        return any(
-            capability.defer_loading is not True and capability.has_get_workspace for capability in self.capabilities
-        )
+        return any(capability.has_get_workspace for capability in self.capabilities)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         for capability in self.capabilities:
-            if capability.defer_loading is True:
-                continue
             if (workspace := capability.get_workspace(ctx, ref=ref)) is not None:
                 return workspace
         return None
