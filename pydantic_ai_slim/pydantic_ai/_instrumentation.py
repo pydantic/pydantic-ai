@@ -548,8 +548,15 @@ class _FinishModelRequestSpan(Protocol):
     def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
 
 
-def record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
-    """Record `error` on `span` as an `exception` event.
+def record_exception(
+    span: Span,
+    error: BaseException,
+    *,
+    include_content: bool,
+    escaped: bool = True,
+    attributes: Mapping[str, AttributeValue] | None = None,
+) -> None:
+    """Record `error` on `span` as an `exception` event, with any extra event `attributes`.
 
     With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
     only the exception type is kept: the message and stack trace of an exception raised around
@@ -565,7 +572,7 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
     if not span.is_recording():
         return
     if include_content:
-        span.record_exception(error, escaped=escaped)
+        span.record_exception(error, attributes=attributes, escaped=escaped)
         return
     error_type = type(error)
     type_name = (
@@ -574,7 +581,9 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
         else error_type.__qualname__
     )
     # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
+    span.add_event(
+        'exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped), **(attributes or {})}
+    )
 
 
 def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:

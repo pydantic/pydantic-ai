@@ -296,6 +296,25 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh(include_c
 
 
 @pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_failed_fallback_attempt(include_content: bool) -> None:
+    """An error `FallbackModel` fell back from is recorded on the span even though the run succeeds."""
+    settings, exporter = redacted_setup(include_content)
+
+    def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=500, model_name='first', body=SECRETS['provider_error_body'])
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(
+        FallbackModel(FunctionModel(fail), FunctionModel(respond)), capabilities=[Instrumentation(settings=settings)]
+    )
+    await agent.run(SECRETS['user_prompt'])
+
+    check(exporter, include_content, {'user_prompt', 'model_text', 'provider_error_body'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_when_request_parameters_cannot_be_serialized(
     include_content: bool,
 ) -> None:

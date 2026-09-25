@@ -415,6 +415,8 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agent.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
 
+When the agent is [instrumented](../logfire.md), the model request (`chat`) span describes the model that answered, and each attempt the `FallbackModel` moved on from is recorded as an event on that span: an error as an `exception` event with `exception.escaped` set to `False`, and a response rejected by a [response handler](#response-based-fallback) as a `pydantic_ai.fallback.response_rejected` event carrying its finish reason. Each event names the model that was tried in its `gen_ai.provider.name` and `gen_ai.request.model` attributes, and its zero-based position among the request's attempts in `pydantic_ai.fallback.attempt`. With [`include_content=False`](../logfire.md#excluding-prompts-and-completions), exception events keep only the exception type.
+
 ### Response-Based Fallback
 
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a native tool reporting failure.

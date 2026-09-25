@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 from pydantic_core import to_json
 from typing_extensions import TypedDict
@@ -37,6 +38,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    FinishReason,
     InstructionId,
     InstructionPart,
     ModelResponseState,
@@ -308,7 +310,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'start_time': 2000000000,
-                'end_time': 3000000000,
+                'end_time': 4000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
@@ -350,13 +352,29 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         },
                     },
                 },
+                'events': [
+                    {
+                        'name': 'exception',
+                        'timestamp': 3000000000,
+                        'attributes': {
+                            'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                            'exception.message': "status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            'exception.stacktrace': "pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            'exception.escaped': 'False',
+                            'gen_ai.provider.name': 'function',
+                            'gen_ai.system': 'function',
+                            'gen_ai.request.model': 'function:failure_response:',
+                            'pydantic_ai.fallback.attempt': 0,
+                        },
+                    }
+                ],
             },
             {
                 'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 4000000000,
+                'end_time': 5000000000,
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:success_response:',
                     'agent_name': 'agent',
@@ -460,7 +478,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'start_time': 2000000000,
-                'end_time': 3000000000,
+                'end_time': 4000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
@@ -503,13 +521,29 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         },
                     },
                 },
+                'events': [
+                    {
+                        'name': 'exception',
+                        'timestamp': 3000000000,
+                        'attributes': {
+                            'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                            'exception.message': "status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            'exception.stacktrace': "pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            'exception.escaped': 'False',
+                            'gen_ai.provider.name': 'function',
+                            'gen_ai.system': 'function',
+                            'gen_ai.request.model': 'function::failure_response_stream',
+                            'pydantic_ai.fallback.attempt': 0,
+                        },
+                    }
+                ],
             },
             {
                 'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 4000000000,
+                'end_time': 5000000000,
                 'attributes': {
                     'model_name': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'agent_name': 'agent',
@@ -581,7 +615,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'start_time': 2000000000,
-                'end_time': 4000000000,
+                'end_time': 6000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.provider.name': 'fallback:function,function',
@@ -619,12 +653,40 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'name': 'exception',
                         'timestamp': 3000000000,
                         'attributes': {
+                            'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                            'exception.message': "status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            'exception.stacktrace': "pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            'exception.escaped': 'False',
+                            'gen_ai.provider.name': 'function',
+                            'gen_ai.system': 'function',
+                            'gen_ai.request.model': 'function:failure_response:',
+                            'pydantic_ai.fallback.attempt': 0,
+                        },
+                    },
+                    {
+                        'name': 'exception',
+                        'timestamp': 4000000000,
+                        'attributes': {
+                            'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                            'exception.message': "status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            'exception.stacktrace': "pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            'exception.escaped': 'False',
+                            'gen_ai.provider.name': 'function',
+                            'gen_ai.system': 'function',
+                            'gen_ai.request.model': 'function:failure_response:',
+                            'pydantic_ai.fallback.attempt': 1,
+                        },
+                    },
+                    {
+                        'name': 'exception',
+                        'timestamp': 5000000000,
+                        'attributes': {
                             'exception.type': 'pydantic_ai.exceptions.FallbackExceptionGroup',
                             'exception.message': 'All models from FallbackModel failed (2 sub-exceptions)',
                             'exception.stacktrace': '+------------------------------------',
                             'exception.escaped': 'False',
                         },
-                    }
+                    },
                 ],
             },
             {
@@ -632,7 +694,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 6000000000,
+                'end_time': 8000000000,
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:failure_response:',
                     'agent_name': 'agent',
@@ -656,7 +718,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'events': [
                     {
                         'name': 'exception',
-                        'timestamp': 5000000000,
+                        'timestamp': 7000000000,
                         'attributes': {
                             'exception.type': 'pydantic_ai.exceptions.FallbackExceptionGroup',
                             'exception.message': 'All models from FallbackModel failed (2 sub-exceptions)',
@@ -1274,7 +1336,7 @@ Don't include any text or Markdown fencing before or after.
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'start_time': 2000000000,
-                'end_time': 3000000000,
+                'end_time': 4000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.tool.definitions': [
@@ -1370,13 +1432,29 @@ Don't include any text or Markdown fencing before or after.
                         },
                     },
                 },
+                'events': [
+                    {
+                        'name': 'exception',
+                        'timestamp': 3000000000,
+                        'attributes': {
+                            'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                            'exception.message': 'status_code: 500, model_name: tool-model, body: None',
+                            'exception.stacktrace': 'pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: tool-model, body: None',
+                            'exception.escaped': 'False',
+                            'gen_ai.provider.name': 'function',
+                            'gen_ai.system': 'function',
+                            'gen_ai.request.model': 'function:tool_output_func:',
+                            'pydantic_ai.fallback.attempt': 0,
+                        },
+                    }
+                ],
             },
             {
                 'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 4000000000,
+                'end_time': 5000000000,
                 'attributes': {
                     'model_name': 'fallback:function:tool_output_func:,function:prompted_output_func:',
                     'agent_name': 'agent',
@@ -3395,3 +3473,202 @@ def test_context_window_is_smallest_known_candidate_window() -> None:
     with pytest.raises(NotImplementedError):
         FallbackModel(windowed(200_000)).profile
     assert WrapperModel(FallbackModel(windowed(200_000), windowed(128_000))).context_window == 128_000
+
+
+# --- Failed attempt events ---
+
+
+def _chat_span_events(capfire: CaptureLogfire) -> list[dict[str, Any]]:
+    """The `chat` span's events, after asserting the span did not end in error."""
+    [chat_span] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('chat ')]
+    [status] = [span.status for span in capfire.exporter.exported_spans if span.name == chat_span['name']]
+    assert status.status_code == StatusCode.UNSET
+    return chat_span['events']
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_failed_attempt_event_redacts_exception_without_content(capfire: CaptureLogfire) -> None:
+    """A failed attempt's message and stack trace follow `include_content`, like any exception instrumentation records."""
+    agent = Agent(
+        FallbackModel(failure_model, success_model),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    assert agent.run_sync('hello').output == 'success'
+
+    assert _chat_span_events(capfire) == snapshot(
+        [
+            {
+                'name': 'exception',
+                'timestamp': 3000000000,
+                'attributes': {
+                    'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                    'exception.escaped': 'False',
+                    'gen_ai.provider.name': 'function',
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'function:failure_response:',
+                    'pydantic_ai.fallback.attempt': 0,
+                },
+            }
+        ]
+    )
+    assert 'test error' not in json.dumps(capfire.exporter.exported_spans_as_dict())
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_response_rejected_event(capfire: CaptureLogfire) -> None:
+    def rejected(finish_reason: FinishReason | None) -> FunctionModel:
+        def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('reject')], finish_reason=finish_reason)
+
+        return FunctionModel(respond, model_name=f'rejected-{finish_reason}')
+
+    def reject(response: ModelResponse) -> bool:
+        return response.text == 'reject'
+
+    agent = Agent(
+        FallbackModel(rejected('length'), rejected(None), success_model, fallback_on=reject),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    assert agent.run_sync('hello').output == 'success'
+
+    assert _chat_span_events(capfire) == snapshot(
+        [
+            {
+                'name': 'pydantic_ai.fallback.response_rejected',
+                'timestamp': 3000000000,
+                'attributes': {
+                    'gen_ai.provider.name': 'function',
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'rejected-length',
+                    'pydantic_ai.fallback.attempt': 0,
+                    'gen_ai.response.finish_reasons': ('length',),
+                },
+            },
+            {
+                'name': 'pydantic_ai.fallback.response_rejected',
+                'timestamp': 4000000000,
+                'attributes': {
+                    'gen_ai.provider.name': 'function',
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'rejected-None',
+                    'pydantic_ai.fallback.attempt': 1,
+                },
+            },
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_failed_pinned_continuation_event(capfire: CaptureLogfire) -> None:
+    """A pinned continuation that fails over is attempt 0, and the rewound chain's attempts count on from it."""
+    primary_calls = 0
+
+    def primary(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+
+    model = FallbackModel(FunctionModel(primary, model_name='primary'), FunctionModel(success_response))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    parameters = ModelRequestParameters()
+    messages.append(await model.request(messages, None, parameters))
+
+    response = await InstrumentedModel(model, InstrumentationSettings()).request(messages, None, parameters)
+    assert response.text == 'success'
+
+    assert _chat_span_events(capfire) == snapshot(
+        [
+            {
+                'name': 'exception',
+                'timestamp': 2000000000,
+                'attributes': {
+                    'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                    'exception.message': 'status_code: 500, model_name: primary, body: continuation failed',
+                    'exception.stacktrace': 'pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: primary, body: continuation failed',
+                    'exception.escaped': 'False',
+                    'gen_ai.provider.name': 'function',
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'primary',
+                    'pydantic_ai.fallback.attempt': 0,
+                },
+            },
+            {
+                'name': 'exception',
+                'timestamp': 3000000000,
+                'attributes': {
+                    'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                    'exception.message': 'status_code: 500, model_name: primary, body: continuation failed',
+                    'exception.stacktrace': 'pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: primary, body: continuation failed',
+                    'exception.escaped': 'False',
+                    'gen_ai.provider.name': 'function',
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'primary',
+                    'pydantic_ai.fallback.attempt': 1,
+                },
+            },
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_failed_pinned_continuation_event_stream(capfire: CaptureLogfire) -> None:
+    primary_calls = 0
+
+    async def primary_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls > 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+        yield 'partial'
+
+    primary = _ContinuationModel(
+        _inner=FunctionModel(stream_function=primary_stream, model_name='primary'), _stream_state=['suspended']
+    )
+    model = FallbackModel(primary, success_model_stream)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    parameters = ModelRequestParameters()
+    async with model.request_stream(messages, None, parameters) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    messages.append(streamed_response.get())
+
+    instrumented = InstrumentedModel(model, InstrumentationSettings())
+    async with instrumented.request_stream(messages, None, parameters) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.get().text == 'hello world'
+
+    assert _chat_span_events(capfire) == snapshot(
+        [
+            {
+                'name': 'exception',
+                'timestamp': 2000000000,
+                'attributes': {
+                    'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                    'exception.message': 'status_code: 500, model_name: primary, body: continuation failed',
+                    'exception.stacktrace': 'pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: primary, body: continuation failed',
+                    'exception.escaped': 'False',
+                    'gen_ai.provider.name': 'function',
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'primary',
+                    'pydantic_ai.fallback.attempt': 0,
+                },
+            },
+            {
+                'name': 'exception',
+                'timestamp': 3000000000,
+                'attributes': {
+                    'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                    'exception.message': 'status_code: 500, model_name: primary, body: continuation failed',
+                    'exception.stacktrace': 'pydantic_ai.exceptions.ModelHTTPError: status_code: 500, model_name: primary, body: continuation failed',
+                    'exception.escaped': 'False',
+                    'gen_ai.provider.name': 'function',
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'primary',
+                    'pydantic_ai.fallback.attempt': 1,
+                },
+            },
+        ]
+    )
