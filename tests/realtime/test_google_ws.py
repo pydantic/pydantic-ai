@@ -207,10 +207,10 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
 async def test_image_then_typed_question(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str
 ) -> None:
-    """An image sent right before a typed question is seen: it rides in the question's client content.
+    """An image sent right before a typed question is seen.
 
-    Sent as a video frame instead, Gemini 3.8 answers that it can't see an image and 2.5 sees a
-    low-detail version, because a typed turn only sees images in its own content.
+    The image goes out as a video frame, which these models' typed turns don't see (3.8 answers that
+    it can't see an image, 2.5 misreads it), so the question's client content carries it again.
     """
     provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel(model_name, provider=provider)
@@ -225,9 +225,11 @@ async def test_image_then_typed_question(
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
+    [video] = sent_frames_containing(cassette, '"video"')
     [question] = sent_frames_containing(cassette, 'What fruit is in the image?')
     assert [list(part) for part in question['client_content']['turns'][0]['parts']] == [['inlineData'], ['text']]
-    assert not sent_frames_containing(cassette, '"video"')
+    sent = [message.data for message in cassette.interactions if isinstance(message, CassetteMessage)]
+    assert sent.index(video) < sent.index(question)
 
     messages = session.all_messages()
     assert [type(message).__name__ for message in messages] == ['ModelRequest', 'ModelRequest', 'ModelResponse']
@@ -240,11 +242,7 @@ async def test_image_then_typed_question(
 async def test_image_then_spoken_question(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str
 ) -> None:
-    """An image sent right before a spoken question is seen: it goes out as a video frame first.
-
-    A spoken turn only sees video frames: in a client-content turn, Gemini 2.5 answers that it can't
-    see an image.
-    """
+    """An image sent right before a spoken question is seen, as the video frame it goes out as."""
     provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel(model_name, provider=provider)
     agent = Agent(instructions='Answer in one short sentence.')
@@ -650,6 +648,8 @@ def test_profile_allow_seeding() -> None:
         google_async_tool_calls_by_default=False,
         google_requires_async_tool_calls=False,
         google_supports_async_tool_call_scheduling=True,
+        # A typed turn doesn't see an image sent just before it as a video frame (verified live).
+        google_text_turns_see_video_frames=False,
     )
 
 

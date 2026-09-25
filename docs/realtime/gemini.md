@@ -238,13 +238,13 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
 - [Seeded](history.md#seeding-a-session) function calls/results are represented as readable text
   because Live cannot accept function parts in seeded turns.
-- A Gemini turn only sees the [images](audio.md#images) sent on its own channel: a spoken turn sees
-  live video frames, and a typed turn sees images in its own content. So an image sent with `send()`
-  waits for the next input for up to a second. A text turn carries it in its own content, text sent
-  with `respond=False` leaves it waiting, and anything else (audio, another image, a tool result)
-  sends it as a video frame first. If nothing follows within the second, it goes out as a video
-  frame, so a camera without a microphone still streams. A question typed later than that may not
-  see the image, so send the two together: `session.send([image, 'What is this?'])`.
+- `send()` sends an [image](audio.md#images) as a live video frame. Spoken turns see video frames,
+  but typed turns don't on the Live models. So a typed turn (`send('...')`) also carries the most
+  recent image sent in the last 10 seconds in its own content, ahead of the text. That image is sent,
+  and counted as input, twice. Context text (`respond=False`) and audio don't carry it. To ask about an
+  image in writing, send the two together so the question is always inside the window:
+  `session.send([image, 'What is this?'])`. The `google_text_turns_see_video_frames` profile flag
+  controls the second send.
 - Gemini 3.x Live models transcribe the user's speech even with input transcription
   [turned off](audio.md#input-transcription). Pydantic AI discards those transcripts, so the setting
   still keeps the user's words out of history, but they are still produced on Google's side.

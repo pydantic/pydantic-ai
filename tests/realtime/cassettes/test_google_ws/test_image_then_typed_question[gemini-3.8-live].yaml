@@ -21,6 +21,13 @@ interactions:
 - kind: message
   direction: sent
   data:
+    realtime_input:
+      video:
+        data: _9j_4AAQSkZJRgABAQAAAQABAAD_2wBDAAMCAgICAgMC
+        mime_type: image/jpeg
+- kind: message
+  direction: sent
+  data:
     client_content:
       turns:
       - parts:
@@ -34,11 +41,8 @@ interactions:
   direction: received
   data:
     sessionResumptionUpdate:
-      newHandle: 45db4869-ac36-49aa-85de-eab56eaa878f
+      newHandle: b5475112-c12b-470f-a731-81a6491df488
       resumable: true
-- kind: message
-  direction: received
-  data: {}
 - kind: message
   direction: received
   data: {}
@@ -57,19 +61,22 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: CgAOAAwABwALAAsADwAQAA4ADgARABAAEAAPABIAFgAL
+            data: AAA=
         role: model
       outputTranscription:
         text: 'The image shows a '
 - kind: message
   direction: received
+  data: {}
+- kind: message
+  direction: received
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: YRIKEqsRNBG5ED8Qvg8rD38O2A00DXwMyQsmC30Kzwkr
+            data: BgAZACwAGwAhACQAMAAuAEMAOwA9AEUAOwBAAEwAVABK
         role: model
 - kind: message
   direction: received
@@ -82,7 +89,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: CAAHAAcABwAHAAQAAQAGAAkACQAIAAcACAAHAAUABwAL
+            data: uAGPAVkBQAEdAeAAqABhADgAEwC//63/mf9f/0L/Df+3
         role: model
 - kind: message
   direction: received
@@ -95,11 +102,8 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 7QV6AWP/vPs4+Yj5svmB94b1MfOw7tLrSesE6mXso+7r
+            data: xekb6PvmceXn41/iH+Fs3wre3d2e3dDe6uCG4MfhB+Rc
         role: model
-- kind: message
-  direction: received
-  data: {}
 - kind: message
   direction: received
   data: {}
@@ -111,10 +115,39 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: IvpyB+L5l/UeBqUIyAD0/Bn/H/xR99oEPxGVAfftKPcy
+            data: 9vhGBjEJugDA+zYCQP5Y9CMDtxGoCaz0uPe//0n1FPsM
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: dALX/477/vdm89/uveyt6jLpAuiy6LPpFu1P8t70n/hK
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: kvup80b/RApAFiweOB2hGrkdfiqnJiUvJi6qORpETkbW
         role: model
       outputTranscription:
-        text: sliced kiwi fruit.
+        text: halved kiwi fruit.
+- kind: message
+  direction: received
+  data: {}
 - kind: message
   direction: received
   data:
@@ -123,7 +156,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: x/HtBG4CsPcoB9n/7fYxCBIGDPN6AcoKPPbO/hwId/cz
+            data: qBJdEc8OVAuTBkwCHgAe//v+ef7w/Fj7EvqF+Fb4vfjm
         role: model
 - kind: message
   direction: received
@@ -136,7 +169,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: FgWkBikJbgyeDs0QDROsE4wSFBD5CkwFDv5Q+Pn0lfM1
+            data: NvlkAMsE/QBKANv+1/uzAIUFN/88/C4C6wGq/T0BkwDE
         role: model
 - kind: message
   direction: received
@@ -149,7 +182,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: QP+E/3n/4QA7/1cC4/3Y/dcAIgAj/wD/UwJkAF78y/3n
+            data: 1QzCCo4I+QURA8EAv/6p/PD6tvgP93X14vNA8hrwrO5K
         role: model
 - kind: message
   direction: received
@@ -162,7 +195,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: Yfli+Gj3lPbI9dv0JvRt88ryV/Ly8b/xjfFv8VnxX/G5
+            data: effn9Sb1WPQd9E/0ovR49fH1vvYj95r34PdZ+E74tPgP
         role: model
 - kind: message
   direction: received
@@ -175,20 +208,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: zP0NAdcAKv7vAkgAwfzeA6r+yf19AzD8BgOy/qH+2AFi
-        role: model
-- kind: message
-  direction: received
-  data: {}
-- kind: message
-  direction: received
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: 8f/w//H/8f/w//H/8f/v//D/8P/x/+//8P/w/+//7//v
+            data: EQAHAAAA+P/8/wIACAAVAAsAEQAAAAMABwADABcABQAV
         role: model
 - kind: message
   direction: received
@@ -202,8 +222,8 @@ interactions:
       turnComplete: true
     usageMetadata:
       promptTokenCount: 834
-      responseTokenCount: 64
-      totalTokenCount: 898
+      responseTokenCount: 69
+      totalTokenCount: 903
       promptTokensDetails:
       - modality: TEXT
         tokenCount: 313
@@ -213,5 +233,5 @@ interactions:
         tokenCount: 272
       responseTokensDetails:
       - modality: AUDIO
-        tokenCount: 64
-      thoughtsTokenCount: 46
+        tokenCount: 69
+      thoughtsTokenCount: 30

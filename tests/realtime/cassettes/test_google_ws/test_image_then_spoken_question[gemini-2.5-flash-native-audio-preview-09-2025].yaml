@@ -311,9 +311,9 @@ interactions:
         - text: '**Identifying the Fruit**
 
 
-            I''ve got it - the image depicts a kiwi fruit. Its distinguishing features,
-            the green flesh, black seeds, and white core, leave no room for doubt.
-            I''ll state "kiwi" as the answer.
+            I''ve got it - the image depicts a kiwi fruit. The distinctive green flesh,
+            tiny black seeds, and white core were the key identifiers. I''m confident
+            in my assessment.
 
 
 
@@ -333,7 +333,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: C/3q/Mz8sfyU/Hn8Y/xS/Eb8Pvw5/Dz8QvxS/F78bPx+
+            data: BAADAAYABAAFAAgABgAKAAcACwAIAA0AEQASABMAFAAb
 - kind: message
   direction: received
   data:
@@ -342,7 +342,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: ntZQ1oDWpN183bvdh+SN4W7lXvZq8uP4DQaEE/0M9A21
+            data: iQHVAfYB2QH6ASwCLQJtAmwClwLhAgMDTwNVA5ID6AMO
 - kind: message
   direction: received
   data:
@@ -351,7 +351,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: Efiu87nwlu6L8HH1ofiY+ET5QvqF+xX+1gBmAf8DEAex
+            data: nv/+/pX6TAKqCO/9VuvfC6cRI/Zo9Y/3uf1+FOwP4u3W
 - kind: message
   direction: received
   data:
@@ -360,7 +360,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: Zf5W/7b/NwArAdMBQgL3An4D2gN1BPUEFwU4BU0FIwUj
+            data: AAn0CZsMIg9wE54X6BiGGCMYvRr/H6skByNkHEsVmRKX
 - kind: message
   direction: received
   data:
@@ -369,7 +369,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: agN8A8cDdAMnA5oCIQNRA4gCZgH3ASoD4QIKARAB8QHt
+            data: lv+F/2L/T/9M/1j/VP9V/0n/PP84/0X/Uv9i/3T/hf+U
 - kind: message
   direction: received
   data:
@@ -378,7 +378,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: j/jFAEoFcvx1BugMMe5477oHUAY4CHQHv/iM6doIWBTW
+            data: YPil+P8BlhPtJLgxdTVQMVctJCkqK1QvRDlEPwhAG0Ej
 - kind: message
   direction: received
   data:
@@ -387,7 +387,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: BQC3/Gj/0gWKDI8SxRZZFmcWWxY3FFETaxPNE78WShid
+            data: PP+zAbwE3wnQDF0SdBVyF+Qb1CDsJZEpsirNKkQqNikE
 - kind: message
   direction: received
   data:
@@ -396,7 +396,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: bwJ0A4wBnP4T/9H+BP7c+zL7Iv1g/Pv7/v6u/KL88f6l
+            data: UPRp/pACY/RQBEf2yvjPBxvwFADN+aT3ov747EML0vBj
 - kind: message
   direction: received
   data:
@@ -405,7 +405,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: If57Amj9TgLI/SAAIgGG/ckBWv6uAnj9VwCgAnz9rAKp
+            data: gwNUB54BzwWb/5wA7ADQBFn+tPbgAxH8oveG/vf81fz3
 - kind: message
   direction: received
   data:
@@ -414,7 +414,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 2B5CIJYfKx1lFjIQrxAhD7kO5g48DMkLHAy6Dc8Mzgsi
+            data: ag0XCtkGnwPEAd3+1f0u/Pn33fXQ8cLvde/K7/PuRO4q
 - kind: message
   direction: received
   data:
@@ -423,7 +423,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: kPwf/mL9XPx+/Y8ACQECAikD5/+vAQ0CSgHlAskEWQU0
+            data: Pv9G/03/V/9j/2b/a/9y/3v/f/+F/4n/i/+P/47/jv+M
 - kind: message
   direction: received
   data:
@@ -432,7 +432,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 6//r/+r/6v/s/+3/7P/r/+3/5v/k/+b/4f/l/+f/5f/o
+            data: G/wE/woBogAX/839c/4tAb0BiQDJ/av9qf7y/tQATgCd
 - kind: message
   direction: received
   data:
@@ -441,7 +441,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: ggLo++j9twGD/wUAzwJa/0z7tAATAnP7GAO1AbkBSfkS
+            data: ewJf/20AKv/V+uEAsAJyAtX///6D/8z+CAH2AAMBewNF
 - kind: message
   direction: received
   data:
@@ -450,7 +450,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: jP1q/qMAhwGvAFr/ev1w/JkALAN9AWH/ugAr/en9zAE/
+            data: qv8P/9v+cwBpAogBBQB7/8UAfwFHAp8BngArATgCswR3
 - kind: message
   direction: received
   data:
@@ -459,7 +459,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: hPqzBSAIBwMcA5gH/gtJDxgPsQkFCzUShRdqGPkXFRaD
+            data: a9tC4YDlHeQj4/vd2t093ZTeceSR5ZPoBer26ZTp5uhb
 - kind: message
   direction: received
   data:
@@ -468,7 +468,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: NxooGN8VfxRYFbUYkBtgHgsg/B8QHa8Y6RVZFc0XTxma
+            data: 0eIc4dbeG95u3dzc9NtN3KHc0dsD3M7b89u53Pfec+FH
 - kind: message
   direction: received
   data:
@@ -477,7 +477,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 4e1E7ezsWuwi7DPswOyh7f7uxfC18jX1wPdv+k/9XwBw
+            data: SvIl8gnyjPI18wn0BPb690n6Ef2t/zEDHgb4CM4Lgw6l
 - kind: message
   direction: received
   data:
@@ -486,7 +486,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: uf87/qD8Tfse+tv4ifc299n21/as91n4lPkl+wb9o/4/
+            data: RhvfGuIZPRqsGO0X9xfCFv0T2xPDEMwOdAsoCG8FMwBT
 - kind: message
   direction: received
   data:
@@ -495,7 +495,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: oeoW7nPzc/YM+YP4DPTa9B/11PhVA80NDhIIE60QKgiN
+            data: uPAd8dfxvvJo8xX0mfNc9H/2p/V194/5q/kH+6z85fyk
 - kind: message
   direction: received
   data:
@@ -504,7 +504,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: gAGkAO/+IP25AKYEtAK0AekAe/Qo/o0MdAJ/AVr9evIQ
+            data: sP7U/rP+4/7u/g3/Hf9H/7//Wv/G/xAAuf8QADkAawCI
 - kind: message
   direction: received
   data:
@@ -513,7 +513,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: QPRK8FjwlvEO9r36Mfxr+tP3xPR+9p360f13AdMAzf58
+            data: I/8h/17+//0x/uv9tP7y/e3+Vf47/Gj+s/0//mT++v6Q
 - kind: message
   direction: received
   data:
@@ -522,7 +522,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: Y/3j/LL8Y/10/db97P2l/VD9ZP23/f39pv6K/jH+Rf6r
+            data: egIgA/gCPwIAApEBugFcAW8BnAFuAhQCugDD/7//KgBd
 - kind: message
   direction: received
   data:
@@ -531,7 +531,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 6P/8/xgALAAcABcACgACABkAPQBGAEIAPgA9AD4AVABV
+            data: 0v+3/6n/q/+Q/6n/wf+2/7H/3v/Y/7j/vf+f/5f/p//Q
 - kind: message
   direction: received
   data:
@@ -540,7 +540,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: DgAMAAkADgAJAAwACQAKABIACQAGAAQACQAMAAgACgAK
+            data: 2f/a/+f/+f////X/7P/m/9v/5P/l//X///8IABsAIAAX
 - kind: message
   direction: received
   data:
@@ -549,7 +549,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: /v8AAAEABAACAAQAAgAHAAUACAAKAAEAAwAFAAcABgAI
+            data: LwAwADEAMQAtADAAMQA0AC0ALgAwACsALQAuAC4AKwAs
 - kind: message
   direction: received
   data:
@@ -558,7 +558,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: DAALAAoACwANAAsACwALAAwACQADAAcACQAKAAsACAAK
+            data: EwAUABMAFAAVABUAFwAVABcAGgAbABQAFAAYABkAGAAY
 - kind: message
   direction: received
   data:
@@ -567,7 +567,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 7//v/+//8f/y//H/8v/y/+//6f/t/+//7f/v/+//7f/v
+            data: HwAfAB0AHwAgAB8AIAAbACEAGwAWABsAHAAdAB0AHAAb
 - kind: message
   direction: received
   data:
@@ -576,7 +576,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: EAAMABAAEAANAA0ADwAQABEAFQAWABUADQANABYAEQAU
+            data: CAAJAAUACAAHAAcACAAFAAYAAAD9/wMAAgABAP//AwD/
 - kind: message
   direction: received
   data:
@@ -585,16 +585,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: CQALAAoACwALAAsACwALAAsACQACAAMABwAGAAUACgAF
-- kind: message
-  direction: received
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: +//6/wAA+v/6//v/+f/7//j/+/8DAP7/9/////3//f//
+            data: 2f/X/9v/1v/c/93/2P/f/8r/1//e/+7/7v/n/+7/6P/p
 - kind: message
   direction: received
   data:
@@ -619,4 +610,4 @@ interactions:
       responseTokensDetails:
       - modality: AUDIO
         tokenCount: 59
-      thoughtsTokenCount: 44
+      thoughtsTokenCount: 43

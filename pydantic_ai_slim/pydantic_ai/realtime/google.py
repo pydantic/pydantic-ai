@@ -16,7 +16,7 @@ Application Default Credentials.
 
 from __future__ import annotations as _annotations
 
-import asyncio
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
@@ -355,15 +355,26 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     Function response scheduling is not supported for this model` if the field is sent at all.
     """
 
+    google_text_turns_see_video_frames: bool
+    """Whether a typed turn sees an image sent just before it as a live video frame. Default: `True`.
+
+    `session.send(image)` sends the image as a video frame, which a spoken turn sees. On a model where
+    a typed turn doesn't, the most recent image sent in the last 10 seconds is sent again in the typed
+    turn's own content, ahead of the text. Every Gemini Live model probed misses it:
+    `gemini-3.1-flash-live-preview`, `gemini-3.8-live` and its extended-thinking variant answer that
+    they can't see an image, and `gemini-2.5-flash-native-audio-*` and Vertex's `gemini-live-2.5-flash`
+    misread it.
+    """
+
 
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
 
-# How long a sent image waits for the input that follows it before it goes out on its own as a video
-# frame (see `GoogleRealtimeConnection.send`). Code that sends an image and then a question does so
-# within milliseconds, while a camera sends about one frame a second: one second catches the question
-# without making the latest camera frame reach the model later than the next one would have.
-_IMAGE_HOLD_SECONDS = 1.0
+# How recently an image must have been sent for a typed turn to carry it again, on a model whose typed
+# turns don't see video frames. Long enough for someone to type a short question about an image they
+# just shared, short enough that a question well after it doesn't re-send a stale one. A camera stream
+# always has a fresh frame.
+_RECENT_IMAGE_SECONDS = 10.0
 
 
 # Literal -> SDK enum mappings, kept as small tables so the public API stays string-friendly.
@@ -1174,7 +1185,7 @@ class GoogleRealtimeModel(RealtimeModel):
             # resumption restores server state, and a `RealtimeSessionReconnectEvent` starts a fresh turn.
             if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
                 await session.send_client_content(turns=turns, turn_complete=False)
-            connection = GoogleRealtimeConnection(
+            yield GoogleRealtimeConnection(
                 session,
                 profile=self.profile,
                 provider_name=self._provider.name,
@@ -1184,12 +1195,6 @@ class GoogleRealtimeModel(RealtimeModel):
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
             )
-            try:
-                yield connection
-            finally:
-                # An image still held when the session closes never reaches the model, which isn't
-                # answering anymore anyway.
-                connection._discard_held_image()  # pyright: ignore[reportPrivateUsage]
         finally:
             if cm is not None:
                 await cm.__aexit__(None, None, None)
@@ -1254,12 +1259,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # verified live), so when this is set at reconnect time the turn's boundary would otherwise
         # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
         self._turn_open = False
-        # The image `send` is holding for the input that follows it, and the timer that sends it on its
-        # own if nothing does. (`google-genai` runs on asyncio, so the timer is a plain asyncio task.)
-        self._held_image: BinaryImage | None = None
-        # Counts held images, so a timer can tell whether the image it was started for is still held.
-        self._held_image_count = 0
-        self._held_image_timers: set[asyncio.Task[None]] = set()
+        # On a model whose typed turns don't see video frames, the most recent image sent and when (by
+        # `time.monotonic()`), for the next typed turn to carry again. See `send`.
+        self._text_turns_see_video_frames = cast('GoogleRealtimeModelProfile', self._profile).get(
+            'google_text_turns_see_video_frames', True
+        )
+        self._recent_image: tuple[BinaryImage, float] | None = None
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -1269,24 +1274,22 @@ class GoogleRealtimeConnection(RealtimeConnection):
         """Send content to the Gemini Live API.
 
         Accepts `BinaryAudio` (raw PCM16, 16kHz, mono), a `str` text turn, `TextContext` (text sent
-        with `turn_complete=False`, so it waits for the next turn), `BinaryImage`, and `ToolResult`.
-        The manual turn-taking verbs are not supported (Gemini uses automatic VAD).
-
-        Gemini takes images on two channels, and a turn only sees the images on its own channel
-        (verified live): a spoken turn sees video frames, and a typed turn sees images in its client
-        content. So an image is held until the next input, which decides the channel: a text turn
-        carries it in its own content, and anything else sends it as a video frame first. `TextContext`
-        leaves it held, because it doesn't say which kind of turn will ask about the image. A newer
-        image sends the held one as a video frame, and one that nothing follows goes out as a video
-        frame after `_IMAGE_HOLD_SECONDS`, so a camera without a microphone still streams.
+        with `turn_complete=False`, so it waits for the next turn), `BinaryImage` (a live video
+        frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
+        automatic VAD).
         """
-        if isinstance(content, BinaryImage):
-            await self._send_held_image()
-            self._hold_image(content)
-            return
-        if isinstance(content, str):
+        # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
+        if isinstance(content, BinaryAudio):
+            require_pcm_audio(content, provider_name=self._provider_name)
+            await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
+                audio=genai_types.Blob(data=content.data, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
+            )
+        elif isinstance(content, str):
             parts = [genai_types.Part(text=content)]
-            if (image := self._take_held_image()) is not None:
+            recent_image = self._recent_image
+            if recent_image is not None and time.monotonic() - recent_image[1] <= _RECENT_IMAGE_SECONDS:
+                # This model's typed turns don't see video frames: send the image again, in the turn.
+                image = recent_image[0]
                 parts.insert(
                     0, genai_types.Part(inline_data=genai_types.Blob(data=image.data, mime_type=image.media_type))
                 )
@@ -1295,20 +1298,19 @@ class GoogleRealtimeConnection(RealtimeConnection):
             await self._session.send_client_content(
                 turns=genai_types.Content(role='user', parts=parts), turn_complete=True
             )
-            return
-        if isinstance(content, TextContext):
+            if self._recent_image is recent_image:
+                self._recent_image = None  # carried (or stale): a later typed turn doesn't send it again
+        elif isinstance(content, TextContext):
             await self._session.send_client_content(
                 turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
                 turn_complete=False,
             )
-            return
-        await self._send_held_image()
-        # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
-        if isinstance(content, BinaryAudio):
-            require_pcm_audio(content, provider_name=self._provider_name)
+        elif isinstance(content, BinaryImage):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
-                audio=genai_types.Blob(data=content.data, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
+                video=genai_types.Blob(data=content.data, mime_type=content.media_type)
             )
+            if not self._text_turns_see_video_frames:
+                self._recent_image = (content, time.monotonic())
         elif isinstance(content, ToolResult):
             name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
             # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
@@ -1358,50 +1360,6 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         else:
             raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
-
-    async def _send_video_frame(self, image: BinaryImage) -> None:
-        # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
-        await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
-            video=genai_types.Blob(data=image.data, mime_type=image.media_type)
-        )
-
-    def _hold_image(self, image: BinaryImage) -> None:
-        """Hold `image` for the next input, and start the timer that sends it on its own."""
-        self._held_image = image
-        self._held_image_count += 1
-        timer = asyncio.create_task(self._send_held_image_later(self._held_image_count))
-        # asyncio keeps only a weak reference to a running task.
-        self._held_image_timers.add(timer)
-        timer.add_done_callback(self._held_image_timers.discard)
-
-    def _take_held_image(self) -> BinaryImage | None:
-        """Take the held image for the input about to be sent; its timer then finds nothing to send."""
-        image, self._held_image = self._held_image, None
-        return image
-
-    def _discard_held_image(self) -> None:
-        """Drop the held image and stop its timers, when the connection closes."""
-        self._held_image = None
-        for timer in self._held_image_timers:
-            timer.cancel()
-
-    async def _send_held_image(self) -> None:
-        if (image := self._take_held_image()) is not None:
-            await self._send_video_frame(image)
-
-    async def _send_held_image_later(self, count: int) -> None:
-        """Send the held image as a video frame if it's still held once nothing has followed it for a while."""
-        await asyncio.sleep(_IMAGE_HOLD_SECONDS)
-        if count != self._held_image_count or (image := self._take_held_image()) is None:
-            return  # the input that followed it already sent it
-        try:
-            await self._send_video_frame(image)
-        except self.transport_errors:
-            # The connection dropped. The receive loop reconnects (or reports the loss), so hold the image
-            # again, with a fresh timer, rather than failing the whole connection from a timer — unless
-            # a newer image was sent meanwhile, which supersedes it.
-            if self._held_image is None:
-                self._hold_image(image)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # `session.receive()` yields a single model turn and then returns, so loop to keep serving

@@ -254,6 +254,15 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
+_REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
+    'gemini-2.5-flash-native-audio',
+    'gemini-3.1-flash-live',
+    'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
+    'gemini-live-2.5-flash',  # Vertex AI
+)
+"""Live model families whose typed turns don't see an image sent just before them as a video frame."""
+
+
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for a Gemini Live model."""
     # `models/gemini-3.8-live` is as valid an id as the bare spelling — `google-genai` passes a
@@ -339,6 +348,12 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # for this model`. The native-audio models and `gemini-3.8-live` take `INTERRUPT` (verified live
     # 2026-09-16 for the latter, as Google documents).
     profile['google_supports_async_tool_call_scheduling'] = 'native-audio' in model_name or is_3_8_live
+    # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
+    # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
+    # sees images in its own content, so these get the recent image sent again there.
+    profile['google_text_turns_see_video_frames'] = not model_name.startswith(
+        _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS
+    )
     return profile
 
 
