@@ -1866,12 +1866,23 @@ class RealtimeSession:
         """Replace a response already in history with its interrupted form.
 
         Replaced rather than mutated, so a snapshot a caller took from `all_messages()` doesn't change.
-        Responses are never removed from history, only inserted around, so it is found by identity.
+        Responses are never removed from history, only inserted around, so it is found by identity — and
+        the user turns anchored to it by identity follow it to its replacement. The user who barged in
+        usually started speaking right after it, so their turn is anchored to exactly this response.
         """
         position = next(index for index in range(len(self._history) - 1, -1, -1) if self._history[index] is response)
         marked = replace(response, parts=_mark_last_speech_interrupted(response.parts, played_ms), state='interrupted')
         self._history[position] = marked
         self._finalized_speech = (speech_index, marked)
+
+        def follow(anchor: ModelMessage | None) -> ModelMessage | None:
+            return marked if anchor is response else anchor
+
+        self._pending_anonymous_user_turn_anchors = deque(map(follow, self._pending_anonymous_user_turn_anchors))
+        self._pending_user_turn_anchors = {
+            item_id: (follow(anchor),) for item_id, (anchor,) in self._pending_user_turn_anchors.items()
+        }
+        self._user_turn_anchors = {item_id: follow(anchor) for item_id, anchor in self._user_turn_anchors.items()}
 
     def _flush_tap(self, tap: _AudioTap) -> None:
         """Discard the tap's buffered chunks, counting them as dropped for position mapping."""

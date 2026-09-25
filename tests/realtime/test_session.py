@@ -2111,6 +2111,39 @@ async def test_handle_barge_in_interrupts_automatically_on_speech_start() -> Non
         assert [chunk async for chunk in stream] == []
 
 
+@pytest.mark.parametrize('item_id', ['item-user', None])
+async def test_handle_barge_in_after_generation_keeps_the_user_turn_after_the_cut_reply(item_id: str | None) -> None:
+    """The user who barges in starts speaking right after the reply they cut off.
+
+    Their turn is placed relative to that reply in history, so it must follow the reply to its
+    interrupted replacement rather than lose its place.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK), ResponseDone()],
+        [
+            RealtimeInputSpeechStartEvent(item_id=item_id),
+            AudioDelta(b'c' * _CHUNK),
+            ResponseDone(),
+            # Transcription is asynchronous: the words land after the reply they prompted.
+            InputTranscript(text='wait', is_final=True, item_id=item_id),
+        ],
+    )
+    session = RealtimeSession(conn, _noop_runner, handle_barge_in=True)
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        assert await anext(stream) == b'a' * _CHUNK  # `b` stays buffered and unheard
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert [
+        (type(message).__name__, message.state if isinstance(message, ModelResponse) else None)
+        for message in session.all_messages()
+    ] == [('ModelResponse', 'interrupted'), ('ModelRequest', None), ('ModelResponse', 'complete')]
+
+
 async def test_handle_barge_in_without_truncation_flushes_and_cancels() -> None:
     """On a model without output truncation (xAI), unheard audio still means flush plus a bare cancel."""
     conn = _GatedRealtimeConnection(
