@@ -24,6 +24,7 @@ from typing_extensions import Never, TypeAliasType, assert_never
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._genai_prices import fill_response_cost
+from .._run_context import context_window_fraction
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -1206,14 +1207,7 @@ class RealtimeSession:
             return self._reported_context_window_used
         if not self._profile.get('response_usage_covers_context', True):
             return None
-        context_window = self._profile.get('context_window')
-        if context_window is None or context_window <= 0:
-            return None
-        for message in reversed(self.all_messages()):
-            if isinstance(message, ModelResponse):
-                tokens = message.usage.total_tokens
-                return tokens / context_window if tokens else None
-        return None
+        return context_window_fraction(self.all_messages(), self._profile.get('context_window'))
 
     def stream_audio(self) -> AsyncIterator[bytes]:
         """Stream model audio chunks ready for playback.
