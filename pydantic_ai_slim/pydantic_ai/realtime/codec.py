@@ -233,7 +233,8 @@ class ToolCall:
     """Whether the model can keep generating the same response while this call runs.
 
     Gemini Live's `NON_BLOCKING` calls do: the model goes on talking ("this might take a moment") in
-    the turn that called the tool. The session then keeps that response open instead of recording it at
+    the turn that called the tool. A provider that reports several calls at once flags all of them when
+    any is asynchronous, since they share that response. The session then keeps that response open instead of recording it at
     the call, so what the model says before the result goes back is recorded with the call, ahead of the
     result, rather than after it."""
 

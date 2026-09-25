@@ -1198,7 +1198,8 @@ class GoogleRealtimeModel(RealtimeModel):
                 reconnect=reconnect,
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
-                non_blocking_tools=non_blocking_tools,
+                # Read at each tool call, so a reconnect's re-dialed config is the one that counts.
+                non_blocking_tools=lambda: non_blocking_tools,
             )
         finally:
             if cm is not None:
@@ -1225,14 +1226,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
         input_transcription_enabled: bool = True,
         async_tool_calls: bool = False,
         provider_url: str = '',
-        non_blocking_tools: frozenset[str] = frozenset(),
+        non_blocking_tools: Callable[[], frozenset[str]] | None = None,
     ) -> None:
         self._session = session
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
         self._async_tool_calls_enabled = async_tool_calls
-        # Functions declared `NON_BLOCKING`: their calls are flagged `runs_asynchronously`.
+        # The functions the current config declares `NON_BLOCKING`: a tool-call batch with one of them in it
+        # is flagged `runs_asynchronously`.
         self._non_blocking_tools = non_blocking_tools
         # Whether the model takes a `scheduling` field at all: extended thinking paces results against its
         # own reasoning and closes the session if one is sent. A connection built without a profile keeps
@@ -1505,7 +1507,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         if message.server_content is not None:
             events.extend(self._map_server_content(message.server_content))
         if message.tool_call is not None:
-            for call in message.tool_call.function_calls or []:
+            calls = message.tool_call.function_calls or []
+            non_blocking = self._non_blocking_tools() if self._non_blocking_tools is not None else frozenset[str]()
+            # Classified as a batch: the model keeps talking in the response that made these calls if any
+            # of them is asynchronous, so all of them are held with it, whatever order they're listed in.
+            runs_asynchronously = any((call.name or '') in non_blocking for call in calls)
+            for call in calls:
                 name = call.name or ''
                 # Gemini usually assigns an id, but fall back to the same synthetic id a standard
                 # request builds for an id-less call, so parallel calls don't collide on one key and
@@ -1522,7 +1529,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         tool_call_id=call_id,
                         tool_name=name,
                         args=to_json(call.args or {}).decode(),
-                        runs_asynchronously=name in self._non_blocking_tools,
+                        runs_asynchronously=runs_asynchronously,
                     )
                 )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):

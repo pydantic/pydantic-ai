@@ -424,6 +424,79 @@ def test_tool_def_rejects_a_recursive_schema() -> None:
         )
 
 
+@pytest.mark.parametrize('order', ['blocking_first', 'non_blocking_first'])
+async def test_a_tool_call_batch_with_an_asynchronous_call_runs_asynchronously(order: str) -> None:
+    """Every call of a `tool_call` message is flagged when any is `NON_BLOCKING`, whatever their order.
+
+    The model keeps talking in that response for the asynchronous call's sake, so the session must hold it
+    for the whole batch; flagged one by one, a blocking call listed first would record it before the
+    asynchronous call arrived.
+    """
+    tools = [ToolDefinition(name='blocking_one'), ToolDefinition(name='async_one')]
+    model = _model(_RecordingSession())
+    settings = GoogleRealtimeModelSettings(
+        google_async_tool_calls=True,
+        google_config_overrides={
+            'tools': [
+                genai_types.Tool(
+                    function_declarations=[
+                        genai_types.FunctionDeclaration(name='blocking_one', behavior=genai_types.Behavior.BLOCKING),
+                        genai_types.FunctionDeclaration(name='async_one', behavior=genai_types.Behavior.NON_BLOCKING),
+                    ]
+                )
+            ]
+        },
+    )
+    names = ['blocking_one', 'async_one'] if order == 'blocking_first' else ['async_one', 'blocking_one']
+    async with model.connect(
+        messages=[ModelRequest(parts=[], instructions='x')],
+        model_settings=settings,
+        model_request_parameters=ModelRequestParameters(function_tools=tools),
+    ) as conn:
+        events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id=name, name=name, args={}) for name in names]
+                )
+            )
+        )
+        blocking_only = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id='b2', name='blocking_one', args={})]
+                )
+            )
+        )
+    assert [(e.tool_name, e.runs_asynchronously) for e in events if isinstance(e, ToolCall)] == [
+        (name, True) for name in names
+    ]
+    assert [(e.tool_name, e.runs_asynchronously) for e in blocking_only if isinstance(e, ToolCall)] == [
+        ('blocking_one', False)
+    ]
+
+
+async def test_reconnect_reads_the_redialed_config_for_asynchronous_calls() -> None:
+    """A reconnect builds its config afresh, and the calls it declares `NON_BLOCKING` are what count."""
+    tools = [ToolDefinition(name='first')]
+    params = ModelRequestParameters(function_tools=tools)
+    model = _model(_RecordingSession())
+    async with model.connect(
+        messages=[ModelRequest(parts=[], instructions='x')],
+        model_settings=GoogleRealtimeModelSettings(google_async_tool_calls=True, reconnect={}),
+        model_request_parameters=params,
+    ) as conn:
+        tools.append(ToolDefinition(name='second'))
+        assert await conn._attempt_reconnect()  # pyright: ignore[reportPrivateUsage]
+        events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id='c', name='second', args={})]
+                )
+            )
+        )
+    assert [(e.tool_name, e.runs_asynchronously) for e in events if isinstance(e, ToolCall)] == [('second', True)]
+
+
 @pytest.mark.parametrize('unset_is_non_blocking', [False, True])
 def test_non_blocking_function_names_follow_each_declaration(unset_is_non_blocking: bool) -> None:
     """Only a call to a function declared `NON_BLOCKING` (or left unset where that's the default) runs asynchronously."""
