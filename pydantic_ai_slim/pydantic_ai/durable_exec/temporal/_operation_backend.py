@@ -22,16 +22,12 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
-    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 
 from ._activity_execution import execute_activity
 from ._operation_names import TemporalOperationNamer
-from ._toolset import heartbeating, model_response_payload_errors, payload_size_errors
-
-_CONTENT_WORKSPACE_METHODS = frozenset({'read_bytes', 'read_text', 'write_bytes', 'write_text'})
-"""Workspace activities whose payload carries file content, and can therefore exceed the blob-size limit."""
+from ._toolset import heartbeating, model_response_payload_errors
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
@@ -64,13 +60,11 @@ class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
         model: ActivityConfig,
         event: ActivityConfig,
         tool: ActivityConfig,
-        workspace: Callable[[DurableOperationId], ActivityConfig],
         resolve_tool: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
     ) -> None:
         self._model = model
         self._event = event
         self._tool = tool
-        self._workspace = workspace
         self._resolve_tool = resolve_tool
 
     def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> ActivityConfig:
@@ -78,8 +72,6 @@ class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
             return self._model
         if role == 'event':
             return self._event
-        if role == 'workspace':
-            return self._workspace(operation_id)
         return self._tool
 
     def for_tool(
@@ -108,11 +100,6 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
     @property
     def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
         return self._operation
-
-    @property
-    def config(self) -> ActivityConfig:
-        """The activity config the operation was bound with; a call may pass a widened copy."""
-        return self._config
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
@@ -144,8 +131,6 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         elif isinstance(operation_id, EventStreamHandlerId):
             event = cast(_EventParams, params).event
             activity_config['summary'] = f'handle event: {event.event_kind}'
-        elif isinstance(operation_id, WorkspaceOperationId):
-            activity_config['summary'] = f'workspace: {operation_id.method}'
         else:
             # New operation ids use their stable activity name as the default summary. Their
             # parameter transport must implement `TemporalParameterTransport`, including
@@ -154,16 +139,6 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
 
         if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
             with model_response_payload_errors(model_name):
-                return await execute_activity(
-                    activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
-                )
-        if isinstance(operation_id, WorkspaceOperationId) and operation_id.method in _CONTENT_WORKSPACE_METHODS:
-            with payload_size_errors(
-                f'The `{operation_id.method}` workspace operation moved file content through an activity payload '
-                'that exceeded the Temporal server blob-size limit',
-                'Move the transfer into a tool: it runs inside an activity, so the content never crosses the '
-                'workflow boundary.',
-            ):
                 return await execute_activity(
                     activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
                 )
@@ -182,17 +157,12 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         event_config: ActivityConfig,
         tool_config: ActivityConfig,
         resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
-        workspace_config: Callable[[DurableOperationId], ActivityConfig] | None = None,
         runtime: object | None = None,
     ) -> None:
         super().__init__(
             namer=TemporalOperationNamer(agent_name),
             config=TemporalOperationConfig(
-                model=model_config,
-                event=event_config,
-                tool=tool_config,
-                workspace=workspace_config or (lambda operation_id: tool_config),
-                resolve_tool=resolve_tool_config,
+                model=model_config, event=event_config, tool=tool_config, resolve_tool=resolve_tool_config
             ),
         )
         self._deps_type = deps_type

@@ -158,9 +158,6 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'google.auth',
             # Used by fastmcp via py-key-value-aio
             'beartype',
-            # Pydantic imports it lazily while building the schema of a dataclass whose fields carry
-            # `Field` metadata, which the workflow does for the workspace activities' result types.
-            'annotated_types',
             # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
             'attrs',
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize

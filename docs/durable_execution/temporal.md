@@ -242,17 +242,11 @@ A `native=` factory on [`XSearch`][pydantic_ai.capabilities.XSearch] or [`ImageG
 
 ### Workspaces
 
-Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent with `Agent(capabilities=[...])`, not per run with `agent.run(capabilities=[...])`. [Durable execution](../workspace.md#durable-execution) covers the rules shared by every engine.
-
-In a tool, `ctx.workspace` is rebuilt inside the activity with the same policy (for example `read_only=True`), and its calls go straight to the provider. In workflow code (capability hooks, output functions, `result.workspace`), each workspace call runs as an `agent__{name}__workspace__{method}` activity, plus one `agent__{name}__workspace__ensure` activity at the start of each run, which creates the environment even if no tool uses it.
-
-An activity can run on any worker, so:
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run: in a tool it is rebuilt inside the activity and calls the provider directly, and in workflow code (capability hooks, output functions, `result.workspace`) each call runs as an activity. Because an activity can run on any worker:
 
 - Construct every worker's agent with the same workspace capabilities as the workflow's.
-- In a custom capability's [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace], read only `deps` and the [run context fields listed above](#agent-run-context-and-dependencies).
-- Set workspace policy, such as `read_only=True`, on the capability passed to `Agent(...)`. Changing it per run in [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] raises `UserError`.
-
-Workspace calls from hooks, output functions and `result.workspace` carry file contents in the activity payload, so they count against the [payload size limit](#large-payloads). Read and write large files inside a tool, where `ctx.workspace` calls go straight to the provider, and return only a summary or path.
+- In a custom [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace], read only `deps` and the [run context fields listed above](#agent-run-context-and-dependencies).
+- Move large files inside a tool: a workflow-side call carries the file in the activity payload, which counts against the [payload size limit](#large-payloads).
 
 ### Capabilities at Runtime
 
@@ -639,7 +633,6 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
 - `model_activity_config`: The Temporal activity config to use for model request activities. This is merged with the base activity config. Model request activities carry the [durable-execution retry layer](../retries.md#the-layers): Temporal's default `RetryPolicy.maximum_attempts` of `0` means unbounded re-execution of the model request — see [Retry multiplication](../retries.md#retry-multiplication) for how it stacks with the SDK client's and transport's retries.
 - `event_stream_handler_activity_config`: The Temporal activity config to use for event stream handler activities. This is merged with the base activity config.
 - `toolset_activity_config`: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
-- `workspace_activity_config`: The Temporal activity config to use for [workspace](#workspaces) activities. This is merged with the base activity config. Commands and writes (`run`, `write_bytes`, `write_text`, `make_dir`, `remove`) get a single attempt, so a retry never repeats them, and reads keep the base policy, unless you set a `retry_policy` here, which then applies to every workspace activity. A `run(timeout=...)` that would not finish within the activity's `start_to_close_timeout` extends that activity's deadline to the command's timeout plus 30 seconds.
 
 Because `ActivityConfig` is a `TypedDict`, a misspelled or misplaced key is not caught at runtime by Python and would only fail once the config is handed to Temporal inside the workflow, where the failure is retried indefinitely. Config keys are therefore checked when [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] is constructed, so a key Temporal doesn't know raises a `UserError` up front.
 

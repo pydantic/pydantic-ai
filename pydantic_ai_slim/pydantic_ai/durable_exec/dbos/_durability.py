@@ -79,7 +79,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         model_step_config: StepConfig | None = None,
         event_stream_handler_step_config: StepConfig | None = None,
         mcp_step_config: StepConfig | None = None,
-        workspace_step_config: StepConfig | None = None,
         parallel_execution_mode: DBOSParallelExecutionMode = 'parallel_ordered_events',
         register_legacy_workflows: bool = False,
     ):
@@ -110,10 +109,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_step_config: DBOS step config for model request steps.
             event_stream_handler_step_config: DBOS step config for event stream handler steps.
             mcp_step_config: DBOS step config for MCP server steps.
-            workspace_step_config: DBOS step config for the
-                [workspace](https://pydantic.dev/docs/ai/workspace/#durable-execution) steps, one
-                per `Workspace` method called from workflow code. Steps are attempted once unless
-                `retries_allowed` is set, so a command or write is never repeated by a retry.
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
@@ -124,7 +119,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._model_step_config = model_step_config or {}
         self._event_stream_handler_step_config = event_stream_handler_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
-        self._workspace_step_config = workspace_step_config or {}
         self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
         self._register_legacy_workflows = register_legacy_workflows
         # Populated by for_agent when the capability is attached to an agent.
@@ -158,7 +152,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 model=self._model_step_config,
                 event=self._event_stream_handler_step_config,
                 tool=self._mcp_step_config,
-                workspace=self._workspace_step_config,
             ),
         )
         self._bound_model_operations = self._bind_model_operations(

@@ -25,7 +25,6 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -44,24 +43,13 @@ try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
-    from temporalio.common import RetryPolicy
-    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
-    from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._workspace import (
-        DurableWorkspace,
-        EnsureArguments,
-        ReadBytesArguments,
-        RunArguments,
-        WorkspaceOperationParams,
-        WriteBytesArguments,
-    )
+    from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall
     from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
-    from pydantic_ai.durable_exec.temporal._operation_backend import TemporalBoundOperation
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
-    from pydantic_ai.durable_exec.temporal._transports import _WorkspaceOperationWire
+    from pydantic_ai.durable_exec.temporal._transports import _WorkspaceCallWire
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -305,14 +293,14 @@ async def test_fresh_workspace_is_provisioned_once_and_shared_by_every_side(clie
     assert 'create:' not in ' '.join(_PROVIDER_LOG[1:])
     assert _activity_names(history) == snapshot(
         [
-            'agent__fresh__workspace__ensure',
-            'agent__fresh__workspace__write_text',
+            'agent__fresh__capability__workspace__call',
+            'agent__fresh__capability__workspace__call',
             'agent__fresh__model_request',
             'agent__fresh__toolset__<agent>__call_tool',
             'agent__fresh__toolset__<agent>__call_tool',
             'agent__fresh__model_request',
-            'agent__fresh__workspace__list_dir',
-            'agent__fresh__workspace__read_text',
+            'agent__fresh__capability__workspace__call',
+            'agent__fresh__capability__workspace__call',
         ]
     )
 
@@ -456,63 +444,6 @@ async def test_binary_content_and_expected_errors_cross_the_activity_boundary(cl
     assert _ENVIRONMENTS['env-1']['/remote/blob.bin'] == _BINARY
 
 
-# --- Oversized file content gets an actionable Temporal error ---------------------------------
-
-PayloadOperation = Literal['read_bytes', 'write_bytes']
-
-
-@pytest.mark.parametrize('operation', ['read_bytes', 'write_bytes'])
-async def test_workspace_content_payload_size_error_names_operation_and_remedy(
-    monkeypatch: pytest.MonkeyPatch, operation: PayloadOperation
-) -> None:
-    agent = Agent(TestModel(), name='payload', capabilities=[RemoteWorkspaces(), TemporalDurability()])
-    durability = TemporalDurability.from_agent(agent)
-    assert durability is not None
-    bound = durability._bound_workspace_operations[operation]  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(bound, TemporalBoundOperation)
-
-    async def fail_with_payload_size_error(**kwargs: Any) -> None:
-        cause = ApplicationError(
-            '[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit.',
-            type='PayloadsTooLarge',
-        )
-        error = ActivityError(
-            'activity failed',
-            scheduled_event_id=1,
-            started_event_id=2,
-            identity='test',
-            activity_type=f'workspace__{operation}',
-            activity_id='test',
-            retry_state=None,
-        )
-        error.__cause__ = cause
-        raise error
-
-    monkeypatch.setattr(
-        'pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', fail_with_payload_size_error
-    )
-    arguments = (
-        ReadBytesArguments(path='/remote/blob.bin')
-        if operation == 'read_bytes'
-        else WriteBytesArguments(path='/remote/blob.bin', data=b'content')
-    )
-    params = WorkspaceOperationParams(
-        run_context=RunContext(deps=None, model=TestModel(), usage=RunUsage()),
-        ref=WorkspaceRef(provider='remote', id='environment'),
-        arguments=arguments,
-    )
-
-    with pytest.raises(UserError) as exc_info:
-        await bound(params)
-
-    message = str(exc_info.value)
-    assert message.startswith(
-        f'The `{operation}` workspace operation moved file content through an activity payload '
-        'that exceeded the Temporal server blob-size limit.'
-    )
-    assert 'Move the transfer into a tool' in message
-
-
 # --- An uncaught workspace error fails the workflow instead of hanging it ----------------------
 
 
@@ -614,11 +545,11 @@ async def test_local_workspace_end_to_end(client: Client) -> None:
         assert (Path(_LOCAL_DIR) / 'note.txt').read_text() == 'on disk'
         assert _activity_names(history) == snapshot(
             [
-                'agent__local__workspace__ensure',
+                'agent__local__capability__workspace__call',
                 'agent__local__model_request',
                 'agent__local__toolset__<agent>__call_tool',
                 'agent__local__model_request',
-                'agent__local__workspace__read_text',
+                'agent__local__capability__workspace__call',
             ]
         )
     finally:
@@ -786,89 +717,6 @@ async def test_a_creating_capability_must_recognize_the_ref_it_created(client: C
     )
 
 
-# --- Activity configuration --------------------------------------------------------------------
-
-
-def test_workspace_activities_attempt_mutations_once_by_default() -> None:
-    """Retrying a command or write would repeat its side effect; reads keep the base policy."""
-    agent = Agent(
-        TestModel(),
-        name='config',
-        capabilities=[
-            RemoteWorkspaces(),
-            TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=10))),
-        ],
-    )
-    durability = TemporalDurability.from_agent(agent)
-    assert durability is not None
-    operations = durability._bound_workspace_operations  # pyright: ignore[reportPrivateUsage]
-
-    def attempts(method: Any) -> int | None:
-        operation = operations[method]
-        assert isinstance(operation, TemporalBoundOperation)
-        policy = operation.config.get('retry_policy')
-        assert policy is not None
-        return policy.maximum_attempts
-
-    assert {method: attempts(method) for method in operations} == snapshot(
-        {
-            'ensure': 0,
-            'run': 1,
-            'read_bytes': 0,
-            'write_bytes': 1,
-            'stat': 0,
-            'list_dir': 0,
-            'make_dir': 1,
-            'remove': 1,
-            'exists': 0,
-            'realpath': 0,
-            'read_text': 0,
-            'write_text': 1,
-        }
-    )
-
-    # An explicit workspace retry policy applies to every method, mutating ones included.
-    configured = Agent(
-        TestModel(),
-        name='config',
-        capabilities=[
-            RemoteWorkspaces(),
-            TemporalDurability(workspace_activity_config=ActivityConfig(retry_policy=RetryPolicy(maximum_attempts=3))),
-        ],
-    )
-    configured_durability = TemporalDurability.from_agent(configured)
-    assert configured_durability is not None
-    run = configured_durability._bound_workspace_operations['run']  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(run, TemporalBoundOperation)
-    policy = run.config.get('retry_policy')
-    assert policy is not None
-    assert policy.maximum_attempts == 3
-    assert 'UserError' in (policy.non_retryable_error_types or [])
-
-
-def test_run_timeout_widens_the_activity_deadline() -> None:
-    agent = Agent(
-        TestModel(),
-        name='config',
-        capabilities=[
-            RemoteWorkspaces(),
-            TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60))),
-        ],
-    )
-    durability = TemporalDurability.from_agent(agent)
-    assert durability is not None
-    run = durability._bound_workspace_operations['run']  # pyright: ignore[reportPrivateUsage]
-
-    widen = durability._workspace_operation_config  # pyright: ignore[reportPrivateUsage]
-    assert widen(run, RunArguments(command=['sleep', '1'])) is None
-    assert widen(run, RunArguments(command=['sleep', '1'], timeout=10)) is None
-    widened = widen(run, RunArguments(command=['sleep', '600'], timeout=600))
-    assert widened is not None
-    assert widened.get('start_to_close_timeout') == timedelta(seconds=630)
-    assert isinstance(run, TemporalBoundOperation)
-    assert widened.get('retry_policy') is run.config.get('retry_policy')
-
-
 async def test_activity_refuses_a_ref_no_worker_capability_recognizes() -> None:
     """An `ensure` activity for a ref the worker's capabilities cannot rebuild fails with an explanation."""
     agent = Agent(TestModel(), name='ctx', capabilities=[RemoteWorkspaces(), TemporalDurability()])
@@ -877,10 +725,10 @@ async def test_activity_refuses_a_ref_no_worker_capability_recognizes() -> None:
     ensure = next(
         item
         for item in durability.temporal_activities
-        if ActivityDefinition.must_from_callable(item).name == 'agent__ctx__workspace__ensure'  # pyright: ignore[reportUnknownMemberType]
+        if ActivityDefinition.must_from_callable(item).name == 'agent__ctx__capability__workspace__call'  # pyright: ignore[reportUnknownMemberType]
     )
-    wire = _WorkspaceOperationWire[EnsureArguments](
-        arguments=EnsureArguments(),
+    wire = _WorkspaceCallWire(
+        call=WorkspaceCall(method='ensure'),
         ref=WorkspaceRef(provider='other', id='x'),
         serialized_run_context={'run_id': 'r', 'workspace_ref': {'provider': 'other', 'id': 'x'}},
     )

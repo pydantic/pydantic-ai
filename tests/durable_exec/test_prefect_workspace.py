@@ -15,7 +15,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
-from pydantic_ai.durable_exec._workspace import DurableWorkspace
+from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import ReadOnlyWorkspace, WorkspaceReadOnlyError, WorkspaceRef
 
@@ -61,7 +61,8 @@ class WriteInHook(AbstractCapability[Any]):
 
 
 def _workspace_tasks() -> list[str]:
-    return [name for name in task_names if name.startswith('Workspace')]
+    """The method of each workspace task, in the order the flow ran them."""
+    return [name.split(':')[-1] for name in task_names if name.startswith('Capability: workspace.call')]
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +74,8 @@ def record_task_names(monkeypatch: pytest.MonkeyPatch) -> None:
     original = _operation_backend.PrefectOperationBackend.execute
 
     async def execute(self: Any, **kwargs: Any) -> object:
-        task_names.append(kwargs['name'])
+        call = kwargs['cache_key'][0]
+        task_names.append(f'{kwargs["name"]}:{call.method}' if isinstance(call, WorkspaceCall) else kwargs['name'])
         return await original(self, **kwargs)
 
     monkeypatch.setattr(_operation_backend.PrefectOperationBackend, 'execute', execute)
@@ -130,11 +132,11 @@ async def test_prefect_workspace_operations_run_as_tasks_and_a_flow_retry_replay
     assert list(provider.environments) == ['env-1']
     assert _workspace_tasks() == snapshot(
         [
-            'Workspace: ensure',
-            'Workspace: write_text',
-            'Workspace: ensure',
-            'Workspace: write_text',
-            'Workspace: read_text',
+            'ensure',
+            'write_bytes',
+            'ensure',
+            'write_bytes',
+            'read_bytes',
         ]
     )
 
@@ -155,11 +157,11 @@ async def test_prefect_repeated_identical_reads_are_not_served_from_cache() -> N
     assert await read_twice() == ('one', 'two')
     assert _workspace_tasks() == snapshot(
         [
-            'Workspace: ensure',
-            'Workspace: write_text',
-            'Workspace: read_text',
-            'Workspace: write_text',
-            'Workspace: read_text',
+            'ensure',
+            'write_bytes',
+            'read_bytes',
+            'write_bytes',
+            'read_bytes',
         ]
     )
 
@@ -216,7 +218,7 @@ async def test_prefect_local_workspace_end_to_end(tmp_path: Path) -> None:
     agent = Agent(
         TestModel(call_tools=['write_note']),
         name='prefect_local',
-        capabilities=[LocalWorkspace(tmp_path), PrefectDurability(workspace_task_config={'retries': 0})],
+        capabilities=[LocalWorkspace(tmp_path), PrefectDurability()],
     )
 
     @agent.tool
@@ -239,4 +241,4 @@ async def test_prefect_local_workspace_end_to_end(tmp_path: Path) -> None:
         'working_dir': str(tmp_path.resolve()),
     }
     assert (tmp_path / 'note.txt').read_text() == 'on disk'
-    assert _workspace_tasks() == ['Workspace: ensure']
+    assert _workspace_tasks() == ['ensure']

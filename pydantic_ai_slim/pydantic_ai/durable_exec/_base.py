@@ -131,17 +131,14 @@ from ._toolset import (
 )
 from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
 from ._workspace import (
-    WORKSPACE_OPERATIONS,
+    WORKSPACE_OPERATION_ID,
     DurableWorkspace,
-    WorkspaceArguments,
-    WorkspaceBoundOperation,
-    WorkspaceCacheIdentity,
+    WorkspaceCallCacheIdentity,
+    WorkspaceCallParams,
+    WorkspaceCallResult,
     WorkspaceEnsurer,
-    WorkspaceMethod,
-    WorkspaceOperationParams,
-    WorkspaceOperationResult,
-    execute_workspace_operation,
-    resolve_run_workspace,
+    execute_call,
+    select_workspace,
 )
 
 _T = TypeVar('_T')
@@ -321,19 +318,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_event_operation: BoundDurableOperation[EventStreamHandlerParams, Any, None] | None = None
         self._bound_capability_operations: dict[tuple[str, str], CapabilityBoundOperation] = {}
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
-        self._bound_workspace_operations: dict[WorkspaceMethod | Literal['ensure'], WorkspaceBoundOperation] = {}
+        self._bound_workspace_operation: BoundDurableOperation[WorkspaceCallParams, Any, WorkspaceCallResult] | None = (
+            None
+        )
         self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
-        """Return the capability to use with the agent.
-
-        The bound copy is composed with the companions `_companion_capabilities` names, in the
-        `outermost` tier, when there are any: the base contributes the one that provisions the
-        workspace before the run body, and an engine that needs its own (Temporal publishes its
-        Workflow Stream terminal event from one) overrides that method and adds to the list.
-        `CombinedCapability` flattens the pair into one ordering pass, so every part stays a leaf and
-        `from_agent` keeps resolving.
-        """
+        """Return the capability to use with the agent: the bound copy, with any `_companion_capabilities` outside it."""
         bound = self._bind_for_agent(agent)
         companions = bound._companion_capabilities()
         if not companions:
@@ -342,7 +333,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """Capabilities to compose around the bound copy, outermost first."""
-        if not self._bound_workspace_operations:
+        if self._bound_workspace_operation is None:
             return []
         return [WorkspaceEnsurer(self)]
 
@@ -369,46 +360,44 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if isinstance(backend, RegisteredOperationBackend) and bound._bound_model_operations is None:
             bound._bound_model_operations = bound._bind_model_operations(backend, model_id=None, model_name='default')
         bound._bind_capability_operations(agent)
-        bound._bind_workspace_operations(agent)
+        bound._bind_workspace_operation(agent)
         return bound
 
-    def _bind_workspace_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        """Bind one durable unit per workspace method, when a construction-time capability supplies workspaces.
+    def _bind_workspace_operation(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Bind the workspace operation when a construction-time capability supplies workspaces.
 
-        Bound conditionally so an agent without a workspace supplier keeps its exact persisted unit
-        set: those names are compatibility data, and a third-party namer written before workspace
-        units existed would otherwise be asked to name them for every agent.
+        Only then, so an agent without a workspace keeps its exact persisted operation names.
         """
-        self._bound_workspace_operations = {}
+        self._bound_workspace_operation = None
         if not agent.root_capability.has_get_workspace:
             return
-        backend = self.get_durable_operation_backend()
-        for spec in WORKSPACE_OPERATIONS:
 
-            async def handler(params: WorkspaceOperationParams[Any]) -> WorkspaceOperationResult[Any]:
-                return await execute_workspace_operation(self._unit_workspace(params), params.arguments)
+        async def handler(params: WorkspaceCallParams) -> WorkspaceCallResult:
+            return await execute_call(self._unit_workspace(params), params.call)
 
-            operation = DurableOperation(
-                operation_id=spec.operation_id,
+        self._bound_workspace_operation = self.get_durable_operation_backend().bind(
+            DurableOperation(
+                operation_id=WORKSPACE_OPERATION_ID,
                 handler=handler,
-                parameter_transport=self._workspace_operation_parameter_transport(
-                    spec.arguments_type, spec.result_type
-                ),
-                cache_identity=WorkspaceCacheIdentity(),
-                result_codec=self._typed_result_codec(spec.result_type),
-                config_role='workspace',
+                parameter_transport=self._workspace_call_transport(),
+                cache_identity=WorkspaceCallCacheIdentity(),
+                result_codec=self._typed_result_codec(WorkspaceCallResult),
+                config_role='capability',
             )
-            self._bound_workspace_operations[spec.operation_id.method] = backend.bind(operation)
+        )
 
-    def _unit_workspace(self, params: WorkspaceOperationParams[Any]) -> Workspace:
-        """The workspace a unit operates on, without the durable wrapper.
+    def _workspace_call_transport(self) -> ParameterTransport[WorkspaceCallParams, Any]:
+        return IdentityParameterTransport[WorkspaceCallParams]()
 
-        In-process engines hand the unit the run's own context, whose workspace is the live
-        `DurableWorkspace`: its wrapped workspace is used directly, so nothing reattaches per
-        operation. An engine that serializes the context (Temporal) rebuilds the workspace from the
-        serialized ref while deserializing it; only the `ensure` unit of a fresh environment arrives
-        without one, and builds the selection from the worker's capability tree, ref-less, which is
-        what creates the environment.
+    async def _call_workspace(self, params: WorkspaceCallParams) -> WorkspaceCallResult:
+        assert self._bound_workspace_operation is not None
+        return await self._bound_workspace_operation(params)
+
+    def _unit_workspace(self, params: WorkspaceCallParams) -> Workspace:
+        """The workspace a unit calls, without the durable wrapper.
+
+        In-process engines pass the run's own context, whose `DurableWorkspace` wraps it; Temporal
+        rebuilds it from the serialized ref, and only a fresh environment's `ensure` builds it here.
         """
         ctx = params.run_context
         workspace = ctx.workspace
@@ -416,10 +405,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return workspace.wrapped
         if workspace.attached:
             return workspace
-        # The run's own context carries the per-run tree; a deserialized one carries the worker agent's.
-        root_capability = ctx.root_capability
-        assert root_capability is not None
-        resolved = resolve_run_workspace(root_capability, ctx, params.ref)
+        assert ctx.root_capability is not None
+        resolved = select_workspace(ctx.root_capability, ctx, params.ref)
         if resolved is None:
             ref = params.ref
             named = f' {ref.id!r} from provider {ref.provider!r}' if ref is not None else ''
@@ -431,23 +418,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
         return resolved
 
-    def _workspace_operation(self, method: WorkspaceMethod | Literal['ensure']) -> WorkspaceBoundOperation:
-        return self._bound_workspace_operations[method]
-
-    def _workspace_operation_parameter_transport(
-        self, arguments_type: type[Any], result_type: object
-    ) -> ParameterTransport[WorkspaceOperationParams[Any], Any]:
-        return IdentityParameterTransport[WorkspaceOperationParams[Any]]()
-
-    def _workspace_operation_config(
-        self, operation: WorkspaceBoundOperation, arguments: WorkspaceArguments[Any]
-    ) -> Any | None:
-        """Engine config for one workspace call, or `None` for the unit's bound config.
-
-        Engines override this to widen the unit's deadline for a `run(timeout=...)` longer than it.
-        """
-        return None
-
     def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
         """Install the `DurableWorkspace` around the run's selected workspace inside the container.
 
@@ -457,7 +427,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         if not self.in_durable_context or in_durable_unit() or not workspace.attached:
             return workspace
-        if not self._bound_workspace_operations:
+        if self._bound_workspace_operation is None:
             raise UserError(
                 f'A workspace is attached to this run inside a {self.engine_name} {self.durable_container_noun}, '
                 f'but no capability supplied workspaces when the agent was constructed, so no durable '
@@ -485,7 +455,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # A `DurableWorkspace` without a ref never dispatched a unit; asking the capabilities for a
         # fresh environment is the same as passing `workspace=None`.
         rebuilt = (
-            resolve_run_workspace(run_capability, ctx, ref)
+            select_workspace(run_capability, ctx, ref)
             if ref is not None or isinstance(workspace, DurableWorkspace)
             else None
         )

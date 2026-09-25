@@ -17,7 +17,6 @@ from ._operation import (
     ToolsetGetToolsId,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
-    WorkspaceOperationId,
 )
 
 
@@ -85,8 +84,6 @@ class JournalOperationNamer(DurableOperationNamer):
                 return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.validate_args'
             case ToolsetCallToolId(toolset_kind=kind, toolset_id=toolset_id):
                 return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.call_tool'
-            case WorkspaceOperationId(method=method):
-                return f'{self._agent_name}__workspace__{method}'
         assert_never(operation_id)
 
     def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName:

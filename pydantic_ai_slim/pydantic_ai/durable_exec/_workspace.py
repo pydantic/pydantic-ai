@@ -1,34 +1,27 @@
-"""Workspace operations as durable units.
+"""Workspace calls as one durable operation.
 
 Inside a durable container, [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace] is a
-[`DurableWorkspace`][pydantic_ai.durable_exec._workspace.DurableWorkspace]: a wrapper installed
-innermost around the run's selected workspace whose every operation runs in its own durable unit,
-so workflow-side code (capability hooks, output functions, `result.workspace`) never performs
-workspace I/O in the container. Inside a unit (a tool activity, a `@durable_operation` hook)
-`ctx.workspace` is the plain facade and calls reach the backend directly.
+`DurableWorkspace`: every call made in workflow code (capability hooks, output functions,
+`result.workspace`) runs as the durability capability's workspace operation, so it is journaled and
+never repeated on replay. Inside a durable unit (a tool, a `@durable_operation`) calls go straight to
+the workspace, rebuilt from the run's `WorkspaceRef`.
 
-One `ensure` unit runs at the start of every run in a container. It forces the environment to
-exist, and journals its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] and canonical
-working directory. From then on every unit carries the same ref, so parallel tools, retries,
-replay and recovery all reattach to one environment, and `working_dir()` and `resolve()` are
-answered locally from the journaled value.
-
-Parameters and results are pydantic dataclasses with `bytes` encoded as base64, which is the one
-shape that survives Temporal's payload converter, `JSON_CODEC` and pickle unchanged. Errors a
-workspace is expected to raise cross as data and are re-raised as the same types on the other
-side, so a durable unit only fails for infrastructure errors the engine should retry.
+An `ensure` call runs first, once per run: it creates or attaches to the environment and journals its
+ref and working directory, so every later unit, parallel tools included, reattaches to that one
+environment. Errors a workspace is expected to raise cross as data and are re-raised with their
+original type, so a hook can catch them and the engine only retries infrastructure failures.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 import anyio
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Never
+from typing_extensions import Never, assert_never
 
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
@@ -50,423 +43,183 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
 )
 
-from ._operation import CacheIdentity, WorkspaceMethod, WorkspaceOperationId
-from ._operation_backend import BoundDurableOperation, in_durable_unit
+from ._operation import CacheIdentity, CapabilityOperationId
+from ._operation_backend import in_durable_unit
 
 if TYPE_CHECKING:
     from ._base import BaseDurabilityCapability
 
-__all__ = (
-    'DurableWorkspace',
-    'WorkspaceMethod',
-    'WorkspaceOperationId',
-    'WorkspaceOperationParams',
-    'WorkspaceOperationResult',
-)
+__all__ = ('DurableWorkspace',)
 
+WORKSPACE_OPERATION_ID = CapabilityOperationId('workspace', operation='call')
+"""The persisted identity of the workspace operation, named and configured like a capability operation."""
+
+# Base64 for `bytes`: Temporal's payload converter serializes by runtime type, ignoring annotations.
 _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
-"""Serialize `bytes` fields as base64 text.
 
-Temporal's payload converter serializes by runtime type and ignores field annotations, so a
-`Base64Bytes` annotation never sees non-UTF-8 data; a dataclass-level config does.
-"""
-
-ValueT = TypeVar('ValueT')
-ValueT_co = TypeVar('ValueT_co', covariant=True)
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceOperationParams(Generic[ValueT]):
-    """Semantic parameters of a workspace unit: the run context, the journaled ref, and the call."""
-
-    run_context: RunContext[Any]
-    ref: WorkspaceRef | None
-    arguments: WorkspaceArguments[ValueT]
-
-
-class WorkspaceArguments(Protocol[ValueT_co]):
-    """The typed arguments of one workspace call, which know how to make that call."""
-
-    @property
-    def method(self) -> WorkspaceMethod | Literal['ensure']: ...
-
-    async def call(self, workspace: Workspace) -> ValueT_co: ...
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class EnsuredWorkspace:
-    """What the `ensure` unit journals: the environment's identity and its canonical working directory."""
-
-    ref: WorkspaceRef
-    working_dir: str
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class EnsureArguments:
-    @property
-    def method(self) -> Literal['ensure']:
-        return 'ensure'
-
-    async def call(self, workspace: Workspace) -> EnsuredWorkspace:
-        # `working_dir()` is the one operation every backend has, and it creates or attaches. The
-        # ref is read afterwards because a fresh environment only gets one from its provider.
-        working_dir = await workspace.working_dir()
-        ref = workspace.ref
-        if ref is None:
-            raise UserError(
-                'The workspace backend completed an operation without reporting a `WorkspaceRef`. A backend '
-                'used under durable execution must report a `ref` once any operation has completed, so that '
-                'every durable unit can reattach to the same environment.'
-            )
-        return EnsuredWorkspace(ref=ref, working_dir=working_dir)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class RunArguments:
-    @property
-    def method(self) -> Literal['run']:
-        return 'run'
-
-    command: WorkspaceCommand
-    shell: bool = False
-    cwd: str | None = None
-    env: Mapping[str, str] | None = None
-    timeout: float | None = None
-
-    async def call(self, workspace: Workspace) -> CommandResult:
-        result = await workspace.run(self.command, shell=self.shell, cwd=self.cwd, env=self.env, timeout=self.timeout)
-        return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class ReadBytesArguments:
-    @property
-    def method(self) -> Literal['read_bytes']:
-        return 'read_bytes'
-
-    path: str
-
-    async def call(self, workspace: Workspace) -> bytes:
-        return await workspace.read_bytes(self.path)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class WriteBytesArguments:
-    @property
-    def method(self) -> Literal['write_bytes']:
-        return 'write_bytes'
-
-    path: str
-    data: bytes
-
-    async def call(self, workspace: Workspace) -> None:
-        await workspace.write_bytes(self.path, self.data)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class StatArguments:
-    @property
-    def method(self) -> Literal['stat']:
-        return 'stat'
-
-    path: str
-
-    async def call(self, workspace: Workspace) -> FileEntry:
-        return _file_entry(await workspace.stat(self.path))
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class ListDirArguments:
-    @property
-    def method(self) -> Literal['list_dir']:
-        return 'list_dir'
-
-    path: str
-
-    async def call(self, workspace: Workspace) -> list[FileEntry]:
-        return [_file_entry(entry) for entry in await workspace.list_dir(self.path)]
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class MakeDirArguments:
-    @property
-    def method(self) -> Literal['make_dir']:
-        return 'make_dir'
-
-    path: str
-
-    async def call(self, workspace: Workspace) -> None:
-        await workspace.make_dir(self.path)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class RemoveArguments:
-    @property
-    def method(self) -> Literal['remove']:
-        return 'remove'
-
-    path: str
-
-    async def call(self, workspace: Workspace) -> None:
-        await workspace.remove(self.path)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class ExistsArguments:
-    @property
-    def method(self) -> Literal['exists']:
-        return 'exists'
-
-    path: str
-
-    async def call(self, workspace: Workspace) -> bool:
-        return await workspace.exists(self.path)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class RealpathArguments:
-    @property
-    def method(self) -> Literal['realpath']:
-        return 'realpath'
-
-    path: str
-
-    async def call(self, workspace: Workspace) -> str:
-        return await workspace.realpath(self.path)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class ReadTextArguments:
-    @property
-    def method(self) -> Literal['read_text']:
-        return 'read_text'
-
-    path: str
-    encoding: str = 'utf-8'
-
-    async def call(self, workspace: Workspace) -> str:
-        return await workspace.read_text(self.path, encoding=self.encoding)
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class WriteTextArguments:
-    @property
-    def method(self) -> Literal['write_text']:
-        return 'write_text'
-
-    path: str
-    content: str
-    encoding: str = 'utf-8'
-
-    async def call(self, workspace: Workspace) -> None:
-        await workspace.write_text(self.path, self.content, encoding=self.encoding)
-
-
-def _file_entry(entry: WorkspaceFileEntry) -> FileEntry:
-    return FileEntry(name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size)
-
-
-@dataclass(frozen=True)
-class WorkspaceOperationSpec:
-    """The static shape of one workspace unit: its id and the argument and result types it carries."""
-
-    operation_id: WorkspaceOperationId
-    arguments_type: type[Any]
-    result_type: object
-    """The `WorkspaceOperationResult[...]` type form of the unit's result."""
-
-
-WorkspaceErrorKind: TypeAlias = Literal[
-    'timeout',
-    'unavailable',
-    'read_only',
-    'workspace',
-    'not_found',
-    'not_a_directory',
-    'is_a_directory',
-    'permission',
-    'file_exists',
-    'unicode_decode',
-    'not_implemented',
-    'user',
-    'type',
-    'value',
+WorkspaceMethod: TypeAlias = Literal[
+    'ensure', 'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
 ]
 
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class UnicodeDecodeDetails:
-    """The constructor arguments of a `UnicodeDecodeError`, which carries the undecodable bytes."""
+class WorkspaceCallError:
+    """An expected workspace error, carried as data so the unit succeeds and the caller re-raises it."""
 
-    encoding: str
-    object: bytes
-    start: int
-    end: int
-    reason: str
-
-
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class WorkspaceOperationError:
-    """An expected workspace failure, carried as data so the unit succeeds and the caller re-raises it."""
-
-    kind: WorkspaceErrorKind
+    type: str
     message: str
     stdout: str = ''
     stderr: str = ''
-    decode: UnicodeDecodeDetails | None = None
 
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class WorkspaceOperationResult(Generic[ValueT]):
-    """The journaled outcome of a workspace unit: the call's value, or the error it raised."""
+class WorkspaceCallResult:
+    """The journaled outcome of a call: the field for the method's return shape, or the error."""
 
-    value: ValueT | None = None
-    error: WorkspaceOperationError | None = None
-
-
-_ERROR_TYPES: dict[WorkspaceErrorKind, type[Exception]] = {
-    'read_only': WorkspaceReadOnlyError,
-    'not_found': FileNotFoundError,
-    'not_a_directory': NotADirectoryError,
-    'is_a_directory': IsADirectoryError,
-    'permission': PermissionError,
-    'file_exists': FileExistsError,
-    'not_implemented': NotImplementedError,
-    'user': UserError,
-    'type': TypeError,
-    'value': ValueError,
-}
-"""Error kinds that rebuild from their message alone. The others need extra fields; see `raise_operation_error`."""
+    data: bytes = b''
+    text: str = ''
+    flag: bool = False
+    entries: list[FileEntry] = field(default_factory=list[FileEntry])
+    command: CommandResult | None = None
+    ref: WorkspaceRef | None = None
+    error: WorkspaceCallError | None = None
 
 
-def workspace_operation_error(error: Exception) -> WorkspaceOperationError | None:
-    """Map an exception a workspace is expected to raise to its data form, or `None` for anything else.
+def _entry(entry: WorkspaceFileEntry) -> FileEntry:
+    return FileEntry(name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size)
 
-    Subclasses are checked before their bases: `WorkspaceTimeoutError`, `WorkspaceUnavailableError`,
-    and `WorkspaceReadOnlyError` are also `WorkspaceError`s, while `WorkspaceReadOnlyError` is also a
-    `PermissionError` and `UnicodeDecodeError` is also a `ValueError`. `WorkspaceUnavailableError`
-    crosses as data too: retrying the same unit cannot succeed, so the caller must get to decide,
-    not the engine.
-    """
+
+@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
+class WorkspaceCall:
+    """One `Workspace` method call: the method and the arguments it takes."""
+
+    method: WorkspaceMethod
+    path: str = ''
+    data: bytes = b''
+    command: WorkspaceCommand = ''
+    shell: bool = False
+    cwd: str | None = None
+    env: dict[str, str] | None = None
+    timeout: float | None = None
+
+    async def execute(self, workspace: Workspace) -> WorkspaceCallResult:
+        match self.method:
+            case 'ensure':
+                # `working_dir()` is the one operation every backend has, and it creates or attaches;
+                # the ref is read afterwards because a fresh environment only then has one.
+                working_dir = await workspace.working_dir()
+                if workspace.ref is None:
+                    raise UserError(
+                        'The workspace backend completed an operation without reporting a `WorkspaceRef`. Under '
+                        'durable execution a backend must report its `ref` once an operation has completed, so '
+                        'every durable unit can reattach to the same environment.'
+                    )
+                return WorkspaceCallResult(text=working_dir, ref=workspace.ref)
+            case 'run':
+                result = await workspace.run(
+                    self.command, shell=self.shell, cwd=self.cwd, env=self.env, timeout=self.timeout
+                )
+                return WorkspaceCallResult(
+                    command=CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+                )
+            case 'read_bytes':
+                return WorkspaceCallResult(data=await workspace.read_bytes(self.path))
+            case 'write_bytes':
+                await workspace.write_bytes(self.path, self.data)
+                return WorkspaceCallResult()
+            case 'stat':
+                return WorkspaceCallResult(entries=[_entry(await workspace.stat(self.path))])
+            case 'list_dir':
+                return WorkspaceCallResult(entries=[_entry(entry) for entry in await workspace.list_dir(self.path)])
+            case 'make_dir':
+                await workspace.make_dir(self.path)
+                return WorkspaceCallResult()
+            case 'remove':
+                await workspace.remove(self.path)
+                return WorkspaceCallResult()
+            case 'exists':
+                return WorkspaceCallResult(flag=await workspace.exists(self.path))
+            case 'realpath':
+                return WorkspaceCallResult(text=await workspace.realpath(self.path))
+        assert_never(self.method)
+
+
+@dataclass(frozen=True)
+class WorkspaceCallParams:
+    """The workspace operation's parameters: the run context, the environment's ref, and the call."""
+
+    run_context: RunContext[Any]
+    ref: WorkspaceRef | None
+    call: WorkspaceCall
+
+
+class WorkspaceCallCacheIdentity(CacheIdentity[WorkspaceCallParams]):
+    def project(self, params: WorkspaceCallParams) -> tuple[object, ...]:
+        return (params.call, params.ref)
+
+
+_EXPECTED_ERRORS: tuple[type[Exception], ...] = (
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+    WorkspaceReadOnlyError,
+    WorkspaceError,
+    FileNotFoundError,
+    NotADirectoryError,
+    IsADirectoryError,
+    PermissionError,
+    FileExistsError,
+    NotImplementedError,
+    UserError,
+    TypeError,
+    ValueError,
+)
+"""Subclasses before their bases: an error crosses as the first of these it is an instance of."""
+_EXPECTED_ERRORS_BY_NAME = {error_type.__name__: error_type for error_type in _EXPECTED_ERRORS}
+
+
+def error_as_data(error: Exception) -> WorkspaceCallError | None:
+    """The data form of an error a workspace is expected to raise, or `None` for anything else."""
+    error_type = next((error_type for error_type in _EXPECTED_ERRORS if isinstance(error, error_type)), None)
+    if error_type is None:
+        return None
     if isinstance(error, WorkspaceTimeoutError):
-        return WorkspaceOperationError(
-            kind='timeout', message=str(error), stdout=error.stdout, stderr=error.stderr
+        return WorkspaceCallError(
+            type=error_type.__name__, message=str(error), stdout=error.stdout, stderr=error.stderr
         )
-    if isinstance(error, WorkspaceUnavailableError):
-        return WorkspaceOperationError(kind='unavailable', message=str(error))
-    if isinstance(error, WorkspaceReadOnlyError):
-        return WorkspaceOperationError(kind='read_only', message=str(error))
-    if isinstance(error, WorkspaceError):
-        return WorkspaceOperationError(kind='workspace', message=str(error))
-    if isinstance(error, UnicodeDecodeError):
-        return WorkspaceOperationError(
-            kind='unicode_decode',
-            message=str(error),
-            decode=UnicodeDecodeDetails(
-                encoding=error.encoding, object=error.object, start=error.start, end=error.end, reason=error.reason
-            ),
-        )
-    for kind, error_type in _ERROR_TYPES.items():
-        if isinstance(error, error_type):
-            return WorkspaceOperationError(kind=kind, message=str(error))
-    return None
+    return WorkspaceCallError(type=error_type.__name__, message=str(error))
 
 
-def raise_operation_error(error: WorkspaceOperationError) -> Never:
-    """Re-raise a workspace failure that crossed a durable boundary as data, as its original type."""
-    if error.kind == 'timeout':
+def raise_error(error: WorkspaceCallError) -> Never:
+    """Re-raise an error that crossed a durable boundary as data, with its original type."""
+    error_type = _EXPECTED_ERRORS_BY_NAME[error.type]
+    if error_type is WorkspaceTimeoutError:
         raise WorkspaceTimeoutError(error.message, stdout=error.stdout, stderr=error.stderr)
-    if error.kind == 'unavailable':
-        raise WorkspaceUnavailableError(error.message)
-    if error.kind == 'workspace':
-        raise WorkspaceError(error.message)
-    if error.kind == 'unicode_decode':
-        details = error.decode
-        assert details is not None
-        raise UnicodeDecodeError(details.encoding, details.object, details.start, details.end, details.reason)
-    raise _ERROR_TYPES[error.kind](error.message)
+    raise error_type(error.message)
 
 
-async def execute_workspace_operation(
-    workspace: Workspace, arguments: WorkspaceArguments[ValueT]
-) -> WorkspaceOperationResult[ValueT]:
-    """Run one workspace call inside a durable unit, capturing expected failures as data.
-
-    Anything not in the error table propagates and fails the unit, so a provider's own transient
-    errors get the engine's retry policy while a missing file does not.
-    """
+async def execute_call(workspace: Workspace, call: WorkspaceCall) -> WorkspaceCallResult:
+    """Run a call inside a durable unit; anything outside the error table fails the unit, so the engine retries it."""
     try:
-        value = await arguments.call(workspace)
+        return await call.execute(workspace)
     except Exception as error:
-        operation_error = workspace_operation_error(error)
-        if operation_error is None:
+        if (data := error_as_data(error)) is None:
             raise
-        return WorkspaceOperationResult(error=operation_error)
-    return WorkspaceOperationResult(value=value)
+        return WorkspaceCallResult(error=data)
 
 
-class WorkspaceCacheIdentity(CacheIdentity[WorkspaceOperationParams[Any]]):
-    """Project the call and the environment it targets; hash-keyed engines add their own sequence."""
-
-    def project(self, params: WorkspaceOperationParams[Any]) -> tuple[object, ...]:
-        return (params.arguments, params.ref)
-
-
-WORKSPACE_OPERATIONS: tuple[WorkspaceOperationSpec, ...] = (
-    WorkspaceOperationSpec(WorkspaceOperationId('ensure'), EnsureArguments, WorkspaceOperationResult[EnsuredWorkspace]),
-    WorkspaceOperationSpec(WorkspaceOperationId('run'), RunArguments, WorkspaceOperationResult[CommandResult]),
-    WorkspaceOperationSpec(WorkspaceOperationId('read_bytes'), ReadBytesArguments, WorkspaceOperationResult[bytes]),
-    WorkspaceOperationSpec(WorkspaceOperationId('write_bytes'), WriteBytesArguments, WorkspaceOperationResult[None]),
-    WorkspaceOperationSpec(WorkspaceOperationId('stat'), StatArguments, WorkspaceOperationResult[FileEntry]),
-    WorkspaceOperationSpec(
-        WorkspaceOperationId('list_dir'), ListDirArguments, WorkspaceOperationResult[list[FileEntry]]
-    ),
-    WorkspaceOperationSpec(WorkspaceOperationId('make_dir'), MakeDirArguments, WorkspaceOperationResult[None]),
-    WorkspaceOperationSpec(WorkspaceOperationId('remove'), RemoveArguments, WorkspaceOperationResult[None]),
-    WorkspaceOperationSpec(WorkspaceOperationId('exists'), ExistsArguments, WorkspaceOperationResult[bool]),
-    WorkspaceOperationSpec(WorkspaceOperationId('realpath'), RealpathArguments, WorkspaceOperationResult[str]),
-    WorkspaceOperationSpec(WorkspaceOperationId('read_text'), ReadTextArguments, WorkspaceOperationResult[str]),
-    WorkspaceOperationSpec(WorkspaceOperationId('write_text'), WriteTextArguments, WorkspaceOperationResult[None]),
-)
-"""Every workspace unit a durability capability binds, `ensure` first."""
-
-MUTATING_WORKSPACE_METHODS: frozenset[WorkspaceMethod] = frozenset(
-    {'run', 'write_bytes', 'write_text', 'make_dir', 'remove'}
-)
-"""Methods whose unit an engine should attempt once by default: a retry would repeat the side effect."""
-
-WorkspaceBoundOperation: TypeAlias = BoundDurableOperation[
-    WorkspaceOperationParams[Any], Any, WorkspaceOperationResult[Any]
-]
-
-
-def resolve_run_workspace(
+def select_workspace(
     capability: AbstractCapability[Any], ctx: RunContext[Any], ref: WorkspaceRef | None
 ) -> Workspace | None:
-    """Rebuild the run's workspace from the capability tree, the way the agent selects it.
-
-    A bare backend is wrapped in a `Workspace`; a facade or wrapper is returned as is, which is how
-    policy such as `ReadOnlyWorkspace` comes back on every side of a durable boundary.
-    """
-    selection = capability.get_workspace(ctx, ref=ref)
-    if selection is None:
-        return None
-    return selection if isinstance(selection, Workspace) else Workspace(selection)
+    """The workspace the capabilities supply for `ref`, the way the agent selects it, policy wrappers included."""
+    selected = capability.get_workspace(ctx, ref=ref)
+    return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
 
 
 class DurableWorkspace(WrapperWorkspace):
-    """The run's workspace inside a durable container: each operation is its own durable unit.
+    """The run's workspace inside a durable container: each call from workflow code is a durable operation.
 
-    Installed by a durability capability's `_prepare_workspace` hook, innermost around the workspace
-    the run selected. Outside the container, and inside a durable unit, calls go straight to the
-    wrapped workspace. The first dispatched call runs `ensure` if the run's companion capability
-    has not already, so a capability whose `wrap_run` touches the workspace before the run body
-    still gets one environment.
-
-    [`ref`][pydantic_ai.workspaces.Workspace.ref] and
-    [`working_dir`][pydantic_ai.workspaces.Workspace.working_dir] report the values `ensure`
-    journaled, which are deterministic under replay; `working_dir` is fixed for the life of a
-    workspace, so answering it locally loses nothing and saves hooks that resolve paths a unit each.
+    Outside the container, and inside a durable unit, calls go straight to the wrapped workspace.
+    `ref` and `working_dir` report what `ensure` journaled.
     """
 
     def __init__(self, wrapped: Workspace, *, durability: BaseDurabilityCapability[Any], ctx: RunContext[Any]) -> None:
@@ -475,7 +228,6 @@ class DurableWorkspace(WrapperWorkspace):
         self._ctx = ctx
         self._ref: WorkspaceRef | None = None
         self._working_dir: str | None = None
-        self._ensured = False
         self._ensure_lock = anyio.Lock()
 
     @property
@@ -497,9 +249,7 @@ class DurableWorkspace(WrapperWorkspace):
         return self._durability.in_durable_context and not in_durable_unit()
 
     async def working_dir(self) -> str:
-        if self._working_dir is not None:
-            return self._working_dir
-        if not self._in_container():
+        if self._working_dir is None and not self._in_container():
             return await self.wrapped.working_dir()
         await self._ensure()
         assert self._working_dir is not None
@@ -516,121 +266,101 @@ class DurableWorkspace(WrapperWorkspace):
     ) -> WorkspaceResult:
         if not self._in_container():
             return await self.wrapped.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-        return await self._dispatch(RunArguments(command=command, shell=shell, cwd=cwd, env=env, timeout=timeout))
+        call = WorkspaceCall(
+            method='run', command=command, shell=shell, cwd=cwd, env=dict(env) if env else None, timeout=timeout
+        )
+        result = (await self._call(call)).command
+        assert result is not None
+        return result
 
     async def read_bytes(self, path: str) -> bytes:
         if not self._in_container():
             return await self.wrapped.read_bytes(path)
-        return await self._dispatch(ReadBytesArguments(path=path))
+        return (await self._call(WorkspaceCall(method='read_bytes', path=path))).data
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         if not self._in_container():
             return await self.wrapped.write_bytes(path, data)
-        await self._dispatch(WriteBytesArguments(path=path, data=data))
+        await self._call(WorkspaceCall(method='write_bytes', path=path, data=data))
 
     async def stat(self, path: str) -> WorkspaceFileEntry:
         if not self._in_container():
             return await self.wrapped.stat(path)
-        return await self._dispatch(StatArguments(path=path))
+        return (await self._call(WorkspaceCall(method='stat', path=path))).entries[0]
 
     async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
         if not self._in_container():
             return await self.wrapped.list_dir(path)
-        return await self._dispatch(ListDirArguments(path=path))
+        return (await self._call(WorkspaceCall(method='list_dir', path=path))).entries
 
     async def make_dir(self, path: str) -> None:
         if not self._in_container():
             return await self.wrapped.make_dir(path)
-        await self._dispatch(MakeDirArguments(path=path))
+        await self._call(WorkspaceCall(method='make_dir', path=path))
 
     async def remove(self, path: str) -> None:
         if not self._in_container():
             return await self.wrapped.remove(path)
-        await self._dispatch(RemoveArguments(path=path))
+        await self._call(WorkspaceCall(method='remove', path=path))
 
     async def exists(self, path: str) -> bool:
         if not self._in_container():
             return await self.wrapped.exists(path)
-        return await self._dispatch(ExistsArguments(path=path))
+        return (await self._call(WorkspaceCall(method='exists', path=path))).flag
 
     async def realpath(self, path: str) -> str:
         if not self._in_container():
             return await self.wrapped.realpath(path)
-        return await self._dispatch(RealpathArguments(path=path))
+        return (await self._call(WorkspaceCall(method='realpath', path=path))).text
 
-    async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
-        if not self._in_container():
-            return await self.wrapped.read_text(path, encoding=encoding)
-        return await self._dispatch(ReadTextArguments(path=path, encoding=encoding))
-
-    async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
-        if not self._in_container():
-            return await self.wrapped.write_text(path, content, encoding=encoding)
-        await self._dispatch(WriteTextArguments(path=path, content=content, encoding=encoding))
-
-    async def _dispatch(self, arguments: WorkspaceArguments[ValueT]) -> ValueT:
+    async def _call(self, call: WorkspaceCall) -> WorkspaceCallResult:
         await self._ensure()
-        # The ambient context is only set around `before_run` and model requests; elsewhere (tool
-        # hooks, `after_run`, `result.workspace` after the run) the run's own context serves.
+        return await self._dispatch(call, ref=self._ref)
+
+    async def _dispatch(self, call: WorkspaceCall, *, ref: WorkspaceRef | None) -> WorkspaceCallResult:
+        # The ambient context is set around `before_run` and model requests; elsewhere (tool hooks,
+        # `after_run`, `result.workspace` after the run) the run's own context serves.
         ctx = get_current_run_context() or self._ctx
-        operation = self._durability._workspace_operation(arguments.method)  # pyright: ignore[reportPrivateUsage]
-        config = self._durability._workspace_operation_config(operation, arguments)  # pyright: ignore[reportPrivateUsage]
-        result = await operation(
-            WorkspaceOperationParams(run_context=ctx, ref=self._ref, arguments=arguments), config=config
+        result = await self._durability._call_workspace(  # pyright: ignore[reportPrivateUsage]
+            WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
         )
         if result.error is not None:
-            raise_operation_error(result.error)
-        # The bound operation is stored untyped alongside the other methods'; the arguments'
-        # `call` signature is what fixes the value type.
-        return cast(ValueT, result.value)
+            raise_error(result.error)
+        return result
 
     async def _ensure(self, ctx: RunContext[Any] | None = None) -> None:
-        """Run the `ensure` unit once for the run, and rebuild the wrapped workspace on its ref.
-
-        Every dispatched operation calls this first, under a lock, so parallel first uses share one
-        environment even when the companion capability's eager call did not come first.
-        """
-        if self._ensured:
+        """Run `ensure` once for the run, under a lock so parallel first calls share one environment."""
+        if self._working_dir is not None:
             return
         async with self._ensure_lock:
-            if self._ensured:
+            if self._working_dir is not None:
                 return
             if ctx is not None:
                 self._ctx = ctx
-            ctx = get_current_run_context() or self._ctx
-            arguments = EnsureArguments()
-            operation = self._durability._workspace_operation(arguments.method)  # pyright: ignore[reportPrivateUsage]
-            result = await operation(
-                WorkspaceOperationParams(run_context=ctx, ref=self.wrapped.ref, arguments=arguments)
-            )
-            if result.error is not None:
-                raise_operation_error(result.error)
-            ensured = cast(EnsuredWorkspace, result.value)
-            if self.wrapped.ref != ensured.ref:
-                # A fresh environment: rebuild the selection on its identity, so this side attaches
-                # to what the unit created instead of creating another on first use.
-                root_capability = ctx.root_capability
-                assert root_capability is not None
-                rebuilt = resolve_run_workspace(root_capability, ctx, ensured.ref)
+            result = await self._dispatch(WorkspaceCall(method='ensure'), ref=self.wrapped.ref)
+            assert result.ref is not None
+            if self.wrapped.ref != result.ref:
+                # A fresh environment: rebuild the selection on its ref, so this side attaches to what
+                # the unit created instead of creating another on first use.
+                ctx = get_current_run_context() or self._ctx
+                assert ctx.root_capability is not None
+                rebuilt = select_workspace(ctx.root_capability, ctx, result.ref)
                 if rebuilt is None:
                     raise UserError(
-                        f'No capability can supply workspace {ensured.ref.id!r} from provider '
-                        f'{ensured.ref.provider!r}, which the run just created. A `get_workspace` hook that '
+                        f'No capability can supply workspace {result.ref.id!r} from provider '
+                        f'{result.ref.provider!r}, which the run just created. A `get_workspace` hook that '
                         'creates an environment must also recognize its ref.'
                     )
                 self._backend = rebuilt
-            self._ref = ensured.ref
-            self._working_dir = ensured.working_dir
-            self._ensured = True
+            self._ref = result.ref
+            self._working_dir = result.text
 
 
 class WorkspaceEnsurer(AbstractCapability[AgentDepsT]):
-    """Runs the `ensure` unit before the run body, from the `outermost` tier.
+    """Runs `ensure` before the run body, from the `outermost` tier.
 
-    A durability capability is `innermost`, so its own `wrap_run` runs after every other
-    capability's pre-handler code; those hooks would otherwise dispatch the first workspace unit
-    themselves through the lazy fallback. The durability capability's `for_agent` composes this
-    companion around itself, the way `TemporalDurability` pairs its terminal-event publisher.
+    The durability capability is `innermost`, so without this the first workspace call from another
+    capability's `wrap_run` would run `ensure` itself through the lazy fallback.
     """
 
     def __init__(self, durability: BaseDurabilityCapability[AgentDepsT]) -> None:
@@ -647,12 +377,7 @@ class WorkspaceEnsurer(AbstractCapability[AgentDepsT]):
 
 
 class RejectWorkspaceInContainer(AbstractCapability[AgentDepsT]):
-    """Refuse a real workspace for an agent used through a deprecated wrapper agent inside its container.
-
-    The wrapper agents have no durability capability, so nothing would route workspace operations
-    through durable units: a hook would do provider I/O in workflow code, and a tool activity would
-    create a new environment per call. Added per-run by the wrapper agents' `iter`.
-    """
+    """Refuse a workspace inside the container for the deprecated wrapper agents, which cannot make it durable."""
 
     _safe_at_runtime = True
 
@@ -662,10 +387,8 @@ class RejectWorkspaceInContainer(AbstractCapability[AgentDepsT]):
         self._capability = capability
 
     def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
-        if workspace.attached:
-            raise UserError(
-                f'Workspaces are not supported inside a {self._engine} {self._container_noun} through the deprecated '
-                f'wrapper agent. Use `Agent(..., capabilities=[{self._capability}()])`, which runs every workspace '
-                f'operation as a durable unit, and attach the workspace through a capability such as `LocalWorkspace`.'
-            )
-        return workspace
+        raise UserError(
+            f'Workspaces are not supported inside a {self._engine} {self._container_noun} through the deprecated '
+            f'wrapper agent. Use `Agent(..., capabilities=[{self._capability}()])`, which runs every workspace '
+            f'operation as a durable unit, and attach the workspace through a capability such as `LocalWorkspace`.'
+        )

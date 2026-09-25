@@ -27,14 +27,10 @@ _IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_dur
 
 
 def in_durable_unit() -> bool:
-    """Whether the current task is executing the body of a durable unit.
+    """Whether the current task is running a durable unit's body, set by `CallableOperationBackend`.
 
-    Set by `CallableOperationBackend` around every operation handler, for engines whose units run in
-    the container's own process: there, the engine's own "inside the container" check stays true
-    inside a unit (Prefect's `FlowRunContext` is still set inside a task), and code that must not
-    nest one unit in another -- a `DurableWorkspace` call from a tool -- needs the finer answer.
-    Registered engines whose units run elsewhere (Temporal) never see the container's objects inside
-    a unit, and DBOS's own check already distinguishes a step, so neither needs this.
+    In-process engines need it where their own container check stays true inside a unit (Prefect's
+    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call from a tool goes direct.
     """
     return _IN_DURABLE_UNIT.get()
 
@@ -205,18 +201,9 @@ class RoleBasedOperationConfig(Generic[ConfigT]):
         event: ConfigT,
         capability: ConfigT,
         tool: ConfigT,
-        workspace: ConfigT | None = None,
         resolve_tool: Callable[[DurableOperationId, object | None, str], ConfigT | Literal[False]] | None = None,
     ) -> None:
-        # Workspace units fall back to the capability config: an engine written before the
-        # `'workspace'` role existed keeps resolving every role it is asked for.
-        self._configs = {
-            'model': model,
-            'event': event,
-            'capability': capability,
-            'tool': tool,
-            'workspace': capability if workspace is None else workspace,
-        }
+        self._configs = {'model': model, 'event': event, 'capability': capability, 'tool': tool}
         self._resolve_tool = resolve_tool
 
     def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> ConfigT:

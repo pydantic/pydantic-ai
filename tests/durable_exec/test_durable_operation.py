@@ -50,7 +50,6 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
     TypedResultCodec,
-    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._operation_backend import (
     BoundDurableOperation,
@@ -791,8 +790,6 @@ def _exhaustive_identity(operation_id: DurableOperationId) -> str:
             return 'validation'
         case ToolsetCallToolId():
             return 'call'
-        case WorkspaceOperationId():
-            return 'workspace'
     assert_never(operation_id)
 
 
@@ -807,7 +804,6 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         ToolsetGetInstructionsId('mcp'),
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         ToolsetCallToolId('mcp', toolset_id='mcp'),
-        WorkspaceOperationId('ensure'),
     ]
     assert [_exhaustive_identity(operation_id) for operation_id in identities] == [
         'model',
@@ -819,7 +815,6 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         'instructions',
         'validation',
         'call',
-        'workspace',
     ]
 
 

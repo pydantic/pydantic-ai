@@ -95,7 +95,7 @@ cannot tell a dead environment from a failed operation, probe with `working_dir(
 
 Under `TemporalDurability`, `DBOSDurability` or `PrefectDurability`, attach the workspace capability
 at agent construction and nothing else is needed: in workflow code (hooks, output functions,
-`result.workspace`) every `Workspace` method runs as its own durable unit, and inside a unit (a
+`result.workspace`) every `Workspace` call runs as a durable unit, and inside a unit (a
 tool) `ctx.workspace` is the plain workspace, rebuilt on Temporal from the serialized ref through the
 same capabilities (policy wrappers included). One `ensure` unit at run start creates or attaches the
 environment and records its ref and working directory, so all units share one environment and
@@ -103,9 +103,8 @@ environment and records its ref and working directory, so all units share one en
 `WorkspaceRef`, a previous `result.workspace`, or a live instance whose ref a capability recognizes,
 which is rebuilt through that capability. Any wrapper around it, such as `ReadOnlyWorkspace`, is
 silently dropped, so put policy on the capability (e.g. `LocalWorkspace(..., read_only=True)`). A
-live instance without a recognized ref raises `UserError`. `run`/writes/`make_dir`/`remove` are attempted once by
-default; configure with `workspace_activity_config`, `workspace_step_config` or
-`workspace_task_config`. The deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` wrappers refuse
+live instance without a recognized ref raises `UserError`. Workspace calls retry like capability
+operations, so a command or write may repeat if a worker dies mid-call. The deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` wrappers refuse
 workspaces in their container.
 
 See the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/) for protocol details and lifecycle

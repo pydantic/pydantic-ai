@@ -187,11 +187,7 @@ You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQ
 
 ### Workspaces
 
-Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent with `Agent(capabilities=[...])`, not per run with `agent.run(capabilities=[...])`. [Durable execution](../workspace.md#durable-execution) covers the rules shared by every engine.
-
-Each workspace call made in workflow code runs as its own step, named `{name}__workspace__{method}`. Under DBOS that includes calls from plain function tools, which run in the workflow, as well as capability hooks, output functions and `result.workspace`. A `{name}__workspace__ensure` step at the start of each run creates the environment even if no tool uses it. Inside a step, such as an MCP tool or a [`@durable_operation`][pydantic_ai.capabilities.durable_operation] hook, workspace calls reach the provider directly.
-
-DBOS records each workspace step's arguments and result, so the [size guidance above](#agent-run-context-and-dependencies) applies to file contents and command output your tools move through `ctx.workspace`. Move large files inside an MCP tool or a `@durable_operation` hook instead.
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies).
 
 ### Model Selection at Runtime
 
@@ -252,7 +248,6 @@ You can customize DBOS step behavior, such as retries, by passing [`StepConfig`]
 - `mcp_step_config`: The DBOS step config to use for MCP server communication. No retries if omitted.
 - `model_step_config`: The DBOS step config to use for model request steps. No retries if omitted. The model request step carries the [durable-execution retry layer](../retries.md#the-layers) — see [Retry multiplication](../retries.md#retry-multiplication) for how `StepConfig` retries stack with the SDK client's and transport's retries.
 - `event_stream_handler_step_config`: The DBOS step config to use for event stream handler steps (`DBOSDurability` only). No retries if omitted.
-- `workspace_step_config`: The DBOS step config to use for [workspace](#workspaces) steps (`DBOSDurability` only). No retries if omitted, so a retry never repeats a command or write. Setting `retries_allowed` retries every workspace step, reads and writes alike.
 
 Unlike the [Temporal](temporal.md#per-tool-activity-config) and [Prefect](prefect.md#tool-wrapping) integrations, DBOS takes no per-tool config: tool metadata (a `'dbos'` key or otherwise) is ignored, and there's no way to opt an individual tool out of step wrapping.
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -36,8 +36,6 @@ from pydantic_ai.durable_exec import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
-    WorkspaceMethod,
-    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationResult,
@@ -60,6 +58,7 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_call_result,
 )
+from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -97,8 +96,6 @@ def test_public_engine_builder_exports() -> None:
         'RoleBasedOperationConfig',
         'ToolsetKind',
         'ToolsetValidateToolArgumentsId',
-        'WorkspaceMethod',
-        'WorkspaceOperationId',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -124,25 +121,10 @@ JOURNAL_OPERATION_NAMES = {
     'compat__capability__compat.operation',
 }
 
-WORKSPACE_METHODS: tuple[WorkspaceMethod | Literal['ensure'], ...] = (
-    'ensure',
-    'run',
-    'read_bytes',
-    'write_bytes',
-    'stat',
-    'list_dir',
-    'make_dir',
-    'remove',
-    'exists',
-    'realpath',
-    'read_text',
-    'write_text',
-)
-"""Bound only for an agent with a construction-time workspace supplier; the sets above stay as they are without one."""
-
-JOURNAL_WORKSPACE_NAMES = {f'compat__workspace__{method}' for method in WORKSPACE_METHODS}
-PREFECT_WORKSPACE_NAMES = {f'Workspace: {method}' for method in WORKSPACE_METHODS}
-TEMPORAL_WORKSPACE_NAMES = {f'agent__compat__workspace__{method}' for method in WORKSPACE_METHODS}
+# Bound only for an agent with a construction-time workspace supplier; the sets above stay as they are without one.
+JOURNAL_WORKSPACE_NAMES = {'compat__capability__workspace.call'}
+PREFECT_WORKSPACE_NAMES = {'Capability: workspace.call'}
+TEMPORAL_WORKSPACE_NAMES = {'agent__compat__capability__workspace__call'}
 
 PREFECT_OPERATION_NAMES = {
     'Model Request: test',
@@ -217,10 +199,6 @@ def _operation_ids() -> list[DurableOperationId]:
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         CapabilityOperationId('compat', operation='operation'),
     ]
-
-
-def _workspace_operation_ids() -> list[DurableOperationId]:
-    return [WorkspaceOperationId(method) for method in WORKSPACE_METHODS]
 
 
 class CompatWorkspaceSupplier(AbstractCapability[Any]):
@@ -335,32 +313,21 @@ def test_default_journal_operation_name_matrix() -> None:
         for operation_id in _operation_ids()
     }
     assert names == JOURNAL_OPERATION_NAMES
-    workspace_names = {namer.operation_name(operation_id) for operation_id in _workspace_operation_ids()}
-    assert workspace_names == JOURNAL_WORKSPACE_NAMES
+    assert {namer.operation_name(WORKSPACE_OPERATION_ID)} == JOURNAL_WORKSPACE_NAMES
 
 
-async def test_journal_workspace_units_bind_only_with_a_supplier() -> None:
-    def bound_workspace_names(*capabilities: AbstractCapability[Any]) -> set[str]:
-        durability = JournalDurability()
-        agent = Agent(TestModel(), name='compat', capabilities=[*capabilities, durability])
-        bound = JournalDurability.from_agent(agent)
-        assert bound is not None
-        namer = JournalOperationNamer('compat')
-        return {
-            namer.operation_name(WorkspaceOperationId(method))
-            for method in bound._bound_workspace_operations  # pyright: ignore[reportPrivateUsage]
-        }
-
-    assert bound_workspace_names(CompatCapability()) == set()
-    assert bound_workspace_names(CompatCapability(), CompatWorkspaceSupplier()) == JOURNAL_WORKSPACE_NAMES
+async def test_journal_workspace_operation_binds_only_with_a_supplier() -> None:
+    plain = JournalDurability()
+    await Agent(TestModel(), name='compat', capabilities=[CompatCapability(), plain]).run('go')
+    assert not [name for name in plain.recorded_names if 'workspace' in name]
 
     durability = JournalDurability()
     agent = Agent(TestModel(), name='compat', capabilities=[CompatWorkspaceSupplier(), durability])
     result = await agent.run('go')
     await result.workspace.write_text('a.txt', 'a')
     assert [name for name in durability.recorded_names if 'workspace' in name] == [
-        'compat__workspace__ensure',
-        'compat__workspace__write_text',
+        'compat__capability__workspace.call',
+        'compat__capability__workspace.call',
     ]
 
 
@@ -374,8 +341,7 @@ def test_prefect_operation_name_matrix() -> None:
         for operation_id in _operation_ids()
     }
     assert names == PREFECT_OPERATION_NAMES
-    workspace_names = {namer.operation_name(operation_id) for operation_id in _workspace_operation_ids()}
-    assert workspace_names == PREFECT_WORKSPACE_NAMES
+    assert {namer.operation_name(WORKSPACE_OPERATION_ID)} == PREFECT_WORKSPACE_NAMES
 
 
 def test_prefect_operation_name_assembly_completeness() -> None:

@@ -141,7 +141,7 @@ The backend config object implements the backend configuration protocol. Its pub
 [`OperationConfigRole`][pydantic_ai.durable_exec.OperationConfigRole] and a
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId]. Match the concrete ID variants
 when config differs by model, toolset, or operation. The role is a coarse config bucket: `'model'`,
-`'event'`, `'tool'`, `'capability'`, or `'workspace'`. The operation ID carries the fine-grained identity. A
+`'event'`, `'tool'`, or `'capability'`. The operation ID carries the fine-grained identity. A
 capability operation ID includes the explicit name from `@durable_operation(name='...')`. That name
 is required because it becomes persisted compatibility data and must remain stable if the Python
 method is renamed. The ID union represents the IDs available in the installed Pydantic AI version.
@@ -152,47 +152,16 @@ MCP tools perform I/O and always run in their durable unit, so returning `False`
 
 The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
 `ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
-`ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`,
-`CapabilityOperationId`, and `WorkspaceOperationId`. Their Python class names do not determine
-persisted operation names.
-
-### Workspace operations
-
-When a capability attached at construction supplies a [workspace](../workspace.md), the base binds
-one operation per [`Workspace`][pydantic_ai.workspaces.Workspace] method, identified by
-[`WorkspaceOperationId`][pydantic_ai.durable_exec.WorkspaceOperationId] with a
-[`WorkspaceMethod`][pydantic_ai.durable_exec.WorkspaceMethod] as its `method`. It also binds an
-`'ensure'` operation, which runs at the start of every run to create or attach the environment and
-journal its `WorkspaceRef` and working directory. An agent without a workspace gets no workspace operations, so its persisted
-names do not change.
-
-What your backend must handle:
-
-- **Config.** These operations use the `'workspace'` role.
-  [`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig] takes an optional
-  `workspace=` config and falls back to the `capability` config without one.
-- **Names.** A custom namer must name the new ID;
-  [`JournalOperationNamer`][pydantic_ai.durable_exec.JournalOperationNamer] uses
-  `{agent}__workspace__{method}`.
-- **Caching.** Hash-keyed engines must add a per-container sequence to the cache identity, as for
-  event handling: two identical reads with a write between them are two operations, not one cached
-  result.
-- **Retries.** Default `run`, `write_bytes`, `write_text`, `make_dir` and `remove` to a single
-  attempt. A retry repeats the command or write.
-
-Parameters and results are pydantic dataclasses (`bytes` fields serialize as base64), so they cross
-both codecs and an engine's own converter unchanged. Errors a workspace
-is expected to raise, such as a missing file or a read-only refusal, come back as data and are
-re-raised as the same type in container code. The unit itself fails, and is retried, only for other
-errors.
+`ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
+`CapabilityOperationId`. Their Python class names do not determine persisted operation names.
 
 ### API evolution
 
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId] grows in minor releases as
-Pydantic AI adds durable units. Engine configuration must therefore include a default branch when
-matching IDs. Use that branch to apply a safe base configuration or raise an actionable
-unsupported-operation error. Do not rely on an exhaustive match that assumes the current union
-will never gain another arm.
+Pydantic AI adds durable units. Sandbox operations are one planned example. Engine configuration
+must therefore include a default branch when matching IDs. Use that branch to apply a safe base
+configuration or raise an actionable unsupported-operation error. Do not rely on an exhaustive
+match that assumes the current union will never gain another arm.
 
 ## Persisted names and recovery
 

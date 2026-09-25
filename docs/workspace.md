@@ -281,10 +281,8 @@ Tools use `ctx.workspace` as they would in a plain run.
 
 - Unlike a plain run, every run creates or attaches its environment at its start, even if no tool
   uses it. Retries, replays and recovery then reattach to that same environment.
-- A retry never runs a command twice. On Temporal, commands and writes get one attempt by default and
-  reads keep the base retry policy; on DBOS and Prefect every workspace step gets one attempt unless
-  you allow retries. Change it with `workspace_activity_config` (Temporal), `workspace_step_config`
-  (DBOS) or `workspace_task_config` (Prefect).
+- Workspace calls retry like tools do, so a command or write may run again if a worker dies mid-call,
+  and a `run(timeout=...)` must fit within the call's own timeout (Temporal's `start_to_close_timeout`).
 - `workspace=` passes on only a reference. The run uses the capability's own workspace for it, so a
   wrapper such as `ReadOnlyWorkspace(...)` is silently dropped, and a backend whose reference no
   capability recognizes raises `UserError`. Put policy on the capability instead, such as

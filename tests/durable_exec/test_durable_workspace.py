@@ -29,20 +29,16 @@ from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     DurableOperationId,
     JournalOperationNamer,
-    OperationConfigRole,
     RoleBasedOperationConfig,
-    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._workspace import (
+    WORKSPACE_OPERATION_ID,
     DurableWorkspace,
-    ReadBytesArguments,
-    RunArguments,
-    UnicodeDecodeDetails,
-    WorkspaceOperationError,
-    WorkspaceOperationResult,
-    WriteBytesArguments,
-    raise_operation_error,
-    workspace_operation_error,
+    WorkspaceCall,
+    WorkspaceCallError,
+    WorkspaceCallResult,
+    error_as_data,
+    raise_error,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -81,6 +77,10 @@ class _Backend(CallableOperationBackend[dict[str, Any]]):
         cache_key: tuple[object, ...],
         config: dict[str, Any],
     ) -> object:
+        if operation_id == WORKSPACE_OPERATION_ID:
+            call = cache_key[0]
+            assert isinstance(call, WorkspaceCall)
+            name = f'{name}:{call.method}'
         self._durability.units.append(name)
         return await body()
 
@@ -132,7 +132,7 @@ def _run_context() -> RunContext[None]:
 
 def _workspace_units(durability: FakeDurability) -> list[str]:
     # `for_agent` binds a shallow copy, so the user's instance shares the recorded list but not the name.
-    return [name.split('__workspace__')[1] for name in durability.units if '__workspace__' in name]
+    return [name.split('workspace.call:')[1] for name in durability.units if 'workspace.call:' in name]
 
 
 async def test_ensure_runs_once_before_hooks_and_every_side_shares_one_environment() -> None:
@@ -162,7 +162,7 @@ async def test_ensure_runs_once_before_hooks_and_every_side_shares_one_environme
     assert result.workspace.ref == WorkspaceRef(provider='fake', id='fake-fresh')
     # The result's workspace still dispatches units after the run, inside the container.
     assert await result.workspace.exists('note.txt') is True
-    assert _workspace_units(durability) == snapshot(['ensure', 'write_text', 'exists'])
+    assert _workspace_units(durability) == snapshot(['ensure', 'write_bytes', 'exists'])
     # `ensure` created one environment on the live backend an in-process unit shares with the
     # container, so nothing was rebuilt or reattached.
     assert [(backend.name, backend.create_calls, backend.attach_calls) for backend in supplier.backends] == snapshot(
@@ -205,7 +205,7 @@ async def test_parallel_first_uses_share_one_ensure() -> None:
     result = await agent.run('go')
 
     assert result.workspace.ref == WorkspaceRef(provider='fake', id='fake-fresh')
-    assert _workspace_units(durability) == snapshot(['ensure', 'write_text', 'write_text'])
+    assert _workspace_units(durability) == snapshot(['ensure', 'write_bytes', 'write_bytes'])
     assert sum(backend.create_calls for backend in supplier.backends) == 1
 
 
@@ -219,7 +219,7 @@ async def test_policy_wrapper_is_enforced_inside_the_unit(tmp_path: Path) -> Non
     assert isinstance(result.workspace.wrapped, ReadOnlyWorkspace)
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await result.workspace.write_text('x.txt', 'x')
-    assert _workspace_units(durability) == ['ensure', 'write_text']
+    assert _workspace_units(durability) == ['ensure', 'write_bytes']
 
 
 async def test_expected_errors_cross_as_data_and_re_raise(tmp_path: Path) -> None:
@@ -236,7 +236,7 @@ async def test_expected_errors_cross_as_data_and_re_raise(tmp_path: Path) -> Non
     with pytest.raises(TypeError):
         await result.workspace.run('echo hi')
     # Every failure was a completed unit, not a failed one.
-    assert _workspace_units(durability) == ['ensure', 'read_bytes', 'read_text', 'run']
+    assert _workspace_units(durability) == ['ensure', 'read_bytes', 'read_bytes', 'run']
 
 
 async def test_backend_is_not_reachable_from_workflow_code() -> None:
@@ -259,7 +259,7 @@ async def test_ensure_rejects_a_backend_without_a_ref() -> None:
 
     agent = Agent(TestModel(), name='ws', capabilities=[WorkspaceCapability(RefLess('refless')), FakeDurability()])
 
-    with pytest.raises(UserError, match='must report a `ref` once any operation has completed'):
+    with pytest.raises(UserError, match='must report its `ref` once an operation has completed'):
         await agent.run('go')
 
 
@@ -310,7 +310,7 @@ async def test_durable_agent_outside_the_container_keeps_the_selected_workspace(
     assert result.workspace.backend is supplier.backend
     durability = TransparentDurability.from_agent(agent)
     assert durability is not None
-    assert [name for name in durability.units if '__workspace__' in name] == []
+    assert [name for name in durability.units if 'workspace.call' in name] == []
 
 
 async def test_result_workspace_calls_directly_once_the_container_has_ended() -> None:
@@ -352,7 +352,7 @@ async def test_no_units_are_bound_without_a_construction_time_supplier() -> None
     Agent(TestModel(), name='ws', capabilities=[durability])
     bound = FakeDurability.from_agent(Agent(TestModel(), name='ws', capabilities=[durability]))
     assert bound is not None
-    assert bound._bound_workspace_operations == {}  # pyright: ignore[reportPrivateUsage]
+    assert bound._bound_workspace_operation is None  # pyright: ignore[reportPrivateUsage]
 
     # Attaching one per run inside the container is then refused rather than run non-durably.
     supplier = WorkspaceCapability()
@@ -441,7 +441,9 @@ async def test_sub_agent_run_from_a_unit_uses_the_forwarded_workspace_directly()
     # The child saw the parent's live durable workspace, and its calls went direct: one `ensure`
     # for the parent run, and no unit for anything the tools did.
     assert type(child_workspaces[0]) is DurableWorkspace
-    assert [name for name in durability.units if '__workspace__' in name] == ['parent__workspace__ensure']
+    assert [name for name in durability.units if 'workspace.call' in name] == [
+        'parent__capability__workspace.call:ensure'
+    ]
 
 
 async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> None:
@@ -473,7 +475,7 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         [
             'ensure',
             'make_dir',
-            'write_text',
+            'write_bytes',
             'write_bytes',
             'run',
             'stat',
@@ -497,41 +499,13 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         await agent.run('go', workspace=WorkspaceRef(provider='fake', id='expired'))
 
 
-def test_workspace_role_falls_back_to_the_capability_config() -> None:
-    config = RoleBasedOperationConfig(model={'m': 1}, event={'e': 1}, capability={'c': 1}, tool={'t': 1})
-    assert config.base('workspace', operation_id=WorkspaceOperationId('run')) == {'c': 1}
-    explicit = RoleBasedOperationConfig(
-        model={'m': 1}, event={'e': 1}, capability={'c': 1}, tool={'t': 1}, workspace={'w': 1}
-    )
-    assert explicit.base('workspace', operation_id=WorkspaceOperationId('run')) == {'w': 1}
-
-
 def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
     raw = b'\xff\xfe\x00binary'
-    params = WriteBytesArguments(path='/a', data=raw)
-    dumped = JSON_CODEC.dump(WriteBytesArguments, params)
-    # Pydantic's base64 mode uses the URL-safe alphabet.
-    assert dumped == {'path': '/a', 'data': '__4AYmluYXJ5'}
-    assert JSON_CODEC.load(WriteBytesArguments, dumped) == params
-    assert pickle.loads(pickle.dumps(params)) == params
-
-    result = WorkspaceOperationResult[bytes](value=raw)
-    assert (
-        JSON_CODEC.load(WorkspaceOperationResult[bytes], JSON_CODEC.dump(WorkspaceOperationResult[bytes], result))
-        == result
-    )
-    entries = WorkspaceOperationResult[list[FileEntry]](value=[FileEntry(name='a', path='/a', is_dir=False, size=1)])
-    assert (
-        JSON_CODEC.load(
-            WorkspaceOperationResult[list[FileEntry]],
-            JSON_CODEC.dump(WorkspaceOperationResult[list[FileEntry]], entries),
-        )
-        == entries
-    )
-    assert JSON_CODEC.load(
-        RunArguments, JSON_CODEC.dump(RunArguments, RunArguments(command=['ls', '-l']))
-    ) == RunArguments(command=['ls', '-l'])
-    assert JSON_CODEC.load(ReadBytesArguments, {'path': '/x'}) == ReadBytesArguments(path='/x')
+    call = WorkspaceCall(method='write_bytes', path='/a', data=raw)
+    assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, call)) == call
+    assert pickle.loads(pickle.dumps(call)) == call
+    result = WorkspaceCallResult(data=raw, entries=[FileEntry(name='a', path='/a', is_dir=False, size=1)])
+    assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
 
 
 @pytest.mark.parametrize(
@@ -546,7 +520,6 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
         IsADirectoryError('/dir'),
         PermissionError('/root'),
         FileExistsError('/there'),
-        UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid start byte'),
         NotImplementedError('no stat'),
         UserError('policy'),
         TypeError('shell'),
@@ -554,32 +527,21 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
     ],
 )
 def test_error_table_round_trips_every_kind(error: Exception) -> None:
-    data = workspace_operation_error(error)
+    data = error_as_data(error)
     assert data is not None
-    restored = JSON_CODEC.load(WorkspaceOperationError, JSON_CODEC.dump(WorkspaceOperationError, data))
+    restored = JSON_CODEC.load(WorkspaceCallError, JSON_CODEC.dump(WorkspaceCallError, data))
     with pytest.raises(type(error)) as raised:
-        raise_operation_error(restored)
+        raise_error(restored)
     assert str(raised.value) == str(error)
     assert type(raised.value) is type(error)
     if isinstance(error, WorkspaceTimeoutError):
         assert isinstance(raised.value, WorkspaceTimeoutError)
         assert (raised.value.stdout, raised.value.stderr) == ('partial', 'err')
-    if isinstance(error, UnicodeDecodeError):
-        assert isinstance(raised.value, UnicodeDecodeError)
-        assert raised.value.object == b'\xff'
 
 
 def test_unexpected_errors_fail_the_unit() -> None:
-    assert workspace_operation_error(ConnectionError('flaky')) is None
-    assert workspace_operation_error(OSError('other')) is None
-    assert (
-        WorkspaceOperationError(
-            kind='unicode_decode',
-            message='m',
-            decode=UnicodeDecodeDetails(encoding='utf-8', object=b'', start=0, end=0, reason='r'),
-        ).decode
-        is not None
-    )
+    assert error_as_data(ConnectionError('flaky')) is None
+    assert error_as_data(OSError('other')) is None
 
 
 async def test_run_never_ensures_without_an_attached_workspace() -> None:
@@ -590,37 +552,3 @@ async def test_run_never_ensures_without_an_attached_workspace() -> None:
     assert result.workspace.ref == WorkspaceRef(provider='fake', id='known')
     # A known ref still gets one `ensure`, which journals the working directory and attaches once.
     assert _workspace_units(durability) == ['ensure']
-
-
-def test_journal_names_with_a_workspace_supplier() -> None:
-    durability = FakeDurability()
-    bound = FakeDurability.from_agent(
-        Agent(TestModel(), name='compat', capabilities=[WorkspaceCapability(), durability])
-    )
-    assert bound is not None
-    namer = JournalOperationNamer('compat')
-    names = {
-        namer.operation_name(WorkspaceOperationId(method))
-        for method in bound._bound_workspace_operations  # pyright: ignore[reportPrivateUsage]
-    }
-    assert names == snapshot(
-        {
-            'compat__workspace__ensure',
-            'compat__workspace__exists',
-            'compat__workspace__list_dir',
-            'compat__workspace__make_dir',
-            'compat__workspace__read_bytes',
-            'compat__workspace__read_text',
-            'compat__workspace__realpath',
-            'compat__workspace__remove',
-            'compat__workspace__run',
-            'compat__workspace__stat',
-            'compat__workspace__write_bytes',
-            'compat__workspace__write_text',
-        }
-    )
-
-
-def test_operation_config_role_includes_workspace() -> None:
-    role: OperationConfigRole = 'workspace'
-    assert role == 'workspace'

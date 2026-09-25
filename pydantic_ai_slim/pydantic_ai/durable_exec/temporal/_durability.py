@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from collections.abc import AsyncIterable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -10,7 +9,6 @@ from typing import Any, Literal, cast
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
 from temporalio.client import Client, WorkflowHandle
-from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
@@ -30,17 +28,10 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetCallToolParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
-    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads, managed_model_scope
-from pydantic_ai.durable_exec._workspace import (
-    MUTATING_WORKSPACE_METHODS,
-    RunArguments,
-    WorkspaceArguments,
-    WorkspaceBoundOperation,
-)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
@@ -85,7 +76,7 @@ from ._transports import (
     _ModelRequestTransport,
     _RequestParams as _RequestParams,
     _StreamedActivityPayload,
-    _WorkspaceOperationTransport,
+    _WorkspaceCallTransport,
 )
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
@@ -96,14 +87,6 @@ provider round trip, and heartbeating (see `heartbeating`) lets Temporal disting
 long-but-healthy activity from a crashed worker. Tool activities deliberately get no default:
 a CPU-bound tool can starve the heartbeat task, and failing it for a missed heartbeat would
 be a regression against no timeout at all.
-"""
-
-_WORKSPACE_COMMAND_TIMEOUT_MARGIN = timedelta(seconds=30)
-"""Added to a `run(timeout=...)` deadline to size the activity that carries the command.
-
-The activity also attaches to the environment and ships the result, so it needs more time than
-the command itself; without widening, a command allowed to run longer than the activity's
-`start_to_close_timeout` would be cut off by the activity and, worse, retried.
 """
 
 
@@ -191,7 +174,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         model_activity_config: ActivityConfig | None = None,
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
-        workspace_activity_config: ActivityConfig | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     ):
         """Create a TemporalDurability capability.
@@ -241,13 +223,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 event stream handler activities.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
                 merged on top of the base config.
-            workspace_activity_config: Activity config merged on top of the base for the
-                [workspace](https://pydantic.dev/docs/ai/workspace/#durable-execution) activities,
-                one per `Workspace` method called from workflow code. Unless it sets a
-                `retry_policy`, the activities for `run`, `write_bytes`, `write_text`, `make_dir`
-                and `remove` get a single attempt, so a command or write is never repeated by a
-                retry; reads keep the base policy. A `run(timeout=...)` longer than the activity's
-                `start_to_close_timeout` widens that call's deadline to fit the command.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
 
@@ -287,10 +262,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             ts_id: validate_activity_config(config, f'`toolset_activity_config[{ts_id!r}]`')
             for ts_id, config in (toolset_activity_config or {}).items()
         }
-        if workspace_activity_config is not None:
-            workspace_activity_config = validate_activity_config(
-                workspace_activity_config, '`workspace_activity_config`'
-            )
 
         # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
         # `RetryPolicy` shared with other activities would leak the non-retryable entries into
@@ -321,16 +292,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._event_stream_handler_activity_config.get('retry_policy')
         )
         self._toolset_activity_config = toolset_activity_config or {}
-        self._workspace_activity_config: ActivityConfig = {
-            **activity_config,
-            **(workspace_activity_config or {}),
-        }
-        self._workspace_activity_config['retry_policy'] = with_non_retryable_errors(
-            self._workspace_activity_config.get('retry_policy')
-        )
-        # An explicit workspace retry policy is the user's answer for every method, single-attempt
-        # default included; only its absence makes the mutating methods attempt once.
-        self._workspace_retry_policy_configured = 'retry_policy' in (workspace_activity_config or {})
 
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
@@ -363,43 +324,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             model_config=self._model_activity_config,
             event_config=self._event_stream_handler_activity_config,
             tool_config=self.activity_config,
-            workspace_config=self._workspace_operation_activity_config,
             resolve_tool_config=self._resolve_temporal_tool_config,
             runtime=self,
         )
         self._register_activities(agent)
 
-    def _workspace_operation_activity_config(self, operation_id: DurableOperationId) -> ActivityConfig:
-        """The bound config of one workspace activity: mutating methods attempt once by default."""
-        config = self._workspace_activity_config.copy()
-        if (
-            isinstance(operation_id, WorkspaceOperationId)
-            and operation_id.method in MUTATING_WORKSPACE_METHODS
-            and not self._workspace_retry_policy_configured
-        ):
-            # Always present: `__init__` normalized the base policy onto every workspace config.
-            retry_policy = copy.copy(config.get('retry_policy')) or RetryPolicy()
-            retry_policy.maximum_attempts = 1
-            config['retry_policy'] = retry_policy
-        return config
-
-    def _workspace_operation_parameter_transport(
-        self, arguments_type: type[Any], result_type: object
-    ) -> _WorkspaceOperationTransport:
-        return _WorkspaceOperationTransport(self, arguments_type=arguments_type, result_type=result_type)
-
-    def _workspace_operation_config(
-        self, operation: WorkspaceBoundOperation, arguments: WorkspaceArguments[Any]
-    ) -> ActivityConfig | None:
-        if not isinstance(arguments, RunArguments) or arguments.timeout is None:
-            return None
-        assert isinstance(operation, TemporalBoundOperation)
-        config = operation.config
-        deadline = timedelta(seconds=arguments.timeout) + _WORKSPACE_COMMAND_TIMEOUT_MARGIN
-        start_to_close = config.get('start_to_close_timeout')
-        if start_to_close is None or start_to_close >= deadline:
-            return None
-        return {**config, 'start_to_close_timeout': deadline}
+    def _workspace_call_transport(self) -> _WorkspaceCallTransport:
+        return _WorkspaceCallTransport(self)
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""

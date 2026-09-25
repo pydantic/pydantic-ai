@@ -112,13 +112,13 @@ async def test_dbos_workspace_operations_run_as_steps_and_a_fork_replays_them(db
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert [step['function_name'] for step in steps] == snapshot(
         [
-            'dbos_workspace__workspace__ensure',
-            'dbos_workspace__workspace__write_text',
+            'dbos_workspace__capability__workspace.call',
+            'dbos_workspace__capability__workspace.call',
             'dbos_workspace__model.request',
-            'dbos_workspace__workspace__write_text',
-            'dbos_workspace__workspace__read_text',
+            'dbos_workspace__capability__workspace.call',
+            'dbos_workspace__capability__workspace.call',
             'dbos_workspace__model.request',
-            'dbos_workspace__workspace__read_text',
+            'dbos_workspace__capability__workspace.call',
         ]
     )
 
@@ -207,7 +207,7 @@ async def test_dbos_local_workspace_end_to_end(dbos: DBOS, tmp_path: Path) -> No
     agent = Agent(
         TestModel(call_tools=['write_note']),
         name='dbos_local',
-        capabilities=[LocalWorkspace(tmp_path), DBOSDurability(workspace_step_config={'retries_allowed': False})],
+        capabilities=[LocalWorkspace(tmp_path), DBOSDurability()],
     )
 
     @agent.tool

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from pydantic_ai import messages as _messages
 from pydantic_ai.durable_exec._capability_operation import (
@@ -23,7 +22,7 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
-from pydantic_ai.durable_exec._workspace import WorkspaceArguments, WorkspaceOperationParams
+from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -55,11 +54,9 @@ __all__ = (
     '_ModelRequestTransport',
     '_RequestParams',
     '_StreamedActivityPayload',
-    '_WorkspaceOperationTransport',
-    '_WorkspaceOperationWire',
+    '_WorkspaceCallTransport',
+    '_WorkspaceCallWire',
 )
-
-ArgumentsT = TypeVar('ArgumentsT')
 
 
 class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
@@ -390,39 +387,28 @@ class _EventStreamHandlerTransport(
         return _SemanticEventStreamHandlerParams(params.event, run_context=ctx)
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=ConfigDict(ser_json_bytes='base64', val_json_bytes='base64'))
-class _WorkspaceOperationWire(Generic[ArgumentsT]):
-    """Serializable arguments of a workspace activity; parametrized per method so the converter validates them."""
-
-    arguments: ArgumentsT
+@dataclass(kw_only=True)
+class _WorkspaceCallWire:
+    call: WorkspaceCall
     ref: WorkspaceRef | None
     serialized_run_context: Any
 
 
-class _WorkspaceOperationTransport(
-    TemporalParameterTransport[WorkspaceOperationParams[Any], tuple[_WorkspaceOperationWire[Any], Any]]
-):
-    def __init__(self, durability: TemporalDurability[Any], *, arguments_type: type[Any], result_type: object) -> None:
+class _WorkspaceCallTransport(TemporalParameterTransport[WorkspaceCallParams, tuple[_WorkspaceCallWire, Any]]):
+    wire_type = _WorkspaceCallWire
+    result_type = WorkspaceCallResult
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
         self._durability = durability
-        self.wire_type = _WorkspaceOperationWire[arguments_type]
-        self.result_type = result_type
 
-    def dump(self, params: WorkspaceOperationParams[Any]) -> tuple[_WorkspaceOperationWire[Any], Any]:
+    def dump(self, params: WorkspaceCallParams) -> tuple[_WorkspaceCallWire, Any]:
         ctx = params.run_context
-        return (
-            _WorkspaceOperationWire[Any](
-                arguments=params.arguments,
-                ref=params.ref,
-                serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
-            ),
-            ctx.deps,
-        )
+        serialized_run_context = self._durability.run_context_type.serialize_run_context(ctx)
+        return _WorkspaceCallWire(
+            call=params.call, ref=params.ref, serialized_run_context=serialized_run_context
+        ), ctx.deps
 
-    def load(
-        self, payload: tuple[_WorkspaceOperationWire[Any], Any], *, runtime: object
-    ) -> WorkspaceOperationParams[Any]:
+    def load(self, payload: tuple[_WorkspaceCallWire, Any], *, runtime: object) -> WorkspaceCallParams:
         wire, deps = payload
         ctx = self._durability.deserialize_operation_run_context(wire.serialized_run_context, deps)
-        return WorkspaceOperationParams(
-            run_context=ctx, ref=wire.ref, arguments=cast(WorkspaceArguments[Any], wire.arguments)
-        )
+        return WorkspaceCallParams(run_context=ctx, ref=wire.ref, call=wire.call)

@@ -61,23 +61,15 @@ runs in container code, so it carries the same determinism requirement as every 
 runs there.
 
 Workspaces are routed by the base, not by engines: when a construction-time capability overrides
-`get_workspace`, `_bind_workspace_operations` binds one `WorkspaceOperationId(method)` unit per
-`Workspace` method plus `'ensure'` (a persisted name set; bind nothing otherwise, so agents without a
-supplier keep their pinned names), `_prepare_workspace` installs one `DurableWorkspace` innermost around
-the selected workspace inside the container, and the `WorkspaceEnsurer` companion (composed in
-`for_agent` through `_companion_capabilities`) runs `ensure` before the run body, with a lazy
-locked fallback on first dispatch. A `DurableWorkspace` never reaches a unit: in-process engines
-get the run's live wrapped workspace through `_unit_workspace`, and engines that serialize the run
-context (Temporal) rebuild `ctx.workspace` from the serialized ref through the worker's
-construction-time capabilities, without re-running `for_run`, which is why `workspace_rebuilt_in_unit`
-engines reject a per-run wrapper-chain change. A live `workspace=` argument inside the container is
-claimed through the capabilities by its ref (`_claim_explicit_workspace`), dropping any caller-side
-wrapper, and raises `UserError` when no capability recognizes it. `in_durable_unit()` (a `ContextVar` set by
-`CallableOperationBackend`) is the "already inside a unit" answer for engines whose own
-`in_durable_context` stays true inside a unit (Prefect). Expected workspace errors cross as data
-(`WorkspaceOperationError`) and are re-raised as their original types; Temporal additionally lists
-them as workflow-failure types so an uncaught one fails the workflow instead of hanging it. Keep
-`run`, writes, `make_dir` and `remove` single-attempt by default in every engine's workspace config.
+`get_workspace`, `_bind_workspace_operation` binds one operation, `CapabilityOperationId('workspace',
+operation='call')`, configured and retried like any capability operation (bind nothing otherwise, so
+agents without a supplier keep their pinned names). `_prepare_workspace` installs a `DurableWorkspace`
+around the selected workspace inside the container; each of its calls, `ensure` included, is one
+`WorkspaceCall`. The `WorkspaceEnsurer` companion runs `ensure` before the run body, with a locked lazy
+fallback on first call, so parallel units share one environment. Inside a unit, `_unit_workspace`
+gives the call the plain workspace: the live one in-process, or on Temporal the one rebuilt from the
+serialized ref. Expected workspace errors cross as data and are re-raised with their original type;
+Temporal also lists them as workflow-failure types so an uncaught one fails the workflow.
 
 Assume a durable unit may execute more than once if the process fails after the side effect but
 before its checkpoint commits. Document the engine's guarantees and require idempotency or expose

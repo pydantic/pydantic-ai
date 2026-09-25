@@ -5,12 +5,7 @@ from collections.abc import Awaitable, Callable
 from prefect import task
 from prefect.context import FlowRunContext
 
-from pydantic_ai.durable_exec._operation import (
-    CapabilityOperationId,
-    DurableOperationId,
-    EventStreamHandlerId,
-    WorkspaceOperationId,
-)
+from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, EventStreamHandlerId
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, RoleBasedOperationConfig
 
 from ._operation_names import PrefectOperationNamer
@@ -41,9 +36,6 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
             sequence_key = (
                 f'{self._event_sequence_key}:capability:{len(capability_id)}:{capability_id}{operation_id.operation}'
             )
-        elif isinstance(operation_id, WorkspaceOperationId):
-            # Two identical reads with a write between them are two calls, not one cached result.
-            sequence_key = f'{self._event_sequence_key}:workspace:{operation_id.method}'
 
         if sequence_key is not None:
             flow_context = FlowRunContext.get()
