@@ -700,8 +700,9 @@ def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEve
     error = _response_status_error(response)
     if error is None:
         return RealtimeSessionErrorEvent(message='The realtime response failed.', recoverable=True)
-    # The SDK models only `type` and `code`; the server's human-readable `message` is kept as an extra.
-    message = (error.model_extra or {}).get('message')
+    # The SDK models only `type` and `code`; the server's human-readable `message` is kept as an extra
+    # field, which `getattr` reads now and still reads if the SDK promotes it to a real field.
+    message = getattr(error, 'message', None)
     return RealtimeSessionErrorEvent(
         message=message
         if isinstance(message, str) and message
