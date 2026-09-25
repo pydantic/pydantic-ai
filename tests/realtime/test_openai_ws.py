@@ -318,6 +318,35 @@ async def test_text_context_waits_for_next_turn(openai_ws_cassette: tuple[Provid
     assert 'ada' in (part.transcript or '').lower()
 
 
+async def test_refused_text_is_taken_out_of_history(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    # OpenAI caps an input text at 256,000 characters and refuses a longer one with an `error` naming
+    # the item's `event_id`, so the refused text is taken back out of history rather than recorded as
+    # something the model saw.
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime-mini', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    errors: list[RealtimeSessionErrorEvent] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('a' * 256_001, respond=False)
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeSessionErrorEvent):
+                    errors.append(event)
+                elif isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert [(error.code, error.recoverable) for error in errors] == snapshot([('string_above_max_length', True)])
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == [UserPromptPart(content='Say hello.', timestamp=IsDatetime())]
+
+
 async def test_image_can_solicit_one_response(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
