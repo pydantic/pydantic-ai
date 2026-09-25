@@ -535,6 +535,8 @@ async def test_response_done_maps_xai_usage_extras() -> None:
         output_tokens=5,
         input_audio_tokens=6,
         output_audio_tokens=4,
+        # Reported twice on purpose: in `details` under xAI's own name, and as the meter that prices it.
+        audio_seconds=3,
         details={
             'audio_tokens': 4,
             'input_grok_tokens': 2,
@@ -542,14 +544,28 @@ async def test_response_done_maps_xai_usage_extras() -> None:
             'billable_audio_seconds': 3,
         },
     )
-    # The billable duration is reported twice on purpose: in `details` under the provider's own name,
-    # and as the `audio_seconds` meter that prices the call.
-    expected.audio_seconds = 3
     assert events[0] == SessionUsage(
         usage=expected,
         provider_response_id='resp-xai',
         finish_reason='stop',
     )
+
+
+async def test_response_done_without_billable_seconds_leaves_audio_seconds_unset() -> None:
+    """A usage frame with no billed duration reports none, rather than guessing one from the tokens."""
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp-xai', 'status': 'completed', 'output': [], 'usage': None},
+            'usage': {'input_tokens': 8, 'output_tokens': 5},
+        }
+    )
+    conn = XaiRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    usage_event = events[0]
+    assert isinstance(usage_event, SessionUsage)
+    assert usage_event.usage.audio_seconds == 0
 
 
 class FakeConnect:

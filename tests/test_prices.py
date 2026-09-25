@@ -62,11 +62,19 @@ def test_fractional_audio_seconds_survive_into_pricing():
     ).total_price == snapshot(Decimal('0.00276'))
 
 
-def test_audio_seconds_accumulates_across_a_run():
-    """`RunUsage.incr` must sum the duration, or a session's cost would only ever reflect one response."""
+def test_audio_seconds_takes_part_in_usage_arithmetic():
+    """Every way usage is combined carries the duration, or a run's cost reflects only part of it.
+
+    `RunUsage.__sub__` lists its fields explicitly, so a new field is easy to leave out there — and
+    usage attribution uses it to report a nested run's own usage.
+    """
+    first, second = RequestUsage(audio_seconds=1.5), RequestUsage(audio_seconds=2.25)
+    assert (first + second).audio_seconds == 3.75
+
     run = RunUsage()
-    for _ in range(3):
-        request = RequestUsage()
-        request.audio_seconds = 2.0
-        run.incr(request)
-    assert run.audio_seconds == snapshot(6.0)
+    run.incr(first)
+    run.incr(second)
+    assert run.audio_seconds == 3.75
+
+    before = RunUsage(audio_seconds=1.0)
+    assert (run - before).audio_seconds == 2.75
