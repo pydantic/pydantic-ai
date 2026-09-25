@@ -380,11 +380,13 @@ class _ToolBatch:
     """Whether the response making the calls has been finalized, so no further call can join."""
     sent_unanswered: bool = False
     """Whether a result went out without asking for a response, so the batch may still owe one."""
+    abandoned: bool = False
+    """Whether the provider lost the conversation the calls were made in, so no answer is asked for."""
 
     @property
     def answer_owed(self) -> bool:
         """Every result is out, none of them asked for the answer, and no call can still join."""
-        return self.closed and not self.unsent and self.sent_unanswered
+        return self.closed and not self.unsent and self.sent_unanswered and not self.abandoned
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -2833,9 +2835,11 @@ class RealtimeSession:
         self._input_audio.clear()
 
         # Tool batches go with the conversation the provider lost: the running calls are cancelled below,
-        # and the model is not asked to answer results it may never have received. Dropped before the
-        # in-flight response is settled, which would otherwise complete its batch and ask.
-        self._tool_call_batches.clear()
+        # and the model is not asked to answer results it may never have received, even by a tool that
+        # swallows its cancellation and returns anyway. Marked before the in-flight response is settled,
+        # which would otherwise complete its batch and ask.
+        for batch in self._tool_call_batches.values():
+            batch.abandoned = True
         self._open_tool_batch = None
         if self._response_in_flight:
             events.extend(self._finalize_assistant_part())
@@ -3106,7 +3110,7 @@ class RealtimeSession:
         batch = self._tool_call_batches.pop(call_part.tool_call_id, None)
         if batch is not None:
             batch.unsent.discard(call_part.tool_call_id)
-        respond = batch is None or (batch.closed and not batch.unsent)
+        respond = batch is None or (batch.closed and not batch.unsent and not batch.abandoned)
         if respond:
             self._reserve_response_request()
         else:
@@ -3331,6 +3335,7 @@ class RealtimeSession:
                 reserved_budget=reserved_budget,
             )
         except asyncio.CancelledError:
+            self._tool_call_batches.pop(call_part.tool_call_id, None)
             raise
         except BaseException as e:
             self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
