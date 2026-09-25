@@ -2035,6 +2035,8 @@ def _effective_thinking_type(
 def _thinking_blocks_tool_forcing(
     thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
 ) -> bool:
+    if profile.get('bedrock_thinking_variant') == 'xai':
+        return False
     return thinking_type == 'enabled' or (thinking_type == 'adaptive' and not _supports_tool_forcing(profile))
 
 

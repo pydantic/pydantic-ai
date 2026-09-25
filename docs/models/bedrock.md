@@ -116,6 +116,10 @@ and explicit `ToolOutput` raises a `UserError`. Models that do not support force
 restriction with adaptive thinking too. See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
 and [forced tool use restrictions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html#model-parameters-anthropic-claude-forced-tool-use).
 
+xAI Grok 4.6 (`us.xai.grok-4.6`, `global.xai.grok-4.6`) always reasons, and Converse accepts a forced tool choice
+with it. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
+[`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
+
 ### Custom HTTP headers
 
 Use [`ModelSettings.extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] to add HTTP headers to
