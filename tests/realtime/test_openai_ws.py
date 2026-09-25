@@ -1390,11 +1390,9 @@ async def test_handle_barge_in_over_live_speech(
     assert sent_frames_containing(cassette, 'response.cancel') == []
 
     # The provider accepted it: the first reply settles as interrupted with the truncation point on
-    # its speech part, and the barged-in utterance still got a reply generated in full. That reply was
-    # never played before the session closed, so it is recorded as cut where playback stopped.
+    # its speech part, and the barged-in utterance still got a completed reply.
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['interrupted', 'interrupted'])
-    assert responses[1].finish_reason == 'stop'
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
     speech = next(part for part in responses[0].parts if isinstance(part, SpeechPart))
     assert speech.interrupted_at_ms == 0
 
@@ -1404,9 +1402,10 @@ async def test_interrupt_after_the_reply_finished_generating(
 ) -> None:
     """Generation outruns playback, so the user usually barges in after the reply's `response.done`.
 
-    The reply is still being heard, so the barge-in must still truncate its item and the provider must
-    accept that for a finished response. History marks that reply interrupted instead of complete,
-    and the next reply is unaffected. The playback position is 0 so it replays deterministically.
+    The reply is still being heard, so the barge-in must still truncate its item, and the provider must
+    accept that for a finished response, so the model doesn't believe it was heard in full. History is
+    append-only: the recorded reply keeps its full text and `complete` state, and the next reply is
+    unaffected. The playback position is 0 so it replays deterministically.
     """
     provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
@@ -1437,9 +1436,13 @@ async def test_interrupt_after_the_reply_finished_generating(
     assert 'conversation.item.truncated' in received
     assert 'error' not in received
 
-    # Neither reply was played before the session closed: the second is recorded as cut at 0 too.
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['interrupted', 'interrupted'])
-    assert [
-        [part.interrupted_at_ms for part in response.parts if isinstance(part, SpeechPart)] for response in responses
-    ] == snapshot([[0], [0]])
+    assert [response.state for response in responses] == snapshot(['complete', 'complete'])
+    assert responses[0].provider_response_id is not None
+    # The truncation named the first reply's output item.
+    first_item = next(
+        message.data['item']['id']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.data.get('type') == 'response.output_item.added'
+    )
+    assert truncates[0]['item_id'] == first_item

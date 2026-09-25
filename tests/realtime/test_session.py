@@ -79,7 +79,6 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeOutputSpeechEndEvent,
-    RealtimeOutputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSession as _RealtimeSession,
     RealtimeSessionReconnectEvent,
@@ -1621,46 +1620,20 @@ async def test_interrupt_played_bytes_flushes_and_attributes_to_the_current_turn
         assert [chunk async for chunk in stream] == []
 
 
-async def _play_out(stream: AsyncIterator[bytes], chunks: int) -> asyncio.Future[bytes]:
-    """Play `chunks` chunks, then come back for more so the last one counts as played too."""
-    for _ in range(chunks):
-        await anext(stream)
-    pending = asyncio.ensure_future(anext(stream))
-    await asyncio.sleep(0)
-    return pending
+def _speech(item_id: str, chunks: int = 1) -> list[RealtimeCodecEvent]:
+    return [AudioDelta(bytes([len(item_id)]) * _CHUNK, item_id=item_id) for _ in range(chunks)]
 
 
-async def test_a_spoken_reply_joins_history_once_it_has_been_played() -> None:
-    """History is append-only, so a reply is recorded once, when the listener has heard it.
-
-    Its generation is over well before that: the turn boundary and `wait_for_reply()` don't wait for
-    playback.
-    """
-    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK), ResponseDone()])
-    session = RealtimeSession(conn, _noop_runner)
-
-    async with session:
-        stream = session.stream_audio()
-        await _consume_until(aiter(session), _is_turn_complete)
-        await session.wait_for_reply()
-        assert session.all_messages() == []
-
-        assert await anext(stream) == b'a' * _CHUNK
-        assert session.all_messages() == []
-        rest = await _play_out(stream, 1)
-        assert _speech_cuts(session) == [('complete', [None])]
-    rest.cancel()
-
-
-async def test_interrupt_played_bytes_after_the_reply_finished_generating_records_it_interrupted() -> None:
+async def test_interrupt_played_bytes_after_the_reply_finished_generating_truncates_it() -> None:
     """Generation outruns playback, so the user usually cuts off a reply that has finished generating.
 
-    The barge-in truncates it, and it is recorded once, interrupted where playback stopped; its position
-    is not left behind for the next response that happens to be interrupted.
+    The provider's copy is truncated where playback stopped, so the model doesn't believe it was heard
+    in full. History is append-only: the recorded reply keeps its full text and `complete` state. The
+    position isn't left behind for the next response that happens to be interrupted.
     """
     conn = _GatedRealtimeConnection(
-        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK), ResponseDone()],
-        [AudioDelta(b'c' * _CHUNK), ResponseDone(interrupted=True)],  # a later reply, cut with no position
+        [*_speech('item-a', 2), ResponseDone()],
+        [*_speech('item-c'), ResponseDone(interrupted=True)],  # a later reply, cut with no position
     )
     session = RealtimeSession(conn, _noop_runner)
 
@@ -1668,51 +1641,25 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_record
         stream = session.stream_audio()
         events = aiter(session)
         await _consume_until(events, _is_turn_complete)
-        assert await anext(stream) == b'a' * _CHUNK  # `b` stays buffered and unheard
+        await anext(stream)  # the second chunk stays buffered and unheard
 
         assert await session.interrupt(played_bytes=_CHUNK) is True
-        assert conn.sent == [TruncateOutput(audio_end_ms=100), CancelResponse()]
-        assert _speech_cuts(session) == [('interrupted', [100])]
+        assert conn.sent == [TruncateOutput(audio_end_ms=100, item_id='item-a'), CancelResponse()]
 
         conn.release.set()
         _ = [event async for event in events]
 
-    assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
+    assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [None])]
 
 
-async def test_interrupt_played_ms_after_the_reply_finished_generating_records_it_interrupted() -> None:
-    conn = _GatedRealtimeConnection(
-        [AudioDelta(b'a' * _CHUNK), ResponseDone()],
-        [AudioDelta(b'b' * _CHUNK), ResponseDone(interrupted=True)],
-    )
-    session = RealtimeSession(conn, _noop_runner)
-
-    async with session:
-        _stream = session.stream_audio()
-        events = aiter(session)
-        await _consume_until(events, _is_turn_complete)
-        await session.interrupt(played_ms=40)
-        assert _speech_cuts(session) == [('interrupted', [40])]
-        # Recorded is final: a second report for the same reply changes nothing.
-        await session.interrupt(played_ms=30)
-        assert _speech_cuts(session) == [('interrupted', [40])]
-        conn.release.set()
-        _ = [event async for event in events]
-
-    assert _speech_cuts(session) == [('interrupted', [40]), ('interrupted', [None])]
-
-
-async def test_interrupt_played_ms_without_a_playback_view_only_truncates_a_recorded_reply() -> None:
-    """With no `stream_audio()` view the session can't follow playback, so a reply is recorded when it
-    finishes generating; a later position still truncates the provider's copy but can't change history."""
-    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), ResponseDone()])
+async def test_interrupt_played_ms_after_the_reply_finished_generating_truncates_it() -> None:
+    conn = BlockingRealtimeConnection([*_speech('item-a', 2), ResponseDone()])
     session = RealtimeSession(conn, _noop_runner)
 
     async with session:
         await _consume_until(aiter(session), _is_turn_complete)
-        assert _speech_cuts(session) == [('complete', [None])]
         await session.interrupt(played_ms=40)
-        assert conn.sent == [TruncateOutput(audio_end_ms=40), CancelResponse()]
+        assert conn.sent == [TruncateOutput(audio_end_ms=40, item_id='item-a'), CancelResponse()]
 
     assert _speech_cuts(session) == [('complete', [None])]
 
@@ -1748,18 +1695,37 @@ async def test_interrupt_played_ms_marks_a_reply_that_completed_before_the_cance
     assert _speech_cuts(session) == [('interrupted', [50])]
 
 
-async def test_interrupt_played_bytes_resolves_the_playhead_across_replies_generated_ahead() -> None:
+async def test_interrupt_played_bytes_truncates_every_reply_generated_ahead_of_playback() -> None:
     """Two replies can finish generating before the first has finished playing — after a tool round, say.
 
-    The playhead decides which reply was cut: the one playing is cut where playback stopped, and the
-    one after it, never heard, at 0. The provider truncates its latest item, the unheard reply, at 0.
+    The playhead decides where each is cut: the one playing where playback stopped, and the one after
+    it, never heard, at 0.
     """
+    conn = BlockingRealtimeConnection([*_speech('item-a', 2), ResponseDone(), *_speech('item-b', 2), ResponseDone()])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [
+            TruncateOutput(audio_end_ms=100, item_id='item-a'),
+            TruncateOutput(audio_end_ms=0, item_id='item-b'),
+            CancelResponse(),
+        ]
+
+
+async def test_interrupt_played_bytes_without_item_ids_truncates_the_current_item() -> None:
+    """A provider that names no output items can only truncate its current one: the last reply cut."""
     conn = BlockingRealtimeConnection(
         [
             AudioDelta(b'a' * _CHUNK),
             AudioDelta(b'a' * _CHUNK),
             ResponseDone(),
-            AudioDelta(b'b' * _CHUNK),
             AudioDelta(b'b' * _CHUNK),
             ResponseDone(),
         ]
@@ -1771,18 +1737,14 @@ async def test_interrupt_played_bytes_resolves_the_playhead_across_replies_gener
         events = aiter(session)
         await _consume_until(events, _is_turn_complete)
         await _consume_until(events, _is_turn_complete)
-        assert await anext(stream) == b'a' * _CHUNK
+        await anext(stream)
 
         assert await session.interrupt(played_bytes=_CHUNK) is True
         assert conn.sent == [TruncateOutput(audio_end_ms=0), CancelResponse()]
-        assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [0])]
 
 
 async def test_interrupt_played_bytes_positions_are_relative_to_the_part_cut() -> None:
-    """A tool round puts two replies in one exchange; the second's cut is measured from its own start.
-
-    The reply that calls the tool is recorded as soon as it is generated: its results pair with it.
-    """
+    """A tool round puts two replies in one exchange; the second's cut is measured from its own start."""
     conn = _GatedRealtimeConnection(
         [
             AudioDelta(b'a' * _CHUNK),
@@ -1801,143 +1763,68 @@ async def test_interrupt_played_bytes_positions_are_relative_to_the_part_cut() -
 
     async with session:
         stream = session.stream_audio()
-        events = aiter(session)
-        await _consume_until(events, _is_delta_of(2))
-        assert _speech_cuts(session) == [('complete', [None])]
         assert [await anext(stream) for _ in range(3)] == [b'a' * _CHUNK, b'b' * _CHUNK, b'b' * _CHUNK]
         # The first reply and 100 ms of the second were played.
         assert await session.interrupt(played_bytes=2 * _CHUNK) is True
         assert conn.sent[-2:] == [TruncateOutput(audio_end_ms=100), CancelResponse()]
         conn.release.set()
-        _ = [event async for event in events]
+        _ = await drain_events(session)
 
     assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [100])]
 
 
-async def test_a_tool_call_queues_behind_a_reply_still_being_played() -> None:
-    """History keeps the order things happened in: a tool round after a reply lands after that reply."""
-    conn = BlockingRealtimeConnection(
-        [
-            AudioDelta(b'a' * _CHUNK),
-            ResponseDone(),
-            ToolCall(tool_call_id='call-1', tool_name='noop', args='{}'),
-            ResponseDone(),
-        ]
-    )
-    tool_done = asyncio.Event()
+async def test_interrupt_played_ms_resolves_the_reply_the_playback_view_is_playing() -> None:
+    """With a single `stream_audio()` view, a caller-reported position lands in the reply being played.
 
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        tool_done.set()
-        return 'ok'
-
-    session = RealtimeSession(conn, runner)
-
-    async with session:
-        stream = session.stream_audio()
-        events = aiter(session)
-        await _consume_until(events, lambda event: isinstance(event, FunctionToolResultEvent))
-        await tool_done.wait()
-        assert session.all_messages() == []
-        rest = await _play_out(stream, 1)
-        assert [type(part).__name__ for message in session.all_messages() for part in message.parts] == [
-            'SpeechPart',
-            'ToolCallPart',
-            'ToolReturnPart',
-        ]
-    rest.cancel()
-
-
-async def test_a_user_turn_queues_behind_a_reply_still_being_played() -> None:
-    """Speaking over a reply without barge-in handling: the user's turn lands after what they heard."""
-    conn = BlockingRealtimeConnection(
-        [
-            AudioDelta(b'a' * _CHUNK),
-            ResponseDone(),
-            RealtimeInputSpeechStartEvent(item_id='item-user'),
-            InputTranscript(text='wait', is_final=True, item_id='item-user'),
-        ]
-    )
+    Replies generated after it, never heard, are cut at 0.
+    """
+    conn = BlockingRealtimeConnection([*_speech('item-a', 2), ResponseDone(), *_speech('item-b', 2), ResponseDone()])
     session = RealtimeSession(conn, _noop_runner)
 
     async with session:
         stream = session.stream_audio()
         events = aiter(session)
-        await _consume_until(
-            events,
-            lambda event: (
-                isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart) and event.part.speaker == 'user'
-            ),
-        )
-        await session.send('and a typed note', respond=False)
-        assert session.all_messages() == []
-        rest = await _play_out(stream, 1)
-        assert [type(message).__name__ for message in session.all_messages()] == [
-            'ModelResponse',
-            'ModelRequest',
-            'ModelRequest',
-        ]
-    rest.cancel()
-
-
-async def test_a_reply_being_played_is_recorded_where_playback_stopped_when_the_session_closes() -> None:
-    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), AudioDelta(b'a' * _CHUNK), ResponseDone()])
-    session = RealtimeSession(conn, _noop_runner)
-
-    async with session:
-        stream = session.stream_audio()
-        await _consume_until(aiter(session), _is_turn_complete)
-        rest = await _play_out(stream, 1)
-
-    assert _speech_cuts(session) == [('interrupted', [100])]
-    rest.cancel()
-
-
-async def test_a_reply_being_played_is_recorded_where_its_playback_view_stopped() -> None:
-    """A view closed mid-reply played all the listener heard of it; the session carries on."""
-    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), AudioDelta(b'a' * _CHUNK), ResponseDone()])
-    session = RealtimeSession(conn, _noop_runner)
-
-    async with session:
-        stream = cast(AsyncGenerator[bytes, None], session.stream_audio())
-        await _consume_until(aiter(session), _is_turn_complete)
+        await _consume_until(events, _is_turn_complete)
+        await _consume_until(events, _is_turn_complete)
         await anext(stream)
-        await anext(stream)  # `a` has played; the second chunk is being written when playback stops
-        await stream.aclose()
-        assert _speech_cuts(session) == [('interrupted', [100])]
+        await anext(stream)  # the first chunk has played; the view is inside `item-a`
 
-
-async def test_a_second_playback_view_records_held_replies_as_generated() -> None:
-    """With two views there's no single playback position left to wait on."""
-    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), ResponseDone()])
-    session = RealtimeSession(conn, _noop_runner)
-
-    async with session:
-        _first = session.stream_audio()
-        await _consume_until(aiter(session), _is_turn_complete)
-        assert session.all_messages() == []
-        _second = session.stream_audio()
-        assert _speech_cuts(session) == [('complete', [None])]
+        await session.interrupt(played_ms=70)
+        assert conn.sent == [
+            TruncateOutput(audio_end_ms=70, item_id='item-a'),
+            TruncateOutput(audio_end_ms=0, item_id='item-b'),
+            CancelResponse(),
+        ]
 
 
 async def test_interrupt_played_ms_leaves_a_reply_heard_in_full_alone() -> None:
-    """A position at or past the end of a held reply says it was heard in full: nothing was cut."""
-    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), ResponseDone()])
+    """A position at or past the end of a finished reply says it was heard in full: nothing to truncate."""
+    conn = BlockingRealtimeConnection([*_speech('item-a'), ResponseDone()])
     session = RealtimeSession(conn, _noop_runner)
 
     async with session:
-        stream = session.stream_audio()
         await _consume_until(aiter(session), _is_turn_complete)
         await session.interrupt(played_ms=100)
-        assert session.all_messages() == []
-        rest = await _play_out(stream, 1)
-        assert _speech_cuts(session) == [('complete', [None])]
-    rest.cancel()
+        assert conn.sent == [CancelResponse()]
 
 
-async def test_interrupt_played_bytes_leaves_replies_heard_in_full_alone() -> None:
+async def test_interrupt_played_ms_without_a_playback_view_targets_the_latest_audio() -> None:
+    """With no `stream_audio()` view, only the latest audio can be cut, and older replies are retired."""
+    conn = BlockingRealtimeConnection([*_speech('item-a'), ResponseDone(), *_speech('item-b'), ResponseDone()])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await _consume_until(events, _is_turn_complete)
+        await session.interrupt(played_ms=40)
+        assert conn.sent == [TruncateOutput(audio_end_ms=40, item_id='item-b'), CancelResponse()]
+
+
+async def test_interrupt_played_bytes_retires_replies_heard_in_full() -> None:
     conn = _GatedRealtimeConnection(
-        [AudioDelta(b'a' * _CHUNK), ResponseDone()],
-        [AudioDelta(b'b' * _CHUNK), AudioDelta(b'b' * _CHUNK), ResponseDone()],
+        [*_speech('item-a'), ResponseDone()],
+        [*_speech('item-b', 2), ResponseDone()],
     )
     session = RealtimeSession(conn, _noop_runner)
 
@@ -1945,104 +1832,106 @@ async def test_interrupt_played_bytes_leaves_replies_heard_in_full_alone() -> No
         stream = session.stream_audio()
         events = aiter(session)
         await _consume_until(events, _is_turn_complete)
-        rest = await _play_out(stream, 1)
+        await anext(stream)
+        rest = asyncio.ensure_future(anext(stream))  # coming back for more: `item-a` has played
+        await asyncio.sleep(0)
         conn.release.set()
         await _consume_until(events, _is_turn_complete)
-        assert await rest == b'b' * _CHUNK
+        await rest
         assert await session.interrupt(played_bytes=_CHUNK) is True
-
-    assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [0])]
-
-
-def _sideband_speech(text: str, item_id: str) -> list[RealtimeCodecEvent]:
-    """A sideband reply: the provider starts playing it to the browser, and only its transcript passes."""
-    return [RealtimeOutputSpeechStartEvent(), OutputTranscript(text=text, is_final=True, item_id=item_id)]
+        assert conn.sent == [TruncateOutput(audio_end_ms=0, item_id='item-b'), CancelResponse()]
 
 
-async def test_a_sideband_reply_joins_history_when_the_provider_has_played_it() -> None:
-    """On a WebRTC sideband the provider reports when its playback ends; that is when a reply is heard."""
-    conn = _GatedRealtimeConnection(
-        [*_sideband_speech('hi', 'item-1'), ResponseDone()], [RealtimeOutputSpeechEndEvent()]
+async def test_interrupt_played_ms_takes_an_item_id_reported_after_the_first_audio() -> None:
+    conn = BlockingRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), OutputTranscript(text='hi', is_final=True, item_id='item-a'), ResponseDone()]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        await _consume_until(aiter(session), _is_turn_complete)
+        await session.interrupt(played_ms=50)
+        assert conn.sent == [TruncateOutput(audio_end_ms=50, item_id='item-a'), CancelResponse()]
+
+
+async def test_a_text_reply_reports_its_item_after_its_first_text() -> None:
+    """A text reply isn't speech, so there is no playback to cut: only the item id is taken."""
+    conn = BlockingRealtimeConnection(
+        [
+            OutputTranscript(text='hi', output_text=True),
+            OutputTranscript(text=' there', is_final=True, output_text=True, item_id='item-a'),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        await _consume_until(aiter(session), _is_turn_complete)
+        await session.interrupt(played_ms=50)
+        assert conn.sent == [TruncateOutput(audio_end_ms=50), CancelResponse()]
+
+
+async def test_interrupt_played_ms_after_a_reconnect_names_no_old_item() -> None:
+    """A replayed conversation has none of the old output items, so none is named for truncation."""
+    conn = BlockingRealtimeConnection(
+        [*_speech('item-a'), ResponseDone(), RealtimeSessionReconnectEvent(state_restored=True)],
+        reconnect_restores_in_flight_state=False,
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        await _consume_until(aiter(session), lambda event: isinstance(event, RealtimeSessionReconnectEvent))
+        await session.interrupt(played_ms=40)
+        assert conn.sent == [TruncateOutput(audio_end_ms=40), CancelResponse()]
+
+
+async def test_interrupt_played_ms_after_the_provider_played_everything_out() -> None:
+    """On a WebRTC sideband the provider reports when playback ends; no reply is being heard after that."""
+    conn = BlockingRealtimeConnection(
+        [OutputTranscript(text='hi', is_final=True, item_id='item-1'), ResponseDone(), RealtimeOutputSpeechEndEvent()]
     )
     session = RealtimeSession(conn, _noop_runner, owns_media=False)
 
     async with session:
-        events = aiter(session)
-        await _consume_until(events, _is_turn_complete)
-        assert session.all_messages() == []
-        conn.release.set()
-        await _consume_until(events, lambda event: isinstance(event, RealtimeOutputSpeechEndEvent))
-        assert _speech_cuts(session) == [('complete', [None])]
-        # Heard in full and recorded: a later position describes nothing.
+        await _consume_until(aiter(session), lambda event: isinstance(event, RealtimeOutputSpeechEndEvent))
         await session.interrupt(played_ms=300)
+        assert conn.sent == [TruncateOutput(audio_end_ms=300), CancelResponse()]
 
     assert _speech_cuts(session) == [('complete', [None])]
 
 
-async def test_a_sideband_reply_is_recorded_when_a_reconnect_ends_its_playback() -> None:
-    """A fresh sideband connection won't resume the old playback, nor report that it ended."""
-    conn = _GatedRealtimeConnection(
-        [*_sideband_speech('hi', 'item-1'), ResponseDone()],
-        [RealtimeSessionReconnectEvent(state_restored=False)],
-        reconnect_restores_in_flight_state=False,
-    )
-    session = RealtimeSession(conn, _noop_runner, owns_media=False)
+async def test_interrupt_played_ms_position_stays_with_a_reply_the_session_settles() -> None:
+    """Closing mid-reply settles it as interrupted, and the reported cut position stays with it."""
+    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK)])
+    session = RealtimeSession(conn, _noop_runner)
 
     async with session:
-        events = aiter(session)
-        await _consume_until(events, _is_turn_complete)
-        assert session.all_messages() == []
-        conn.release.set()
-        await _consume_until(events, lambda event: isinstance(event, RealtimeSessionReconnectEvent))
-        assert _speech_cuts(session) == [('complete', [None])]
+        await _consume_until(aiter(session), _is_delta_of(0))
+        await session.interrupt(played_ms=70)
+
+    assert _speech_cuts(session) == [('interrupted', [70])]
 
 
-async def test_interrupt_played_ms_on_a_sideband_records_the_reply_playing() -> None:
-    conn = BlockingRealtimeConnection([*_sideband_speech('first', 'item-1'), ResponseDone()])
+async def test_interrupt_played_ms_without_session_audio_targets_the_reply_last_spoken() -> None:
+    """On a WebRTC sideband no audio passes through the session, only transcripts.
+
+    The last reply is the one playing until a newer one is being generated.
+    """
+    conn = BlockingRealtimeConnection([OutputTranscript(text='first', is_final=True, item_id='item-1'), ResponseDone()])
     session = RealtimeSession(conn, _noop_runner, owns_media=False)
 
     async with session:
         await _consume_until(aiter(session), _is_turn_complete)
         await session.interrupt(played_ms=200)
-        assert _speech_cuts(session) == [('interrupted', [200])]
+        assert conn.sent == [TruncateOutput(audio_end_ms=200, item_id='item-1'), CancelResponse()]
+
+    assert _speech_cuts(session) == [('complete', [None])]
 
 
-async def test_interrupt_played_ms_is_recorded_before_the_provider_acknowledges_the_cancel() -> None:
-    """A sideband's cancel clears the provider's playback, which ends playback before the send returns.
-
-    The position was reported for the reply playing when `interrupt()` was called, so it still lands.
-    """
-    speech_end = asyncio.Event()
-
-    class _ClearingConnection(BlockingRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
-            await super().send(content)
-            if isinstance(content, CancelResponse):
-                speech_end.set()
-                await asyncio.sleep(0.01)  # the acknowledgement lands while the send settles
-
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-            for event in _sideband_speech('hi', 'item-1'):
-                yield event
-            yield ResponseDone()
-            await speech_end.wait()
-            yield RealtimeOutputSpeechEndEvent()
-            await asyncio.Event().wait()
-
-    conn = _ClearingConnection([])
-    session = RealtimeSession(conn, _noop_runner, owns_media=False)
-
-    async with session:
-        await _consume_until(aiter(session), _is_turn_complete)
-        await session.interrupt(played_ms=300)
-
-    assert _speech_cuts(session) == [('interrupted', [300])]
-
-
-async def test_interrupt_played_ms_on_a_sideband_targets_a_newer_reply_in_flight() -> None:
+async def test_interrupt_played_ms_without_session_audio_targets_a_newer_reply_in_flight() -> None:
     conn = _GatedRealtimeConnection(
         [
-            *_sideband_speech('first', 'item-1'),
+            OutputTranscript(text='first', is_final=True, item_id='item-1'),
             ResponseDone(),
             OutputTranscript(text='second', is_final=False, item_id='item-2'),
         ],
@@ -2058,18 +1947,6 @@ async def test_interrupt_played_ms_on_a_sideband_targets_a_newer_reply_in_flight
         _ = [event async for event in events]
 
     assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [150])]
-
-
-async def test_interrupt_played_ms_position_stays_with_a_reply_the_session_settles() -> None:
-    """Closing mid-reply settles it as interrupted, and the reported cut position stays with it."""
-    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK)])
-    session = RealtimeSession(conn, _noop_runner)
-
-    async with session:
-        await _consume_until(aiter(session), _is_delta_of(0))
-        await session.interrupt(played_ms=70)
-
-    assert _speech_cuts(session) == [('interrupted', [70])]
 
 
 async def test_interrupt_played_bytes_clamps_to_zero_inside_a_previous_turn() -> None:
@@ -2504,40 +2381,6 @@ async def test_handle_barge_in_interrupts_automatically_on_speech_start() -> Non
         assert [chunk async for chunk in stream] == []
 
 
-@pytest.mark.parametrize('item_id', ['item-user', None])
-async def test_handle_barge_in_after_generation_keeps_the_user_turn_after_the_cut_reply(item_id: str | None) -> None:
-    """The user who barges in starts speaking right after the reply they cut off.
-
-    Their turn is placed relative to that reply in history, so it must follow the reply to its
-    interrupted replacement rather than lose its place.
-    """
-    conn = _GatedRealtimeConnection(
-        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK), ResponseDone()],
-        [
-            RealtimeInputSpeechStartEvent(item_id=item_id),
-            AudioDelta(b'c' * _CHUNK),
-            ResponseDone(),
-            # Transcription is asynchronous: the words land after the reply they prompted.
-            InputTranscript(text='wait', is_final=True, item_id=item_id),
-        ],
-    )
-    session = RealtimeSession(conn, _noop_runner, handle_barge_in=True)
-
-    async with session:
-        stream = session.stream_audio()
-        events = aiter(session)
-        await _consume_until(events, _is_turn_complete)
-        assert await anext(stream) == b'a' * _CHUNK  # `b` stays buffered and unheard
-        conn.release.set()
-        _ = [event async for event in events]
-
-    assert [
-        (type(message).__name__, message.state if isinstance(message, ModelResponse) else None)
-        for message in session.all_messages()
-        # The reply to the barge-in was never played before the session closed.
-    ] == [('ModelResponse', 'interrupted'), ('ModelRequest', None), ('ModelResponse', 'interrupted')]
-
-
 async def test_handle_barge_in_without_truncation_flushes_and_cancels() -> None:
     """On a model without output truncation (xAI), unheard audio still means flush plus a bare cancel."""
     conn = _GatedRealtimeConnection(
@@ -2683,7 +2526,10 @@ async def test_handle_barge_in_flushes_on_provider_initiated_interruption() -> N
 
 
 async def test_handle_barge_in_provider_interruption_cuts_the_reply_still_playing() -> None:
-    """Gemini interrupts the reply it is generating, but the listener may still be hearing the one before."""
+    """Gemini interrupts the reply it is generating, but the listener may still be hearing the one before.
+
+    That one is already recorded and keeps its record; the reply being generated, never heard, is cut at 0.
+    """
     conn = _GatedRealtimeConnection(
         [AudioDelta(b'a' * _CHUNK), AudioDelta(b'a' * _CHUNK), ResponseDone(), AudioDelta(b'b' * _CHUNK)],
         [RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)],
@@ -2696,7 +2542,7 @@ async def test_handle_barge_in_provider_interruption_cuts_the_reply_still_playin
         conn.release.set()
         _ = await drain_events(session)
 
-    assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [0])]
+    assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [0])]
 
 
 async def test_handle_barge_in_provider_interruption_leaves_a_fully_heard_reply_alone() -> None:

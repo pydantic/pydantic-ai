@@ -64,7 +64,6 @@ from pydantic_ai.realtime import (
     RealtimeOutputSpeechStartEvent,
     RealtimeSession as _RealtimeSession,
     RealtimeSessionReconnectEvent,
-    RealtimeTurnCompleteEvent,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -743,28 +742,6 @@ async def test_chat_span_records_interrupted_response_state() -> None:
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
     assert chat.attributes is not None
     assert 'pydantic_ai.response.state' not in chat.attributes
-
-
-async def test_chat_span_of_a_reply_being_played_ends_when_the_reply_is_recorded() -> None:
-    """A spoken reply joins history once heard or cut, and its span ends then, in the state it's recorded in."""
-    settings, exporter = _settings()
-    session = RealtimeSession(
-        _Connection([AudioDelta(b'a' * 4800), AudioDelta(b'a' * 4800), ResponseDone()]),
-        _ok_runner,
-        instrumentation=settings,
-        model_name='gpt-realtime',
-    )
-    async with session:
-        stream = session.stream_audio()
-        events = aiter(session)
-        while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
-            pass
-        assert [s.name for s in exporter.get_finished_spans() if s.name.startswith('chat')] == []
-        await anext(stream)
-        assert await session.interrupt(played_bytes=4800) is True
-        chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
-        assert chat.attributes is not None
-        assert chat.attributes['pydantic_ai.response.state'] == 'interrupted'
 
 
 async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:

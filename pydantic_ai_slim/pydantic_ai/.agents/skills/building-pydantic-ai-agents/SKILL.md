@@ -319,15 +319,12 @@ Key facts for building realtime agents:
 - **Barge-in** (the user speaking over the model): pass `handle_barge_in=True` to `.session()` and
   the session owns the local half — flushing the audio the user will never hear, truncating the
   provider's transcript to what was played, and adding a client cancel only on providers whose own
-  turn detection isn't already cancelling. Off by default, and it needs playback to drain a single
+  turn detection isn't already cancelling. A reply that already finished generating is truncated
+  provider-side only: history is append-only, so it stays `complete`. Off by default, and it needs playback to drain a single
   device-paced `stream_audio()` iterator (the position it tracks); with none or several it stands
   down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
   gets the same treatment on your own signal. A playback layer that buffers ahead of the device
   makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
-- **When a reply joins history**: history is append-only. A reply still playing through the single
-  `stream_audio()` view is recorded once played out (complete) or cut (interrupted at the playback
-  position), not when it finished generating; a sideband waits for the provider's playback end.
-  `wait_for_reply()` marks generation; call `wait_for_playback()` before reading the reply from history.
 - **Mute with server VAD**: keep sending zero-valued PCM16 frames at the normal cadence. Sending
   nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
   Under manual turn control, stop sending and call `clear_audio()` instead.

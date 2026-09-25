@@ -110,8 +110,7 @@ on ordinary user turns. A reply that has not reached its first audio chunk is st
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
-itself without reporting speech onset (Gemini) only the local flush is performed. Either way,
-history still records where playback stopped. The events still
+itself without reporting speech onset (Gemini) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
 chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
@@ -203,15 +202,19 @@ and should flush it on barge-in, as above.
 
 History records a known cutoff on
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] and marks the
-response state as interrupted. Models generate audio several times faster than it plays, so the reply
-the user speaks over has usually finished generating already. Because history never changes a
-response after recording it, a reply that is still playing through the session's single
-`stream_audio()` view isn't recorded until the listener has heard it. Once the playhead passes its
-last chunk, it is recorded as complete. If a barge-in cuts it first, it is recorded as interrupted
-where playback stopped, and any reply generated after it, which the user never heard, is cut at 0.
-See [when a reply joins history](history.md#when-a-reply-joins-history). The cutoff is not carried
-over to the next response that gets interrupted. When this history is sent to a text model, Pydantic AI adds a readable
+response state as interrupted. When this history is sent to a text model, Pydantic AI adds a readable
 interruption note to the prepared request without modifying stored history.
+
+Models generate audio several times faster than it plays, so the reply the user speaks over has
+usually finished generating already. A reply joins history when it finishes generating, and history
+is append-only. That reply therefore keeps its full transcript and its `complete` state in history,
+even though the user heard only part of it. The barge-in still truncates the provider's copy where
+playback stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
+`handle_barge_in=True`), the session resolves the playback position against every reply still
+queued for playback. The reply being played is cut where playback stopped, and any reply generated
+after it, which the user never heard, is cut at 0. The `interrupt` span in the trace records the
+position. Only a reply that is still being generated is recorded as interrupted, and the position
+is never carried over to a later response.
 
 ## Speaking first
 
