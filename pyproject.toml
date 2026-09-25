@@ -214,6 +214,7 @@ dev = [
     "markdownify>=1.2",
     "inline-snapshot>=0.32.5",
     "pytest>=9.0.3",
+    "pytest-codspeed>=4.1.1",
     "pytest-examples>=0.0.18",
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.3.0",
