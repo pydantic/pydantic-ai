@@ -13,6 +13,7 @@ from typing import Any
 
 import anyio
 import pytest
+from genai_prices import calc_price
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
@@ -132,6 +133,15 @@ async def test_audio_in_delegated_tool_round(
     assert tool_call_response.usage.input_tokens > 0
     assert spoken_reply.usage.input_tokens > 0
     assert tool_call_response.usage.input_tokens + spoken_reply.usage.input_tokens == session.usage.input_tokens
+    # Both carry Live's name, so each also records the backend model that spent its tokens, which is
+    # what lets the cost be recalculated from `usage` later without charging it at Live's rate.
+    assert tool_call_response.model_name == spoken_reply.model_name == snapshot('gpt-live-1')
+    assert tool_call_response.provider_details == snapshot({'delegated_model': 'gpt-5.6-sol'})
+    assert spoken_reply.provider_details == snapshot({'delegated_model': 'gpt-5.6-sol'})
+    for response in (tool_call_response, spoken_reply):
+        assert response.provider_details is not None
+        repriced = calc_price(response.usage, response.provider_details['delegated_model'], provider_id='openai')
+        assert response.usage.cost == repriced.total_price
     # And Live speaks the backend's answer, which is the point of delegating.
     answer = spoken_reply.parts[0]
     assert isinstance(answer, SpeechPart) and answer.speaker == 'assistant'

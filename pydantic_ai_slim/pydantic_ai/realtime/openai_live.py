@@ -845,7 +845,9 @@ class OpenAILiveConnection(RealtimeConnection):
             mapped.cost = price.total_price
         # Response-scoped, so the backend's request is what a per-request input-token limit is
         # measured against: it is the only thing in a Live session that spends input tokens.
-        return [SessionUsage(mapped)]
+        # The response carries Live's name, so it records the backend model as well: without it the
+        # tokens on `usage` could not be re-priced later, or even attributed to the model that spent them.
+        return [SessionUsage(mapped, provider_details={'delegated_model': response.model})]
 
     def _map_usage(self, cumulative_seconds: float) -> list[RealtimeCodecEvent]:
         """Emit the *increment* since the last report.

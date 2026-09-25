@@ -257,7 +257,9 @@ breakdowns intact. In a call that delegates, most of the token cost is there.
 
 Those tokens are priced against the *backend's* model, not against `gpt-live-1`, because that is
 what spent them — so a delegated turn's cost is right even though the
-[`ModelResponse`][pydantic_ai.messages.ModelResponse] it lands on carries Live's name. The backend's
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] it lands on carries Live's name. That response
+records the backend model under `delegated_model` in its `provider_details`, so the cost can be
+recalculated from its `usage` later, or attributed to the model that spent it. The backend's
 request is also what a `per_request_input_tokens_limit` is measured against, since it is the only
 thing in a Live session that spends input tokens.
 

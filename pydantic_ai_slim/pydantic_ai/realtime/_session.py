@@ -743,6 +743,7 @@ class RealtimeSession:
         self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
+        self._pending_provider_details: dict[str, Any] | None = None
         self._pending_interrupted_at_ms: int | None = None
         self._response_finalized_before_terminal = False
         # User requests sent while a response is in flight are held until that response is finalized,
@@ -2127,7 +2128,9 @@ class RealtimeSession:
                 model_name=self._connection.model_name or self._model_name,
                 provider_name=self._provider_name,
                 provider_url=self._provider_url,
-                provider_details=provider_details,
+                # Details reported with the response's usage (e.g. the model GPT-Live delegated to)
+                # underlie those the terminal event reports for the response itself.
+                provider_details={**(self._pending_provider_details or {}), **(provider_details or {})} or None,
                 provider_response_id=provider_response_id or self._pending_provider_response_id,
                 finish_reason=finish_reason or self._pending_finish_reason,
                 conversation_id=self._conversation_id,
@@ -2161,6 +2164,7 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
+        self._pending_provider_details = None
         self._response_limit_checked = False
         if response is not None:
             self._check_response_boundary_limits()
@@ -3052,6 +3056,8 @@ class RealtimeSession:
         self._pending_response_usage = self._pending_response_usage + event.usage
         self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
         self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
+        if event.provider_details:
+            self._pending_provider_details = {**(self._pending_provider_details or {}), **event.provider_details}
         if self._tool_calls_awaiting_usage:
             events.extend(self._finalize_assistant_part())
             self._finalize_response(
