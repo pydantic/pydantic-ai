@@ -825,6 +825,8 @@ class RealtimeSession:
         # `_pending_response_requests` for the solicited-but-not-started half — see `_reply_outstanding`.
         self._response_active = False
         self._exchange_progress = asyncio.Event()
+        # Set when a background failure ends the exchange in progress; see `_park_error`.
+        self._exchange_failed = False
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
@@ -1381,18 +1383,9 @@ class RealtimeSession:
         rolled back by a failed send stops counting, and several `respond=True` sends in flight are all
         waited for rather than just the first to reach its boundary.
         """
-        if self._closed or self._pump_finished or self._failed:
+        if self._closed or self._pump_finished or self._exchange_failed:
             return False
         return self._response_active or bool(self._pending_response_requests)
-
-    @property
-    def _failed(self) -> bool:
-        """Whether a background failure has ended the session, however it was (or will be) delivered.
-
-        A tool that raised, or a usage limit tripped by the request its result would make, stops the
-        model from getting that result, so nothing it owed will come.
-        """
-        return any(not isinstance(error, asyncio.CancelledError) for error in self._parked_errors)
 
     def _release_exchange(self) -> None:
         self._response_active = False
@@ -2050,7 +2043,10 @@ class RealtimeSession:
         """Park a background failure for iteration or close, ending receive-only views if nobody is iterating."""
         self._parked_errors.append(error)
         self._queue_put(error)
-        # Nothing the session owed will come now, so a caller in `wait_for_reply()` is done waiting.
+        # A tool that raised, or a usage limit tripped by the request its result would make, stops the
+        # model from getting that result, so nothing the exchange owed will come: a caller in
+        # `wait_for_reply()` is done waiting. Scoped to this exchange; the next request clears it.
+        self._exchange_failed = True
         self._exchange_progress.set()
         if not self._iterator_active and self._pump_task is not None:
             self._receive_ending = True
@@ -3281,6 +3277,7 @@ class RealtimeSession:
             )
             self._usage_limits.check_before_request(projected)
         self._pending_response_requests += 1
+        self._exchange_failed = False
 
     def _begin_response(self) -> None:
         """Take the reservation for the response that's starting, or make the check now if it has none.

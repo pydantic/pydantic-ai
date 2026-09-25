@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextlib
 import gc
 import io
 import wave
@@ -10148,13 +10149,12 @@ async def test_result_going_out_when_its_batch_is_abandoned_asks_for_no_answer(l
 
     class _AbandonsWhileSending(_ToolBatchConnection):
         async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ToolResult):
-                self.close_response.set()
-                # A frame already handed to the transport goes out even if the sending task is cancelled.
-                try:
-                    await release_send.wait()
-                except asyncio.CancelledError:
-                    await release_send.wait()
+            # Only the tool result is sent. A frame already handed to the transport goes out even if the
+            # sending task is cancelled.
+            self.close_response.set()
+            with contextlib.suppress(asyncio.CancelledError):
+                await release_send.wait()
+            await release_send.wait()
             await super().send(content)
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -10348,9 +10348,9 @@ async def test_tool_result_that_fails_to_send_leaves_no_answer_to_ask_for(early:
         async with session:
             events = asyncio.create_task(drain_events(session))
             if early:
-                await _until(lambda: session._failed)  # pyright: ignore[reportPrivateUsage]
+                await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
             conn.close_response.set()
-            await _until(lambda: session._failed or session._pump_finished)  # pyright: ignore[reportPrivateUsage]
+            await _until(lambda: bool(session._parked_errors) or session._pump_finished)  # pyright: ignore[reportPrivateUsage]
             release_slow.set()
             await _until(lambda: 'c2' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
             for _ in range(10):
@@ -10419,6 +10419,52 @@ async def test_wait_for_reply_returns_when_a_tool_fails_while_the_session_is_ite
             events = asyncio.create_task(drain_events(session))
             with anyio.fail_after(_LIVENESS_TIMEOUT):
                 await session.wait_for_reply()
+            await events
+
+
+async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply() -> None:
+    """A failed tool ends only its own exchange: a reply asked for afterwards is waited for as usual."""
+    answer = asyncio.Event()
+
+    class _AnswersLater(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}')
+            await answer.wait()
+            yield OutputTranscript(text='later', is_final=True)
+            yield ResponseDone()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise ValueError('tool exploded')
+
+    session = RealtimeSession(_AnswersLater([]), runner)
+    errors: list[BaseException] = []
+
+    async def consume() -> None:
+        # A consumer that reports the tool's failure and keeps listening.
+        while True:
+            try:
+                async for _ in session:
+                    pass
+            except ValueError as e:
+                errors.append(e)
+            else:
+                return
+
+    async with session:
+        events = asyncio.create_task(consume())
+        waiting = asyncio.create_task(session.wait_for_reply())
+        await session.send('Go.')
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await waiting
+            await _until(lambda: bool(errors))
+        await session.send('Try again.')
+        later = asyncio.create_task(session.wait_for_reply())
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not later.done()
+        answer.set()
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await later
             await events
 
 
