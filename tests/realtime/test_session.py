@@ -10682,6 +10682,93 @@ async def test_failed_tool_leaves_no_tool_batch_behind() -> None:
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
 
 
+@pytest.mark.parametrize('early', [True, False])
+@pytest.mark.parametrize('manual_turn_control', [True, False])
+async def test_cancellation_after_the_last_result_went_out_gives_its_counted_reply_back(
+    manual_turn_control: bool, early: bool
+) -> None:
+    """A provider that cancels the calls after their results went out won't answer them either.
+
+    `early` has the result settle before the calling response completes, so the tool task asks for the
+    answer itself and is cancelled while doing so, after the interrupted turn already took the reply.
+    """
+
+    class _CancelsAfterTheResult(_ToolBatchConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            for call in self.calls:
+                yield call
+            yield SessionUsage(usage=RequestUsage(input_tokens=1))
+            await _until(lambda: bool(_sent_tool_traffic(self)))
+            yield ToolCallCancelled(tool_call_ids=['c1'])  # a barge-in crossing the result
+            # The interrupted turn's boundary (Gemini sends its usage with it), with no answer.
+            yield SessionUsage(usage=RequestUsage(input_tokens=1))
+            yield ResponseDone(interrupted=True)
+            await asyncio.Event().wait()  # pragma: no cover
+
+    conn = _CancelsAfterTheResult(
+        [ToolCall(tool_call_id='c1', tool_name='slow', args='{}', response_usage_follows=True)]
+    )
+    release = asyncio.Event()
+    session = RealtimeSession(
+        conn, _slow_until(release), profile=RealtimeModelProfile(supports_manual_turn_control=manual_turn_control)
+    )
+    async with session:
+        events = asyncio.create_task(drain_events(session))
+        if not early:
+            await _until(lambda: 'c1' in session._tool_call_batches and session._tool_call_batches['c1'].closed)  # pyright: ignore[reportPrivateUsage]
+        release.set()
+        await _until(lambda: bool(_sent_tool_traffic(conn)) and not session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
+        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert not session._tool_call_batches  # pyright: ignore[reportPrivateUsage]
+        await session.close()
+        events.cancel()
+
+
+async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchange() -> None:
+    """A tool failing while an unrelated reply streams doesn't leave the failed exchange owed."""
+    fail_now = asyncio.Event()
+    finish_b = asyncio.Event()
+
+    class _BStreamsWhileAFails(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}', response_usage_follows=True)
+            yield SessionUsage(usage=RequestUsage(input_tokens=1), finish_reason='tool_call')
+            yield OutputTranscript(text='B is streaming')
+            fail_now.set()
+            await finish_b.wait()
+            yield ResponseDone()
+            await asyncio.Event().wait()  # pragma: no cover
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await fail_now.wait()
+        raise ValueError('tool exploded')
+
+    session = RealtimeSession(_BStreamsWhileAFails([]), runner)
+    errors: list[BaseException] = []
+
+    async def consume() -> None:
+        while True:
+            try:
+                async for _ in session:
+                    pass
+            except ValueError as e:
+                errors.append(e)
+            else:
+                return
+
+    async with session:
+        events = asyncio.create_task(consume())
+        await session.send('A')
+        await _until(lambda: bool(errors))
+        finish_b.set()
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
+        await session.close()
+        events.cancel()
+
+
 async def test_wait_for_reply_returns_when_a_tool_result_trips_the_request_limit() -> None:
     """The request a tool result would make can exceed `request_limit`; the reply then never comes."""
 

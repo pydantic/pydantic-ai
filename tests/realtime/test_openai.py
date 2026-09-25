@@ -4482,3 +4482,63 @@ async def test_parallel_tool_calls_get_one_response_create() -> None:
         ['ToolCallPart', 'ToolCallPart'],
         ['SpeechPart'],
     ]
+
+
+@pytest.mark.anyio
+async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching() -> None:
+    """One call's result goes out as soon as it settles, and its `response.create` at the `response.done`.
+
+    The same frames at the same moments as before tool results were batched: the connection already held
+    an early result's `response.create` back until the calling response's `response.done`.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'sunny'
+
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager(runner)
+    )
+
+    def sent_types() -> list[str]:
+        return [json.loads(frame)['type'] + ('/output' if 'function_call_output' in frame else '') for frame in ws.sent]
+
+    async with session:
+        await session.send('Weather?')
+        ws.push({'type': 'response.created', 'response': {'id': 'resp-1', 'status': 'in_progress', 'output': []}})
+        call = {
+            'id': 'item-call-1',
+            'type': 'function_call',
+            'call_id': 'call-1',
+            'name': 'get_weather',
+            'arguments': '{}',
+            'status': 'completed',
+        }
+        ws.push(
+            {
+                'type': 'response.function_call_arguments.done',
+                'response_id': 'resp-1',
+                'item_id': 'item-call-1',
+                'output_index': 0,
+                'call_id': 'call-1',
+                'name': 'get_weather',
+                'arguments': '{}',
+            }
+        )
+        with anyio.fail_after(5):
+            while 'conversation.item.create/output' not in sent_types():
+                ws.sent_changed.clear()
+                await ws.sent_changed.wait()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        # The result is out while the calling response is still active; nothing more until it's done.
+        assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
+
+        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': [call]}})
+        await ws.wait_for_creates(2)
+        assert sent_types()[1:] == ['response.create', 'conversation.item.create/output', 'response.create']
+        for frame in _response_frames('resp-2', 'Sunny.'):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
