@@ -169,6 +169,19 @@ def test_init(env: TestEnv):
     assert isinstance(model.client, AsyncTypeSafeClient)
 
 
+@pytest.mark.parametrize('model_name', ['jev-latest', 'jev-preview', 'jev-1.13.0'])
+def test_context_window_comes_from_genai_prices(env: TestEnv, model_name: str):
+    """Jev's profile leaves `context_window` to genai-prices, which records the 32k limit a growing conversation hits.
+
+    `jev-1.13` refuses a request once the state plus the longest question passes 32k tokens, well before its 64k
+    combined budget, so compaction keyed on `context_window_used` has to measure against 32k to fire in time.
+    """
+    env.set('TYPESAFE_API_KEY', 'api-key')
+    model = TypeSafeModel(model_name)
+    assert model.context_window == 32_000
+    assert FallbackModel(model, TestModel()).context_window == 32_000
+
+
 @pytest.mark.vcr
 async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture):
     agent = Agent(typesafe_model, output_type=Handling, instructions='Judge what the command would actually do.')
