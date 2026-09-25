@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
+    RealtimeError,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
@@ -1712,17 +1713,10 @@ async def test_connect_streams_events() -> None:
     assert events[-1].message.startswith('Gemini Live connection closed: ')
 
 
-async def test_connect_maps_rejected_config_to_model_http_error() -> None:
-    # A rejected session config (here an unsupported voice) closes the WebSocket, which the SDK raises as
-    # an `APIError` carrying the close code and reason. `connect` maps it to `ModelHTTPError` like a
-    # regular `GoogleModel` request, rather than leaking the raw SDK error, so users can handle realtime
-    # and non-realtime failures uniformly.
-    reason = 'No matching speaker voice found for name: alloy'
-    response = httpx.Response(429, headers={'Retry-After': '5', 'X-Request-ID': 'request-123'})
-
+def _rejecting_client(error: Exception) -> Client:
     class _RejectingConnect:
         async def __aenter__(self) -> Any:
-            raise genai_errors.APIError(1007, reason, response)
+            raise error
 
         async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
@@ -1731,14 +1725,43 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
         def connect(self, *, model: str, config: Any) -> _RejectingConnect:
             return _RejectingConnect()
 
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
-    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    return cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+
+
+async def test_connect_maps_rejected_config_to_realtime_error() -> None:
+    # A rejected session config (here an unsupported voice) closes the WebSocket, which the SDK raises as
+    # an `APIError` whose `code` is the WebSocket close code. That's not an HTTP status, so `connect` raises
+    # a `RealtimeError`, like a close later in the session and like the OpenAI-protocol providers'
+    # handshake closes, rather than a `ModelHTTPError` with `status_code=1007`.
+    reason = 'No matching speaker voice found for name: alloy'
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=_rejecting_client(genai_errors.APIError(1007, reason, None))),
+    )
+    with pytest.raises(RealtimeError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert not isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
+    assert exc_info.value.message == snapshot(
+        'Gemini Live connection closed: 1007 None. No matching speaker voice found for name: alloy'
+    )
+
+
+async def test_connect_maps_http_status_api_error_to_model_http_error() -> None:
+    # An `APIError` that does carry an HTTP status (the SDK's error-payload path) still maps to
+    # `ModelHTTPError`, like a regular `GoogleModel` request.
+    response = httpx.Response(429, headers={'Retry-After': '5', 'X-Request-ID': 'request-123'})
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=_rejecting_client(genai_errors.APIError(429, 'slow down', response))),
+    )
     with pytest.raises(ModelHTTPError) as exc_info:
         async with _connect(model, 'x'):
             pass  # pragma: no cover
-    assert exc_info.value.status_code == 1007
+    assert exc_info.value.status_code == 429
     assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
-    assert exc_info.value.body == reason
+    assert exc_info.value.body == 'slow down'
     assert exc_info.value.headers == {'retry-after': '5', 'x-request-id': 'request-123'}
 
 
@@ -1750,18 +1773,9 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
     from websockets.exceptions import InvalidStatus
     from websockets.http11 import Response
 
-    class _RejectingConnect:
-        async def __aenter__(self) -> Any:
-            raise InvalidStatus(Response(401, 'Unauthorized', Headers({'Retry-After': '5'}), body=b'bad key'))
-
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: Any) -> _RejectingConnect:
-            return _RejectingConnect()
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _rejecting_client(
+        InvalidStatus(Response(401, 'Unauthorized', Headers({'Retry-After': '5'}), body=b'bad key'))
+    )
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelHTTPError) as exc_info:
         async with _connect(model, 'x'):
@@ -1775,18 +1789,7 @@ async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
     # A handshake failure with no HTTP status (DNS, TLS, protocol) reaches us as a bare
     # `websockets.WebSocketException`. There's no status to report, so it becomes a `ModelAPIError`
     # rather than escaping untyped — the sibling of the `InvalidStatus` → `ModelHTTPError` mapping.
-    class _FailingConnect:
-        async def __aenter__(self) -> Any:
-            raise WebSocketException('handshake went sideways')
-
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: Any) -> _FailingConnect:
-            return _FailingConnect()
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _rejecting_client(WebSocketException('handshake went sideways'))
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelAPIError) as exc_info:
         async with _connect(model, 'x'):
@@ -1798,18 +1801,7 @@ async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
     # The connection never came up at all (DNS, refused, reset, dial timeout). The SDK doesn't wrap
     # these, so without mapping the caller would get a bare `OSError` from what looks like an ordinary
     # model call; there is no HTTP status, so it becomes a `ModelAPIError`.
-    class _UnreachableConnect:
-        async def __aenter__(self) -> Any:
-            raise ConnectionRefusedError('connection refused')
-
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: Any) -> _UnreachableConnect:
-            return _UnreachableConnect()
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _rejecting_client(ConnectionRefusedError('connection refused'))
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelAPIError) as exc_info:
         async with _connect(model, 'x'):
@@ -2696,6 +2688,83 @@ def test_profile_recognizes_resource_name_spelling(
     profile = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile
     assert profile.get('supports_thinking', False) is expects_thinking
     assert cast('GoogleRealtimeModelProfile', profile).get('google_thinking_always_enabled', False) is always_enabled
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'is_extended_thinking'),
+    [
+        ('gemini-3.8-live', False),
+        ('gemini-3.8-live-preview-09-2026', False),
+        ('gemini-3.8-live-001', False),
+        ('gemini-3.8-live@20260916', False),
+        ('gemini-3.8-live-extended-thinking', True),
+        ('gemini-3.8-live-extended-thinking-preview-09-2026', True),
+    ],
+)
+def test_profile_recognizes_snapshot_variants_of_3_8_live(model_name: str, is_extended_thinking: bool) -> None:
+    """A dated or `-preview` snapshot of `gemini-3.8-live` gets its flags, like every other id check.
+
+    An exact match on the bare id gave a snapshot `supports_thinking=True`, so a `thinking` setting was sent
+    as a level the model rejects with `1007`, and none of the 3.8 tool-call flags.
+    """
+    profile = cast(
+        'GoogleRealtimeModelProfile',
+        GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile,
+    )
+    assert (
+        profile.get('supports_thinking'),
+        profile.get('google_thinking_always_enabled'),
+        profile.get('supports_async_tool_calls'),
+        profile.get('google_async_tool_calls_by_default'),
+        profile.get('google_supports_async_tool_call_scheduling'),
+    ) == (is_extended_thinking, is_extended_thinking, True, True, not is_extended_thinking)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'supported'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', True),
+        ('gemini-live-2.5-flash', True),
+        ('gemini-3.1-flash-live-preview', False),
+        ('gemini-3.8-live', False),
+        ('gemini-3.8-live-extended-thinking', False),
+        ('gemini-3.8-live-preview-09-2026', False),
+        ('gemini-3.1-flash-live-preview-09-2026', False),
+        # A Gemini 3.x Live family nobody has checked isn't refused ahead of its profile being updated.
+        ('gemini-3.9-flash-live-preview', True),
+    ],
+)
+async def test_connect_rejects_affective_dialog_where_unsupported(model_name: str, supported: bool) -> None:
+    """The Gemini 3.1 Flash Live and 3.8 Live models reject affective dialog, so `connect` fails before dialing.
+
+    Verified live: `gemini-3.1-flash-live-preview` refuses the handshake, and the 3.8 models open the
+    session and then close it with `1007 Request contains an invalid argument` on the first send.
+    """
+    captured: dict[str, Any] = {}
+    model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured)))
+    settings = GoogleRealtimeModelSettings(google_affective_dialog=True)
+    if supported:
+        async with _connect(model, 'x', model_settings=settings):
+            pass
+        assert captured['config'].enable_affective_dialog is True
+    else:
+        with pytest.raises(UserError, match=r'`google_affective_dialog=True` is not supported by'):
+            async with _connect(model, 'x', model_settings=settings):
+                pass  # pragma: no cover
+        assert captured == {}
+
+
+async def test_affective_dialog_follows_a_profile_override() -> None:
+    """A user `profile=` saying the model supports it wins over the built-in table."""
+    captured: dict[str, Any] = {}
+    model = GoogleRealtimeModel(
+        'gemini-3.8-live',
+        provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured)),
+        profile=GoogleRealtimeModelProfile(google_supports_affective_dialog=True),
+    )
+    async with _connect(model, 'x', model_settings=GoogleRealtimeModelSettings(google_affective_dialog=True)):
+        pass
+    assert captured['config'].enable_affective_dialog is True
 
 
 @pytest.mark.parametrize(
