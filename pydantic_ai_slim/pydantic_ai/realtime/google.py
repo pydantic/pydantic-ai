@@ -16,6 +16,7 @@ Application Default Credentials.
 
 from __future__ import annotations as _annotations
 
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
@@ -375,12 +376,29 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     session and then close it with the same error on the first send.
     """
 
+    google_text_turns_see_video_frames: bool
+    """Whether a typed turn sees an image sent just before it as a live video frame. Default: `True`.
+
+    `session.send(image)` sends the image as a video frame, which a spoken turn sees. On a model where
+    a typed turn doesn't, the most recent image sent in the last 10 seconds is sent again in the typed
+    turn's own content, ahead of the text. Every Gemini Live model probed misses it:
+    `gemini-3.1-flash-live-preview`, `gemini-3.8-live` and its extended-thinking variant answer that
+    they can't see an image, and `gemini-2.5-flash-native-audio-*` and Vertex's `gemini-live-2.5-flash`
+    misread it.
+    """
+
 
 _MIN_WEBSOCKET_CLOSE_CODE = 1000
 """The lowest WebSocket close code (RFC 6455 section 7.4), above every HTTP status."""
 
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
+
+# How recently an image must have been sent for a typed turn to carry it again, on a model whose typed
+# turns don't see video frames. Long enough for someone to type a short question about an image they
+# just shared, short enough that a question well after it doesn't re-send a stale one. A camera stream
+# always has a fresh frame.
+_RECENT_IMAGE_SECONDS = 10.0
 
 
 # Literal -> SDK enum mappings, kept as small tables so the public API stays string-friendly.
@@ -1287,6 +1305,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # verified live), so when this is set at reconnect time the turn's boundary would otherwise
         # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
         self._turn_open = False
+        # On a model whose typed turns don't see video frames, the most recent image sent and when (by
+        # `time.monotonic()`), for the next typed turn to carry again. See `send`.
+        self._text_turns_see_video_frames = cast('GoogleRealtimeModelProfile', self._profile).get(
+            'google_text_turns_see_video_frames', True
+        )
+        self._recent_image: tuple[BinaryImage, float] | None = None
         # Whether the turn's latest output is a tool-call frame, with nothing said since. A model that
         # `google_closes_tool_call_turn_separately` closes that turn with its own `turn_complete` once it
         # takes the results, before speaking the answer; see `_map_message`. Only the first boundary after
@@ -1294,8 +1318,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._tool_call_turn_unanswered = False
 
     @property
-    def batches_tool_results(self) -> bool:
-        # Gemini answers a tool-call frame once every call in it has a result, whatever `respond` says.
+    def _answers_tool_calls_per_response(self) -> bool:
         return True
 
     @property
@@ -1318,12 +1341,21 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 audio=genai_types.Blob(data=content.data, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
             )
         elif isinstance(content, str):
+            parts = [genai_types.Part(text=content)]
+            recent_image = self._recent_image
+            if recent_image is not None and time.monotonic() - recent_image[1] <= _RECENT_IMAGE_SECONDS:
+                # This model's typed turns don't see video frames: send the image again, in the turn.
+                image = recent_image[0]
+                parts.insert(
+                    0, genai_types.Part(inline_data=genai_types.Blob(data=image.data, mime_type=image.media_type))
+                )
             # A typed message is a discrete turn: commit it with `send_client_content(turn_complete=True)`
             # so the model replies, rather than buffering it as streaming realtime input.
             await self._session.send_client_content(
-                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content)]),
-                turn_complete=True,
+                turns=genai_types.Content(role='user', parts=parts), turn_complete=True
             )
+            if self._recent_image is recent_image:
+                self._recent_image = None  # carried (or stale): a later typed turn doesn't send it again
         elif isinstance(content, TextContext):
             await self._session.send_client_content(
                 turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
@@ -1333,6 +1365,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
                 video=genai_types.Blob(data=content.data, mime_type=content.media_type)
             )
+            if not self._text_turns_see_video_frames:
+                self._recent_image = (content, time.monotonic())
         elif isinstance(content, ToolResult):
             name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
             # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
@@ -1614,8 +1648,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # The model said nothing after its tool calls and has all their results: this closes the
             # tool-call turn, not the answer, which is still to come. Like the OpenAI protocol's
             # function-call-only `response.done`, it reports only its usage (emitted above, folded into
-            # the answer's response), and the turn stays open for the answer.
-            if not closes_answered_tool_call_turn:
+            # the answer's response), and the turn stays open for the answer: the next boundary ends
+            # it, even an empty one, and a drop before then closes it as interrupted.
+            if closes_answered_tool_call_turn:
+                self._turn_open = True
+            else:
                 events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
                 self._turn_interrupted = False
                 # A stalled exchange's response is still open — the model will add a tool call and an

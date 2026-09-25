@@ -98,6 +98,7 @@ from ._openai_protocol import (
     resolve_transcription_model,
     response_failed_error,
     response_finish_reason,
+    response_provider_details,
     seed_items,
     tool_choice_config,
     tool_def_to_openai,
@@ -120,6 +121,7 @@ from .codec import (
     RealtimeInput,
     SessionUsage,
     TextContext,
+    ToolCall,
     ToolResult,
     TruncateOutput,
 )
@@ -356,6 +358,18 @@ def _describe_close(ws: ClientConnection) -> str:
     return f'received {code} {reason}' if reason else f'received {code}'
 
 
+@dataclass
+class _ToolCallBatch:
+    """The tool calls one response made, which get a single `response.create` once all have outputs."""
+
+    unanswered: set[str] = field(default_factory=set[str])
+    """Calls whose output hasn't been sent yet."""
+    inputs: list[int] = field(default_factory=list[int])
+    """The `send()` inputs that carried the outputs, which the `response.create` is made for."""
+    done: bool = False
+    """Whether the response is done, so no further call can join."""
+
+
 class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
@@ -415,6 +429,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # Inputs that shared a `response.create` with an earlier one and so get no response of their own,
         # reported to the session through `_take_merged_response_requests`.
         self._merged_response_requests = 0
+        # The calls each response made, by response id, and the response each call came from: a response's
+        # tool results get a single `response.create`, once the response is done and every call has its
+        # output. Asking after each one had the model answer before its sibling calls had results.
+        self._tool_call_batches: dict[str, _ToolCallBatch] = {}
+        self._tool_call_responses: dict[str, str] = {}
         self._cancel_sent = False
         # Id of a response we cancelled (barge-in): the server keeps streaming a few straggler deltas
         # before its `response.done`, and mapping them would surface speech the user already interrupted.
@@ -449,7 +468,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return self._message_history
 
     @property
-    def batches_tool_results(self) -> bool:
+    def _answers_tool_calls_per_response(self) -> bool:
         return True
 
     def _take_merged_response_requests(self) -> int:
@@ -576,8 +595,21 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         )
         if item:
             await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
-        if content.respond:
+        if (response_id := self._tool_call_responses.pop(content.tool_call_id, None)) is None:
+            # A call this connection didn't see made: its result asks for a response of its own.
             await self._request_response((input_index,))
+            return
+        batch = self._tool_call_batches[response_id]
+        batch.unanswered.discard(content.tool_call_id)
+        batch.inputs.append(input_index)
+        await self._answer_tool_call_batch_if_complete(response_id)
+
+    async def _answer_tool_call_batch_if_complete(self, response_id: str) -> None:
+        """Ask for the response that answers `response_id`'s tool calls, once it's done and all have outputs."""
+        batch = self._tool_call_batches[response_id]
+        if batch.done and not batch.unanswered:
+            del self._tool_call_batches[response_id]
+            await self._request_response(tuple(batch.inputs))
 
     async def _send_text(self, text: str, *, respond: bool, input_index: int) -> None:
         await self._send_event(
@@ -739,6 +771,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             done_events, superseded = await self._handle_response_done(data)
             events.extend(done_events)
         event = self._map_event(data)
+        if (
+            event_type == 'response.function_call_arguments.done'
+            and isinstance(event, ToolCall)
+            and isinstance(response_id := data.get('response_id'), str)
+        ):
+            self._tool_call_batches.setdefault(response_id, _ToolCallBatch()).unanswered.add(event.tool_call_id)
+            self._tool_call_responses[event.tool_call_id] = response_id
         if event_type == 'response.created':
             created = RESPONSE_CREATED_EVENT_ADAPTER.validate_python(data)
             if not self._response_started:
@@ -877,6 +916,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # The response the user's barge-in starts answers them instead, and takes one of their
                 # requests; the others are merged into it.
                 self._merged_response_requests += max(0, len(deferred_inputs) - 1)
+        if isinstance(response_id, str) and response_id in self._tool_call_batches:
+            # No more calls can join the response: its tool results are answered once all are in.
+            self._tool_call_batches[response_id].done = True
+            await self._answer_tool_call_batch_if_complete(response_id)
         # Validated only now that all the response state above is settled: a malformed usage payload
         # raises `ValueError`, which `__aiter__` surfaces as a recoverable frame error and keeps reading
         # — but this `response.done` was still the terminal for its response, and bailing before the
@@ -889,12 +932,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # frame (its `response.usage` is empty), so fall back to it.
         frame_usage = done.usage if isinstance(done, ProtocolResponseDoneEvent) else None
         usage = self._map_response_usage(response.usage) or self._map_response_usage(frame_usage)
+        # The response's `provider_details` ride along too: a response that called a tool is recorded
+        # from this usage rather than from its `ResponseDone` (suppressed for a function-call-only
+        # response, and arriving after the response is already recorded otherwise), so without them a
+        # tool-call response would lack the `status` every other response carries. Not for a superseded
+        # response, though: the session may be recording the newer one when this usage lands, and the
+        # older response's status (typically `cancelled`) doesn't describe it.
+        provider_details = None if superseded else response_provider_details(response)
         if usage is not None:
             events.append(
                 SessionUsage(
                     usage=usage,
                     provider_response_id=response_id or None,
                     finish_reason=finish_reason,
+                    provider_details=provider_details,
                 )
             )
         elif matches_active_response and finish_reason == 'tool_call':
@@ -903,6 +954,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     usage=RequestUsage(),
                     provider_response_id=response_id or None,
                     finish_reason='tool_call',
+                    provider_details=provider_details,
                 )
             )
         # Reported even for a superseded response: its failure is real, and it's the only report of it.
@@ -948,8 +1000,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 tuple(self._deferred_response_inputs) if self._pending_response else self._response_request_inputs
             )
             self._clear_active_response()
-            # A fresh socket also drops anything the old one was still holding for us.
+            # A fresh socket also drops anything the old one was still holding for us, and the session
+            # settles the tool calls in flight rather than sending their results.
             self._cancelled_response_id = None
+            self._tool_call_batches.clear()
+            self._tool_call_responses.clear()
             if replay_response:
                 await self._create_response(replay_inputs)
             # Cleared only once the replay is on the wire, so a send that failed above leaves the

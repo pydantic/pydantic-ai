@@ -431,21 +431,9 @@ async def test_audio_tool_round_parity(
     assert isinstance(messages[-2].parts[0], ToolReturnPart)
 
 
-# GPT-Live ends a turn after a stretch of wall-clock silence, and replay delivers a recording's frames
-# back to back, so a replayed multi-turn conversation runs its turns together. (Recorded live, it passes
-# the same invariants: one request per utterance, in order.) Its single spoken turn is covered by
-# `test_audio_tool_round_parity`.
-_CONVERSATION_CASES = [
-    pytest.param(
-        (case, case.route),
-        id=case.id,
-        marks=pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded')
-        if case.route == 'azure'
-        else (),
-    )
-    for case in REALTIME_PARITY_CASES
-    if not case.synthesizes_turn_boundary
-]
+# GPT-Live ends a turn after a stretch of wall-clock silence. Replay delivers a recording's frames back
+# to back, but its cassette records when each frame arrived, and replay runs Live's turn clock on that
+# recorded time: see `ws_cassettes.ReplayWebSocket.now`.
 _CONVERSATION = [
     Utterance('my_name_is_alice', keyword='alice'),
     Utterance('weather_in_paris', keyword='paris'),
@@ -455,7 +443,7 @@ _CONVERSATION = [
 _SILENCE_BETWEEN_TURNS = 8.0
 
 
-@pytest.mark.parametrize('parity_ws_cassette', _CONVERSATION_CASES, indirect=True)
+@pytest.mark.parametrize('parity_ws_cassette', _AUDIO_CASES, indirect=True)
 async def test_continuous_microphone_conversation_parity(
     parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
     assets_path: Path,

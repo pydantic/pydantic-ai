@@ -365,7 +365,7 @@ def test_map_audio_delta() -> None:
     payload = base64.b64encode(b'\x01\x02').decode('ascii')
     for event_type in ('response.output_audio.delta', 'response.audio.delta'):
         event = map_event({'type': event_type, 'delta': payload, 'item_id': 'item-a'})
-        assert event == AudioDelta(data=b'\x01\x02', item_id='item-a')
+        assert event == AudioDelta(data=b'\x01\x02', item_id='item-a', response_id='response')
 
 
 def test_map_audio_delta_non_string_delta() -> None:
@@ -376,11 +376,11 @@ def test_map_audio_delta_non_string_delta() -> None:
 def test_map_transcript_delta_and_done() -> None:
     for event_type in ('response.output_audio_transcript.delta', 'response.audio_transcript.delta'):
         assert map_event({'type': event_type, 'delta': 'hel', 'item_id': 'item-a'}) == OutputTranscript(
-            text='hel', is_final=False, item_id='item-a'
+            text='hel', is_final=False, item_id='item-a', response_id='response'
         )
     for event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
         assert map_event({'type': event_type, 'transcript': 'hello', 'item_id': 'item-a'}) == OutputTranscript(
-            text='hello', is_final=True, item_id='item-a'
+            text='hello', is_final=True, item_id='item-a', response_id='response'
         )
 
 
@@ -388,15 +388,17 @@ def test_map_text_output_delta_and_done() -> None:
     # `output_text=True` distinguishes plain text output from an audio transcript, so the session
     # persists it as a `TextPart` rather than a `SpeechPart`.
     assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == OutputTranscript(
-        text='hel', is_final=False, output_text=True
+        text='hel', is_final=False, output_text=True, response_id='response'
     )
     assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == OutputTranscript(
-        text='hello', is_final=True, output_text=True
+        text='hello', is_final=True, output_text=True, response_id='response'
     )
 
 
 def test_map_transcript_missing_field_defaults_to_empty() -> None:
-    assert map_event({'type': 'response.output_audio_transcript.delta'}) == OutputTranscript(text='', is_final=False)
+    assert map_event({'type': 'response.output_audio_transcript.delta'}) == OutputTranscript(
+        text='', is_final=False, response_id='response'
+    )
 
 
 @pytest.mark.parametrize('status', ['completed', None])
@@ -446,6 +448,7 @@ def test_map_function_call() -> None:
         tool_name='get_weather',
         args='{"city": "Paris"}',
         response_usage_follows=True,
+        response_id='response',
     )
 
 
@@ -758,32 +761,35 @@ def test_map_unhandled_event_returns_none() -> None:
     [
         (
             {'type': 'response.output_audio.delta', 'delta': 'AQI=', 'item_id': 'a'},
-            AudioDelta(b'\x01\x02', item_id='a'),
+            AudioDelta(b'\x01\x02', item_id='a', response_id='response'),
         ),
-        ({'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', item_id='a')),
+        (
+            {'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'},
+            AudioDelta(b'\x01\x02', item_id='a', response_id='response'),
+        ),
         (
             {'type': 'response.output_audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
-            OutputTranscript('hel', is_final=False, item_id='a'),
+            OutputTranscript('hel', is_final=False, item_id='a', response_id='response'),
         ),
         (
             {'type': 'response.audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
-            OutputTranscript('hel', is_final=False, item_id='a'),
+            OutputTranscript('hel', is_final=False, item_id='a', response_id='response'),
         ),
         (
             {'type': 'response.output_audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
-            OutputTranscript('hello', is_final=True, item_id='a'),
+            OutputTranscript('hello', is_final=True, item_id='a', response_id='response'),
         ),
         (
             {'type': 'response.audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
-            OutputTranscript('hello', is_final=True, item_id='a'),
+            OutputTranscript('hello', is_final=True, item_id='a', response_id='response'),
         ),
         (
             {'type': 'response.output_text.delta', 'delta': 'hel'},
-            OutputTranscript('hel', is_final=False, output_text=True),
+            OutputTranscript('hel', is_final=False, output_text=True, response_id='response'),
         ),
         (
             {'type': 'response.output_text.done', 'text': 'hello'},
-            OutputTranscript('hello', is_final=True, output_text=True),
+            OutputTranscript('hello', is_final=True, output_text=True, response_id='response'),
         ),
         (
             {'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'hel', 'item_id': 'u'},
@@ -804,7 +810,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'name': 'weather',
                 'arguments': '{}',
             },
-            ToolCall('call-1', tool_name='weather', args='{}', response_usage_follows=True),
+            ToolCall('call-1', tool_name='weather', args='{}', response_usage_follows=True, response_id='response'),
         ),
         ({'type': 'input_audio_buffer.speech_started'}, RealtimeInputSpeechStartEvent()),
         ({'type': 'input_audio_buffer.speech_stopped'}, RealtimeInputSpeechEndEvent()),
@@ -985,7 +991,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     async with _connect(model, 'Be nice', tools=tools) as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [OutputTranscript(text='hi', is_final=True)]
+    assert events == [OutputTranscript(text='hi', is_final=True, response_id='response')]
     assert fake_connect.url == 'wss://api.openai.com/v1/realtime?model=gpt-realtime'
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
 
@@ -1502,7 +1508,7 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
-    assert events == [AudioDelta(data=b'\x09')]
+    assert events == [AudioDelta(data=b'\x09', response_id='response')]
 
 
 @pytest.mark.anyio
@@ -1609,7 +1615,7 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     errors = [event for event in events if isinstance(event, RealtimeSessionErrorEvent)]
     assert len(errors) == 3 + len(malformed_nested_frames) + len(malformed_transcription_frames)
     assert all(event.recoverable for event in errors)
-    assert events[-1] == AudioDelta(data=b'\x09')
+    assert events[-1] == AudioDelta(data=b'\x09', response_id='response')
 
 
 @pytest.mark.anyio
@@ -2395,7 +2401,7 @@ async def test_connection_drops_deltas_from_a_cancelled_response() -> None:
             finish_reason=None,
             provider_details={'status': 'cancelled'},
         ),
-        AudioDelta(data=b'\x02', item_id='item-2'),  # the next response is unaffected
+        AudioDelta(data=b'\x02', item_id='item-2', response_id='resp-2'),  # the next response is unaffected
     ]
     assert conn._cancelled_response_id is None  # pyright: ignore[reportPrivateUsage]
 
@@ -2427,7 +2433,9 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
     # A's usage is recorded, B keeps streaming, and no `ResponseDone` fired for the superseded A.
     assert [type(event).__name__ for event in events] == ['SessionUsage', 'AudioDelta']
     assert isinstance(events[0], SessionUsage) and events[0].provider_response_id == 'A'
-    assert events[1] == AudioDelta(data=b'\x02', item_id='b-item')
+    # A's `cancelled` status doesn't ride along: the session may be recording B when this usage lands.
+    assert events[0].provider_details is None
+    assert events[1] == AudioDelta(data=b'\x02', item_id='b-item', response_id='B')
     assert not any(isinstance(event, ResponseDone) for event in events)
 
 
@@ -2627,6 +2635,7 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
             usage=RequestUsage(input_tokens=3, output_tokens=2),
             provider_response_id='resp-1',
             finish_reason='stop',
+            provider_details={'status': 'completed'},
         ),
         ResponseDone(
             interrupted=False,
@@ -2653,12 +2662,14 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
-    # function-call-only → no ResponseDone, but usage is still surfaced
+    # function-call-only → no ResponseDone, but usage is still surfaced, carrying the details the
+    # suppressed `ResponseDone` would have
     assert events == [
         SessionUsage(
             usage=RequestUsage(output_tokens=5),
             provider_response_id='resp-tool',
             finish_reason='tool_call',
+            provider_details={'status': 'completed'},
         )
     ]
 
@@ -2670,6 +2681,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
         json.dumps(
             {
                 'type': 'response.function_call_arguments.done',
+                'response_id': 'resp-tool',
                 'call_id': 'call-1',
                 'name': 'get_weather',
                 'arguments': '{}',
@@ -2689,6 +2701,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
         json.dumps(
             {
                 'type': 'response.output_audio_transcript.done',
+                'response_id': 'resp-answer',
                 'item_id': 'answer-1',
                 'transcript': 'Sunny',
             }
@@ -2746,6 +2759,7 @@ async def test_session_stamps_openai_response_metadata(
     transcript = json.dumps(
         {
             'type': 'response.output_audio_transcript.done',
+            'response_id': 'resp-1',
             'item_id': 'item-1',
             'transcript': 'hello',
         }
@@ -2880,7 +2894,7 @@ async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
     events = await collect_codec_events(conn)
     assert events == [
         RealtimeSessionReconnectEvent(state_restored=False),
-        OutputTranscript(text='still here', is_final=True),
+        OutputTranscript(text='still here', is_final=True, response_id='response'),
     ]
 
 
@@ -2924,7 +2938,10 @@ async def test_reconnects_on_drop_and_resumes() -> None:
         reconnect={'base_delay': 0.0, 'max_attempts': 1},
     )
     events = await collect_codec_events(conn)
-    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert events == [
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
 
 
 class _DropAfterHandshake(FakeWebSocket):
@@ -2976,7 +2993,10 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert events == [
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
     assert connect.closed == [dropped, good]
 
 
@@ -3002,7 +3022,10 @@ async def test_connect_webrtc_reconnect_closes_previous_connection(monkeypatch: 
     ) as conn:
         events = await collect_codec_events(conn, sideband=True)
 
-    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert events == [
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
     assert connect.closed == [dropped, good]
 
 
@@ -3039,10 +3062,10 @@ async def test_reconnect_updates_server_reported_model(monkeypatch: pytest.Monke
 
 def test_output_text_events_keep_item_id() -> None:
     assert map_event({'type': 'response.output_text.delta', 'delta': 'hi', 'item_id': 'item-1'}) == (
-        OutputTranscript(text='hi', is_final=False, item_id='item-1', output_text=True)
+        OutputTranscript(text='hi', is_final=False, item_id='item-1', output_text=True, response_id='response')
     )
     assert map_event({'type': 'response.output_text.done', 'text': 'hi', 'item_id': 'item-1'}) == (
-        OutputTranscript(text='hi', is_final=True, item_id='item-1', output_text=True)
+        OutputTranscript(text='hi', is_final=True, item_id='item-1', output_text=True, response_id='response')
     )
 
 
@@ -4282,14 +4305,6 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
 
 
 @pytest.mark.anyio
-async def test_connection_send_tool_result_without_respond_asks_for_no_response() -> None:
-    ws = FakeWebSocket([])
-    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    await conn.send(ToolResult(tool_call_id='call_1', output='42', respond=False))
-    assert [json.loads(frame)['type'] for frame in ws.sent] == ['conversation.item.create']
-
-
-@pytest.mark.anyio
 async def test_requests_merged_into_a_deferred_response_create_are_reported() -> None:
     """Requests joining one already deferred get no `response.create` of their own, and the session is told.
 
@@ -4307,7 +4322,6 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     await conn.send('second')  # deferred behind the first response
     await conn.send('third')  # joins the deferred request
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))  # joins it too
-    await conn.send(ToolResult(tool_call_id='call_2', output='43', respond=False))  # asks for nothing
 
     events = await collect_codec_events(conn)
     # Reported once the shared response has started, not when the requests joined: a refused
