@@ -20,6 +20,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import (
+    CommandResult,
     LocalWorkspaceBackend,
     SupportsFilesystem,
     Workspace,
@@ -187,11 +188,21 @@ async def test_shell_discipline(tmp_path: Path):
         await workspace.run(['echo', 'hello'], shell=True)
 
 
-async def test_missing_binary_raises(tmp_path: Path):
-    """A spawn failure propagates as-is: the argv path execs directly, without a shell."""
+async def test_a_program_that_cannot_run_is_a_result_like_in_sh(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
+    missing = str(tmp_path / 'missing-binary')
+    (tmp_path / 'script.sh').write_text('#!/bin/sh\n')
+    not_executable = str(tmp_path / 'script.sh')
+
+    assert await workspace.run([missing]) == CommandResult(
+        exit_code=127, stdout='', stderr=f'{missing}: command not found\n'
+    )
+    assert await workspace.run([not_executable]) == CommandResult(
+        exit_code=126, stdout='', stderr=f'{not_executable}: Permission denied\n'
+    )
+    # A missing `cwd` is not the program failing to run, so it still raises.
     with pytest.raises(FileNotFoundError):
-        await workspace.run([str(tmp_path / 'missing-binary')])
+        await workspace.run(['true'], cwd=str(tmp_path / 'missing-dir'))
 
 
 async def test_nonzero_exit_is_a_result(tmp_path: Path):
