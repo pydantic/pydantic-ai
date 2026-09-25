@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -40,6 +41,8 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
+
+from ..conftest import IsStr
 
 
 class InMemoryDecisionModel(DecisionModel[None]):
@@ -400,8 +403,8 @@ def assign(team: Literal['billing', 'technical']) -> str:
     return team
 
 
-def route_question(model: InMemoryDecisionModel, key: str = 'route') -> ChoiceQuestion:
-    question = model.requests[0].questions[key]
+def route_question(model: InMemoryDecisionModel) -> ChoiceQuestion:
+    question = model.requests[0].questions['route']
     assert isinstance(question, ChoiceQuestion)
     return question
 
@@ -446,25 +449,34 @@ async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_
             DecisionRequest(
                 state='Someone else can see my invoices.',
                 questions={
+                    'Escalation.security': NoulQuestion(
+                        instructions={
+                            'field': 'security',
+                            'premise': "If the user's request calls for Escalation: Hand the ticket to a person.",
+                            'question': 'Is this a security issue?',
+                        }
+                    ),
+                    'Triage.urgent': NoulQuestion(
+                        instructions={
+                            'field': 'urgent',
+                            'premise': "If the user's request calls for Triage: Triage a support ticket.",
+                            'question': 'Does this need an immediate response?',
+                        }
+                    ),
+                    'Triage.action': ChoiceQuestion(
+                        criteria={'approve': None, 'review': None},
+                        instructions={
+                            'field': 'action',
+                            'premise': "If the user's request calls for Triage: Triage a support ticket.",
+                            'question': 'What should happen next?',
+                        },
+                    ),
                     'route': ChoiceQuestion(
                         criteria={'Escalation': 'Hand the ticket to a person.', 'Triage': 'Triage a support ticket.'},
                         instructions='Which of these does this call for?',
-                    )
+                    ),
                 },
-            ),
-            DecisionRequest(
-                state='Someone else can see my invoices.',
-                questions={
-                    'security': NoulQuestion(
-                        instructions={
-                            'field': 'security',
-                            'question': 'Is this a security issue?',
-                            'chosen': 'Escalation',
-                            'goal': 'Hand the ticket to a person.',
-                        }
-                    )
-                },
-            ),
+            )
         ]
     )
     # `provider_details` names routes by their labels too, not by the tools Pydantic AI made for them.
@@ -508,17 +520,14 @@ async def test_a_route_label_collision_renames_the_output_route(allow_model_requ
     assert route_question(model).criteria == snapshot(
         {'Refund (output)': 'Refund the ticket.', 'Triage': 'Triage the ticket.', 'Refund': 'Refund the customer.'}
     )
-    assert [part.tool_name for part in response.parts if isinstance(part, ToolCallPart)] == ['final_result_Refund']
-    assert model.requests[1].questions == snapshot(
+    assert response.parts == [ToolCallPart('final_result_Refund', {'urgent': True}, tool_call_id=IsStr())]
+    # Both output routes were asked up front, each under its label, and only the taken one's answers were read.
+    assert list(model.requests[0].questions) == snapshot(['Refund (output).urgent', 'Triage.urgent', 'route'])
+    assert model.requests[0].questions['Refund (output).urgent'].instructions == snapshot(
         {
-            'urgent': NoulQuestion(
-                instructions={
-                    'field': 'urgent',
-                    'question': 'Is it urgent?',
-                    'chosen': 'Refund (output)',
-                    'goal': 'Refund the ticket.',
-                }
-            )
+            'field': 'urgent',
+            'premise': "If the user's request calls for Refund (output): Refund the ticket.",
+            'question': 'Is it urgent?',
         }
     )
 
@@ -531,10 +540,11 @@ class Routed(BaseModel):
 
 @pytest.mark.anyio
 async def test_the_route_question_stays_clear_of_a_field_named_route(allow_model_requests: None):
+    """A field asked beside the route question is keyed under its route's label, so `route` is never a field's."""
     model = InMemoryDecisionModel()
     await Agent(model, output_type=Routed, tools=[refund]).run('Take the A2.')
-    assert list(model.requests[0].questions) == ['route', 'route_']
-    assert list(route_question(model, 'route_').criteria) == ['Routed', 'refund']
+    assert list(model.requests[0].questions) == ['Routed.route', 'route']
+    assert list(route_question(model).criteria) == ['Routed', 'refund']
 
 
 class RoutingDecisionModel(InMemoryDecisionModel):
@@ -818,5 +828,352 @@ async def test_the_route_question_carries_the_agent_instructions(allow_model_req
     model = InMemoryDecisionModel()
     await Agent(model, output_type=Triage, tools=[refund], instructions='Handle support tickets.').run('Charged twice.')
     assert route_question(model).instructions == snapshot(
-        {'question': 'Which of these does this call for?', 'instructions': 'Handle support tickets.'}
+        {'question': 'Which of these does this call for?', 'background': 'Handle support tickets.'}
+    )
+
+
+class Bank(str, Enum):
+    """The banks the customer's accounts can be with."""
+
+    ing = 'ing'
+    rabobank = 'rabobank'
+
+
+class Party(BaseModel):
+    """One side of a payment."""
+
+    bank: Bank = Field(description='Which bank?')
+
+
+class Transfer(BaseModel):
+    """Send money from one of the customer's accounts to someone else."""
+
+    source: Party = Field(description='The account the money leaves.')
+    target: Party
+
+
+@pytest.mark.anyio
+async def test_a_nested_field_carries_what_it_sits_in(allow_model_requests: None):
+    """Flattening a model drops what its fields and models say about themselves, which is what tells leaves apart.
+
+    `source.bank` and `target.bank` both ask "Which bank?"; only the chain above them, root to leaf, says which
+    bank each one is. The field's own description, beside its `$ref`, and the nested model's docstring each go in,
+    and an `Enum` whose docstring the leaf's own description hides comes last. A unit test pins the exact questions.
+    """
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=Transfer, instructions='Payments desk.').run('Send 300 from my ING to Rabobank.')
+    assert model.requests[0].questions == snapshot(
+        {
+            'source.bank': ChoiceQuestion(
+                criteria={'ing': None, 'rabobank': None},
+                instructions={
+                    'field': 'source.bank',
+                    'context': [
+                        'source: The account the money leaves.',
+                        'Party: One side of a payment.',
+                        "Bank: The banks the customer's accounts can be with.",
+                    ],
+                    'question': 'Which bank?',
+                    'goal': "Send money from one of the customer's accounts to someone else.",
+                    'background': 'Payments desk.',
+                },
+            ),
+            'target.bank': ChoiceQuestion(
+                criteria={'ing': None, 'rabobank': None},
+                instructions={
+                    'field': 'target.bank',
+                    'context': [
+                        'Party: One side of a payment.',
+                        "Bank: The banks the customer's accounts can be with.",
+                    ],
+                    'question': 'Which bank?',
+                    'goal': "Send money from one of the customer's accounts to someone else.",
+                    'background': 'Payments desk.',
+                },
+            ),
+        }
+    )
+
+
+class Colours(BaseModel):
+    """Pick colours."""
+
+    chosen: list[Bank] = Field(description='Does this bank apply?')
+    maybe: Bank | None = Field(description='Which bank, if any?')
+    plain: Bank
+
+
+@pytest.mark.anyio
+async def test_an_enum_docstring_the_field_hides_is_context_however_the_enum_is_reached(allow_model_requests: None):
+    """An optional `Enum` and a `list` of one hide the docstring behind their own description the same way.
+
+    A field without a description of its own is asked the `Enum`'s docstring as its question, so there is nothing
+    hidden to add.
+    """
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=Colours).run('ING.')
+    questions = model.requests[0].questions
+    bank = "Bank: The banks the customer's accounts can be with."
+    assert questions['chosen.ing'].instructions == snapshot(
+        {
+            'field': 'chosen',
+            'context': [bank],
+            'question': 'Does this bank apply?',
+            'goal': 'Pick colours.',
+            'option': 'ing',
+        }
+    )
+    assert questions['maybe'].instructions == snapshot(
+        {'field': 'maybe', 'context': [bank], 'question': 'Which bank, if any?', 'goal': 'Pick colours.'}
+    )
+    assert questions['plain'].instructions == snapshot(
+        {'field': 'plain', 'question': "The banks the customer's accounts can be with.", 'goal': 'Pick colours.'}
+    )
+
+
+class Book(BaseModel):
+    """Book a new appointment."""
+
+    day: Literal['monday', 'tuesday'] = Field(description='Which day?')
+
+
+class Cancel(BaseModel):
+    """Cancel an existing appointment."""
+
+    day: Literal['monday', 'tuesday'] = Field(description='Which day?')
+
+
+@pytest.mark.anyio
+async def test_every_route_is_asked_up_front_under_its_premise(allow_model_requests: None):
+    """Each fillable route's fields ride beside the route question, keyed and premised by the route's label.
+
+    One request instead of a pick and a fill. Only the taken route's answers are read, so the other route's answer
+    to the same field name reaches neither the output nor `provider_details`, and `requests` is not reported.
+    """
+    model = RoutingDecisionModel({'Book': 0.2, 'Cancel': 0.8})
+    result = await Agent(model, output_type=[Book, Cancel]).run('I cannot make it on Tuesday.')
+    assert len(model.requests) == 1
+    assert model.requests[0].questions == snapshot(
+        {
+            'Book.day': ChoiceQuestion(
+                criteria={'monday': None, 'tuesday': None},
+                instructions={
+                    'field': 'day',
+                    'premise': "If the user's request calls for Book: Book a new appointment.",
+                    'question': 'Which day?',
+                },
+            ),
+            'Cancel.day': ChoiceQuestion(
+                criteria={'monday': None, 'tuesday': None},
+                instructions={
+                    'field': 'day',
+                    'premise': "If the user's request calls for Cancel: Cancel an existing appointment.",
+                    'question': 'Which day?',
+                },
+            ),
+            'route': ChoiceQuestion(
+                criteria={'Book': 'Book a new appointment.', 'Cancel': 'Cancel an existing appointment.'},
+                instructions='Which of these does this call for?',
+            ),
+        }
+    )
+    assert result.output == Cancel(day='monday')
+    assert result.response.provider_details == snapshot(
+        {
+            'confidence': {'day': 0.9},
+            'probabilities': {'day': {'monday': 1.0, 'tuesday': 0.0}},
+            'scores': {},
+            'route': {
+                'choice': 'Cancel',
+                'probabilities': {'Book': 0.2, 'Cancel': 0.8},
+                'offered': ['Book', 'Cancel'],
+            },
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_a_request_too_large_to_ask_every_route_in_picks_then_fills(allow_model_requests: None):
+    """Past the size cutoff, a route is picked first and filled in a second request, as a union always used to be.
+
+    A state this long costs more to send twice than the other route's questions do to ask, so it is asked up
+    front; past 16k tokens the request would answer more slowly than two small ones, so it is not.
+    """
+    long = 'I cannot make it on Tuesday. ' + 'Some detail nobody asked about. ' * 3000
+    model = RoutingDecisionModel({'Book': 0.2, 'Cancel': 0.8})
+    result = await Agent(model, output_type=[Book, Cancel]).run(long)
+    assert [list(request.questions) for request in model.requests] == snapshot([['route'], ['day']])
+    assert model.requests[1].questions['day'].instructions == snapshot(
+        {
+            'field': 'day',
+            'premise': "If the user's request calls for Cancel: Cancel an existing appointment.",
+            'question': 'Which day?',
+        }
+    )
+    assert (result.response.provider_details or {})['requests'] == 2
+
+
+class Wide(BaseModel):
+    """Record the ticket in full."""
+
+    a: bool = Field(description='Is it about billing, invoices, charges, refunds, or anything to do with money?')
+    b: bool = Field(description='Is it about shipping, delivery, tracking, parcels, or anything to do with transport?')
+    c: bool = Field(description='Is it about the product itself, a defect, a missing part, or how to use it at all?')
+    d: bool = Field(description='Is it about the account, logging in, passwords, or two-factor authentication at all?')
+
+
+@pytest.mark.anyio
+async def test_other_routes_questions_costing_more_than_a_second_request_are_not_asked_up_front(
+    allow_model_requests: None,
+):
+    """When the questions thrown away would cost more than sending the short state again, pick first, fill after.
+
+    A single output type beside tools is still asked up front, as it always has been.
+    """
+
+    def record(
+        a: bool, b: bool, c: bool, d: bool, e: Literal['low', 'medium', 'high', 'critical', 'unknown', 'other']
+    ) -> str:
+        """Record the ticket in the other system.
+
+        Args:
+            a: Is it about billing, invoices, charges, refunds, or anything to do with money at all?
+            b: Is it about shipping, delivery, tracking, parcels, or anything to do with transport?
+            c: Is it about the product itself, a defect, a missing part, or how to use it at all?
+            d: Is it about the account, logging in, passwords, or two-factor authentication at all?
+            e: How bad is it, from low to critical, or unknown, or something else entirely?
+        """
+        return 'recorded'  # pragma: no cover
+
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=Wide, tools=[record]).run('Hi.')
+    assert list(model.requests[0].questions) == snapshot(['Wide.a', 'Wide.b', 'Wide.c', 'Wide.d', 'route'])
+
+
+@pytest.mark.anyio
+async def test_a_label_with_a_dot_in_it_keeps_its_questions_apart(allow_model_requests: None):
+    """A question's key is for reading its answer back: `a.b` + `c` and `a` + `b.c` would both be `a.b.c`.
+
+    The one asked second gets `_` appended, and each route's answers are read back by the keys it was given.
+    """
+    # A hand-written schema can nest an object in place rather than by `$ref`: it has a description, and no model.
+    nested = {
+        'type': 'object',
+        'properties': {
+            'b': {
+                'type': 'object',
+                'description': 'The B part.',
+                'properties': {'c': {'type': 'boolean', 'description': 'Is it C?'}},
+            }
+        },
+    }
+    flat = {'type': 'object', 'properties': {'c': {'type': 'boolean', 'description': 'Is it C?'}}}
+    output_tools = [
+        ToolDefinition(name='a', description='Do A.', kind='output', parameters_json_schema=nested),
+        ToolDefinition(name='a.b', description='Do A.B.', kind='output', parameters_json_schema=flat),
+    ]
+    model = RoutingDecisionModel({'a': 0.3, 'a.b': 0.7})
+    response = await model.request(
+        [ModelRequest(parts=[UserPromptPart('C.')])],
+        None,
+        ModelRequestParameters(output_mode='tool', output_tools=output_tools, allow_text_output=False),
+    )
+    assert list(model.requests[0].questions) == snapshot(['a.b.c', 'a.b.c_', 'route'])
+    assert model.requests[0].questions['a.b.c'].instructions == snapshot(
+        {
+            'field': 'b.c',
+            'premise': "If the user's request calls for a: Do A.",
+            'context': ['b: The B part.'],
+            'question': 'Is it C?',
+        }
+    )
+    assert response.parts == [ToolCallPart('a.b', {'c': True}, tool_call_id=IsStr())]
+
+
+@pytest.mark.anyio
+async def test_after_a_tool_returns_the_turn_is_told_apart_from_the_text(allow_model_requests: None):
+    """The latest prompt stays the text under judgement, and the calls made for it since go under `done`.
+
+    Without the split, a request after a tool call has no `text` at all: the prompt sits in `history` with the
+    calls, and a question about the text has none to be about.
+    """
+    model = RoutingDecisionModel({'Triage': 0.4, 'look_up_order': 0.6})
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi.')]),
+        ModelResponse(parts=[TextPart('Hello, how can I help?')]),
+    ]
+    await Agent(model, output_type=Triage, tools=[look_up_order]).run('Where is my order?', message_history=history)
+    assert model.requests[-1].state == snapshot(
+        {
+            'history': [{'user': 'Hi.'}, {'assistant': 'Hello, how can I help?'}],
+            'text': 'Where is my order?',
+            'done': [
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+            ],
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_a_message_history_that_ends_mid_turn_is_split_at_its_latest_prompt(allow_model_requests: None):
+    """A `message_history` passed in can end partway through a turn, and the split still loses and repeats nothing.
+
+    What came before the latest prompt in the same request (the previous turn's last result, a system prompt) is
+    history; what came after it is this turn's. Every entry lands in exactly one of the three.
+    """
+    model = RoutingDecisionModel({'Triage': 0.9, 'look_up_order': 0.05, 'issue_refund': 0.05})
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Where is order 1?')]),
+        ModelResponse(parts=[ToolCallPart('look_up_order', {}, 'c1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('look_up_order', 'Order #1 shipped yesterday.', 'c1'),
+                UserPromptPart('Thanks. It arrived broken.'),
+                UserPromptPart('Please refund it.'),
+                RetryPromptPart('Pick something else.'),
+            ]
+        ),
+        ModelResponse(parts=[ThinkingPart('A refund, then.'), ToolCallPart('issue_refund', {}, 'c2')]),
+        ModelRequest(parts=[ToolReturnPart('issue_refund', 'Refunded.', 'c2')]),
+    ]
+    await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run(message_history=history)
+    [request] = model.requests
+    assert request.state == snapshot(
+        {
+            'history': [
+                {'user': 'Where is order 1?'},
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+            ],
+            'text': """\
+Thanks. It arrived broken.
+
+Please refund it.\
+""",
+            'done': [
+                {'retry': IsStr()},
+                {'thinking': 'A refund, then.'},
+                {'tool_call': {'name': 'issue_refund', 'args': {}}},
+                {'tool_return': {'name': 'issue_refund', 'content': 'Refunded.'}},
+            ],
+        }
+    )
+    # The previous turn's result does not withhold `look_up_order`; this turn's withholds `issue_refund`.
+    assert list(route_question(model).criteria) == ['Triage', 'look_up_order']
+
+
+@pytest.mark.anyio
+async def test_a_turn_with_no_earlier_history_has_no_history_entry(allow_model_requests: None):
+    """The split only names what is there: the first turn's calls leave nothing before the prompt."""
+    model = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.6, 'issue_refund': 0.1})
+    await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run('Where is my order?')
+    assert model.requests[-1].state == snapshot(
+        {
+            'text': 'Where is my order?',
+            'done': [
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+            ],
+        }
     )
