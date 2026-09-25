@@ -353,7 +353,7 @@ class ConversationItemCreated:
 class InputRejected:
     """The provider refused part of an input this connection was sent, so it had no effect.
 
-    Yielded just ahead of the [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent]
+    Yielded just ahead of the [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]
     that explains the refusal, and only when the provider's error identifies the frame it refused (the
     OpenAI protocol echoes the client `event_id`). A connection that can't tell which input an error was
     about yields the error alone. The session uses it to take back what it assumed the input did: a
