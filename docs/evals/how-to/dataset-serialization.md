@@ -477,7 +477,7 @@ evaluators:
 
 ### Custom Evaluator Not Found
 
-**Problem**: `ValueError: Unknown evaluator name: 'CustomEvaluator'`
+**Problem**: loading fails with an `ExceptionGroup` (`1 error(s) loading evaluators from registry`) wrapping `ValueError: Evaluator 'CustomEvaluator' is not in the provided custom_evaluator_types. Valid choices: [...]`
 
 **Solution**: Pass `custom_evaluator_types` when loading:
 
