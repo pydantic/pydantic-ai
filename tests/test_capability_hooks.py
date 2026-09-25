@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
+    CombinedCapability,
     ToolSearch,
     UseThreadExecutor,
 )
@@ -64,7 +65,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
@@ -125,6 +126,41 @@ class TestRunHooks:
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
         await agent.run('hello')
         assert 'before_run' in cap.log
+
+    @pytest.mark.parametrize('subclass', [False, True], ids=['plain', 'subclass'])
+    async def test_context_copies(self, subclass: bool) -> None:
+        """Context isolation and subclass initialization do not depend on model I/O."""
+
+        @dataclass
+        class CheckedContext(RunContext[list[str]]):
+            active_at_init: bool | None = field(init=False)
+
+            def __post_init__(self) -> None:
+                self.active_at_init = self.capability_active
+
+        ctx_type = CheckedContext if subclass else RunContext[list[str]]
+        ctx = ctx_type(deps=[], model=TestModel(), usage=RunUsage())
+        contexts: list[RunContext[list[str]]] = []
+        hooks = Hooks[list[str]]()
+
+        @hooks.on.before_run
+        async def record(cap_ctx: RunContext[list[str]]) -> None:
+            assert cap_ctx is not ctx
+            assert type(cap_ctx) is type(ctx)
+            assert cap_ctx.capability_active is True
+            assert cap_ctx.retry == 0
+            assert cap_ctx.deps is ctx.deps and cap_ctx.usage is ctx.usage
+            cap_ctx.retry = 1
+            contexts.append(cap_ctx)
+            if isinstance(cap_ctx, CheckedContext):
+                assert cap_ctx.active_at_init is True
+
+        await CombinedCapability([hooks, hooks]).before_run(ctx)
+        assert contexts[0] is not contexts[1]
+        assert ctx.retry == 0
+        assert ctx.capability_active is None
+        if isinstance(ctx, CheckedContext):
+            assert ctx.active_at_init is None
 
     async def test_after_run(self):
         cap = LoggingCapability()
