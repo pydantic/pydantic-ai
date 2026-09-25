@@ -5834,7 +5834,7 @@ async def test_late_terminal_of_an_earlier_response_does_not_close_the_next() ->
 
     The user barged in on A, and B started streaming (with a tool call) before A's `response.done`
     landed. A's usage and terminal name A, so B stays open until its own usage, which records it with
-    B's id and status. A's tokens still count toward B, so they're priced.
+    B's id, status and usage. A's tokens count toward the session, not toward B.
     """
     conn = FakeRealtimeConnection(
         [
@@ -5866,7 +5866,105 @@ async def test_late_terminal_of_an_earlier_response_does_not_close_the_next() ->
     responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
     assert [
         (r.provider_response_id, r.provider_details, r.finish_reason, r.usage.input_tokens, r.state) for r in responses
-    ] == [('resp_b', {'status': 'completed'}, 'tool_call', 11, 'complete')]
+    ] == [('resp_b', {'status': 'completed'}, 'tool_call', 10, 'complete')]
+    assert session.usage.input_tokens == 11
+
+
+async def test_terminal_of_another_response_is_not_taken_for_a_recorded_ones_trailer() -> None:
+    """A tool-call response recorded from its usage doesn't swallow the next response's terminal.
+
+    The recorded response's own trailing `response.done` never arrives here (the connection drops it as
+    superseded), so the marker saying "this response's terminal is redundant" belongs to that response
+    only. The next, empty cancelled response is still recorded from its own terminal.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(
+                tool_call_id='call_a',
+                tool_name='missing_tool',
+                args='{}',
+                response_usage_follows=True,
+                response_id='resp_a',
+            ),
+            SessionUsage(usage=RequestUsage(output_tokens=3), provider_response_id='resp_a', finish_reason='tool_call'),
+            ResponseDone(interrupted=True, provider_response_id='resp_b', provider_details={'status': 'cancelled'}),
+        ]
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
+    assert [(r.provider_response_id, r.state) for r in responses] == [('resp_a', 'complete'), ('resp_b', 'interrupted')]
+
+
+async def test_late_trailer_of_a_recorded_response_is_ignored_while_the_next_streams() -> None:
+    """A recorded tool-call response's own trailing terminal, arriving after the next one started, is let go.
+
+    It neither closes the response now streaming nor lingers to be mistaken for that one's trailer, and
+    usage reported late for it (priced by the provider here) counts toward the session alone.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(
+                tool_call_id='call_a',
+                tool_name='missing_tool',
+                args='{}',
+                response_usage_follows=True,
+                response_id='resp_a',
+            ),
+            SessionUsage(usage=RequestUsage(output_tokens=3), provider_response_id='resp_a', finish_reason='tool_call'),
+            OutputTranscript(text='answer', is_final=True, response_id='resp_b'),
+            SessionUsage(usage=RequestUsage(input_tokens=2, cost=Decimal('0.5')), provider_response_id='resp_a'),
+            ResponseDone(provider_response_id='resp_a'),
+            ResponseDone(provider_response_id='resp_b'),
+        ]
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
+    assert [(r.provider_response_id, r.state, r.usage.input_tokens) for r in responses] == [
+        ('resp_a', 'complete', 0),
+        ('resp_b', 'complete', 0),
+    ]
+    assert (session.usage.input_tokens, session.usage.cost) == (2, Decimal('0.5'))
+
+
+async def test_late_content_of_a_recorded_response_is_dropped() -> None:
+    """A delta still in flight when its response was recorded doesn't lock or leak into the next one."""
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='first', is_final=True, response_id='resp_a'),
+            ResponseDone(provider_response_id='resp_a'),
+            OutputTranscript(text=' leftover', response_id='resp_a'),
+            OutputTranscript(text='second', is_final=True, response_id='resp_b'),
+            OutputTranscript(text=' leftover', response_id='resp_a'),
+            ResponseDone(provider_response_id='resp_b'),
+        ]
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    assert [
+        (m.provider_response_id, [p.transcript for p in m.parts if isinstance(p, SpeechPart)])
+        for m in session.new_messages()
+        if isinstance(m, ModelResponse)
+    ] == [('resp_a', ['first']), ('resp_b', ['second'])]
+
+
+async def test_content_of_a_new_response_records_the_one_before() -> None:
+    """Content naming a new response means the one being assembled is over, even without its terminal."""
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='first', is_final=True, response_id='resp_a'),
+            OutputTranscript(text='second', is_final=True, response_id='resp_b'),
+            ResponseDone(provider_response_id='resp_b'),
+        ]
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    assert [
+        (m.provider_response_id, [p.transcript for p in m.parts if isinstance(p, SpeechPart)])
+        for m in session.new_messages()
+        if isinstance(m, ModelResponse)
+    ] == [('resp_a', ['first']), ('resp_b', ['second'])]
 
 
 async def test_reconnect_while_idle_on_replay_provider_keeps_state_restored() -> None:
