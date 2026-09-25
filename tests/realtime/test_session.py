@@ -10621,7 +10621,7 @@ async def test_reply_counted_for_a_provider_answering_by_itself_is_given_back_if
             if content.tool_call_id == 'c1':
                 await fail_fast.wait()
                 raise RuntimeError('send failed')
-            await super().send(content)  # pragma: no cover
+            await super().send(content)
 
     release_slow = asyncio.Event()
     conn = _FailsTheFastResult()
