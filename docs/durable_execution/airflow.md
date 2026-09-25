@@ -10,7 +10,7 @@ Unlike the wrapper-object integrations on this page, Airflow's durable unit is a
 
 ## Durable Execution
 
-When an agent runs as a durable Airflow task, Airflow records each completed **model request** and **tool call** as a cache entry. On a retry, Airflow replays these entries to skip completed work: each entry stores a fingerprint of the request that produced it, and if that fingerprint no longer matches (the conversation diverged since the previous attempt), the step re-runs live instead of returning a stale result. The cache lives in object storage (local, S3, GCS, or Azure) for the lifetime of a single DAG run's task and is deleted when the task succeeds.
+When an agent runs as a durable Airflow task, Airflow records each completed **model request** and **tool call** as a cache entry. On a retry, Airflow replays these entries to skip completed work: each entry stores a fingerprint of the request that produced it, and if that fingerprint no longer matches (the conversation diverged since the previous attempt), the step re-runs live instead of returning a stale result. On Airflow 3.3 and above (with `apache-airflow-providers-common-ai` 0.7.0 or newer) the cache is Airflow's own per-task-instance task state store, so it needs no storage configuration. It is cleared when the task succeeds, and any entries left by a run that ultimately fails are removed when the DAG run is deleted. On older Airflow the cache instead lives in object storage (local, S3, GCS, or Azure) that you configure.
 
 For example, imagine an agent calls a model, gets a useful response, starts a tool call, and then the worker crashes. Without durable execution, Airflow's normal retry restarts the task from the top and repeats the model request and any later side effects. With durable execution, the retry replays the run, reuses the cached result for the already-completed model request, and continues from the first operation that has not completed.
 
@@ -26,7 +26,9 @@ uv add "apache-airflow-providers-common-ai"
 
 The agent's model and credentials come from an Airflow connection (the examples use `pydanticai_default`). See [Pydantic AI connection](https://airflow.apache.org/docs/apache-airflow-providers-common-ai/stable/connections/pydantic_ai.html) for how to configure one.
 
-Durable execution needs a place to store its step cache. Point `[common.ai] durable_cache_path` at an object-storage location:
+On Airflow 3.3 and above (with `apache-airflow-providers-common-ai` 0.7.0 or newer) durable execution needs no storage configuration. The step cache is kept in Airflow's task state store, scoped to the task instance.
+
+Only on Airflow older than 3.3 do you need to give durable execution a place to store its step cache. There, point `[common.ai] durable_cache_path` at an object-storage location:
 
 ```ini title="airflow.cfg"
 [common.ai]
@@ -110,8 +112,8 @@ When running a Pydantic AI agent as a durable Airflow task:
 
 * The durable unit is the Airflow task; recovery happens through Airflow task retries, so set `retries` (and a `retry_delay`) on the task.
 * Define the agent with a concrete model, for example via a connection that resolves to `Agent('openai:gpt-5-nano', ...)`. The model must be set when `durable=True`.
-* Set `[common.ai] durable_cache_path` to an object-storage location the workers can read and write.
+* On Airflow 3.3 and above no cache storage configuration is needed, since the step cache uses the task state store. Only on older Airflow set `[common.ai] durable_cache_path` to an object-storage location the workers can read and write.
 * On a retry, a cached model request or tool call is replayed when its stored fingerprint matches the current request, and re-runs live when it diverges. Requests that can't be serialized to a fingerprint fall back to unverified positional replay, so keep runs deterministic across retries.
 * `durable=True` and `enable_hitl_review=True` are mutually exclusive.
 * Streaming is not supported under `durable=True`.
-* The step cache is scoped to one DAG run's task and is deleted when the task succeeds.
+* The step cache is scoped to a single task instance and is deleted when the task succeeds. On Airflow 3.3 and above it lives in the task state store, and entries left by a run that ultimately fails are removed when the DAG run is deleted.
