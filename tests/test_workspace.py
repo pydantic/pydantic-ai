@@ -43,6 +43,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
+    WorkspaceUnavailableError,
     WrapperWorkspace,
 )
 
@@ -450,8 +451,9 @@ async def test_unavailable_workspace_uses_the_configured_reason_for_every_operat
         backend.exists('/file'),
     ]
 
+    # A workspace error, not a `UserError`, so a tool can catch it and tell the model instead of ending the run.
     for operation in operations:
-        with pytest.raises(UserError, match='workspace disabled by policy'):
+        with pytest.raises(WorkspaceUnavailableError, match='workspace disabled by policy'):
             await operation
 
 

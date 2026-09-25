@@ -253,7 +253,7 @@ When no capability supplies a workspace:
 
 To answer a question without letting tools touch files, pass an
 [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace]. Every workspace operation then
-raises `UserError` with the reason you give:
+raises `WorkspaceUnavailableError` with the reason you give:
 
 ```python {requires="workspace_agent.py"}
 from pydantic_ai.workspaces import UnavailableWorkspace
