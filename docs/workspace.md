@@ -8,14 +8,12 @@ is available but native filesystem access is not, [`Workspace`][pydantic_ai.work
 performs file operations through the shell.
 
 ```python {title="workspace_agent.py"}
-import os
-
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[LocalWorkspace('.', env={'PATH': os.environ['PATH']})],
+    capabilities=[LocalWorkspace('.')],
 )
 
 
@@ -58,23 +56,19 @@ To choose the workspace for a single run instead, pass a backend through `worksp
 precedence over the agent's capabilities:
 
 ```python {requires="workspace_agent.py"}
-import os
-
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from workspace_agent import agent
 
 
 async def main() -> None:
-    workspace = LocalWorkspaceBackend('.', env={'PATH': os.environ['PATH']})
+    workspace = LocalWorkspaceBackend('.')
     await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', workspace=workspace)
 ```
 
-Commands inherit nothing from the agent process's environment: they get the workspace's `env`, with
-any `env` passed to `run` layered on top. Pass what they need, as the first example does with
-`PATH`, and add others such as `HOME` the same way. Without `PATH`, programs are only looked up in
-the system's default path, so tools installed elsewhere (Homebrew, `~/.local/bin`, a virtualenv)
-are not found.
+Commands inherit only `PATH` and `HOME` from the agent process's environment, so they find the
+host's tools and the user's configuration. The workspace's `env` is layered on top, then any `env`
+passed to `run`; pass other variables a command needs the same way.
 
 !!! warning
     Don't pass `os.environ` itself: that hands the model's commands every secret in the process,

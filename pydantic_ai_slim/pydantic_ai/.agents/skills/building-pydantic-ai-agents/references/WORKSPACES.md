@@ -19,10 +19,8 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 isolation: `working_dir` is only the default directory and the base for relative paths, not a jail
 or a security boundary. Use it only for trusted work. `working_dir` is required; a relative path
 such as `'.'` resolves against the current directory at construction, and a leading `~` is
-expanded; the caller owns that directory. Commands inherit nothing from the agent process: they get
-`env` plus the per-call `env`, so pass what they need, e.g.
-`LocalWorkspace('.', env={'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']})` (without
-`PATH`, only the system default path is searched). Never pass `os.environ` wholesale: it hands the
+expanded; the caller owns that directory. Commands inherit only `PATH` and
+`HOME` from the agent process, with `env` and then the per-call `env` layered on top. Never pass `os.environ` wholesale: it hands the
 model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`. It has the default id
 `local_workspace`, so a second one replaces the first unless it gets its own `id`. Its ref is
 `WorkspaceRef(provider='local', id=<working_dir, ~ expanded>)` from construction (the directory

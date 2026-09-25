@@ -394,14 +394,16 @@ async def test_kill_tolerates_an_already_exited_group():
         LocalWorkspaceBackend._kill(process)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_commands_inherit_nothing_from_the_host_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_commands_inherit_only_path_and_home_from_the_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('LOCAL_WORKSPACE_HOST_SECRET', 'do-not-pass')
-    workspace = LocalWorkspaceBackend(tmp_path, env={'SHARED': 'backend', 'BACKEND_ONLY': 'backend'})
+    monkeypatch.setenv('PATH', '/host/bin:/usr/bin')
+    monkeypatch.setenv('HOME', '/host/home')
+    workspace = LocalWorkspaceBackend(tmp_path, env={'SHARED': 'backend', 'HOME': 'backend'})
 
     result = await workspace.run(['/usr/bin/env'], env={'SHARED': 'call'})
 
     child_environment = dict(line.split('=', 1) for line in result.stdout.splitlines())
-    assert child_environment == {'SHARED': 'call', 'BACKEND_ONLY': 'backend'}
+    assert child_environment == {'PATH': '/host/bin:/usr/bin', 'HOME': 'backend', 'SHARED': 'call'}
 
 
 async def test_cwd_selects_the_working_directory(tmp_path: Path):

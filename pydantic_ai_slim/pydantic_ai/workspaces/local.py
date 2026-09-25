@@ -39,6 +39,8 @@ from .protocol import (
 
 __all__ = ('LocalWorkspaceBackend',)
 
+# Not secrets, and without them commands miss the host's tools and the user's configuration.
+_INHERITED_ENV = ('PATH', 'HOME')
 _MAX_CAPTURE_BYTES = 10 * 1024 * 1024
 """Ceiling on the combined stdout and stderr a single command may produce."""
 
@@ -95,11 +97,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     the host that this process can. Use it for trusted local work, tests, and development; run
     untrusted code in a container or VM through a provider workspace.
 
-    Commands inherit nothing from the agent process's environment: they get exactly `env` plus the
-    per-call `env`. Pass what they need, e.g. `env={'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']}`;
-    without `PATH`, programs are looked up in the system default path only, so tools installed
-    elsewhere (Homebrew, `~/.local/bin`) are not found. Don't pass `os.environ` wholesale: it hands
-    the model's commands every secret in the process, LLM API keys included.
+    Commands inherit only `PATH` and `HOME` from the agent process's environment, so they find the
+    host's tools (Homebrew, `~/.local/bin`) and user configuration (git, uv). `env` is layered on
+    top, then the per-call `env`; set a variable to override it. Nothing else is inherited: passing
+    `os.environ` wholesale would hand the model's commands every secret in the process, LLM API
+    keys included.
 
     It supports POSIX platforms only. A command that calls `setsid` can move its own processes
     outside the process group that this workspace kills on cancellation or timeout.
@@ -116,7 +118,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             a confinement boundary. The caller creates and removes it. It is canonicalized on first
             use so [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir] reports
             the directory commands actually run in.
-        env: Environment variables every command in this workspace gets. The per-call `env` of
+        env: Environment variables every command in this workspace gets, layered on top of the
+            inherited `PATH` and `HOME`. The per-call `env` of
             [`run`][pydantic_ai.workspaces.SupportsCommands.run] is layered on top.
     """
 
@@ -134,7 +137,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._working_dir = absolute
         self._canonical_working_dir: Path | None = None
         self._ref = WorkspaceRef(provider='local', id=absolute.as_posix())
-        self._env = dict(env or {})
+        self._env = {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ} | dict(env or {})
 
     @property
     def ref(self) -> WorkspaceRef:

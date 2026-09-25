@@ -59,10 +59,8 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = None
     """Environment variables every command in this workspace gets; the per-call `env` is layered on top.
 
-    Commands inherit nothing from the agent process, so pass what they need, e.g.
-    `LocalWorkspace('.', env={'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']})`. Without
-    `PATH`, tools installed outside the system default path (Homebrew, `~/.local/bin`) are not
-    found. Don't pass `os.environ` wholesale: it hands the model's commands every secret in the
+    Commands inherit only `PATH` and `HOME` from the agent process, and `env` is layered on top of
+    them. Don't pass `os.environ` wholesale: it hands the model's commands every secret in the
     process, LLM API keys included.
     """
 
