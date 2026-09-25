@@ -1074,19 +1074,26 @@ def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool
     return turn_detection is not None and bool(turn_detection.get('interrupt_response'))
 
 
-def tool_choice_config(tool_choice: ResolvedToolChoice) -> str | dict[str, Any]:
+def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:
     """Map a resolved `tool_choice` to the OpenAI realtime `tool_choice` field.
 
     Restrictions to a subset of the tools are carried by the advertised tool definitions, which the
-    caller has already narrowed, so only the mode is left to send — except for the one restriction
-    realtime does express directly, a single named function.
+    caller has already narrowed, so only the mode is left to send.
+
+    Raises:
+        UserError: For a choice that forces a tool call. The session config applies it to every
+            response, including the one after a tool result, so the model could never answer: it would
+            call tools until a usage limit ended the session.
     """
-    if isinstance(tool_choice, tuple):
-        mode, allowed = tool_choice
-        if mode == 'required' and len(allowed) == 1:
-            return {'type': 'function', 'name': next(iter(allowed))}
-        return mode
-    return tool_choice
+    mode = tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice
+    if mode == 'required':
+        raise UserError(
+            "A realtime session can't force a tool call: the provider applies `tool_choice` to every "
+            "response, including the one after a tool result, so `tool_choice='required'` or a list of "
+            'tool names would never let the model answer. To restrict which tools the model can use, pass '
+            '`ToolOrOutput(function_tools=[...])` instead.'
+        )
+    return mode
 
 
 async def expect_event(
