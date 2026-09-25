@@ -9,11 +9,12 @@ from functools import cached_property
 from typing import Any, ClassVar, Literal, TypeAlias, cast
 
 from pydantic import JsonValue
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     BaseToolReturnPart,
@@ -55,6 +56,7 @@ __all__ = (
     'ChoiceAnswer',
     'ChoiceQuestion',
     'DecisionAnswer',
+    'DecisionHandOff',
     'DecisionModel',
     'DecisionModelSettings',
     'DecisionQuestion',
@@ -66,7 +68,7 @@ __all__ = (
     'NoulQuestion',
     'ScoreAnswer',
     'ScoreQuestion',
-    'ToolCallProposed',
+    'UnfillableRoute',
     'UnsureRoute',
 )
 
@@ -239,40 +241,14 @@ class DecisionModelSettings(ModelSettings, total=False):
     """
 
 
-class ToolCallProposed(ModelAPIError):
-    """A decision model picked a tool whose arguments it cannot fill.
+class DecisionHandOff(ModelAPIError):
+    """A decision model handed the step off instead of answering it: the base of the hand-offs it raises.
 
     A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind the decision model
     hands that model the whole step by default, tools and all, and only the steps the decision model hands off cost
-    a language model call.
-    """
-
-    tool_name: str
-    """The tool the model proposed."""
-
-    probability: float
-    """How likely the model found the call, from 0 to 1."""
-
-    def __init__(self, model_name: str, tool_name: str, probability: float):
-        self.tool_name = tool_name
-        self.probability = probability
-        super().__init__(
-            model_name,
-            f'{model_name} proposed calling {tool_name!r} (probability {probability:.2f}) but cannot fill its '
-            'arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step.',
-        )
-
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.model_name, self.tool_name, self.probability)
-
-
-class UnsureRoute(ModelAPIError):
-    """A decision model picked a route less likely than `decision_route_threshold`.
-
-    Raised before any request to fill the route. A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind the decision model
-    hands that model the whole step by default, tools and all.
+    a language model call. Pass `fallback_on=DecisionHandOff` to hand off only these, and let an error from the
+    decision model's backend fail the run rather than go to the language model.
     """
 
     route: str
@@ -281,6 +257,51 @@ class UnsureRoute(ModelAPIError):
     probability: float
     """How likely the model found the picked route, from 0 to 1."""
 
+    def __init__(self, model_name: str, route: str, probability: float, message: str):
+        self.route = route
+        self.probability = probability
+        super().__init__(model_name, message)
+
+
+class UnfillableRoute(DecisionHandOff):
+    """A decision model picked a route whose fields or arguments it cannot fill.
+
+    A tool with an argument the model cannot express, such as a free-form `str`, or an output type with such a
+    field. See [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff] for how a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes the step.
+    """
+
+    def __init__(self, model_name: str, route: str, probability: float):
+        super().__init__(
+            model_name,
+            route,
+            probability,
+            f'{model_name} picked {route!r} (probability {probability:.2f}) but cannot fill it. Put a model that '
+            'can behind it: `FallbackModel(decision_model, language_model)` hands `language_model` this step.',
+        )
+
+    @property
+    @deprecated('`tool_name` is deprecated, use `route` instead.', category=PydanticAIDeprecationWarning)
+    def tool_name(self) -> str:
+        """Deprecated alias for [`route`][pydantic_ai.models.decision.DecisionHandOff.route].
+
+        For a tool, the tool's name. For an output type, the name the route question offered it under, as `Reply`,
+        rather than the name of the output tool Pydantic AI made for it.
+        """
+        return self.route
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.route, self.probability)
+
+
+class UnsureRoute(DecisionHandOff):
+    """A decision model picked a route less likely than `decision_route_threshold`.
+
+    Raised before any request to fill the route. See
+    [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff] for how a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes the step.
+    """
+
     probabilities: dict[str, float]
     """The probability the model gave every route, by label."""
 
@@ -288,13 +309,14 @@ class UnsureRoute(ModelAPIError):
     """The `decision_route_threshold` the pick fell below."""
 
     def __init__(self, model_name: str, route: str, probabilities: dict[str, float], threshold: float):
-        self.route = route
-        self.probability = probabilities[route]
         self.probabilities = probabilities
         self.threshold = threshold
+        probability = probabilities[route]
         super().__init__(
             model_name,
-            f'{model_name} picked {route!r} with probability {self.probability:.2f}, below '
+            route,
+            probability,
+            f'{model_name} picked {route!r} with probability {probability:.2f}, below '
             f'`decision_route_threshold` ({threshold:.2f}). Put a model behind it to take the steps it is unsure '
             'of: `FallbackModel(decision_model, language_model)` hands `language_model` this step.',
         )
@@ -338,7 +360,7 @@ class DecisionModel(Model[InterfaceClient]):
     - With tools attached, or a union of output types, one more pick-one asks which route the text calls for, and
       the likeliest is taken. A picked route with fields is filled in a second request, and one whose fields the
       model cannot express, a single output type's included, is raised as
-      [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], for a
+      [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], for a
       [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model. A pick below
       `decision_route_threshold`, when set, is raised as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
       the same way.
@@ -463,7 +485,7 @@ class DecisionModel(Model[InterfaceClient]):
         if len(output_tools) == 1 and output_tool is None and not tools:
             # Every other route has returned this turn, and the one left cannot be filled: it is taken without a
             # choice question, like the last tool left, and handing it off needs no request either.
-            raise ToolCallProposed(self.model_name, output_tools[0].name, 1.0)
+            raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
         ask = _Ask.about(output_tool, instructions, limits) if output_tool else _Ask.nothing()
         route_key = _route_question(ask.questions, routes, output_tools, tools, instructions, limits)
 
@@ -525,7 +547,7 @@ class DecisionModel(Model[InterfaceClient]):
 
         One helper for both routes the model picks and then fills: a tool's arguments, and a union member's fields.
         They are the same two steps, and a route whose fields the model cannot express is the same hand-off either
-        way — [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] is a `ModelAPIError`, so a
+        way — [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] is a `ModelAPIError`, so a
         [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] gives a language model the whole step.
 
         This is also how a single output type the model cannot express is taken when tools or a `None` are on
@@ -538,7 +560,7 @@ class DecisionModel(Model[InterfaceClient]):
         try:
             ask = _Ask.about(tool, instructions, limits, chosen=label)
         except UserError:
-            raise ToolCallProposed(self.model_name, tool.name, probability) from None
+            raise UnfillableRoute(self.model_name, label, probability) from None
 
         try:
             response = await self.decide(DecisionRequest(state=state, questions=ask.questions), settings)

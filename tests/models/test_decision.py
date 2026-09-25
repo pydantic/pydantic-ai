@@ -11,7 +11,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -27,6 +27,7 @@ from pydantic_ai.models.decision import (
     ChoiceAnswer,
     ChoiceQuestion,
     DecisionAnswer,
+    DecisionHandOff,
     DecisionModel,
     DecisionModelSettings,
     DecisionRequest,
@@ -35,7 +36,7 @@ from pydantic_ai.models.decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
-    ToolCallProposed,
+    UnfillableRoute,
     UnsureRoute,
 )
 from pydantic_ai.models.fallback import FallbackModel
@@ -806,7 +807,7 @@ async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests:
     )
     model = RoutingDecisionModel({'Triage': 0.1, 'look_up': 0.9})
 
-    with pytest.raises(ToolCallProposed, match="proposed calling 'look_up'"):
+    with pytest.raises(UnfillableRoute, match="picked 'look_up'"):
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
 
 
@@ -971,7 +972,7 @@ CELLS = [
     Cell(
         'PartReply + set_urgency: PartReply',
         PartReply,
-        snapshot(([['route']], "hands off 'final_result'")),
+        snapshot(([['route']], "hands off 'PartReply'")),
         [set_urgency],
         'PartReply',
     ),
@@ -985,7 +986,7 @@ CELLS = [
     Cell(
         'Reply + look_up_order: Reply',
         Reply,
-        snapshot(([['route']], "hands off 'final_result'")),
+        snapshot(([['route']], "hands off 'Reply'")),
         [look_up_order],
         'Reply',
     ),
@@ -999,7 +1000,7 @@ CELLS = [
     Cell(
         'write_note + set_urgency: write_note',
         write_note,
-        snapshot(([['route']], "hands off 'final_result'")),
+        snapshot(([['route']], "hands off 'write_note'")),
         [set_urgency],
         'write_note',
     ),
@@ -1050,7 +1051,7 @@ CELLS = [
         snapshot(([['urgent', 'customer.area', 'route']], "final_result_None({'response': None})")),
         pick='None',
     ),
-    Cell('Reply | None: Reply', [Reply, None], snapshot(([['route']], "hands off 'final_result_Reply'")), pick='Reply'),
+    Cell('Reply | None: Reply', [Reply, None], snapshot(([['route']], "hands off 'Reply'")), pick='Reply'),
     Cell(
         'Reply | None: None',
         [Reply, None],
@@ -1060,7 +1061,7 @@ CELLS = [
     Cell(
         'PartReply | escalate: PartReply',
         [PartReply, escalate],
-        snapshot(([['route']], "hands off 'final_result_PartReply'")),
+        snapshot(([['route']], "hands off 'PartReply'")),
         pick='PartReply',
     ),
     Cell(
@@ -1090,13 +1091,13 @@ CELLS = [
     Cell(
         'Ticket | Reply: Reply',
         [Ticket, Reply],
-        snapshot(([['route']], "hands off 'final_result_Reply'")),
+        snapshot(([['route']], "hands off 'Reply'")),
         pick='Reply',
     ),
     Cell(
         'Ticket | assign_with_note: assign_with_note',
         [Ticket, assign_with_note],
-        snapshot(([['route']], "hands off 'final_result_assign_with_note'")),
+        snapshot(([['route']], "hands off 'assign_with_note'")),
         pick='assign_with_note',
     ),
     Cell(
@@ -1118,7 +1119,7 @@ CELLS = [
     Cell(
         'PartReply | Reply | None: Reply',
         [PartReply, Reply, None],
-        snapshot(([['route']], "hands off 'final_result_Reply'")),
+        snapshot(([['route']], "hands off 'Reply'")),
         pick='Reply',
     ),
     Cell(
@@ -1130,7 +1131,7 @@ CELLS = [
     Cell(
         'PartReply | Reply + set_urgency: PartReply',
         [PartReply, Reply],
-        snapshot(([['route']], "hands off 'final_result_PartReply'")),
+        snapshot(([['route']], "hands off 'PartReply'")),
         [set_urgency],
         'PartReply',
     ),
@@ -1198,8 +1199,8 @@ async def test_the_route_matrix(allow_model_requests: None, cell: Cell):
         [call] = tools_node.model_response.parts
         assert isinstance(call, ToolCallPart)
         outcome = f'{call.tool_name}({call.args})'
-    except ToolCallProposed as e:
-        outcome = f'hands off {e.tool_name!r}'
+    except UnfillableRoute as e:
+        outcome = f'hands off {e.route!r}'
     except UserError as e:
         outcome = f'UserError: {str(e).split(". ")[0]}'
     assert ([list(request.questions) for request in model.requests], outcome) == cell.expected
@@ -1213,9 +1214,9 @@ async def test_an_output_type_the_model_cannot_fill_is_left_to_the_model_behind_
     a route question, like the last tool left, and cannot be filled, so it is handed off without a request.
     """
     decision_model = RoutingDecisionModel({'Reply': 0.1, 'look_up_order': 0.9})
-    with pytest.raises(ToolCallProposed) as exc_info:
+    with pytest.raises(UnfillableRoute) as exc_info:
         await Agent(decision_model, output_type=Reply, tools=[look_up_order]).run('Where is my order?')
-    assert (exc_info.value.tool_name, exc_info.value.probability) == ('final_result', 1.0)
+    assert (exc_info.value.route, exc_info.value.probability) == ('Reply', 1.0)
     assert [list(request.questions) for request in decision_model.requests] == [['route']]
 
     decision_model = RoutingDecisionModel({'Reply': 0.1, 'look_up_order': 0.9})
@@ -1228,3 +1229,30 @@ async def test_an_output_type_the_model_cannot_fill_is_left_to_the_model_behind_
         for response in result.all_messages()
         if isinstance(response, ModelResponse)
     ] == snapshot([('in-memory-decisions', ['look_up_order']), ('test', ['final_result'])])
+
+
+class UnavailableDecisionModel(InMemoryDecisionModel):
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        raise ModelAPIError(self.model_name, 'The backend is down.')
+
+
+@pytest.mark.anyio
+async def test_a_fallback_on_decision_hand_offs_takes_only_those(allow_model_requests: None):
+    """`fallback_on=DecisionHandOff` hands the language model the steps the decision model hands off, and nothing
+    else: an error from the decision model's backend fails the run rather than quietly costing a language model call."""
+
+    async def run(decision_model: InMemoryDecisionModel, settings: DecisionModelSettings | None = None) -> str | None:
+        model = FallbackModel(decision_model, TestModel(call_tools=[]), fallback_on=DecisionHandOff)
+        agent = Agent(model, output_type=Triage, tools=[look_up_order, refund])
+        result = await agent.run('Where is my order?', model_settings=settings)
+        return result.response.model_name
+
+    # The model picks a tool it cannot fill: `UnfillableRoute`.
+    assert await run(RoutingDecisionModel({'Triage': 0.1, 'look_up_order': 0.1, 'refund': 0.8})) == 'test'
+    # The model is unsure of its pick: `UnsureRoute`.
+    unsure = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.5, 'refund': 0.2})
+    assert await run(unsure, DecisionModelSettings(decision_route_threshold=0.7)) == 'test'
+    # The backend fails: not a hand-off, so it is not handed on.
+    with pytest.raises(ModelAPIError, match='The backend is down') as exc_info:
+        await run(UnavailableDecisionModel())
+    assert not isinstance(exc_info.value, DecisionHandOff)

@@ -65,7 +65,7 @@ with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
     from pydantic_ai.models import typesafe as typesafe_module
-    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel, TypeSafeModelSettings, UnsureRoute
+    from pydantic_ai.models.typesafe import TypeSafeModel, TypeSafeModelSettings, UnfillableRoute, UnsureRoute
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 pytestmark = [
@@ -545,12 +545,12 @@ async def test_a_tool_is_proposed_not_called(
 ):
     """Jev proposes a selected tool whose unbounded numeric argument it cannot fill."""
     agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
-    with pytest.raises(ToolCallProposed) as exc_info:
+    with pytest.raises(UnfillableRoute) as exc_info:
         await agent.run('You charged my card twice for the same month. Put the second one back.')
-    assert exc_info.value.tool_name == 'refund'
+    assert exc_info.value.route == 'refund'
     assert exc_info.value.probability == snapshot(0.99)
     assert str(exc_info.value) == snapshot(
-        "jev-latest proposed calling 'refund' (probability 0.99) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step."
+        "jev-latest picked 'refund' (probability 0.99) but cannot fill it. Put a model that can behind it: `FallbackModel(decision_model, language_model)` hands `language_model` this step."
     )
     assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['route'] == snapshot(
         {
@@ -562,7 +562,7 @@ async def test_a_tool_is_proposed_not_called(
 
 
 async def test_a_fallback_model_takes_the_proposed_step(allow_model_requests: None):
-    """`ToolCallProposed` is a `ModelAPIError`, so the default `FallbackModel` hands the step to the next model."""
+    """`UnfillableRoute` is a `ModelAPIError`, so the default `FallbackModel` hands the step to the next model."""
     jev = mock_model(lambda _: tool_answers('refund', 0.95))
     called: list[float] = []
 
@@ -964,7 +964,7 @@ async def test_tool_arguments_live(
 async def test_a_tool_is_taken_however_unsure(allow_model_requests: None):
     """With no `decision_route_threshold`, the likeliest route is taken at any probability, and proposed here."""
     jev = mock_model(lambda _: tool_answers('refund', 0.51))
-    with pytest.raises(ToolCallProposed) as exc_info:
+    with pytest.raises(UnfillableRoute) as exc_info:
         await Agent(jev, output_type=Ticket, tools=[refund]).run('Charged twice.')
     assert exc_info.value.probability == 0.51
 
@@ -1258,9 +1258,31 @@ async def test_a_streamed_run_can_be_cancelled_early(allow_model_requests: None)
         await stream.cancel()
 
 
-def test_tool_call_proposed_pickles():
-    exc = pickle.loads(pickle.dumps(ToolCallProposed('jev-latest', 'refund', 0.9)))
-    assert (exc.model_name, exc.tool_name, exc.probability) == ('jev-latest', 'refund', 0.9)
+def test_unfillable_route_pickles():
+    exc = pickle.loads(pickle.dumps(UnfillableRoute('jev-latest', 'refund', 0.9)))
+    assert (exc.model_name, exc.route, exc.probability) == ('jev-latest', 'refund', 0.9)
+
+
+def test_tool_call_proposed_is_a_deprecated_alias_of_unfillable_route():
+    """`ToolCallProposed` shipped here, so it still imports, catches, constructs and unpickles as it did."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`ToolCallProposed` has been renamed to `UnfillableRoute`'):
+        alias = typesafe_module.ToolCallProposed
+    # The class itself, so `except ToolCallProposed` catches it, and it takes the positional arguments it always did.
+    assert alias is UnfillableRoute
+    with pytest.warns(PydanticAIDeprecationWarning, match='`tool_name` is deprecated, use `route` instead'):
+        assert UnfillableRoute('jev-latest', 'refund', 0.9).tool_name == 'refund'  # pyright: ignore[reportDeprecated]
+
+    # What an exception pickled before the rename refers to: the old name, in this module.
+    pickled = b'cpydantic_ai.models.typesafe\nToolCallProposed\n(Vjev-latest\nVrefund\nF0.9\ntR.'
+    with pytest.warns(PydanticAIDeprecationWarning, match='`ToolCallProposed` has been renamed'):
+        exc = pickle.loads(pickled)
+    assert isinstance(exc, UnfillableRoute)
+    assert (exc.model_name, exc.route, exc.probability) == ('jev-latest', 'refund', 0.9)
+
+
+def test_the_module_has_no_other_deprecated_names():
+    with pytest.raises(AttributeError, match="has no attribute 'Missing'"):
+        typesafe_module.Missing
 
 
 def approve() -> str:
@@ -1416,9 +1438,9 @@ async def test_the_last_route_left_is_proposed_when_its_arguments_are_unsupporte
         ModelRequest(parts=[ToolReturnPart('final_result', 'rejected', 'call_2')]),
     ]
     agent = Agent(mock_model(unasked), output_type=[reject], tools=[approve, refund])
-    with pytest.raises(ToolCallProposed) as exc_info:
+    with pytest.raises(UnfillableRoute) as exc_info:
         await agent.run(message_history=history)
-    assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 1.0)
+    assert (exc_info.value.route, exc_info.value.probability) == ('refund', 1.0)
 
 
 async def test_the_last_route_left_has_its_supported_arguments_filled(allow_model_requests: None):
@@ -1518,9 +1540,9 @@ async def test_below_the_threshold_with_no_hand_off_left_the_pick_stands(allow_m
         ModelRequest(parts=[ToolReturnPart('final_result', 'rejected', 'call_1')]),
     ]
     agent = Agent(jev, output_type=[reject], tools=[approve, refund])
-    with pytest.raises(ToolCallProposed) as exc_info:
+    with pytest.raises(UnfillableRoute) as exc_info:
         await agent.run(message_history=history)
-    assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 0.55)
+    assert (exc_info.value.route, exc_info.value.probability) == ('refund', 0.55)
 
 
 async def test_a_field_with_more_options_than_jev_picks_from_is_refused(
@@ -1937,7 +1959,7 @@ async def test_a_tool_with_unsupported_arguments_is_proposed_even_with_nothing_t
             }
         )
     )
-    with pytest.raises(ToolCallProposed) as exc_info:
+    with pytest.raises(UnfillableRoute) as exc_info:
         await Agent(jev, output_type=[approve], tools=[refund]).run('Give me my money back.')
     assert exc_info.value.probability == 0.6
 
@@ -2889,16 +2911,16 @@ async def test_a_union_member_jev_cannot_express_is_offered_and_hands_off_when_p
         return answers(route=_route('DraftedReply', {'Ticket': 0.1, 'DraftedReply': 0.9}))
 
     agent = Agent(mock_model(record), output_type=[Ticket, DraftedReply])
-    with pytest.raises(ToolCallProposed) as exc_info:
+    with pytest.raises(UnfillableRoute) as exc_info:
         await agent.run('Write back and say sorry.')
 
-    assert (exc_info.value.tool_name, exc_info.value.probability) == ('final_result_DraftedReply', 0.9)
+    assert (exc_info.value.route, exc_info.value.probability) == ('DraftedReply', 0.9)
     # The choice call happened; only the fill was beyond Jev.
     assert len(seen) == 1
 
 
 async def test_a_union_member_jev_cannot_express_is_filled_by_the_model_behind_it(allow_model_requests: None):
-    """`ToolCallProposed` is a `ModelAPIError`, so `FallbackModel` gives the whole step to a language model."""
+    """`UnfillableRoute` is a `ModelAPIError`, so `FallbackModel` gives the whole step to a language model."""
 
     def record(request: httpx2.Request) -> httpx2.Response:
         return answers(route=_route('DraftedReply', {'Ticket': 0.1, 'DraftedReply': 0.9}))
