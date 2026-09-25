@@ -143,7 +143,7 @@ agent = Agent(
 )
 ```
 
-To keep what the dropped turns said, summarize them instead, with a history processor like [summarize old messages](../message-history.md#summarize-old-messages) or the [harness](https://pydantic.dev/docs/ai/harness/compaction/)'s `SummarizingCompaction`. Either way the summary has to be written by a language model: Jev does not write text, so pass `SummarizingCompaction` a language model as `model=` rather than letting it default to the agent's. Its trigger estimates tokens at about four characters each, which undercounts the JSON Jev is sent by about a quarter, so give it a `max_tokens=` well under 32k, such as `20_000`, rather than a fraction of the window.
+To keep what the dropped turns said, summarize them instead, with a history processor like [summarize old messages](../message-history.md#summarize-old-messages) or the [harness](https://pydantic.dev/docs/ai/harness/compaction/)'s `SummarizingCompaction`. Either way the summary has to be written by a language model: Jev does not write text, so pass `SummarizingCompaction` a language model as `model=` rather than letting it default to the agent's. Give it a `max_tokens=` with headroom under 32k, such as `20_000`: it counts from the usage Jev reported for the last request, but estimates anything newer, and any history with no reported usage, at about four characters a token, which undercounts the JSON Jev is sent by about a quarter.
 
 ## What Jev answers badly
 
