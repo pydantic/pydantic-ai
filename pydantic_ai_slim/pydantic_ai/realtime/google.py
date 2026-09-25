@@ -1369,14 +1369,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 state_restored = state_resumed and not lost_tool_calls
                 if await self._try_reconnect():
                     if lost_tool_calls:
-                        if state_resumed:
-                            await self._settle_lost_tool_calls(lost_tool_calls)
                         # Abandon them the way Gemini's own `tool_call_cancellation` does: the tasks are
-                        # cancelled and each call still gets a matching return in history.
-                        for call_id in lost_tool_calls:
-                            del self._tool_calls[call_id]
+                        # cancelled and each call still gets a matching return in history. Nothing
+                        # awaits between the re-dial and this event, so no tool task can send a result
+                        # for one of these calls onto the new socket before the session cancels it.
+                        lost = {call_id: self._tool_calls.pop(call_id) for call_id in lost_tool_calls}
                         self._tool_calls_since_handle.clear()
                         yield ToolCallCancelled(tool_call_ids=lost_tool_calls)
+                        if state_resumed:
+                            await self._settle_lost_tool_calls(list(lost.values()))
                     if self._turn_open:
                         # The dropped connection was mid-turn. Gemini never continues an in-flight
                         # generation on the re-dialed connection (resumption restores conversation
@@ -1395,7 +1396,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
 
-    async def _settle_lost_tool_calls(self, call_ids: list[str]) -> None:
+    async def _settle_lost_tool_calls(self, calls: list[tuple[str, str | None]]) -> None:
         """Answer calls a resumed session lost with an error, so they don't swallow the next input.
 
         The session resumes still waiting on the exchange the calls belong to, but no longer accepts
@@ -1406,7 +1407,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         """
         responses = [
             genai_types.FunctionResponse(id=gemini_id, name=name, response={'error': INTERRUPTED_TOOL_RETURN_CONTENT})
-            for name, gemini_id in (self._tool_calls[call_id] for call_id in call_ids)
+            for name, gemini_id in calls
         ]
         with suppress(*self.transport_errors):
             await self._session.send_tool_response(function_responses=responses)

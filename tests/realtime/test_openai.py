@@ -4300,7 +4300,7 @@ class _GatedConnectSequence:
     """Hands out `sockets` in order; every dial after the first waits for `release`."""
 
     def __init__(self, sockets: list[_DroppableWebSocket]) -> None:
-        self._sockets = iter(sockets)
+        self._sockets = list(sockets)
         self._dials = 0
         self.redialing = asyncio.Event()
         self.release = asyncio.Event()
@@ -4313,7 +4313,7 @@ class _GatedConnectSequence:
         if self._dials > 1:
             self.redialing.set()
             await self.release.wait()
-        return next(self._sockets)
+        return self._sockets.pop(0)
 
     async def __aexit__(self, *exc: object) -> bool:
         return False
@@ -4364,3 +4364,35 @@ async def test_sends_during_a_reconnect_go_out_on_the_new_connection(monkeypatch
             {'type': 'response.create', 'event_id': 'pydantic_ai.response.4'},
         ]
     )
+
+
+@pytest.mark.anyio
+async def test_a_response_request_lost_to_a_drop_is_asked_for_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `response.create` that hit the dead socket never reached the server, so it isn't left active.
+
+    Left active, the reconnect would re-ask for it as an unstarted response while the session retried
+    the failed send too, and the model would answer twice.
+    """
+    first, second = _DroppableWebSocket(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(model).session() as session:
+        await session.send_audio(b'\x00\x01')
+        first.drop()
+        await connect.redialing.wait()
+        solicit = asyncio.create_task(session.create_response())
+        await _settle()
+        connect.release.set()
+        await asyncio.wait_for(solicit, 5)
+        connection = session._connection  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(connection, OpenAIRealtimeConnection)
+        # Nothing is deferred to ask for a second answer once this one is done.
+        assert connection._pending_response is False  # pyright: ignore[reportPrivateUsage]
+
+    assert [frame['type'] for frame in second.sent] == ['session.update', 'response.create']

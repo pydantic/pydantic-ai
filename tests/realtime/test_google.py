@@ -2623,6 +2623,51 @@ async def test_tool_result_for_a_call_the_reconnect_lost_is_not_sent() -> None:
     assert [(part.tool_call_id, part.outcome) for part in returns] == [('c1', 'interrupted')]
 
 
+async def test_a_lost_call_finishing_while_the_resumed_session_is_told_stays_cancelled() -> None:
+    # Telling the resumed session about the lost call is an await on the new socket. The call's task is
+    # cancelled before it, so a tool that would have finished meanwhile can't put its real result on the
+    # new socket (where nothing answers it) or trip over the call being forgotten.
+    finish = asyncio.Event()
+
+    class _SlowToAcknowledge(_DroppableSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            finish.set()
+            await _settle()
+            await super().send_tool_response(function_responses=function_responses)
+
+    first, second = _DroppableSession(), _SlowToAcknowledge()
+    dial, dialing, release = _gated_dialer(second)
+    finished: list[str] = []
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await finish.wait()
+        finished.append(call_id)  # pragma: no cover - the reconnect cancels the call first
+        return 'sunny'  # pragma: no cover
+
+    session = _reconnecting_session(first, dial, runner)
+    async with session:
+        await session.wait_for_reply()
+        first.push(_handle_update('h1'))
+        first.push(
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+                )
+            )
+        )
+        await _settle()
+        first.drop()
+        await dialing.wait()
+        release.set()
+        await asyncio.wait_for(session.wait_for_reply(), 5)
+        await session.send('Anything else?')
+        second.push(_turn('No.'))
+        await asyncio.wait_for(session.wait_for_reply(), 5)
+
+    assert finished == []
+    assert second.kinds() == ['tool_response', 'client_content']
+
+
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
     # With `jitter=True` the backoff delay is scaled by `0.5 + random()*0.5`, so a fixed `random()`
     # of 0.4 turns the first attempt's 0.5s base delay into 0.5 * 0.7 = 0.35s. Capturing the actual

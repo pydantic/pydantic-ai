@@ -594,7 +594,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         event: dict[str, Any] = {'type': RESPONSE_CREATE_EVENT}
         if input_indexes:
             event['event_id'] = client_event_id('response', input_indexes)
-        await self._send_event(event)
+        try:
+            await self._send_event(event)
+        except BaseException:
+            # The request never reached the server, so no response is active. Left set, a reconnect
+            # would re-ask for it while the session also retries the failed send: two responses.
+            self._response_active = False
+            raise
 
     def _take_deferred_response_inputs(self) -> tuple[int, ...]:
         """Clear the deferred response request, returning the inputs it was made for."""
@@ -926,6 +932,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # A fresh socket also drops anything the old one was still holding for us.
             self._cancelled_response_id = None
             if replay_response:
+                # Queued as deferred until it is on the wire, so a failed send is replayed next attempt.
+                self._pending_response = True
+                self._deferred_response_inputs[:] = replay_inputs
                 await self._create_response(replay_inputs)
             # Cleared only once the replay is on the wire, so a send that failed above leaves the
             # request queued for the next attempt instead of losing it.
