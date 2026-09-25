@@ -80,6 +80,11 @@ class WorkspaceBackendSuite:
         result = await _commands(backend).run('printf out; printf err >&2; exit 7', shell=True)
         assert (result.exit_code, result.stdout, result.stderr) == (7, 'out', 'err')
 
+    async def test_a_missing_program_exits_127(self, backend: WorkspaceBackend) -> None:
+        """Like `sh`, a program that doesn't exist is a normal result with exit code 127, not an error."""
+        result = await _commands(backend).run(['pydantic-ai-conformance-missing-program'])
+        assert result.exit_code == 127
+
     async def test_argv_items_are_literal(self, backend: WorkspaceBackend) -> None:
         payload = ' literal $() `quoted`; && '
         result = await _commands(backend).run(['sh', '-c', 'printf "%s" "$1"', 'sh', payload])

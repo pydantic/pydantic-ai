@@ -125,6 +125,8 @@ def _run_conformance_command(
         if command == 'printf out; printf err >&2; exit 7':
             return FakeWorkspaceResult(exit_code=7, stdout='out', stderr='err')
         return None
+    if list(command) == ['pydantic-ai-conformance-missing-program']:
+        return FakeWorkspaceResult(exit_code=127, stderr=f'{command[0]}: command not found\n')
     if list(command[:3]) == ['sh', '-c', 'pwd -P']:
         return FakeWorkspaceResult(stdout=f'{cwd or working_dir}\n')
     if len(command) == 5 and list(command[:4]) == ['sh', '-c', 'printf "%s" "$1"', 'sh']:

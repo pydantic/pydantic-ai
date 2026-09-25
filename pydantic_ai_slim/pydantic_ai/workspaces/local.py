@@ -247,6 +247,17 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
         try:
             await _shielded(spawn())
+        except (FileNotFoundError, PermissionError) as error:
+            # Like `sh`, a program that is missing (127) or not executable (126) is a normal result.
+            # Only the program itself: a missing `cwd` raises the same error types and must still raise.
+            if isinstance(command, str) or error.filename != command[0]:
+                raise
+            missing = isinstance(error, FileNotFoundError)
+            return CommandResult(
+                exit_code=127 if missing else 126,
+                stdout='',
+                stderr=f'{command[0]}: {"command not found" if missing else "Permission denied"}\n',
+            )
         except BaseException:
             if process is not None:
                 await self._terminate(process)
