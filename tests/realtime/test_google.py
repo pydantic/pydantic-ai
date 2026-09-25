@@ -2993,7 +2993,9 @@ def _spoken(text: str) -> genai_types.LiveServerMessage:
 
 
 async def test_turn_complete_closing_an_answered_tool_call_turn_is_not_a_response_boundary() -> None:
-    """Vertex `gemini-live-2.5-flash` closes the tool-call turn once it takes the results, before answering.
+    """Vertex `gemini-live-2.5-flash` closes the tool-call turn when its generation ends, before answering.
+
+    With the results already sent (a fast tool), that boundary is the tool-call turn's own.
 
     That boundary reports its usage but no `ResponseDone`, which would end the exchange (and
     `wait_for_reply()`) before the answer; the answer's own `turn_complete` does.
@@ -3100,11 +3102,25 @@ async def test_model_without_a_separate_tool_call_boundary_keeps_every_turn_comp
     ],
 )
 def test_profile_marks_models_that_close_the_tool_call_turn_separately(model_name: str, separate: bool) -> None:
-    profile = cast(
-        'GoogleRealtimeModelProfile',
-        GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile,
+    """Set for the verified Vertex model on Vertex AI; the same model id on the Gemini API reports it off."""
+    for vertexai in (True, False):
+        client = _fake_client(_RecordingSession())
+        client.vertexai = vertexai  # pyright: ignore[reportAttributeAccessIssue]
+        profile = cast(
+            'GoogleRealtimeModelProfile',
+            GoogleRealtimeModel(model_name, provider=GoogleProvider(client=client)).profile,
+        )
+        assert profile.get('google_closes_tool_call_turn_separately') is (separate and vertexai)
+
+
+def test_explicit_separate_tool_call_turn_opt_in_is_kept_off_vertex_ai() -> None:
+    """A `profile=` that sets the flag explicitly wins over the Vertex-only default."""
+    model = GoogleRealtimeModel(
+        'gemini-live-2.5-flash',
+        provider=GoogleProvider(client=_fake_client(_RecordingSession())),
+        profile=GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True),
     )
-    assert profile.get('google_closes_tool_call_turn_separately') is separate
+    assert cast('GoogleRealtimeModelProfile', model.profile).get('google_closes_tool_call_turn_separately') is True
 
 
 async def test_turn_complete_with_a_tool_call_still_unanswered_stays_a_response_boundary() -> None:

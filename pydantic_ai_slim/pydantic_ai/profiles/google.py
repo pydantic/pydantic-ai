@@ -352,10 +352,11 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # 2026-09-16 for the latter, as Google documents).
     profile['google_supports_async_tool_call_scheduling'] = 'native-audio' in model_name or is_3_8_live
     # Verified live against Vertex's half-cascade `gemini-live-2.5-flash`: it sends a `turn_complete` when
-    # it takes a tool result and another after speaking the answer. The native-audio and 3.x models send
-    # only the second (recorded in the tool-round parity cassettes). Matched exactly (plus its pinned
-    # `-NNN`/`@` versions), not by family: a model sending only one boundary would never finish an empty
-    # answer. `GoogleRealtimeModel` applies it on Vertex AI only, the one surface it was verified on.
+    # the tool-call generation ends (usage only, whether or not the results have arrived yet) and another
+    # after speaking the answer. The native-audio and 3.x models send only the second (recorded in the
+    # tool-round parity cassettes). Matched exactly (plus its pinned `-NNN`/`@` versions), not by family:
+    # a model sending only one boundary would never finish an empty answer. `GoogleRealtimeModel.profile`
+    # keeps it on for Vertex AI only, the one surface it was verified on.
     profile['google_closes_tool_call_turn_separately'] = (
         re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
     )

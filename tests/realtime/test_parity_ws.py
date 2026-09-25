@@ -318,8 +318,8 @@ async def test_text_tool_round_parity(
     messages = session.all_messages()
     assert [type(message) for message in messages[:3]] == [ModelRequest, ModelResponse, ModelRequest]
     # One tool round is exactly four messages, and one turn boundary, on every provider and route.
-    # Vertex's `gemini-live-2.5-flash` closes the turn once when it takes the tool result and again when
-    # it has spoken; the first boundary carries usage but no output, and is folded into the answer
+    # Vertex's `gemini-live-2.5-flash` closes the turn once when the tool-call generation ends and again
+    # when it has spoken; the first boundary carries usage but no output, and is folded into the answer
     # rather than recorded as an empty response or reported as the end of the exchange.
     answer_responses = messages[3:]
     assert len(answer_responses) == 1

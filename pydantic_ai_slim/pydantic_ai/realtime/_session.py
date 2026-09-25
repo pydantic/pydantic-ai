@@ -2259,8 +2259,9 @@ class RealtimeSession:
         ):
             # A boundary that says nothing, in either sense: no output, and no provider detail or
             # abnormal finish reason explaining why. That isn't a response — it's one logical response
-            # arriving in two frames. Gemini Live closes the turn when it takes a tool result and again
-            # when it has finished speaking, and the first boundary carries only usage; recording it
+            # arriving in two frames. Vertex's `gemini-live-2.5-flash` closes the turn when the tool-call
+            # generation ends and again when it has finished speaking, and the first boundary carries only
+            # usage; recording it
             # would make one tool round five messages there and four everywhere else. Carry the metadata
             # onto the response that does say something, so a tool round has one shape on every
             # provider. A response truncated by `length` (or any other abnormal reason) is real

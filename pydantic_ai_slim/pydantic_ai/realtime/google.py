@@ -123,7 +123,7 @@ from .codec import (
     ToolResult,
 )
 from .model import RealtimeError, RealtimeModel
-from .profiles import DEFAULT_REALTIME_PROFILE, RealtimeModelProfile, RealtimeModelProfileSpec
+from .profiles import DEFAULT_REALTIME_PROFILE, RealtimeModelProfile, RealtimeModelProfileSpec, merge_realtime_profile
 from .settings import RealtimeModelSettings, ReconnectPolicy, TurnDetection
 
 LatestGoogleRealtimeModelNames = Literal[
@@ -349,11 +349,12 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     google_closes_tool_call_turn_separately: bool
     """Whether the model closes a tool-call turn with a `turn_complete` of its own. Default: `False`.
 
-    Vertex's half-cascade `gemini-live-2.5-flash` sends one once it has taken the tool results and
-    another after speaking the answer (verified live); other Live models send only the answer's. With
+    Vertex's half-cascade `gemini-live-2.5-flash` sends one when the tool-call generation ends (usage
+    only, no output), whether or not the results have arrived yet, and another after speaking the
+    answer (verified live); other Live models send only the answer's. With
     this set, the first of the two is reported as the tool-call response's usage rather than a turn
-    boundary, so the exchange isn't reported complete before the answer is spoken. Applied only on
-    Vertex AI, where it was verified.
+    boundary, so the exchange isn't reported complete before the answer is spoken. Set by default on
+    Vertex AI only, where it was verified.
     """
     google_supports_async_tool_call_scheduling: bool
     """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
@@ -845,6 +846,24 @@ class GoogleRealtimeModel(RealtimeModel):
         return self._provider.name
 
     @property
+    def profile(self) -> RealtimeModelProfile:
+        """The Gemini realtime profile, with the flags that depend on the API surface narrowed to it.
+
+        [`google_closes_tool_call_turn_separately`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_closes_tool_call_turn_separately]
+        was verified on Vertex AI only, so it's off on the Gemini Developer API unless a `profile=`
+        override sets it explicitly.
+        """
+        profile = super().profile
+        flag = 'google_closes_tool_call_turn_separately'
+        user = self._profile
+        user_set = user is not None and not callable(user) and flag in user
+        if profile.get(flag, False) and not user_set and not self.client.vertexai:
+            profile = merge_realtime_profile(
+                profile, GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=False)
+            )
+        return profile
+
+    @property
     def _google_profile(self) -> GoogleRealtimeModelProfile:
         """[`profile`][pydantic_ai.realtime.RealtimeModel.profile], narrowed to the Gemini-specific fields."""
         return cast(GoogleRealtimeModelProfile, self.profile)
@@ -1221,16 +1240,9 @@ class GoogleRealtimeModel(RealtimeModel):
             # resumption restores server state, and a `RealtimeSessionReconnectEvent` starts a fresh turn.
             if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
                 await session.send_client_content(turns=turns, turn_complete=False)
-            profile = self.profile
-            if not self.client.vertexai and profile.get('google_closes_tool_call_turn_separately', False):
-                # Verified on Vertex AI only: on another surface the model may close the turn once.
-                profile = cast(
-                    RealtimeModelProfile,
-                    {**cast(GoogleRealtimeModelProfile, profile), 'google_closes_tool_call_turn_separately': False},
-                )
             yield GoogleRealtimeConnection(
                 session,
-                profile=profile,
+                profile=self.profile,
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
                 dial=dial if reconnect is not None else None,
@@ -1312,9 +1324,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         )
         self._recent_image: tuple[BinaryImage, float] | None = None
         # Whether the turn's latest output is a tool-call frame, with nothing said since. A model that
-        # `google_closes_tool_call_turn_separately` closes that turn with its own `turn_complete` once it
-        # takes the results, before speaking the answer; see `_map_message`. Only the first boundary after
-        # the results is taken for that: the next one always ends the turn, so an empty answer completes.
+        # `google_closes_tool_call_turn_separately` closes that turn with its own `turn_complete` when the
+        # tool-call generation ends, before speaking the answer; see `_map_message`. It's taken for that
+        # only once every result is sent (with results still pending, the session holds the reply open
+        # anyway), and only the first time: the next boundary always ends the turn, so an empty answer
+        # completes.
         self._tool_call_turn_unanswered = False
 
     @property
