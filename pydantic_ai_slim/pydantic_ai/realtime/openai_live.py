@@ -309,7 +309,7 @@ def tool_def_to_live(tool: ToolDefinition) -> dict[str, Any]:
     return result
 
 
-_SeedRole = Literal['developer', 'user', 'assistant']
+_SeedRole = Literal['user', 'assistant']
 
 
 def _seed_item(role: _SeedRole, text: str) -> dict[str, Any] | None:
@@ -324,20 +324,21 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
     """The role and text a request part seeds as, or `None` when it carries nothing replayable.
 
     `SystemPromptPart`s are routed through `instructions` instead, exactly as on the Realtime
-    protocol, and a tool result becomes a developer note because Live has nowhere to put a function
-    part in seeded history.
+    protocol. A tool result becomes user-level text because Live has nowhere to put a function part in
+    seeded history, and not a developer note: its content comes from whatever the tool read, which
+    must not be replayed with more authority than it had as a tool result.
     """
     if isinstance(part, UserPromptPart):
         return 'user', _prompt_text(part, provider_name=provider_name)
     if isinstance(part, SpeechPart):
         return 'user', part.transcript or ''
     if isinstance(part, ToolReturnPart):
-        return 'developer', f'Result of `{part.tool_name}`: {part.model_response_str()}'
+        return 'user', f'Result of `{part.tool_name}`: {part.model_response_str()}'
     if isinstance(part, RetryPromptPart):
         # Without this the `ToolCallPart` before it seeds as a call with no outcome, and the backend
         # reads a round that failed as one that succeeded.
         attempt = f'`{part.tool_name}` failed' if part.tool_name else 'The previous attempt failed'
-        return 'developer', f'{attempt}: {part.model_response()}'
+        return 'user', f'{attempt}: {part.model_response()}'
     return None
 
 
@@ -360,7 +361,7 @@ def _seed_response_part(part: ModelResponsePart) -> tuple[_SeedRole, str] | None
 def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) -> list[dict[str, Any]]:
     """Map prior history to Live's startup `input` list.
 
-    Live seeds from text only: developer, user, and assistant messages with one text part each. Tool
+    Live seeds from text only: user and assistant messages with one text part each. Tool
     rounds are rendered as readable text — as Gemini Live does for the same reason — because the
     protocol has no place to put function parts in seeded history. Audio, images, and other media
     cannot be seeded at all, and the profile says so, which is what makes the session reject them

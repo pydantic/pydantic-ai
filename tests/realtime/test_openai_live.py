@@ -309,7 +309,7 @@ async def test_an_image_needs_respond_true(model: OpenAILiveModel) -> None:
 
 
 def test_seeding_projects_history_to_text() -> None:
-    """Live seeds from text alone, so tool rounds are rendered as readable developer/assistant text."""
+    """Live seeds from text alone, so tool rounds are rendered as readable user/assistant text."""
     messages = [
         ModelRequest(parts=[SystemPromptPart(content='ignored, goes to instructions')]),
         ModelRequest(parts=[UserPromptPart(content='What is the weather?')]),
@@ -325,7 +325,7 @@ def test_seeding_projects_history_to_text() -> None:
             {'role': 'user', 'content': [{'type': 'input_text', 'text': 'What is the weather?'}]},
             {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'They want a forecast.'}]},
             {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Called `forecast` with {"city":"A"}.'}]},
-            {'role': 'developer', 'content': [{'type': 'input_text', 'text': 'Result of `forecast`: 14C'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Result of `forecast`: 14C'}]},
             {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Fourteen degrees.'}]},
             {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Thanks!'}]},
             {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Any time.'}]},
@@ -1346,13 +1346,13 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
                 'content': [{'type': 'output_text', 'text': 'Called `weather` with {"city":"Utrecht"}.'}],
             },
             {
-                'role': 'developer',
+                'role': 'user',
                 'content': [
                     {'type': 'input_text', 'text': '`weather` failed: unknown city\n\nFix the errors and try again.'}
                 ],
             },
             {
-                'role': 'developer',
+                'role': 'user',
                 'content': [
                     {
                         'type': 'input_text',
