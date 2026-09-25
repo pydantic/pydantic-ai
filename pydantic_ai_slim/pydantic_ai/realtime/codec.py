@@ -510,9 +510,12 @@ class RealtimeConnection(ABC):
         When `True`, the [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends the results
         of the tool calls one response made as a batch, and only the last asks for a response
         ([`ToolResult.respond`][pydantic_ai.realtime.codec.ToolResult.respond]), so the model answers
-        once with every result in hand. The connection must then honor `respond`, or answer a batch
-        by itself the way Gemini Live does. Defaults to `False`: every result asks for a response of
-        its own.
+        once with every result in hand. What the connection must then do depends on the model profile's
+        [`supports_manual_turn_control`][pydantic_ai.realtime.RealtimeModelProfile.supports_manual_turn_control]:
+        with it, honor `respond` and accept [`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse]
+        (sent when every result was already out before the calling response completed); without it,
+        answer a batch by itself once it has every result, the way Gemini Live does. Defaults to
+        `False`: every result asks for a response of its own.
         """
         return False
 

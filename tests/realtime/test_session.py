@@ -10611,6 +10611,77 @@ async def test_provider_answering_a_batch_by_itself_takes_the_reservation_made_b
         events.cancel()
 
 
+async def test_reply_counted_for_a_provider_answering_by_itself_is_given_back_if_a_result_fails() -> None:
+    """A provider missing one of the batch's results won't answer it, so the reply counted for it is released."""
+    fail_fast = asyncio.Event()
+
+    class _FailsTheFastResult(_ToolBatchConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            assert isinstance(content, ToolResult)
+            if content.tool_call_id == 'c1':
+                await fail_fast.wait()
+                raise RuntimeError('send failed')
+            await super().send(content)  # pragma: no cover
+
+    release_slow = asyncio.Event()
+    conn = _FailsTheFastResult()
+    conn.close_response.set()
+    session = RealtimeSession(
+        conn, _slow_until(release_slow), profile=RealtimeModelProfile(supports_manual_turn_control=False)
+    )
+    with pytest.raises(RuntimeError, match='send failed'):
+        async with session:
+            events = asyncio.create_task(drain_events(session))
+            await _until(lambda: session._open_tool_batch is None and 'c1' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+            release_slow.set()
+            # The slow result is the last: the reply is counted before it goes out, behind the fast one.
+            await _until(lambda: session._pending_response_requests == 1)  # pyright: ignore[reportPrivateUsage]
+            fail_fast.set()
+            await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
+            await _until(lambda: not session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+            assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+            with anyio.fail_after(_LIVENESS_TIMEOUT):
+                await session.wait_for_reply()
+            await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
+
+
+async def test_reconnect_with_tools_running_leaves_no_tool_batch_behind() -> None:
+    """A batch whose response a reconnect settles is closed then, so it retires once its calls are cancelled."""
+
+    class _DropsWhileRunning(_ToolBatchConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}', response_usage_follows=True)
+            yield RealtimeSessionReconnectEvent(state_restored=False)
+            await asyncio.Event().wait()
+
+    conn = _DropsWhileRunning()
+    session = RealtimeSession(conn, _slow_until(asyncio.Event()))
+    async with session:
+        events = asyncio.create_task(drain_events(session))
+        await _until(lambda: not session._pending_tool_calls and session._history != [])  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
+        await session.close()
+        events.cancel()
+
+
+async def test_failed_tool_leaves_no_tool_batch_behind() -> None:
+    """A tool that raised takes its call out of the batch, which then can't be answered and retires."""
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise ValueError('tool exploded')
+
+    conn = _ToolBatchConnection([ToolCall(tool_call_id='c1', tool_name='boom', args='{}', response_usage_follows=True)])
+    conn.close_response.set()
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(ValueError, match='tool exploded'):
+        async with session:
+            events = asyncio.create_task(drain_events(session))
+            await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
+            await _until(lambda: not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
+            assert _sent_tool_traffic(conn) == []
+            await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
+
+
 async def test_wait_for_reply_returns_when_a_tool_result_trips_the_request_limit() -> None:
     """The request a tool result would make can exceed `request_limit`; the reply then never comes."""
 
