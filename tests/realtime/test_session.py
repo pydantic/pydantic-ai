@@ -3156,6 +3156,97 @@ async def test_barge_in_user_turn_follows_the_response_it_interrupted(
     ]
 
 
+@pytest.mark.parametrize(
+    'script',
+    [
+        pytest.param(
+            [
+                _MIC,
+                InputTranscript(text='Tell me a story.'),
+                AudioDelta(data=b'\x01\x00'),
+                OutputTranscript(text='Once upon a time'),
+                _MIC,
+                InputTranscript(text='Stop, what is two plus two?'),
+                _MIC,
+                RealtimeResponseInterruptedEvent(),
+                ResponseDone(interrupted=True),
+                _MIC,
+                AudioDelta(data=b'\x01\x00'),
+                OutputTranscript(text='Four.'),
+                ResponseDone(),
+            ],
+            id='transcript-before-interrupted',
+        ),
+        pytest.param(
+            [
+                _MIC,
+                InputTranscript(text='Tell me a story.'),
+                _MIC,
+                InputTranscript(text='', is_final=True),
+                AudioDelta(data=b'\x01\x00'),
+                OutputTranscript(text='Once upon a time'),
+                _MIC,
+                InputTranscript(text='Stop, what is two plus two?'),
+                _MIC,
+                InputTranscript(text='', is_final=True),
+                OutputTranscript(text=' - four.'),
+                AudioDelta(data=b'\x01\x00'),
+                ResponseDone(),
+            ],
+            id='no-speech-boundaries',
+        ),
+    ],
+)
+async def test_idless_barge_in_transcript_follows_the_answer_it_spoke_over(
+    script: list[RealtimeCodecEvent | _UserAction],
+) -> None:
+    """An id-less turn first heard of through its transcript, while the model answers, is filed after that answer.
+
+    Audio sent during an answer reserves no place, so the transcript is the turn's first sign: on Gemini when it
+    arrives before the provider reports the interruption, and on a provider that reports no speech boundaries
+    at all (GPT-Live), where the model's next output closes the turn.
+    """
+    conn = _ContinuousMicrophoneConnection(script)
+    session = RealtimeSession(conn)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    messages = session.all_messages()
+    first_answer = next(index for index, message in enumerate(messages) if isinstance(message, ModelResponse))
+    assert _user_transcripts(session) == ['Tell me a story.', 'Stop, what is two plus two?']
+    barge_in = next(
+        index
+        for index, message in enumerate(messages)
+        if any(
+            isinstance(part, SpeechPart) and part.transcript == 'Stop, what is two plus two?' for part in message.parts
+        )
+    )
+    assert first_answer < barge_in
+
+
+async def test_untranscribed_push_to_talk_commit_after_a_reconnect_records_one_turn() -> None:
+    """Audio a reconnect already settled as a turn isn't committed again by the next `commit_audio()`."""
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _MIC,
+            RealtimeSessionReconnectEvent(state_restored=False),
+            _RELEASE,
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Could you say that again?', is_final=True),
+            ResponseDone(),
+        ],
+        input_transcription_enabled=False,
+    )
+    conn._reconnect_restores_in_flight_state = False  # pyright: ignore[reportPrivateUsage]
+    session = RealtimeSession(conn)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert [type(message).__name__ for message in session.all_messages()] == ['ModelRequest', 'ModelResponse']
+
+
 _BARGE_IN_OPENING: list[RealtimeCodecEvent] = [
     RealtimeInputSpeechStartEvent(item_id='u1'),
     RealtimeInputSpeechEndEvent(item_id='u1'),

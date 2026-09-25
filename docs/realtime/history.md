@@ -151,7 +151,9 @@ and each provider page for configuration. Transcripts are recorded with the user
 even when they arrive after that turn's response or overlap the following turn. A turn the user
 starts while the model is still answering, whether they [barge in](turns.md#barge-in) or push to talk
 over it, is recorded after that answer. Such a turn joins history once the provider ends the answer it
-cut off, or after a few seconds if the provider never does. If a reported speech
+cut off, or after a few seconds if the provider never does. In that fallback the turn is recorded where
+history stands, so it lands before the answer it interrupted, and ahead of anything sent with
+[`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was still in flight. If a reported speech
 segment never receives a transcript, the session still records its retained audio or a content-less
 `SpeechPart` when the session closes.
 

@@ -2723,9 +2723,9 @@ class RealtimeSession:
                 self._anonymous_user_turns_ended -= 1
         else:
             # No anchor when the first thing we ever hear about the turn is its transcript (text-only
-            # sessions seeded with audio, or a provider that reports nothing before it); the turn starts
-            # here instead.
-            anchor = self._history[-1] if self._history else None
+            # sessions seeded with audio, a provider that reports nothing before it, or audio sent while the
+            # model was answering, which reserves no place); the turn starts here instead.
+            anchor = self._user_turn_anchor_here()
         self._user_turn_anchors[item_id] = anchor
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
@@ -2925,6 +2925,9 @@ class RealtimeSession:
         self._flush_pending_users()
         events.extend(self._finalize_untranscribed_user())
         self._input_audio.clear()
+        # The audio sent so far was just settled as a turn (and a reconnected provider has no buffer holding
+        # it), so a `commit_audio()` from here on commits nothing until more audio is sent.
+        self._audio_uncommitted = False
 
         if self._response_in_flight:
             events.extend(self._finalize_assistant_part())
