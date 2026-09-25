@@ -1879,7 +1879,10 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
     """
-    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
+    try:
+        schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
+    except UserError as e:
+        raise UserError(f'Tool {tool_def.name!r}: {e}') from None
     parameters_json_schema = schema_transformer.walk()
     return replace(
         tool_def,

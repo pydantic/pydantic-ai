@@ -2,14 +2,82 @@ from __future__ import annotations as _annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, NoReturn, TypeAlias, cast
 
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
+
+
+def _is_type_value(value: Any) -> bool:
+    return isinstance(value, str) or (
+        isinstance(value, list) and all(isinstance(t, str) for t in cast(list[Any], value))
+    )
+
+
+# The keywords the walker and the provider `transform()`s read, grouped by the shape they expect.
+# Tool schemas that come from outside Pydantic AI (`Tool.from_schema`, `ExternalToolset`, MCP `inputSchema`,
+# AG-UI frontend tools) are plain dicts, so a node that is not a schema can reach the walker. `_check_schema_shape`
+# checks these keywords and nothing more: keywords not listed here are passed through to the provider untouched,
+# so provider extensions are unaffected. If a transformer starts reading a new keyword, add it here.
+_SCHEMA_KEYWORDS = ('additionalProperties', 'items')
+"""Keywords whose value is a schema."""
+_SCHEMA_CONTAINER_KEYWORDS: dict[str, type[dict[str, Any]] | type[list[Any]]] = {
+    'properties': dict,
+    'patternProperties': dict,
+    '$defs': dict,
+    'prefixItems': list,
+    'allOf': list,
+    'anyOf': list,
+    'oneOf': list,
+}
+"""Keywords whose value is an object or a list of schemas."""
+_VALUE_KEYWORDS: dict[str, tuple[Callable[[Any], bool], str]] = {
+    # keyword: (is the value well-formed, what a well-formed value is)
+    '$ref': (lambda value: isinstance(value, str), 'must be a string'),
+    'type': (_is_type_value, 'must be a string or a list of strings'),
+    'required': (lambda value: isinstance(value, list), 'must be a list'),
+    'enum': (lambda value: isinstance(value, list), 'must be a list'),
+    'minItems': (lambda value: isinstance(value, int) and not isinstance(value, bool), 'must be an integer'),
+}
+"""Keywords whose value the transformers interpret."""
+
+
+def _invalid_schema(path: str, what: str, value: Any) -> NoReturn:
+    raise UserError(f'Invalid JSON Schema at `{path or "<root>"}`: {what}, got {value!r}')
+
+
+def _check_schema_shape(node: Any, path: str = '') -> None:
+    """Raise `UserError` naming the offending node if `node` is not shaped like the JSON Schema the transformers read."""
+    # Draft 2020-12, section 4.3: "A JSON Schema MUST be an object or a boolean."
+    if isinstance(node, bool):
+        return
+    if not isinstance(node, dict):
+        _invalid_schema(path, 'a schema must be an object or a boolean', node)
+    schema = cast(dict[str, Any], node)
+    prefix = f'{path}.' if path else ''
+
+    for key in _SCHEMA_KEYWORDS:
+        if key in schema:
+            _check_schema_shape(schema[key], f'{prefix}{key}')
+    for key, container in _SCHEMA_CONTAINER_KEYWORDS.items():
+        if (value := schema.get(key)) is None:
+            continue
+        if not isinstance(value, container):
+            kind = 'an object' if container is dict else 'a list'
+            _invalid_schema(f'{prefix}{key}', f'`{key}` must be {kind} of schemas', value)
+        members: Iterable[tuple[str | int, Any]] = (
+            cast(dict[str, Any], value).items() if isinstance(value, dict) else enumerate(cast(list[Any], value))
+        )
+        for name, member in members:
+            _check_schema_shape(member, f'{prefix}{key}.{name}')
+    for key, (is_well_formed, what) in _VALUE_KEYWORDS.items():
+        if (value := schema.get(key)) is not None and not is_well_formed(value):
+            _invalid_schema(f'{prefix}{key}', f'`{key}` {what}', value)
 
 
 class UseEnumMemberDocstrings:
@@ -50,6 +118,7 @@ class JsonSchemaTransformer(ABC):
         prefer_inlined_defs: bool = False,
         simplify_nullable_unions: bool = False,
     ):
+        _check_schema_shape(schema)
         self.schema = schema
 
         self.strict = strict
