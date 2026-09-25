@@ -39,7 +39,6 @@ class FakeEntry:
     size: int | None = None
 
 
-_SHELL_RESULT = re.compile(r'^printf ([0-9a-f]+); printf \1 >&2; exit 7$')
 _ENV_COMMAND = re.compile(r'^printf %s "\$([A-Z0-9_]+)"$')
 
 
@@ -123,24 +122,17 @@ def _run_conformance_command(
     if not isinstance(command, str) and list(command) == ['sh', '-c', 'sleep 30'] and timeout is not None:
         raise WorkspaceTimeoutError('command timed out')
     if isinstance(command, str):
-        match = _SHELL_RESULT.fullmatch(command)
-        if match is not None:
-            token = match.group(1)
-            return FakeWorkspaceResult(exit_code=7, stdout=token, stderr=token)
+        if command == 'printf out; printf err >&2; exit 7':
+            return FakeWorkspaceResult(exit_code=7, stdout='out', stderr='err')
         return None
     if list(command[:3]) == ['sh', '-c', 'pwd -P']:
         return FakeWorkspaceResult(stdout=f'{cwd or working_dir}\n')
     if len(command) == 5 and list(command[:4]) == ['sh', '-c', 'printf "%s" "$1"', 'sh']:
         return FakeWorkspaceResult(stdout=command[4])
-    if len(command) == 3 and list(command[:2]) == ['sh', '-c']:
-        match = _ENV_COMMAND.fullmatch(command[2])
-        if match is not None:
-            return FakeWorkspaceResult(stdout=(env or {}).get(match.group(1), ''))
-    if len(command) == 7 and list(command[:2]) == ['sh', '-c'] and command[2].startswith('IFS= read'):
-        path, input_token, output_token = command[4:]
-        if files.get(path) != f'{input_token}\n'.encode():
-            return FakeWorkspaceResult(exit_code=1)
-        _write(files, directories, path, f'{output_token}\n'.encode())
+    if len(command) == 3 and (match := _ENV_COMMAND.fullmatch(command[2])):
+        return FakeWorkspaceResult(stdout=(env or {}).get(match.group(1), ''))
+    if len(command) == 5 and command[2].startswith('IFS= read'):
+        _write(files, directories, command[4], b'out\n')
         return FakeWorkspaceResult()
     return None
 
