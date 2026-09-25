@@ -531,6 +531,55 @@ def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
         map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}}))
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('status_details', 'expected_error', 'provider_details'),
+    [
+        pytest.param(
+            {
+                'type': 'failed',
+                'error': {'type': 'invalid_request_error', 'code': 'input_image_safety_violation', 'message': 'No.'},
+            },
+            RealtimeSessionErrorEvent(message='No.', type='invalid_request_error', code='input_image_safety_violation'),
+            {
+                'status': 'failed',
+                'error': {'type': 'invalid_request_error', 'code': 'input_image_safety_violation', 'message': 'No.'},
+            },
+            id='message',
+        ),
+        pytest.param(
+            {'type': 'failed', 'error': {'type': 'server_error', 'code': 'oops'}},
+            RealtimeSessionErrorEvent(
+                message='{"code":"oops","type":"server_error"}', type='server_error', code='oops'
+            ),
+            {'status': 'failed', 'error': {'type': 'server_error', 'code': 'oops'}},
+            id='no-message',
+        ),
+        pytest.param(
+            None,
+            RealtimeSessionErrorEvent(message='The realtime response failed.'),
+            {'status': 'failed'},
+            id='no-details',
+        ),
+    ],
+)
+async def test_failed_response_emits_recoverable_error(
+    status_details: dict[str, Any] | None,
+    expected_error: RealtimeSessionErrorEvent,
+    provider_details: dict[str, Any],
+) -> None:
+    """OpenAI reports a failed response only inside `response.done`, so the connection surfaces it as an error."""
+    response: dict[str, Any] = {'id': 'resp-failed', 'status': 'failed', 'output': []}
+    if status_details is not None:
+        response['status_details'] = status_details
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(_response_done(response))]))  # type: ignore[arg-type]
+
+    assert await collect_codec_events(conn) == [
+        expected_error,
+        ResponseDone(provider_response_id='resp-failed', finish_reason='error', provider_details=provider_details),
+    ]
+
+
 def test_map_conversation_item_without_identifiers_is_ignored() -> None:
     assert map_conversation_event({'type': 'conversation.item.created', 'item': {}}) is None
     with pytest.raises(ValueError):
