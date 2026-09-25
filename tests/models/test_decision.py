@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
@@ -10,7 +11,16 @@ from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic_ai import Agent, BoolCriteria, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
@@ -25,8 +35,11 @@ from pydantic_ai.models.decision import (
     ScoreAnswer,
     ScoreQuestion,
     ToolCallProposed,
+    UnsureRoute,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -169,7 +182,7 @@ async def test_decide_span(allow_model_requests: None, capfire: CaptureLogfire):
                     'criteria': {'true': 'It can go out today.', 'false': 'It has to wait.'},
                 }
             },
-            'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+            'pydantic_ai.decision.thresholds': {'boolean': 0.5},
             'pydantic_ai.decision.state': {
                 'history': [{'user': 'The migration is reviewed.'}, {'assistant': 'Noted.'}],
                 'text': 'And the tests pass.',
@@ -245,8 +258,8 @@ async def test_decide_span_without_content_keeps_only_an_unknown_type(
     assert span['attributes']['pydantic_ai.decision.answers'] == snapshot({'ship': {'type': 'bogus'}})
 
 
-class LeaningDecisionModel(InMemoryDecisionModel):
-    """Picks the tool on the route question, but less surely than a tool call needs."""
+class UnsureDecisionModel(InMemoryDecisionModel):
+    """Picks the tool on the route question, less surely than the route threshold asks."""
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         response = await super().decide(request, model_settings)
@@ -261,58 +274,173 @@ def escalate_to_team(team: Literal['billing', 'security']) -> str:
     return f'Escalated to {team}.'  # pragma: no cover - picked below the threshold, so never called
 
 
+def _span_tree(capfire: CaptureLogfire) -> list[dict[str, Any]]:
+    """Each span's name, status and exception events, nested under its parent, for the hand-off tests."""
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+
+    def node(span: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {'name': span['name']}
+        if level := span['attributes'].get('logfire.level_num'):
+            result['level'] = level
+        if events := span.get('events'):
+            # The stack trace repeats the message, and its frames are this test's own.
+            result['events'] = [
+                {
+                    'name': event['name'],
+                    **{key: value for key, value in event['attributes'].items() if key != 'exception.stacktrace'},
+                }
+                for event in events
+            ]
+        if children := [
+            child for child in spans if child['parent'] and child['parent']['span_id'] == span['context']['span_id']
+        ]:
+            result['children'] = [node(child) for child in children]
+        return result
+
+    return [node(span) for span in spans if not span['parent']]
+
+
 @pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-async def test_decide_span_below_the_threshold_without_content(allow_model_requests: None, capfire: CaptureLogfire):
-    """A tool picked below the threshold leans to the output, whose fields were asked beside the route question.
+async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """A pick below `decision_route_threshold` is recorded on the `decide` span that picked it, even without content.
 
-    `route_taken` is the span's own `route`, so the speculative answers were used, and `route_reason` says why the
-    pick was not taken. Without content the field answers keep only their numbers, while the route question's
-    answer is kept whole: its labels are route labels.
+    The `FallbackModel` hands the step to the model behind the decision model, so the `chat` span ends without an
+    error: the `decide` span is the one place the hand-off shows, with the picked route's label on its exception.
     """
+    fallback = FallbackModel(UnsureDecisionModel(), TestModel(call_tools=[]))
     agent = Agent(
-        LeaningDecisionModel(),
+        fallback,
         output_type=Triage,
         tools=[escalate_to_team],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.6),
         capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
     )
     result = await agent.run('The customer cannot sign in.')
 
-    assert result.output == Triage(urgent=True, action='review')
-    [span] = [
+    assert result.response.model_name == 'test'
+    assert _span_tree(capfire) == snapshot(
+        [
+            {
+                'name': 'invoke_agent agent',
+                'children': [
+                    {
+                        'name': 'chat test',
+                        'children': [
+                            {
+                                'name': 'decide in-memory-decisions',
+                                'level': 17,
+                                'events': [
+                                    {
+                                        'name': 'exception',
+                                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                        'exception.escaped': 'False',
+                                        'pydantic_ai.decision.route': 'escalate_to_team',
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    [decide] = [
         span
         for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
         if span['name'] == 'decide in-memory-decisions'
     ]
-    assert {
-        key: value for key, value in span['attributes'].items() if key.startswith('pydantic_ai.decision.')
-    } == snapshot(
-        {
-            'pydantic_ai.decision.questions': {
-                'urgent': {'type': 'noul'},
-                'action': {'type': 'choice'},
-                'route': {'type': 'choice'},
-            },
-            'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-            'pydantic_ai.decision.route': 'Triage',
-            'pydantic_ai.decision.route_question': 'route',
-            'pydantic_ai.decision.route_options': ['Triage', 'escalate_to_team'],
-            'pydantic_ai.decision.usage.input_tokens': 4,
-            'pydantic_ai.decision.usage.output_tokens': 2,
-            'pydantic_ai.decision.answers': {
-                'urgent': {'type': 'noul', 'noul': 0.8},
-                'action': {'type': 'choice', 'confidence': 0.9},
-                'route': {
-                    'type': 'choice',
-                    'choice': 'escalate_to_team',
-                    'confidence': 0.1,
-                    'probabilities': {'Triage': 0.45, 'escalate_to_team': 0.55},
+    assert {key: value for key, value in decide['attributes'].items() if key.startswith('pydantic_ai.decision.')} == (
+        snapshot(
+            {
+                'pydantic_ai.decision.questions': {
+                    'urgent': {'type': 'noul'},
+                    'action': {'type': 'choice'},
+                    'route': {'type': 'choice'},
                 },
-            },
-            'pydantic_ai.decision.confidence': {'urgent': 0.6, 'action': 0.9},
-            'pydantic_ai.decision.route_taken': 'Triage',
-            'pydantic_ai.decision.route_reason': 'below_threshold',
-        }
+                'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'route': 0.6},
+                'pydantic_ai.decision.route': 'Triage',
+                'pydantic_ai.decision.route_question': 'route',
+                'pydantic_ai.decision.route_options': ['Triage', 'escalate_to_team'],
+                'pydantic_ai.decision.usage.input_tokens': 4,
+                'pydantic_ai.decision.usage.output_tokens': 2,
+                'pydantic_ai.decision.answers': {
+                    'urgent': {'type': 'noul', 'noul': 0.8},
+                    'action': {'type': 'choice', 'confidence': 0.9},
+                    'route': {
+                        'type': 'choice',
+                        'choice': 'escalate_to_team',
+                        'confidence': 0.1,
+                        'probabilities': {'Triage': 0.45, 'escalate_to_team': 0.55},
+                    },
+                },
+            }
+        )
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_records_an_unsure_route_without_a_fallback(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """Without a model behind it, the unsure pick fails the run, and both the `decide` and `chat` spans record it."""
+    agent = Agent(
+        UnsureDecisionModel(),
+        output_type=Triage,
+        tools=[escalate_to_team],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.6),
+        capabilities=[Instrumentation()],
+    )
+    with pytest.raises(UnsureRoute):
+        await agent.run('The customer cannot sign in.')
+
+    assert _span_tree(capfire) == snapshot(
+        [
+            {
+                'name': 'invoke_agent agent',
+                'level': 17,
+                'events': [
+                    {
+                        'name': 'exception',
+                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                        'exception.message': "in-memory-decisions picked 'escalate_to_team' with probability 0.55, below `decision_route_threshold` (0.60). Put a model behind it to take the steps it is unsure of: `FallbackModel(decision_model, language_model)` hands `language_model` this step.",
+                        'exception.escaped': 'False',
+                    }
+                ],
+                'children': [
+                    {
+                        'name': 'chat in-memory-decisions',
+                        'level': 17,
+                        'events': [
+                            {
+                                'name': 'exception',
+                                'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                'exception.message': "in-memory-decisions picked 'escalate_to_team' with probability 0.55, below `decision_route_threshold` (0.60). Put a model behind it to take the steps it is unsure of: `FallbackModel(decision_model, language_model)` hands `language_model` this step.",
+                                'exception.escaped': 'False',
+                            }
+                        ],
+                        'children': [
+                            {
+                                'name': 'decide in-memory-decisions',
+                                'level': 17,
+                                'events': [
+                                    {
+                                        'name': 'exception',
+                                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                        'exception.message': "in-memory-decisions picked 'escalate_to_team' with probability 0.55, below `decision_route_threshold` (0.60). Put a model behind it to take the steps it is unsure of: `FallbackModel(decision_model, language_model)` hands `language_model` this step.",
+                                        'exception.escaped': 'False',
+                                        'pydantic_ai.decision.route': 'escalate_to_team',
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
     )
 
 
@@ -375,7 +503,7 @@ async def test_decide_span_per_question_confidence_without_content(allow_model_r
                 'action': {'type': 'choice'},
                 'severity': {'type': 'score'},
             },
-            'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+            'pydantic_ai.decision.thresholds': {'boolean': 0.5},
             'pydantic_ai.decision.usage.input_tokens': 4,
             'pydantic_ai.decision.usage.output_tokens': 2,
             'pydantic_ai.decision.answers': {
@@ -407,6 +535,70 @@ async def test_no_decide_span_without_instrumentation(allow_model_requests: None
 
     assert result.output == Triage(urgent=True, action='review')
     assert capfire.exporter.exported_spans_as_dict() == []
+
+
+@pytest.mark.anyio
+async def test_thinking_goes_into_the_history(allow_model_requests: None):
+    """A model's thinking is sent with the rest of its response, in the order it was produced.
+
+    A unit test pins the exact `state`, which a cassette matched without its body would not.
+    """
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Where is my order?')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('I should look the order up.'),
+                TextPart('Let me check.'),
+                ThinkingPart('', signature='encrypted-by-the-provider'),
+                ToolCallPart('look_up_order', {'order_id': 42}, tool_call_id='call_1'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart('look_up_order', 'Shipped.', tool_call_id='call_1')]),
+        ModelResponse(parts=[TextPart('It has shipped.')]),
+    ]
+    await Agent(model, output_type=Triage).run('Thanks!', message_history=history)
+
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'user': 'Where is my order?'},
+                {'thinking': 'I should look the order up.'},
+                {'assistant': 'Let me check.'},
+                {'tool_call': {'name': 'look_up_order', 'args': {'order_id': 42}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Shipped.'}},
+                {'assistant': 'It has shipped.'},
+            ],
+            'text': 'Thanks!',
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_judging_what_a_model_thought(allow_model_requests: None):
+    """A judge given another run's messages sees that run's thinking, which can be the very thing judged."""
+    model = InMemoryDecisionModel()
+    judge = Agent(model, output_type=bool, instructions='Did the assistant consider getting around the tests?')
+    conversation: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Make the tests pass.')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('The quickest way is to skip the failing test.'),
+                TextPart('Done: all tests pass.'),
+            ]
+        ),
+    ]
+    await judge.run(message_history=conversation)
+
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'user': 'Make the tests pass.'},
+                {'thinking': 'The quickest way is to skip the failing test.'},
+                {'assistant': 'Done: all tests pass.'},
+            ]
+        }
+    )
 
 
 @pytest.mark.anyio
@@ -690,7 +882,6 @@ async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_
             'choice': 'Escalation',
             'probabilities': {'Escalation': 1.0, 'Triage': 0.0},
             'offered': ['Escalation', 'Triage'],
-            'taken': 'Escalation',
         }
     )
 
@@ -764,8 +955,10 @@ class RoutingDecisionModel(InMemoryDecisionModel):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         response = await super().decide(request, model_settings)
-        question = request.questions['route']
-        assert isinstance(question, ChoiceQuestion)
+        question = request.questions.get('route')
+        if not isinstance(question, ChoiceQuestion):
+            # A fill, or a single output type left with nothing else on offer: there is no route to pick.
+            return response
         # A route that is no longer offered keeps its probability out of the answer, as a real model's would.
         probabilities = {label: self.route[label] for label in question.criteria}
         choice = max(probabilities, key=lambda label: probabilities[label])
@@ -786,10 +979,10 @@ def issue_refund() -> str:
 
 
 @pytest.mark.anyio
-async def test_the_lean_weighs_every_function_tool_together(allow_model_requests: None):
-    """Probability split between two tools still says a tool is wanted, though neither clears the bar alone."""
-    model = RoutingDecisionModel({'Triage': 0.0, 'look_up_order': 0.59, 'issue_refund': 0.41})
-    result = await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run('Where is my order?')
+async def test_the_likeliest_route_is_taken_however_unsure(allow_model_requests: None):
+    """With no `decision_route_threshold`, the pick is taken at any probability: here a tool at 0.46."""
+    model = RoutingDecisionModel({'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1})
+    result = await Agent(model, output_type=Triage, tools=[look_up_order]).run('Where is my order?')
 
     [first, *_] = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
     assert [part.tool_name for part in first.parts if isinstance(part, ToolCallPart)] == ['look_up_order']
@@ -801,34 +994,160 @@ async def test_the_lean_weighs_every_function_tool_together(allow_model_requests
             'scores': {},
             'route': {
                 'choice': 'look_up_order',
-                'probabilities': {'Triage': 0.0, 'look_up_order': 0.59, 'issue_refund': 0.41},
-                'offered': ['Triage', 'look_up_order', 'issue_refund'],
-                'taken': 'look_up_order',
+                'probabilities': {'Triage': 0.44, 'look_up_order': 0.46},
+                'offered': ['Triage', 'look_up_order'],
             },
         }
     )
 
 
 @pytest.mark.anyio
-async def test_the_function_tools_together_below_the_bar_are_a_lean(allow_model_requests: None):
-    """A tool is picked, but the tools together fall short of the bar, so the output is filled and the lean reported."""
-    model = RoutingDecisionModel({'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1})
-    result = await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run('Where is my order?')
+@pytest.mark.parametrize(
+    'output_type,route,picked',
+    [
+        pytest.param(Triage, {'Triage': 0.3, 'look_up_order': 0.45, 'issue_refund': 0.25}, 'look_up_order', id='tool'),
+        pytest.param(Triage, {'Triage': 0.6, 'look_up_order': 0.3, 'issue_refund': 0.1}, 'Triage', id='output'),
+        pytest.param(
+            [Triage, None], {'Triage': 0.3, 'None': 0.5, 'look_up_order': 0.2, 'issue_refund': 0.0}, 'None', id='None'
+        ),
+    ],
+)
+async def test_a_pick_below_the_route_threshold_is_unsure(
+    allow_model_requests: None, output_type: Any, route: dict[str, float], picked: str
+):
+    """Every kind of route is held to the bar, and the step is handed on before anything is filled."""
+    model = RoutingDecisionModel(route)
+    agent = Agent(
+        model,
+        output_type=output_type,
+        tools=[look_up_order, issue_refund],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+    )
+    with pytest.raises(UnsureRoute) as exc_info:
+        await agent.run('Where is my order?')
+
+    error = exc_info.value
+    assert (error.model_name, error.route, error.threshold) == ('in-memory-decisions', picked, 0.7)
+    assert error.probability == route[picked]
+    assert error.probabilities == route
+    assert len(model.requests) == 1
+
+
+@pytest.mark.anyio
+async def test_an_unsure_route_says_what_to_do_about_it(allow_model_requests: None):
+    model = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.7})
+    agent = Agent(
+        model,
+        output_type=Triage,
+        tools=[look_up_order],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.75),
+    )
+    with pytest.raises(UnsureRoute) as exc_info:
+        await agent.run('Where is my order?')
+    assert str(exc_info.value) == snapshot(
+        "in-memory-decisions picked 'look_up_order' with probability 0.70, below `decision_route_threshold` (0.75). "
+        'Put a model behind it to take the steps it is unsure of: `FallbackModel(decision_model, language_model)` '
+        'hands `language_model` this step.'
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('threshold', [0.7, 0.5])
+async def test_a_pick_at_or_above_the_route_threshold_is_taken(allow_model_requests: None, threshold: float):
+    model = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.7})
+    agent = Agent(
+        model,
+        output_type=Triage,
+        tools=[look_up_order],
+        model_settings=DecisionModelSettings(decision_route_threshold=threshold),
+    )
+    result = await agent.run('Where is my order?')
 
     assert result.output == Triage(urgent=True, action='review')
-    assert len(model.requests) == 1
-    assert result.response.provider_details == snapshot(
-        {
-            'confidence': {'urgent': 0.6, 'action': 0.9},
-            'probabilities': {'action': {'approve': 0.0, 'review': 1.0}},
-            'scores': {},
-            'route': {
-                'choice': 'look_up_order',
-                'probabilities': {'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1},
-                'offered': ['Triage', 'look_up_order', 'issue_refund'],
-                'taken': 'Triage',
-            },
-        }
+    [first, *_] = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    assert [part.tool_name for part in first.parts if isinstance(part, ToolCallPart)] == ['look_up_order']
+
+
+@pytest.mark.anyio
+async def test_a_fallback_model_takes_the_unsure_step(allow_model_requests: None):
+    """`UnsureRoute` is a `ModelAPIError`, so the default `FallbackModel` hands the whole step to the next model."""
+    decision_model = RoutingDecisionModel({'Triage': 0.55, 'look_up_order': 0.45})
+    model = FallbackModel(decision_model, TestModel(call_tools=[]))
+    agent = Agent(
+        model,
+        output_type=Triage,
+        tools=[look_up_order],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+    )
+    result = await agent.run('Where is my order?')
+
+    assert result.response.model_name == 'test'
+    assert len(decision_model.requests) == 1
+
+
+def approve() -> str:
+    """Approve the request as it stands."""
+    return 'approved'  # pragma: no cover
+
+
+def set_urgency(urgent: bool) -> str:
+    """Set how urgent the ticket is."""
+    return f'urgent={urgent}'  # pragma: no cover
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    'tool',
+    [pytest.param(approve, id='with nothing to fill'), pytest.param(set_urgency, id='with arguments to fill')],
+)
+async def test_the_last_route_left_is_not_held_to_the_route_threshold(allow_model_requests: None, tool: Any):
+    """With every other route returned this turn, nothing was picked, so there is no pick to be unsure of."""
+    history = [
+        ModelRequest(parts=[UserPromptPart('Where is my order?')]),
+        ModelResponse(parts=[ToolCallPart('look_up_order', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('look_up_order', 'Order #1 shipped yesterday.', 'call_1')]),
+    ]
+    model = InMemoryDecisionModel()
+    response = await model.request(
+        history,
+        DecisionModelSettings(decision_route_threshold=1.0),
+        ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(name='look_up_order', description='Look up the customer order.'),
+                Tool(tool).tool_def,
+            ],
+            allow_text_output=False,
+        ),
+    )
+
+    assert [part.tool_name for part in response.parts if isinstance(part, ToolCallPart)] == [tool.__name__]
+    name = tool.__name__
+    assert (response.provider_details or {})['route'] == {
+        'choice': name,
+        'probabilities': {name: 1.0},
+        'offered': [name],
+    }
+
+
+@pytest.mark.anyio
+async def test_a_single_output_type_is_not_held_to_the_route_threshold(allow_model_requests: None):
+    """With nothing else on offer there is no route question, so no pick to be unsure of."""
+    model = InMemoryDecisionModel()
+    agent = Agent(model, output_type=Triage, model_settings=DecisionModelSettings(decision_route_threshold=1.0))
+    result = await agent.run('Where is my order?')
+
+    assert result.output == Triage(urgent=True, action='review')
+    assert 'route' not in model.requests[0].questions
+
+
+def test_unsure_route_pickles():
+    exc = pickle.loads(pickle.dumps(UnsureRoute('jev-latest', 'refund', {'refund': 0.4, 'Ticket': 0.6}, 0.7)))
+    assert (exc.model_name, exc.route, exc.probability, exc.probabilities, exc.threshold) == (
+        'jev-latest',
+        'refund',
+        0.4,
+        {'refund': 0.4, 'Ticket': 0.6},
+        0.7,
     )
 
 

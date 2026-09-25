@@ -588,8 +588,15 @@ class _FinishModelRequestSpan(Protocol):
     def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
 
 
-def record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
-    """Record `error` on `span` as an `exception` event.
+def record_exception(
+    span: Span,
+    error: BaseException,
+    *,
+    include_content: bool,
+    escaped: bool = True,
+    attributes: Mapping[str, AttributeValue] | None = None,
+) -> None:
+    """Record `error` on `span` as an `exception` event, with any `attributes` beside the exception's own.
 
     With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
     only the exception type is kept: the message and stack trace of an exception raised around
@@ -605,7 +612,7 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
     if not span.is_recording():
         return
     if include_content:
-        span.record_exception(error, escaped=escaped)
+        span.record_exception(error, attributes=attributes, escaped=escaped)
         return
     error_type = type(error)
     type_name = (
@@ -614,7 +621,9 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
         else error_type.__qualname__
     )
     # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
+    span.add_event(
+        'exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped), **(attributes or {})}
+    )
 
 
 def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
@@ -631,19 +640,26 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
 
 
 @contextmanager
-def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[None]:
+def record_uncaught_errors(
+    span: Span,
+    *,
+    include_content: bool,
+    event_attributes: Callable[[Exception], Mapping[str, AttributeValue]] | None = None,
+) -> Generator[None]:
     """Record exceptions leaving `span`'s scope the way `use_span` would have.
 
     For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
     both jobs to the caller. `use_span` recorded the exception unescaped and described the ERROR
     status with it; both repeat the message, so both follow `include_content`. Enter this around
     the span's whole scope -- the scope `use_span` covered -- not just the call that may fail, so
-    that failures while finalizing the span still mark it.
+    that failures while finalizing the span still mark it. `event_attributes` adds attributes to the
+    exception event for an error, for what the event needs to say even when content is withheld.
     """
     try:
         yield
     except Exception as error:
-        record_exception(span, error, include_content=include_content, escaped=False)
+        attributes = event_attributes(error) if event_attributes else None
+        record_exception(span, error, include_content=include_content, escaped=False, attributes=attributes)
         set_error_status(span, error, include_content=include_content)
         raise
 

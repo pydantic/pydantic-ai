@@ -65,7 +65,7 @@ with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
     from pydantic_ai.models import typesafe as typesafe_module
-    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel, TypeSafeModelSettings
+    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel, TypeSafeModelSettings, UnsureRoute
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 pytestmark = [
@@ -773,7 +773,6 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'choice': 'configure_contact',
                 'probabilities': {'Ticket': 0.05, 'configure_contact': 0.95},
                 'offered': ['Ticket', 'configure_contact'],
-                'taken': 'configure_contact',
             },
             'requests': 2,
         }
@@ -953,7 +952,6 @@ async def test_tool_arguments_live(
                 'choice': 'set_direction',
                 'probabilities': {'output': 0.0, 'set_direction': 1.0},
                 'offered': ['output', 'set_direction'],
-                'taken': 'set_direction',
             },
             'requests': 2,
         }
@@ -963,34 +961,23 @@ async def test_tool_arguments_live(
     assert list(cast(dict[str, Any], second['questions'])) == ['direction']
 
 
-@pytest.mark.parametrize(
-    'probability,settings',
-    [
-        pytest.param(0.59, None, id='below the default threshold'),
-        pytest.param(0.9, {'decision_tool_call_threshold': 0.95}, id='below a raised threshold'),
-    ],
-)
-async def test_a_tool_below_the_threshold_is_a_lean(
-    allow_model_requests: None, probability: float, settings: dict[str, float] | None
-):
-    """A tool picked below the threshold does not end the request; the output is filled and the lean is reported."""
-    jev = mock_model(lambda _: tool_answers('refund', probability))
-    agent = Agent(jev, output_type=Ticket, tools=[refund], model_settings=settings)  # type: ignore[arg-type]
-    result = await agent.run('Charged twice.')
-    assert result.output == Ticket(urgent=True)
-    assert result.response.provider_details == snapshot(
-        {
-            'confidence': {'urgent': 0.8},
-            'probabilities': {},
-            'scores': {},
-            'route': {
-                'choice': 'refund',
-                'probabilities': {'refund': probability, 'Ticket': round(1 - probability, 2)},
-                'offered': ['Ticket', 'refund'],
-                'taken': 'Ticket',
-            },
-        }
+async def test_a_tool_is_taken_however_unsure(allow_model_requests: None):
+    """With no `decision_route_threshold`, the likeliest route is taken at any probability, and proposed here."""
+    jev = mock_model(lambda _: tool_answers('refund', 0.51))
+    with pytest.raises(ToolCallProposed) as exc_info:
+        await Agent(jev, output_type=Ticket, tools=[refund]).run('Charged twice.')
+    assert exc_info.value.probability == 0.51
+
+
+async def test_a_tool_below_the_route_threshold_is_unsure(allow_model_requests: None):
+    """A pick below the bar is raised before the tool is proposed or filled."""
+    jev = mock_model(lambda _: tool_answers('refund', 0.59))
+    agent = Agent(
+        jev, output_type=Ticket, tools=[refund], model_settings=TypeSafeModelSettings(decision_route_threshold=0.6)
     )
+    with pytest.raises(UnsureRoute) as exc_info:
+        await agent.run('Charged twice.')
+    assert (exc_info.value.route, exc_info.value.probability, exc_info.value.threshold) == ('refund', 0.59, 0.6)
 
 
 async def test_the_output_tool_is_one_of_the_options(allow_model_requests: None):
@@ -1001,7 +988,6 @@ async def test_the_output_tool_is_one_of_the_options(allow_model_requests: None)
         'choice': 'Ticket',
         'probabilities': {'Ticket': 0.9, 'refund': 0.1},
         'offered': ['Ticket', 'refund'],
-        'taken': 'Ticket',
     }
 
 
@@ -1084,8 +1070,8 @@ async def test_a_threshold_outside_zero_to_one_is_refused_before_the_request(
     allow_model_requests: None, typesafe_model: TypeSafeModel, threshold: float
 ):
     agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
-    with pytest.raises(UserError, match='`decision_tool_call_threshold` must be between 0 and 1'):
-        await agent.run('anything', model_settings=TypeSafeModelSettings(decision_tool_call_threshold=threshold))
+    with pytest.raises(UserError, match='`decision_route_threshold` must be between 0 and 1'):
+        await agent.run('anything', model_settings=TypeSafeModelSettings(decision_route_threshold=threshold))
 
 
 @pytest.mark.parametrize('threshold', [-0.1, 1.5, float('nan')])
@@ -1233,7 +1219,7 @@ async def test_the_last_route_left_is_taken_without_asking(allow_model_requests:
     assert result.output == 'rejected'
     assert len(seen) == 1
     assert (result.response.provider_details or {})['route'] == snapshot(
-        {'choice': 'reject', 'probabilities': {'reject': 1.0}, 'offered': ['reject'], 'taken': 'reject'}
+        {'choice': 'reject', 'probabilities': {'reject': 1.0}, 'offered': ['reject']}
     )
 
 
@@ -1264,20 +1250,6 @@ async def test_the_composed_stock_description_is_no_description_either(
     """With several output types, the framework composes `Name: <stock description>`; that is still nothing said."""
     with pytest.raises(UserError, match='Give the output type a docstring'):
         await Agent(typesafe_model, output_type=[Undescribed, approve]).run('anything')
-
-
-async def test_below_the_threshold_with_nothing_to_fill_the_likeliest_hand_off_is_taken(
-    allow_model_requests: None,
-):
-    probabilities = {'refund': 0.4, 'approve': 0.35, 'reject': 0.25}
-    jev = mock_model(
-        lambda _: answers(
-            route={'type': 'choice', 'choice': 'refund', 'confidence': 0.1, 'probabilities': probabilities}
-        )
-    )
-    result = await Agent(jev, output_type=[approve, reject], tools=[refund]).run('Looks fine.')
-    assert result.output == 'approved'
-    assert (result.response.provider_details or {})['route']['taken'] == 'approve'
 
 
 async def test_a_streamed_run_can_be_cancelled_early(allow_model_requests: None):
@@ -1319,7 +1291,6 @@ async def test_an_output_function_is_a_hand_off_jev_picks(
             'choice': 'escalate',
             'probabilities': {'Ticket': 0.0, 'escalate': 1.0},
             'offered': ['Ticket', 'escalate'],
-            'taken': 'escalate',
         }
     )
     assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['route']['criteria'] == snapshot(
@@ -1506,7 +1477,6 @@ async def test_the_last_route_left_has_its_supported_arguments_filled(allow_mode
                 'choice': 'set_direction',
                 'probabilities': {'set_direction': 1.0},
                 'offered': ['set_direction'],
-                'taken': 'set_direction',
             },
             'confidence': {'direction': 0.9},
             'probabilities': {'direction': {'left': 0.9, 'right': 0.1}},
@@ -2438,6 +2408,7 @@ async def test_history_from_another_model(allow_model_requests: None):
         ModelResponse(
             parts=[
                 ThinkingPart('Let me check.'),
+                ThinkingPart('', signature='encrypted'),
                 NativeToolCallPart('web_search', {'query': 'weather'}, tool_call_id='call_1'),
                 NativeToolReturnPart('web_search', 'Rainy', tool_call_id='call_1'),
                 ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_2'),
@@ -2456,6 +2427,7 @@ async def test_history_from_another_model(allow_model_requests: None):
         {
             'history': [
                 {'user': 'What is the weather?'},
+                {'thinking': 'Let me check.'},
                 {'tool_call': {'name': 'web_search', 'args': {'query': 'weather'}}},
                 {'tool_return': {'name': 'web_search', 'content': 'Rainy'}},
                 {'tool_call': {'name': 'get_weather', 'args': {'city': 'London'}}},
@@ -2898,7 +2870,6 @@ async def test_a_union_picks_the_type_then_fills_only_that_one(allow_model_reque
                 'choice': 'Escalation',
                 'probabilities': {'Ticket': 0.2, 'Escalation': 0.8},
                 'offered': ['Ticket', 'Escalation'],
-                'taken': 'Escalation',
             },
             'requests': 2,
         }
@@ -2947,23 +2918,6 @@ async def test_one_output_type_jev_cannot_express_is_still_refused_before_any_re
 
     with pytest.raises(UserError, match="Output field 'summary' is not supported"):
         await Agent(mock_model(unreachable), output_type=WithText).run('anything')
-
-
-async def test_a_union_below_the_threshold_fills_the_likeliest_output_type(allow_model_requests: None):
-    """The threshold gates tools, not output types: an unsure tool pick falls back to the likeliest result."""
-    seen: list[dict[str, Any]] = []
-
-    def record(request: httpx2.Request) -> httpx2.Response:
-        seen.append(json.loads(request.content))
-        if len(seen) == 1:
-            return answers(route=_route('refund', {'Ticket': 0.2, 'Escalation': 0.5, 'refund': 0.3}))
-        return answers(security={'type': 'noul', 'noul': 0.9})
-
-    agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
-    result = await agent.run('Someone else can see my invoices.')
-
-    assert result.output == Escalation(security=True)
-    assert list(seen[1]['questions']) == ['security']
 
 
 async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None):
@@ -3196,36 +3150,6 @@ async def test_a_proposed_tool_call_hands_the_whole_step_over_and_jev_judges_the
     assert list(seen[1]['questions']) == snapshot(['urgent'])
 
 
-async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_model_requests: None):
-    """`None` is offered as a hand-off but weighed as a result, so the fallback ranks it with the output types.
-
-    A tool picked below the threshold falls back to the likeliest *result*. `None` is one, so ranking it with
-    the hand-offs instead would return a `Ticket` Jev thought a good deal less likely than nothing at all.
-    """
-
-    def record(request: httpx2.Request) -> httpx2.Response:
-        return answers(
-            urgent={'type': 'noul', 'noul': 0.9},
-            route={
-                'type': 'choice',
-                'choice': 'refund',
-                'confidence': 0.4,
-                'probabilities': {'Ticket': 0.1, 'None': 0.5, 'refund': 0.4},
-            },
-        )
-
-    agent: Agent[None, Ticket | None] = Agent(
-        mock_model(record),
-        output_type=[Ticket, None],
-        tools=[refund],
-    )
-    result = await agent.run('Refund me maybe.')
-
-    assert result.output is None
-    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
-    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
-
-
 async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_requests: None):
     """Every other route has returned this turn, so the `None` one is taken without a request.
 
@@ -3254,30 +3178,6 @@ async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_
     assert result.output is None
     call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
     assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
-
-
-async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):
-    """`_tool_call` falls back to the likeliest output type without requiring Jev to have priced it.
-
-    Jev is not obliged to report a probability for every option it was offered, so the route that comes back
-    is not necessarily one that appears in `probabilities`. Reading it as a plain index raised `KeyError`.
-    """
-    seen: list[dict[str, Any]] = []
-
-    def record(request: httpx2.Request) -> httpx2.Response:
-        seen.append(json.loads(request.content))
-        if len(seen) == 1:
-            # A below-threshold tool pick, with neither output type priced.
-            return answers(route=_route('refund', {'refund': 0.3}))
-        return answers(urgent={'type': 'noul', 'noul': 0.9})
-
-    agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
-    result = await agent.run('You charged me twice.')
-
-    assert result.output == Ticket(urgent=True)
-    details = result.response.provider_details or {}
-    assert details['route']['probabilities'] == {'refund': 0.3}
-    assert details['requests'] == 2
 
 
 async def test_a_union_no_member_of_which_jev_can_fill_is_refused_before_any_request(allow_model_requests: None):
@@ -3329,7 +3229,7 @@ async def test_a_union_with_one_fillable_member_is_still_offered(allow_model_req
     assert set(seen[0]['questions']['route']['criteria']) == {'Ticket', 'DraftedReply'}
 
 
-@pytest.mark.parametrize('setting', ['decision_tool_call_threshold', 'decision_boolean_threshold'])
+@pytest.mark.parametrize('setting', ['decision_route_threshold', 'decision_boolean_threshold'])
 async def test_a_bad_threshold_is_refused_before_the_forced_route_spends_a_request(
     allow_model_requests: None, setting: str
 ):
@@ -3384,6 +3284,19 @@ async def test_deprecated_threshold_is_mapped(allow_model_requests: None):
         result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.8))
 
     assert result.output == Ticket(urgent=False)
+
+
+async def test_deprecated_tool_call_threshold_is_ignored(allow_model_requests: None):
+    """The lean it set is gone, and it is not mapped to `decision_route_threshold`, which would raise instead."""
+    agent = Agent(mock_model(lambda _: tool_answers('Ticket', 0.5)), output_type=Ticket, tools=[refund])
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`typesafe_tool_call_threshold` is deprecated and ignored: the likeliest route is now always taken',
+    ):
+        result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_tool_call_threshold=0.9))
+
+    assert result.output == Ticket(urgent=True)
 
 
 async def test_decision_threshold_wins_over_deprecated_alias(allow_model_requests: None):

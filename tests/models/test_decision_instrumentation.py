@@ -120,7 +120,7 @@ async def test_one_field(allow_model_requests: None, jev: TypeSafeModel, capfire
                                             },
                                         }
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.state': 'Our whole team has been locked out of the dashboard since this morning, and we have a client demo in an hour.',
                                     'logfire.json_schema': {
                                         'type': 'object',
@@ -206,7 +206,7 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                                             'instructions': 'Which of these does this call for?',
                                         }
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.route_question': 'route',
                                     'pydantic_ai.decision.route_options': [
                                         'Refund',
@@ -235,8 +235,6 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                                             'probabilities': {'Escalation': 0.0, 'Refund': 1.0},
                                         }
                                     },
-                                    'pydantic_ai.decision.route_taken': 'Refund',
-                                    'pydantic_ai.decision.route_reason': 'selected',
                                 },
                             },
                             {
@@ -272,7 +270,7 @@ async def test_union_route_and_fill(allow_model_requests: None, jev: TypeSafeMod
                                             },
                                         },
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.route': 'Refund',
                                     'pydantic_ai.decision.state': 'I was charged twice for my March subscription. Please put the second charge back.',
                                     'logfire.json_schema': {
@@ -358,7 +356,7 @@ async def test_without_content(allow_model_requests: None, jev: TypeSafeModel, c
                                         'abusive': {'type': 'noul'},
                                         'action': {'type': 'choice'},
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'logfire.json_schema': {
                                         'type': 'object',
                                         'properties': {
@@ -426,7 +424,7 @@ async def test_streamed_run(allow_model_requests: None, jev: TypeSafeModel, capf
                                             },
                                         }
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.state': 'Could you update the billing address on my account when you get a chance?',
                                     'logfire.json_schema': {
                                         'type': 'object',
@@ -495,7 +493,7 @@ async def test_api_error(allow_model_requests: None, typesafe_api_key: str, capf
                                             },
                                         }
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.state': 'The export button does nothing when I click it.',
                                     'logfire.json_schema': {
                                         'type': 'object',
@@ -573,8 +571,8 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
 ):
     """With one output type and a tool, the output's fields are asked beside the route question, speculatively.
 
-    When the tool wins, `route_taken` differs from the span's `route`, which says those answers were discarded;
-    the tool's arguments are filled in a sibling `decide` span, and the output is filled on the next step, once
+    When the tool wins, the pick in `answers` differs from the span's `route`, which says those answers were
+    discarded, and the span has no `confidence`; the tool's arguments are filled in a sibling `decide` span, and the output is filled on the next step, once
     the tool has returned and is no longer on offer.
     """
     agent = Agent(
@@ -622,7 +620,7 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                             'instructions': 'Which of these does this call for?',
                                         },
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.route': 'TicketPriority',
                                     'pydantic_ai.decision.route_question': 'route',
                                     'pydantic_ai.decision.route_options': ['TicketPriority', 'send_sign_in_link'],
@@ -656,8 +654,6 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                             'probabilities': {'TicketPriority': 0.1, 'send_sign_in_link': 0.9},
                                         },
                                     },
-                                    'pydantic_ai.decision.route_taken': 'send_sign_in_link',
-                                    'pydantic_ai.decision.route_reason': 'selected',
                                 },
                             },
                             {
@@ -679,7 +675,7 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                             },
                                         }
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.route': 'send_sign_in_link',
                                     'pydantic_ai.decision.state': "I can't sign in. Can you text me a sign-in link? My email is not working.",
                                     'logfire.json_schema': {
@@ -737,7 +733,7 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                             },
                                         }
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.state': {
                                         'history': [
                                             {
@@ -805,7 +801,8 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
 ):
     """A picked route whose fields Jev cannot express is handed off before any fill request is sent.
 
-    The route span says so with `route_reason`, and the step goes to the model behind Jev.
+    The route span records the `ToolCallProposed` with the picked route's label, and the step goes to the model
+    behind Jev, so the `chat` span above it ends without an error.
     """
     agent = Agent(
         FallbackModel(jev, FunctionModel(write_reply, model_name='writer')),
@@ -846,7 +843,7 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
                                             'instructions': 'Which of these does this call for?',
                                         }
                                     },
-                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                                    'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                                     'pydantic_ai.decision.route_question': 'route',
                                     'pydantic_ai.decision.route_options': [
                                         'Escalation',
@@ -875,9 +872,18 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
                                             'probabilities': {'Escalation': 0.0, 'Reply': 1.0},
                                         }
                                     },
-                                    'pydantic_ai.decision.route_taken': 'Reply',
-                                    'pydantic_ai.decision.route_reason': 'handed_off',
+                                    'logfire.level_num': 17,
                                 },
+                                'events': [
+                                    {
+                                        'name': 'exception',
+                                        'exception.type': 'pydantic_ai.models.decision.ToolCallProposed',
+                                        'exception.message': "jev-latest proposed calling 'final_result_Reply' (probability 1.00) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step.",
+                                        'exception.stacktrace': "pydantic_ai.models.decision.ToolCallProposed: jev-latest proposed calling 'final_result_Reply' (probability 1.00) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step.",
+                                        'exception.escaped': 'False',
+                                        'pydantic_ai.decision.route': 'Reply',
+                                    }
+                                ],
                             }
                         ],
                     }
@@ -955,9 +961,8 @@ async def test_the_last_route_left_is_filled_without_a_route_question(
                                     },
                                 }
                             },
-                            'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+                            'pydantic_ai.decision.thresholds': {'boolean': 0.5},
                             'pydantic_ai.decision.route': 'issue_refund',
-                            'pydantic_ai.decision.route_reason': 'forced',
                             'pydantic_ai.decision.state': {
                                 'history': [
                                     {'user': 'I was charged twice for order 1042. Please refund the second charge.'},

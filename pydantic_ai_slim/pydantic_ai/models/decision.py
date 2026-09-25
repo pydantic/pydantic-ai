@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from functools import cached_property
+from functools import cached_property, partial
 from typing import Any, ClassVar, Literal, TypeAlias, cast
 
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
@@ -70,6 +70,7 @@ __all__ = (
     'ScoreAnswer',
     'ScoreQuestion',
     'ToolCallProposed',
+    'UnsureRoute',
 )
 
 
@@ -244,17 +245,19 @@ class DecisionModelSettings(ModelSettings, total=False):
     at the threshold to 1 at certainty, so a yes at 0.8 under a threshold of 0.75 reports the narrow margin it is.
     """
 
-    decision_tool_call_threshold: float
-    """How likely it has to be that the text calls for a function tool at all, rather than an output, before the
-    likeliest tool is called, from 0 to 1. Default: 0.6.
+    decision_route_threshold: float
+    """How likely the picked route has to be before it is taken, from 0 to 1. Default: unset, so the pick always is.
 
-    The threshold decides a tool versus no tool, not whether one particular tool is likely enough: which tool runs
-    is simply the likeliest one. With tools attached, one more question asks which route the text calls for, the
-    output type among them. When the model picks a function tool, this is compared with the probability of all
-    function tools together, so probability split between two tools still says a tool is wanted. At or above it,
-    the picked tool is called, after the model fills any supported arguments, or raised as
-    [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] when its arguments are unsupported. Below it,
-    the pick is a lean, and the output is filled as usual.
+    With tools attached, or a union of output types, one more question asks which route the text calls for: a
+    tool, an output type, an output function or `None`. The likeliest route is taken. With this set, a pick whose
+    own probability is below it raises [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute] instead, before
+    any request to fill it. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind the decision model
+    hands that model the step; without one, the run raises it.
+
+    A route taken without a pick is not held to it: the one route left when every other has returned this turn, or
+    a single output type with nothing else on offer. A higher threshold hands off more steps and gets more of the
+    rest right; tune it on labelled examples of your own.
 
     This is not a guard for a tool with side effects, such as a refund or an account change: require approval
     for that tool instead.
@@ -289,6 +292,42 @@ class ToolCallProposed(ModelAPIError):
         return self.__class__, (self.model_name, self.tool_name, self.probability)
 
 
+class UnsureRoute(ModelAPIError):
+    """A decision model picked a route less likely than `decision_route_threshold`.
+
+    Raised before any request to fill the route. A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind the decision model
+    hands that model the whole step by default, tools and all.
+    """
+
+    route: str
+    """The route the model picked, by the label the route question offered it under."""
+
+    probability: float
+    """How likely the model found the picked route, from 0 to 1."""
+
+    probabilities: dict[str, float]
+    """The probability the model gave every route, by label."""
+
+    threshold: float
+    """The `decision_route_threshold` the pick fell below."""
+
+    def __init__(self, model_name: str, route: str, probabilities: dict[str, float], threshold: float):
+        self.route = route
+        self.probability = probabilities[route]
+        self.probabilities = probabilities
+        self.threshold = threshold
+        super().__init__(
+            model_name,
+            f'{model_name} picked {route!r} with probability {self.probability:.2f}, below '
+            f'`decision_route_threshold` ({threshold:.2f}). Put a model behind it to take the steps it is unsure '
+            'of: `FallbackModel(decision_model, language_model)` hands `language_model` this step.',
+        )
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.route, self.probabilities, self.threshold)
+
+
 @dataclass(frozen=True)
 class _Limits:
     """How many options a pick-one and how many levels a rubric can have on this model, `None` for no limit.
@@ -320,10 +359,12 @@ class DecisionModel(Model[InterfaceClient]):
     - The field's description is the question, the output type's docstring its goal, and the agent's
       `instructions` framing shared by every question. The latest user prompt is the text to judge, and the
       message history before it goes along beside it.
-    - With tools attached, or a union of output types, one more pick-one asks which route the text calls for. A
-      picked route with fields is filled in a second request, and one whose fields the model cannot express is
-      raised as [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], for a
-      [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model.
+    - With tools attached, or a union of output types, one more pick-one asks which route the text calls for, and
+      the likeliest is taken. A picked route with fields is filled in a second request, and one whose fields the
+      model cannot express is raised as [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], for a
+      [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model. A pick below
+      `decision_route_threshold`, when set, is raised as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
+      the same way.
     - Each field's confidence, the full distribution of each pick-one and rubric, and the route pick are reported
       in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details].
 
@@ -386,7 +427,7 @@ class DecisionModel(Model[InterfaceClient]):
         route: str | None = None,
         fields: bool = False,
         route_question: str | None = None,
-        forced: bool = False,
+        routes: Mapping[str, ToolDefinition] | None = None,
     ) -> AsyncGenerator[tuple[DecisionResponse, Span]]:
         """Send one request through `decide()`, in a `decide` span when an instrumented request is open.
 
@@ -395,8 +436,12 @@ class DecisionModel(Model[InterfaceClient]):
         of the one that picked it, not its child. Outside an instrumented request the span is a non-recording one.
 
         `route` is the label of the route whose fields this request asks, as the route question offers it, when it
-        was or is being picked from others; `fields` says the request asks field questions at all, `route_question` is the key of the question
-        that picks between routes, and `forced` says the route was taken without one.
+        was or is being picked from others; `fields` says the request asks field questions at all; `route_question`
+        is the key of the question that picks between routes, and `routes` the routes it offers, by label.
+
+        A pick the step can't take is raised inside the span, as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
+        or [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], and recorded on it like any other
+        error, with the picked route's label on the exception event.
         """
         policy = open_request_policy()
         if policy is None:
@@ -413,14 +458,15 @@ class DecisionModel(Model[InterfaceClient]):
                     route=route,
                     fields=fields,
                     route_question=route_question,
-                    forced=forced,
                     include_content=include_content,
                 ),
                 kind=SpanKind.CLIENT,
                 record_exception=False,
                 set_status_on_exception=False,
             ) as span,
-            record_uncaught_errors(span, include_content=include_content),
+            record_uncaught_errors(
+                span, include_content=include_content, event_attributes=partial(_hand_off_attributes, routes or {})
+            ),
         ):
             response = await self.decide(request, model_settings)
             span.set_attributes(_decide_response_attributes(response, route_question, include_content))
@@ -461,9 +507,10 @@ class DecisionModel(Model[InterfaceClient]):
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         settings = cast(DecisionModelSettings, model_settings or {})
-        # Both bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
+        # The bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
         # out from a rejected answer would mean paying for the request that carried the prompt and history.
-        threshold = _threshold(settings, 'decision_tool_call_threshold', _DEFAULT_TOOL_CALL_THRESHOLD)
+        # An unset route bar is 0, which no probability is below, so every pick is taken.
+        route_threshold = _threshold(settings, 'decision_route_threshold', 0.0)
         boolean_threshold = _threshold(settings, 'decision_boolean_threshold', _DEFAULT_BOOLEAN_THRESHOLD)
         limits = _Limits(choice_options=self.max_choice_options, score_levels=self.max_score_levels)
         if forced_tool is not None:
@@ -491,15 +538,16 @@ class DecisionModel(Model[InterfaceClient]):
             if output_tool is not None and route_key is not None
             else None
         )
-        # A picked route whose fields are asked in a second request: the route, its label, its questions, or `None`
-        # for them when the model cannot express its fields and it is handed off, and the route question's details.
-        to_fill: tuple[ToolDefinition, str, _Ask | None, dict[str, Any]] | None = None
+        # A picked route whose fields are asked in a second request: the route, its label, its questions, and the
+        # route question's details.
+        to_fill: tuple[ToolDefinition, str, _Ask, dict[str, Any]] | None = None
         async with self._decide(
             DecisionRequest(state=state, questions=ask.questions),
             settings,
             route=output_label,
             fields=output_tool is not None,
             route_question=route_key,
+            routes=routes,
         ) as (response, span):
             if route_key is None:
                 # One output type and nothing else on offer: there was no route to pick, only fields to fill.
@@ -508,37 +556,38 @@ class DecisionModel(Model[InterfaceClient]):
                 parts = [ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id())]
                 _record_outcome(span, confidence)
             else:
-                route_details = _route_taken(response.answers.get(route_key), routes, threshold)
-                label = route_details['taken']
+                route_details = _route_picked(response.answers.get(route_key), routes)
+                label = route_details['choice']
+                probability = route_details['probabilities'][label]
+                # A pick the step can't take is raised here, inside the span of the request that picked it, so the
+                # span records it. `UnsureRoute` and `ToolCallProposed` are `ModelAPIError`s, and a `FallbackModel`
+                # that gives a language model the step ends the model request span without an error.
+                if probability < route_threshold:
+                    raise UnsureRoute(self.model_name, label, route_details['probabilities'], route_threshold)
                 route = routes[label]
-                reason: _RouteReason = 'selected' if label == route_details['choice'] else 'below_threshold'
                 confidence = None
                 if route is output_tool:
                     # The fields were asked beside the route question, speculatively, and are only read now that
                     # the output is what was taken: answers to a route not taken describe nothing in this response.
                     args, provider_details, confidence = ask.answers(response, boolean_threshold)
                 elif not _none_route(route) and _properties(route.parameters_json_schema):
-                    # Filled below, once this request's span has closed: the fill is its sibling, not its child.
                     fill = _Ask.to_fill(route, instructions, limits, chosen=label)
-                    to_fill = route, label, fill, route_details
                     if fill is None:
-                        reason = 'handed_off'
+                        # A route whose fields the model cannot express is handed off before a request to fill it.
+                        raise ToolCallProposed(self.model_name, route.name, probability)
+                    # Filled below, once this request's span has closed: the fill is its sibling, not its child.
+                    to_fill = route, label, fill, route_details
                     args, provider_details = {}, {}
                 else:
                     # Nothing to write, so the call is made on the pick alone, and no answer built it.
                     args, provider_details = _route_args(route), _unanswered()
-                _record_outcome(span, confidence, taken=(label, reason))
+                _record_outcome(span, confidence)
                 parts = [ToolCallPart(route.name, args, _utils.generate_tool_call_id())]
                 provider_details['route'] = route_details
         response_usage = response.usage
 
         if to_fill is not None:
             route, label, fill, route_details = to_fill
-            if fill is None:
-                # A route whose fields the model cannot express is handed off. `ToolCallProposed` is a
-                # `ModelAPIError`, so a `FallbackModel` gives a language model the whole step. The model may lean
-                # to a route it did not price, so a missing probability is none at all.
-                raise ToolCallProposed(self.model_name, route.name, route_details['probabilities'].get(label, 0.0))
             response, args, provider_details = await self._fill(label, fill, state, settings, boolean_threshold)
             response_usage += response.usage
             provider_details['route'] = route_details
@@ -565,8 +614,6 @@ class DecisionModel(Model[InterfaceClient]):
         state: JsonValue,
         settings: DecisionModelSettings,
         boolean_threshold: float,
-        *,
-        forced: bool = False,
     ) -> tuple[DecisionResponse, dict[str, Any], dict[str, Any]]:
         """Ask a selected route's fields in a second request.
 
@@ -583,7 +630,6 @@ class DecisionModel(Model[InterfaceClient]):
                 settings,
                 route=label,
                 fields=True,
-                forced=forced,
             ) as (response, span):
                 args, provider_details, confidence = ask.answers(response, boolean_threshold)
                 _record_outcome(span, confidence)
@@ -609,7 +655,7 @@ class DecisionModel(Model[InterfaceClient]):
         fill = _Ask.to_fill(tool, instructions, limits, chosen=label)
         if fill is None:
             raise ToolCallProposed(self.model_name, tool.name, 1.0)
-        response, args, details = await self._fill(label, fill, state, settings, boolean_threshold, forced=True)
+        response, args, details = await self._fill(label, fill, state, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return ModelResponse(
             parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],
@@ -689,12 +735,22 @@ class DecisionStreamedResponse(StreamedResponse):
         return self._response.timestamp
 
 
-_DEFAULT_TOOL_CALL_THRESHOLD = 0.6
 _DEFAULT_BOOLEAN_THRESHOLD = 0.5
 
 
-_RouteReason: TypeAlias = Literal['selected', 'below_threshold', 'handed_off', 'forced']
-"""Why a `decide` span's route was taken: see `pydantic_ai.decision.route_reason` in the Logfire docs."""
+def _hand_off_attributes(routes: Mapping[str, ToolDefinition], error: Exception) -> dict[str, AttributeValue]:
+    """The label of the picked route a hand-off names, for its exception event.
+
+    The exception's message names it too, but a message is only recorded with content, and a label is not content.
+    """
+    if isinstance(error, UnsureRoute):
+        return {'pydantic_ai.decision.route': error.route}
+    if isinstance(error, ToolCallProposed):
+        # Raised with the route's tool name, which is the library's own for an output route.
+        label = next(label for label, route in routes.items() if route.name == error.tool_name)
+        return {'pydantic_ai.decision.route': label}
+    return {}
+
 
 # What each kind of answer keeps without content: its numbers, and what they are keyed by only where that is not
 # content. A score's probabilities are keyed by level numbers; a choice's are keyed by option labels, which can quote
@@ -714,7 +770,6 @@ def _decide_span_attributes(
     route: str | None,
     fields: bool,
     route_question: str | None,
-    forced: bool,
     include_content: bool,
 ) -> dict[str, AttributeValue]:
     """A `decide` span's attributes from the request, before it is sent.
@@ -728,10 +783,10 @@ def _decide_span_attributes(
         name: _wire(question) if include_content else {'type': question.type}
         for name, question in request.questions.items()
     }
-    thresholds = {
-        'boolean': _threshold(settings, 'decision_boolean_threshold', _DEFAULT_BOOLEAN_THRESHOLD),
-        'tool_call': _threshold(settings, 'decision_tool_call_threshold', _DEFAULT_TOOL_CALL_THRESHOLD),
-    }
+    thresholds = {'boolean': _threshold(settings, 'decision_boolean_threshold', _DEFAULT_BOOLEAN_THRESHOLD)}
+    if 'decision_route_threshold' in settings:
+        # Unset, every pick is taken, which no number says better than its absence.
+        thresholds['route'] = _threshold(settings, 'decision_route_threshold', 0.0)
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': 'decide',
         **model_attributes(model),
@@ -744,8 +799,6 @@ def _decide_span_attributes(
     if fields:
         # Set once the response is in, and declared here with the rest.
         json_attributes.append('pydantic_ai.decision.confidence')
-    if forced:
-        attributes['pydantic_ai.decision.route_reason'] = 'forced'
     if route_question is not None:
         question = request.questions[route_question]
         assert isinstance(question, ChoiceQuestion)  # `_tool_question` asks nothing else
@@ -808,25 +861,14 @@ def _decide_response_attributes(
     return attributes
 
 
-def _record_outcome(
-    span: Span,
-    confidence: dict[str, float] | None,
-    *,
-    taken: tuple[str, _RouteReason] | None = None,
-) -> None:
-    """Record on a `decide` span what the run made of its answers, none of which is content.
+def _record_outcome(span: Span, confidence: dict[str, float] | None) -> None:
+    """Record on a `decide` span the confidence of the answers the step used, which is not content.
 
-    `confidence` is the thresholded confidence per field question, keyed like the questions, when the span asked
-    any; `taken` is the route taken on the span that asked the route question, and why.
+    `confidence` is the thresholded confidence per field question, keyed like the questions, or `None` when the
+    step used none of the span's field answers.
     """
-    if not span.is_recording():
-        return
-    attributes: dict[str, AttributeValue] = {}
-    if confidence is not None:
-        attributes['pydantic_ai.decision.confidence'] = safe_to_json(confidence).decode()
-    if taken is not None:
-        attributes['pydantic_ai.decision.route_taken'], attributes['pydantic_ai.decision.route_reason'] = taken
-    span.set_attributes(attributes)
+    if confidence is not None and span.is_recording():
+        span.set_attribute('pydantic_ai.decision.confidence', safe_to_json(confidence).decode())
 
 
 def _threshold(settings: DecisionModelSettings, name: str, default: float) -> float:
@@ -953,20 +995,12 @@ def _answers(
     return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}, by_question
 
 
-def _route_taken(answer: object, routes: dict[str, ToolDefinition], threshold: float) -> dict[str, Any]:
-    """The model's answer to the route question as `provider_details['route']` reports it, with the route taken.
+def _route_picked(answer: object, routes: dict[str, ToolDefinition]) -> dict[str, Any]:
+    """The model's answer to the route question, as `provider_details['route']` reports it.
 
     Everything in it is a route label, the name the route question offered each route under, looked up in
-    `routes`. `taken` is the pick, unless the pick was a lean.
-
-    A lean is a function tool picked while the function tools together fall below the threshold: the likeliest
-    output type or `None` route is taken instead, or with neither, the likeliest output function. The probability
-    is summed over the function tools because the bar asks whether to do something rather than give a result, and
-    probability split between two tools still says a tool is wanted, even when neither clears the bar alone.
-
-    The threshold gates tools, not output types. Picking an output type says which result to fill, not that
-    something else should be done; there is nothing to hand off to and nothing to be unsure about beyond the pick
-    itself, whose confidence is reported either way.
+    `routes`. The pick is reported with its probabilities and what was on offer, so the rate at which picks fall
+    below a `decision_route_threshold` can be watched, and a tool that was withheld this turn can be seen to have been.
     """
     if (
         not isinstance(answer, ChoiceAnswer)
@@ -974,41 +1008,14 @@ def _route_taken(answer: object, routes: dict[str, ToolDefinition], threshold: f
         or not all(0 <= p <= 1 for p in answer.probabilities.values())
     ):
         raise UnexpectedModelBehavior(f'Unexpected answer from the model for the route question: {answer!r}')
-    picked = routes.get(answer.choice)
-    if picked is None:
+    if answer.choice not in routes:
         raise UnexpectedModelBehavior(f'The model picked a route it was not offered: {answer.choice!r}')
-    # The pick, its probabilities and what was on offer are reported either way, so the hand-off rate can be
-    # watched, and a tool that was withheld this turn can be seen to have been.
-    details: dict[str, Any] = {
-        'choice': answer.choice,
-        'probabilities': dict(answer.probabilities),
-        'offered': list(routes),
-        'taken': answer.choice,
-    }
-    if picked.kind == 'output':
-        return details
-    tool_probability = sum(
-        p for label, p in answer.probabilities.items() if (route := routes.get(label)) and route.kind != 'output'
-    )
-    if tool_probability >= threshold:
-        return details
-    # A `None` route is a result to take, not something else to be done, so it is weighed with the output types
-    # rather than with the output functions, even though it takes no arguments like they do.
-    results = [
-        label
-        for label, route in routes.items()
-        if route.kind == 'output' and (_none_route(route) or _properties(route.parameters_json_schema))
-    ]
-    hand_offs = [label for label, route in routes.items() if route.kind == 'output' and label not in results]
-    # With no result to lean to, there is nothing else to do but the tool that was picked.
-    leanable = results or hand_offs or [answer.choice]
-    details['taken'] = max(leanable, key=lambda label: answer.probabilities.get(label, 0.0))
-    return details
+    return {'choice': answer.choice, 'probabilities': dict(answer.probabilities), 'offered': list(routes)}
 
 
 def _forced_route(label: str) -> dict[str, Any]:
     """`provider_details['route']` for the one route left, taken without asking: certain, because it was alone."""
-    return {'choice': label, 'probabilities': {label: 1.0}, 'offered': [label], 'taken': label}
+    return {'choice': label, 'probabilities': {label: 1.0}, 'offered': [label]}
 
 
 def _unanswered() -> dict[str, Any]:
@@ -1767,11 +1774,17 @@ def _map_request(message: ModelRequest, *, latest: bool) -> tuple[list[JsonValue
 
 
 def _response_entries(message: ModelResponse) -> list[JsonValue]:
-    """Map a response to history entries, excluding the model's private thinking."""
+    """Map a response to history entries, in the order the model produced them."""
     entries: list[JsonValue] = []
     for part in message.parts:
         if isinstance(part, TextPart):
             entries.append({'assistant': part.content})
+        elif isinstance(part, ThinkingPart):
+            # What a model thought is part of what it did: a judgment can be about the reasoning itself, and a
+            # conversation continued from the history should see it as the model that wrote it would.
+            # Thinking a provider only returned encrypted, as a `signature` with no text, has nothing to show.
+            if part.content:
+                entries.append({'thinking': part.content})
         elif isinstance(part, ToolCallPart | NativeToolCallPart):
             entries.append({'tool_call': {'name': part.tool_name, 'args': part.args_as_dict()}})
         elif isinstance(part, NativeToolReturnPart):
@@ -1785,8 +1798,6 @@ def _response_entries(message: ModelResponse) -> list[JsonValue]:
             )
         elif isinstance(part, SpeechPart):  # pragma: no cover
             raise _unconverted_speech_part_error()
-        elif isinstance(part, ThinkingPart):
-            pass  # The model's own reasoning, not part of the conversation.
         else:
             assert_never(part)
     return entries

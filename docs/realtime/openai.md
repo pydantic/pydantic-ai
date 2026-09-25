@@ -1,3 +1,7 @@
+---
+description: "Use the OpenAI Realtime API and gpt-realtime models with Pydantic AI through OpenAIRealtimeModel: setup, voices, VAD settings, reasoning and browser WebRTC."
+---
+
 # OpenAI Realtime
 
 [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] connects an agent to

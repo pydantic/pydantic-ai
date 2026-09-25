@@ -1,3 +1,7 @@
+---
+description: "Run Pydantic AI agents on Jev from TypeSafe, a classifier that answers typed questions with confidence scores, for routing, guards and judging conversations."
+---
+
 # TypeSafe (Jev)
 
 [Jev](https://typesafe.ai) is TypeSafe's model, and a [decision model](decision.md): it answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text. In Pydantic AI, an agent running on a decision model can use it both to produce a structured [output](../output.md) and to call [tools](../tools.md).
@@ -209,9 +213,9 @@ See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this inte
 
 ## Model settings
 
-Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request. [`TypeSafeModelSettings`][pydantic_ai.models.typesafe.TypeSafeModelSettings] adds the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_tool_call_threshold`.
+Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request. [`TypeSafeModelSettings`][pydantic_ai.models.typesafe.TypeSafeModelSettings] adds the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
 
-The former `typesafe_tool_call_threshold` and `typesafe_boolean_threshold` names remain as deprecated aliases.
+The former `typesafe_boolean_threshold` name remains as a deprecated alias of `decision_boolean_threshold`. The former `typesafe_tool_call_threshold` is deprecated and ignored: Jev always takes the likeliest route, and `decision_route_threshold` with a [`FallbackModel`](decision.md#handing-off-an-unsure-route) hands the picks it is unsure of to a language model instead.
 
 ```python
 from pydantic_ai import Agent

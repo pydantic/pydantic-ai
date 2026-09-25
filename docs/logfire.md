@@ -1,3 +1,7 @@
+---
+description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any OpenTelemetry backend, tracing the model requests, tool calls and token usage of every run."
+---
+
 # Pydantic Logfire Debugging and Monitoring
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
@@ -443,30 +447,23 @@ A `decide` span is only emitted inside an instrumented model request, and only f
 | `gen_ai.provider.name`, `gen_ai.request.model`, `server.address`, ... | The same model attributes as the model request span |
 | `gen_ai.response.model` | The model that answered |
 | `gen_ai.response.id` | The provider's ID for the request, when it returns one |
-| `pydantic_ai.decision.thresholds` | The `decision_boolean_threshold` and `decision_tool_call_threshold` applied, as `{"boolean": ..., "tool_call": ...}` |
+| `pydantic_ai.decision.thresholds` | The thresholds applied: `{"boolean": ...}` for `decision_boolean_threshold`, plus `"route"` for `decision_route_threshold` when it's set |
 | `pydantic_ai.decision.usage.input_tokens`, `pydantic_ai.decision.usage.output_tokens` | This request's usage |
 | `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
 | `pydantic_ai.decision.state` | The state as sent: the text being judged, or a JSON object that adds the conversation's `history` |
 | `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
-| `pydantic_ai.decision.route` | When the request asks the field questions of a route that was chosen from others, that route's label: beside the route question, when filling a route picked by an earlier request, or when filling the one route left (`forced`). A request for a single output type with nothing to choose between has no `route` |
+| `pydantic_ai.decision.route` | When the request asks the field questions of a route that was chosen from others, that route's label: beside the route question, when filling a route picked by an earlier request, or when filling the one route left. A request for a single output type with nothing to choose between has no `route` |
 | `pydantic_ai.decision.confidence` | When the request asks field questions and their answers are used, each question's confidence as Pydantic AI derived it after applying `decision_boolean_threshold`, keyed like the questions and answers. Each option of a `list` or mapping gets its own entry under `field.option`, where `provider_details['confidence']` on the response gives the field the least sure of its options. A `float` field that asks for a probability has no entry, since the probability is the answer |
 | `pydantic_ai.decision.route_question` | When the request asks which route to take, the key of that question: `route`, with underscores appended if a field already has that name |
 | `pydantic_ai.decision.route_options` | When the request asks which route to take, the labels of the routes offered, in order, as a JSON array |
-| `pydantic_ai.decision.route_taken` | When the request asks which route to take, the label of the route the run took, after applying `decision_tool_call_threshold` |
-| `pydantic_ai.decision.route_reason` | Why that route was taken: `selected`, `below_threshold`, `handed_off`, or `forced` (see below) |
 
 Questions and answers share their keys, so an answer can be matched to the question it answers. A field's question is keyed by the field's name, a nested model's fields as `outer.inner`, and each option of a `list` or of a mapping from options to `bool` as `field.option`, since the model is asked about each option separately. The question that picks between routes is keyed by `pydantic_ai.decision.route_question`, and its options are the labels in `pydantic_ai.decision.route_options`.
 
-Every route attribute names a route by its [label](models/decision.md#routes-which-thing-to-do), the name the route question offered it under: an output type's class name such as `Refund`, `None` for the `None` member of a union, or a tool's or output function's name. These are the names `provider_details['route']` uses on the response, whose `choice`, `offered` and `taken` match the route question's answer, `pydantic_ai.decision.route_options` and `pydantic_ai.decision.route_taken`.
+Every route attribute names a route by its [label](models/decision.md#routes-which-thing-to-do), the name the route question offered it under: an output type's class name such as `Refund`, `None` for the `None` member of a union, or a tool's or output function's name. These are the names `provider_details['route']` uses on the response, whose `choice` and `offered` match the route question's answer and `pydantic_ai.decision.route_options`.
 
-The answers are what the model said, and the route attributes are what the run did with them, which can differ. `pydantic_ai.decision.route_reason` says how:
+The route the model picks is the route the step takes, unless the step can't take it. A pick less likely than `decision_route_threshold` raises [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute], and a picked route whose fields the model can't fill raises [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], both before any request to fill it. Either is recorded on the `decide` span that asked the route question, as an error with an `exception` event that carries the picked route's label as `pydantic_ai.decision.route`. With a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] behind the decision model, the model behind it takes the step, and the model request span ends without an error, so the `decide` span is where the hand-off shows. Without one, the model request span records the same error.
 
-- `selected`: the model's pick was taken as it was, including a tool picked below `decision_tool_call_threshold` when there was no other route to fall back to.
-- `below_threshold`: the model picked a tool while the function tools together fell below `decision_tool_call_threshold`, so the run took another route instead.
-- `handed_off`: the model can't fill the taken route's fields, so it raised [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] for a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand the step to the model behind it. No request was sent to fill it.
-- `forced`: only one route was left, so it was taken without asking which. This is set on the request that fills that route's fields, which carries no `route_question`, `route_options` or `route_taken`.
-
-With one output type and tools, the output type's field questions are asked in the same request as the route question, before it's known whether the output will be the route taken. That request carries both `route` and `route_taken`: when they're equal, the output was filled from its answers, and when they differ, those answers were discarded, and the span has no `pydantic_ai.decision.confidence`. A route picked in one request and filled in the next gets a second `decide` span beside the first, whose `route` is the first span's `route_taken`.
+With one output type and tools, the output type's field questions are asked in the same request as the route question, before it's known whether the output will be picked. That request carries `route`: when the route question's answer picks it, the output was filled from its answers, and otherwise those answers were discarded, and the span has no `pydantic_ai.decision.confidence`. A route picked in one request and filled in the next gets a second `decide` span beside the first, whose `route` is the first span's pick.
 
 With [`include_content=False`](#excluding-prompts-and-completions), strings are left out and numbers are kept:
 

@@ -11,6 +11,7 @@ import re
 import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
+from decimal import Decimal
 from typing import Any, Literal, cast, get_args, get_origin
 from unittest.mock import patch
 
@@ -19,6 +20,7 @@ from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._genai_prices import calculate_price_for_usage
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
@@ -617,7 +619,7 @@ def test_map_usage_full_payload() -> None:
             'cached_tokens': 30,
             'text_tokens': 20,
             'image_tokens': 5,
-            'cached_tokens_details': {'audio_tokens': 10},
+            'cached_tokens_details': {'audio_tokens': 10, 'image_tokens': 2},
         },
         output_token_details={'audio_tokens': 40, 'text_tokens': 10},
     )
@@ -629,7 +631,24 @@ def test_map_usage_full_payload() -> None:
         cache_read_tokens=30,
         cache_audio_read_tokens=10,
         output_audio_tokens=40,
+        input_image_tokens=5,
+        cache_image_read_tokens=2,
         details={'input_text_tokens': 20, 'input_image_tokens': 5, 'output_text_tokens': 10, 'audio_tokens': 40},
+    )
+
+
+def test_map_usage_prices_image_input_at_the_image_rate() -> None:
+    """Image input has its own rate on `gpt-realtime`; reported only in `details` it was priced as text."""
+    sdk_usage = RealtimeResponseUsage.construct(
+        input_tokens=1000,
+        output_tokens=0,
+        input_token_details={'text_tokens': 200, 'image_tokens': 800},
+    )
+    usage = rt_openai._map_usage(sdk_usage)  # pyright: ignore[reportPrivateUsage]
+    assert usage is not None
+    # 200 text tokens at $4/M plus 800 image tokens at $5/M; all 1000 at the text rate would be 0.004.
+    assert calculate_price_for_usage(usage, model_name='gpt-realtime', provider_name='openai').total_price == (
+        snapshot(Decimal('0.0048'))
     )
 
 
