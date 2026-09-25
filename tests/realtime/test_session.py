@@ -1813,6 +1813,37 @@ async def test_interrupt_played_bytes_retires_replies_heard_in_full() -> None:
     assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [0])]
 
 
+async def test_interrupt_played_ms_is_resolved_before_the_provider_acknowledges_the_cancel() -> None:
+    """A sideband's cancel clears the provider's playback, which ends playback before the send returns.
+
+    The position was reported for the reply playing when `interrupt()` was called, so it still lands.
+    """
+    speech_end = asyncio.Event()
+
+    class _ClearingConnection(BlockingRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if isinstance(content, CancelResponse):
+                speech_end.set()
+                await asyncio.sleep(0.01)  # the acknowledgement lands while the send settles
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield OutputTranscript(text='hi', is_final=True, item_id='item-1')
+            yield ResponseDone()
+            await speech_end.wait()
+            yield RealtimeOutputSpeechEndEvent()
+            await asyncio.Event().wait()
+
+    conn = _ClearingConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        await _consume_until(aiter(session), _is_turn_complete)
+        await session.interrupt(played_ms=300)
+
+    assert _speech_cuts(session) == [('interrupted', [300])]
+
+
 async def test_interrupt_played_ms_after_the_provider_played_everything_out() -> None:
     """On a WebRTC sideband the provider reports when playback ends; nothing recorded is heard after."""
     conn = BlockingRealtimeConnection(

@@ -1826,9 +1826,12 @@ class RealtimeSession:
             frames.append(TruncateOutput(audio_end_ms=played_ms))
         if not self._server_cancelled_the_response_on_speech:
             frames.append(CancelResponse())
+        # Resolved before sending: the provider can acknowledge the cancel (a sideband's playback
+        # clear) while the send is still settling, and that retires the part the position describes.
+        cuts = self._played_ms_cuts(played_ms)
         if frames:
             await self._send_frame(*frames)
-        self._attribute_played_ms(played_ms)
+        self._apply_cuts(cuts)
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
@@ -1915,8 +1918,8 @@ class RealtimeSession:
             ]
         )
 
-    def _attribute_played_ms(self, played_ms: int | None) -> None:
-        """Record a caller-reported playback position on the part the provider truncates.
+    def _played_ms_cuts(self, played_ms: int | None) -> list[tuple[_SpokenPart, int]]:
+        """Where a caller-reported playback position cuts: the part the provider truncates.
 
         That is the part whose audio was emitted last, or the last speech part when no audio passes
         through the session (a WebRTC sideband). A reply the position says was heard in full is left
@@ -1925,17 +1928,15 @@ class RealtimeSession:
         parts = list(self._spoken.values())
         audible = [part for part in parts if part.start is not None] or parts
         if played_ms is None or not audible:
-            self._apply_cuts([])
-            return
+            return []
         target = audible[-1]
         if (
             target.response is not None
             and target.start is not None
             and played_ms >= self._bytes_to_ms(target.end - target.start)
         ):
-            self._apply_cuts([])
-            return
-        self._apply_cuts([(target, played_ms)])
+            return []
+        return [(target, played_ms)]
 
     def _apply_cuts(self, cuts: list[tuple[_SpokenPart, int]]) -> None:
         """Mark cut speech parts interrupted: in history if recorded, when finalized if still in flight.
