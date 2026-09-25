@@ -1,3 +1,7 @@
+---
+description: "Bundle tools, instructions, model settings and hooks into reusable Pydantic AI capabilities, and browse the built-in capabilities you can add to any agent."
+---
+
 # Capabilities
 
 A capability is a reusable, composable unit of agent behavior. Instead of threading multiple arguments through your `Agent` constructor — [instructions](../agent.md#instructions) here, [model settings](../agent.md#model-run-settings) there, a [toolset](../toolsets.md) somewhere else, a [history processor](../message-history.md#processing-message-history) on yet another parameter — you can bundle related behavior into a single capability and pass it via the [`capabilities`][pydantic_ai.agent.Agent.__init__] parameter.

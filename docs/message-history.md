@@ -1,3 +1,7 @@
+---
+description: "Continue multi-turn conversations with Pydantic AI message history: reuse and store messages as JSON, inject messages mid-run, and trim or summarize history."
+---
+
 # Messages and chat history
 
 Pydantic AI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.

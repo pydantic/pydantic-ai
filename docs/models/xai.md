@@ -1,3 +1,7 @@
+---
+description: "Use xAI Grok models with Pydantic AI: configure the provider and use image generation, X search, file attachments, reasoning effort and multi-agent models."
+---
+
 # xAI
 
 ## Install

@@ -1,3 +1,7 @@
+---
+description: "Define steps in a pydantic-graph workflow: async functions that read state, dependencies and inputs from StepContext, plus streaming steps that yield values."
+---
+
 # Steps
 
 Steps are the fundamental units of work in a graph. They're async functions that receive a [`StepContext`][pydantic_graph.step.StepContext] and return a value.

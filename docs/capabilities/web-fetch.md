@@ -1,3 +1,7 @@
+---
+description: "Let a Pydantic AI agent fetch the contents of URLs with the WebFetch capability, using the provider's native web fetch tool or a local fallback on other models."
+---
+
 # Web Fetch
 
 The [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](overview.md) lets your agent fetch the contents of URLs. Like all [provider-adaptive tools](overview.md#provider-adaptive-tools), it prefers the provider's native web fetch tool and can fall back to a local implementation on other models.

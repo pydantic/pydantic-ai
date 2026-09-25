@@ -1,3 +1,7 @@
+---
+description: "Run Pydantic AI realtime voice agents on Azure OpenAI or Azure AI Voice Live with AzureRealtimeModel: deployment names, transcription, Entra ID auth and WebRTC."
+---
+
 # Azure Realtime
 
 [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure's realtime

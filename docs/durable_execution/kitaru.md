@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with Kitaru, which records runs as flows and checkpoints so model requests, tool calls and human waits resume after recovery."
+---
+
 # Durable Execution with Kitaru
 
 [Kitaru](https://docs.zenml.io/kitaru) is a durable execution layer for AI agents. Its Pydantic AI adapter is provided by the `kitaru` package through `kitaru.adapters.pydantic_ai`, rather than by `pydantic_ai.durable_exec`.

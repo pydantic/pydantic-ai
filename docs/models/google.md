@@ -1,3 +1,7 @@
+---
+description: "Use Google Gemini models with Pydantic AI through the Gemini API or Vertex AI, with video and file input, image generation, thinking and safety settings."
+---
+
 # Google
 
 The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-genai/) package under the hood to

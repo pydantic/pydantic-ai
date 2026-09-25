@@ -1,3 +1,7 @@
+---
+description: "Use Pydantic AI agents inside the tools of your own MCP server, and route their LLM calls back through the connected client with MCP sampling."
+---
+
 # Server
 
 Pydantic AI models can also be used within MCP Servers.

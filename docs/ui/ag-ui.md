@@ -1,3 +1,7 @@
+---
+description: "Serve Pydantic AI agents to CopilotKit and other AG-UI frontends, with streamed events, frontend tools, shared state, tool approval interrupts and Slack bots."
+---
+
 # Agent-User Interaction (AG-UI) Protocol
 
 The [Agent-User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction) is an open standard introduced by the

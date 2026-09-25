@@ -1,3 +1,7 @@
+---
+description: "Install and run the Pydantic AI examples, from setting model provider environment variables to running each example script with uv or pip."
+---
+
 # Pydantic AI examples
 
 Here we include some examples of how to use Pydantic AI and what it can do.
