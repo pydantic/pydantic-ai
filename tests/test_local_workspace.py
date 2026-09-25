@@ -204,11 +204,10 @@ async def test_nonzero_exit_is_a_result(tmp_path: Path):
 async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
-    timeout = 0.2
     with pytest.raises(WorkspaceTimeoutError, match='was killed') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child, so the timeout applies to
         # a command that has not completed rather than to a descendant holding a pipe open.
-        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=timeout)
+        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=2)
 
     assert isinstance(exc_info.value, TimeoutError)
 
@@ -238,7 +237,7 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     that fallback on whatever anyio is installed; the other case is the installed version's own path.
     """
     if force_pipe_bound_wait:
-        monkeypatch.setattr(local_module, '_PROCESS_WAIT_WAITS_FOR_PIPES', True)
+        monkeypatch.setattr(local_module, '_ANYIO_WAITS_FOR_PIPES', True)
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     child_pid_file = tmp_path / 'child-pid'
@@ -265,7 +264,7 @@ async def test_anyio_4_15_wait_path(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     No background child here: on anyio before 4.15 that path waits for the pipes to close.
     """
-    monkeypatch.setattr(local_module, '_PROCESS_WAIT_WAITS_FOR_PIPES', False)
+    monkeypatch.setattr(local_module, '_ANYIO_WAITS_FOR_PIPES', False)
     result = await LocalWorkspaceBackend(tmp_path).run(['echo', 'done'], timeout=10)
     assert (result.exit_code, result.stdout) == (0, 'done\n')
 

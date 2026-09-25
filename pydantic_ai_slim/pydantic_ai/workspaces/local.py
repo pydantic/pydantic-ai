@@ -8,7 +8,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import os
-import re
 import shutil
 import signal
 from collections.abc import Awaitable, Mapping, Sequence
@@ -19,9 +18,8 @@ from typing import cast
 
 import anyio
 import anyio.abc
-from typing_extensions import TypeVar
 
-from pydantic_ai._utils import gather, run_in_executor
+from pydantic_ai._utils import BaseExceptionGroup, run_in_executor
 
 from .protocol import (
     CommandResult,
@@ -47,46 +45,41 @@ _MAX_CAPTURE_BYTES = 10 * 1024 * 1024
 _OUTPUT_DRAIN_GRACE = 2.0
 """How long to keep reading a command's pipes after the direct child has exited."""
 
-T = TypeVar('T')
-
-_ANYIO_VERSION_RE = re.compile(r'(\d+)\.(\d+)')
-_match = _ANYIO_VERSION_RE.match(version('anyio'))
-_PROCESS_WAIT_WAITS_FOR_PIPES = _match is not None and tuple(map(int, _match.groups())) < (4, 15)
-"""Whether `anyio.abc.Process.wait()` on the asyncio backend also waits for the output pipes to close.
-
-Before anyio 4.15.0 it delegated to asyncio's `Process.wait()`, which only returns once every
-redirected pipe has disconnected (https://github.com/agronholm/anyio/issues/1174), so a command
-that left a background child holding stdout open (`sleep 30 & echo done`) would hang `run()`
-until that child exited, and `Process.aclose()` would hang the same way. On those versions
-`_wait_for_exit` polls `returncode`, which asyncio sets the moment the child exits, and `_close`
-releases the inherited pipe descriptors itself before `aclose()`.
-"""
+# Before anyio 4.15, on asyncio, `Process.wait()` and `aclose()` also wait for the output pipes to close
+# (https://github.com/agronholm/anyio/issues/1174), so a command that leaves a background child holding
+# stdout open (`sleep 30 & echo done`) would hang `run()` until that child exits. On those versions
+# `_wait_for_exit` polls `returncode` and `_close` closes our pipe ends first. Delete this workaround
+# once `anyio>=4.15` is the minimum.
+_ANYIO_WAITS_FOR_PIPES = tuple(int(part) for part in version('anyio').split('.')[:2]) < (4, 15)
 _EXIT_POLL_INTERVAL = 0.005
 
 
-def _running_on_asyncio() -> bool:
+def _waits_for_pipes() -> bool:
     try:
         asyncio.get_running_loop()
     except RuntimeError:  # pragma: no cover - only reached on Trio, which CI does not run
         return False
-    return True
+    return _ANYIO_WAITS_FOR_PIPES
 
 
-async def _shielded(awaitable: Awaitable[T]) -> T:
-    """Wait for work that must finish even if the caller is cancelled.
+async def _shielded(awaitable: Awaitable[None]) -> None:
+    """Await to completion even if the caller is cancelled meanwhile; the cancellation is raised after.
 
-    A plain shielded scope is not enough because `asyncio.Task.cancel()` and `asyncio.timeout()`
-    still cancel the task doing the await. A task-group child is cancelled only by the group,
-    which honors the child's shield.
+    Runs in a task-group child, because a shielded scope alone does not stop asyncio's `Task.cancel()`.
     """
 
-    async def run() -> T:
-        result: list[T] = []
+    async def child() -> None:
         with anyio.CancelScope(shield=True):
-            result.append(await awaitable)
-        return result[0]
+            await awaitable
 
-    return (await gather(run()))[0]
+    try:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(child)
+    except BaseExceptionGroup as group:
+        # The child's own error, as a single exception rather than a group.
+        error = group.exceptions[0]
+        error.__suppress_context__ = True
+        raise error
 
 
 class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
@@ -135,7 +128,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # Symlinks are left for `working_dir()` to resolve on first use.
         absolute = expanded if expanded.is_absolute() else Path.cwd() / expanded
         self._working_dir = absolute
-        self._canonical_working_dir: Path | None = None
+        # Resolved on first use, not here, because capabilities build backends inside the event loop.
+        self._resolved_working_dir: Path | None = None
         self._ref = WorkspaceRef(provider='local', id=absolute.as_posix())
         self._env = {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ} | dict(env or {})
 
@@ -154,11 +148,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return self._ref
 
     async def _get_working_dir(self) -> Path:
-        if self._canonical_working_dir is None:
+        # Symlinks resolved (macOS `/var`, `link/..`), so paths match what the kernel reports to commands.
+        if self._resolved_working_dir is None:
 
             def resolve() -> Path:
-                # Canonicalization keeps macOS `/var` symlinks and spellings such as `link/..` aligned
-                # with the directory the kernel uses for the command's working directory.
                 resolved = self._working_dir.resolve()
                 if not resolved.is_dir():
                     raise WorkspaceUnavailableError(
@@ -167,9 +160,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     )
                 return resolved
 
-            # `resolve()` is idempotent, so concurrent first calls may safely compute it twice.
-            self._canonical_working_dir = await run_in_executor(resolve)
-        return self._canonical_working_dir
+            self._resolved_working_dir = await run_in_executor(resolve)
+        return self._resolved_working_dir
 
     async def working_dir(self) -> str:
         return str(await self._get_working_dir())
@@ -180,6 +172,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         if not target.is_absolute():
             raise ValueError(f'path must be absolute, got {path!r}')
         return target
+
+    # File operations run in a thread: filesystem calls block, and must not stall the event loop.
 
     async def read_bytes(self, path: str) -> bytes:
         return await run_in_executor(self._path(path).read_bytes)
@@ -265,7 +259,9 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
         process: anyio.abc.Process | None = None
 
-        async def spawn() -> anyio.abc.Process:
+        async def spawn() -> None:
+            # Assigned here, not returned, so the cleanup below reaches a process that finished
+            # starting after the caller was cancelled.
             nonlocal process
             process = await anyio.open_process(
                 command,
@@ -276,16 +272,15 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 stderr=PIPE,
                 start_new_session=True,
             )
-            return process
 
         try:
-            # Store the result inside the shielded child so cleanup can reach a process whose caller
-            # was cancelled while subprocess creation finished.
-            running_process = await _shielded(spawn())
+            await _shielded(spawn())
         except BaseException:
             if process is not None:
                 await self._terminate(process)
             raise
+        running_process = process
+        assert running_process is not None
 
         stdout_buffer = bytearray()
         stderr_buffer = bytearray()
@@ -365,14 +360,9 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise TimeoutError
         return exit_code
 
-    @staticmethod
-    def _uses_pipe_bound_wait() -> bool:
-        # Trio's `wait()` and `aclose()` never waited on the pipes; only asyncio (and uvloop) did.
-        return _PROCESS_WAIT_WAITS_FOR_PIPES and _running_on_asyncio()
-
     async def _wait_for_exit(self, process: anyio.abc.Process) -> int:
         """Return the exit code as soon as the command itself exits, whatever its children do with the pipes."""
-        if not self._uses_pipe_bound_wait():
+        if not _waits_for_pipes():
             return await process.wait()
         while (exit_code := process.returncode) is None:
             await anyio.sleep(_EXIT_POLL_INTERVAL)
@@ -380,34 +370,28 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     async def _close(self, process: anyio.abc.Process) -> None:
         """Release the process's pipes and reap it, without waiting for the pipes to close."""
-        if self._uses_pipe_bound_wait():
-            # asyncio's `Process.wait()` (which old `aclose()` ends with) returns only once every
-            # pipe has disconnected, so close our ends of the output pipes first, the way anyio
-            # 4.15's `aclose()` does. The transport is reachable only through asyncio's private
-            # `Process._transport`; this branch is dead on anyio >= 4.15.
+        if _waits_for_pipes():
+            # What anyio 4.15's `aclose()` does; the transport is only reachable through asyncio's
+            # private `Process._transport`.
             transport = cast(
                 asyncio.SubprocessTransport,
                 process._process._transport,  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             )
             for fd in (1, 2):
-                # Both pipes exist: `run` always spawns with `stdout=PIPE, stderr=PIPE`.
                 pipe = transport.get_pipe_transport(fd)
-                assert pipe is not None
+                assert pipe is not None  # `run` always spawns with `stdout=PIPE, stderr=PIPE`
                 pipe.close()
         await process.aclose()
 
     async def _terminate(self, process: anyio.abc.Process) -> PermissionError | None:
-        async def terminate() -> PermissionError | None:
-            denial: PermissionError | None = None
-            try:
-                self._kill(process)
-            except PermissionError as error:
-                denial = error
-            finally:
-                await self._close(process)
+        """Kill the process group and reap it; return the error if killing the group was denied."""
+        try:
+            self._kill(process)
+        except PermissionError as denial:
             return denial
-
-        return await _shielded(terminate())
+        finally:
+            await _shielded(self._close(process))
+        return None
 
     @staticmethod
     def _kill(process: anyio.abc.Process) -> None:

@@ -332,12 +332,10 @@ class Workspace(WorkspaceBackend):
         return await self._backend.working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
-        """Resolve a possibly-relative path to an absolute POSIX path.
+        """Join `path` onto `base` (default: the working directory) and normalize it as text, with no I/O.
 
-        Joins `path` onto `base` (default: [`working_dir`][pydantic_ai.workspaces.Workspace.working_dir])
-        and normalizes it textually. This is a spelling convenience for model-supplied paths,
-        **not** a confinement mechanism: `..` segments can escape `base` and symlinks are not
-        inspected. Isolation is the workspace's job, not this method's.
+        Symlinks are not followed and `..` can escape `base`, so this confines nothing; use
+        [`realpath`][pydantic_ai.workspaces.Workspace.realpath] to learn where a path actually leads.
         """
         if base is not None and not posixpath.isabs(base):
             raise ValueError(f'base must be an absolute path, got {base!r}')
@@ -374,17 +372,10 @@ class Workspace(WorkspaceBackend):
         return await self._filesystem.exists(await self.resolve(path))
 
     async def realpath(self, path: str) -> str:
-        """Resolve every symlink in `path`, the way the environment itself would.
+        """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
 
-        A relative `path` is joined onto the [`working_dir`][pydantic_ai.workspaces.Workspace.working_dir].
-        Symlinks in the existing components are resolved and `.`/`..` segments normalized;
-        components that don't exist are kept as written, like `os.path.realpath(path, strict=False)`.
-        Unlike [`resolve`][pydantic_ai.workspaces.Workspace.resolve], which is textual, this
-        answers where a path actually leads.
-
-        Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] when it
-        implements it, and `readlink` in the environment's shell otherwise. A filesystem-only
-        backend has no symlinks to resolve, so its paths are only normalized.
+        Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath], else `readlink` in
+        its shell; a backend with neither only normalizes the path.
         """
         if not posixpath.isabs(path):
             # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
