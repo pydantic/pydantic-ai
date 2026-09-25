@@ -10138,9 +10138,8 @@ async def test_result_after_a_sibling_was_cancelled_is_sent_without_counting_a_r
     session = RealtimeSession(conn, runner)
     async with session:
         events = asyncio.create_task(drain_events(session))
-        await _until(
-            lambda: session._tool_call_batches.get('c1') is not None and session._tool_call_batches['c1'].abandoned
-        )  # pyright: ignore[reportPrivateUsage]
+        batches = session._tool_call_batches  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: (batch := batches.get('c1')) is not None and batch.abandoned)
         assert 'c1' in session._pending_tool_calls  # pyright: ignore[reportPrivateUsage]
         release_slow.set()
         await _until(lambda: bool(conn.results()))
