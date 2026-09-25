@@ -1194,24 +1194,20 @@ async def test_openai_explicit_forcing_without_thinking_allowed(allow_model_requ
 
 @skip_if_no_xai
 @pytest.mark.parametrize(
-    'profile,settings,thinking,expected_tool_choice',
+    'profile_fields,settings,thinking,expected_tool_choice',
     [
-        pytest.param(GrokModelProfile(), {}, 'high', 'required', id='supported_while_thinking'),
+        pytest.param({}, {}, 'high', 'required', id='supported_while_thinking'),
+        pytest.param({'supports_forced_tool_choice_with_thinking': False}, {}, 'high', 'auto', id='thinking_on'),
+        pytest.param({'supports_forced_tool_choice_with_thinking': False}, {}, False, 'required', id='thinking_off'),
         pytest.param(
-            GrokModelProfile(supports_forced_tool_choice_with_thinking=False), {}, 'high', 'auto', id='thinking_on'
-        ),
-        pytest.param(
-            GrokModelProfile(supports_forced_tool_choice_with_thinking=False), {}, False, 'required', id='thinking_off'
-        ),
-        pytest.param(
-            GrokModelProfile(supports_forced_tool_choice_with_thinking=False, thinking_enabled_by_default=True),
+            {'supports_forced_tool_choice_with_thinking': False, 'thinking_enabled_by_default': True},
             {},
             None,
             'auto',
             id='thinking_on_by_default',
         ),
         pytest.param(
-            GrokModelProfile(supports_forced_tool_choice_with_thinking=False),
+            {'supports_forced_tool_choice_with_thinking': False},
             {'xai_reasoning_effort': 'none'},
             'high',
             'required',
@@ -1221,14 +1217,14 @@ async def test_openai_explicit_forcing_without_thinking_allowed(allow_model_requ
 )
 async def test_xai_forcing_follows_thinking_state(
     allow_model_requests: None,
-    profile: GrokModelProfile,
+    profile_fields: dict[str, bool],
     settings: XaiModelSettings,
     thinking: ThinkingLevel | None,
     expected_tool_choice: str,
 ):
     """xAI reads the shared `supports_forced_tool_choice_with_thinking` flag against the request's thinking state,
     in which `xai_reasoning_effort` takes precedence over unified thinking."""
-    m = XaiModel('grok-4', provider=XaiProvider(xai_client=MagicMock()), profile=profile)
+    m = XaiModel('grok-4', provider=XaiProvider(xai_client=MagicMock()), profile=cast(GrokModelProfile, profile_fields))
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False, thinking=thinking)
 
     _, tool_choice = m._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
