@@ -622,8 +622,9 @@ The same `FallbackModel` can also take the steps the decision model answered but
     [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute] is raised instead of a response, and
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] returns the *next* model's response, which carries
     none of the decision model's numbers. So counting hand-offs by their absence in `provider_details` is the
-    measurement, and the exceptions carry the route and its probability if you would rather catch them: run the
-    models separately, or wrap the fallback, when you want both.
+    measurement. If you would rather catch the exceptions, `ToolCallProposed` carries `tool_name` and `probability`,
+    and `UnsureRoute` carries `route`, `probability` and `probabilities`: run the models separately, or wrap the
+    fallback, when you want both.
 
 ## Confidence and thresholds
 
