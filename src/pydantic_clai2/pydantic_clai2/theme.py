@@ -107,6 +107,8 @@ WARNING = AI_YELLOW
 ERROR = CALCIUM
 MUTED = GREY
 THINKING = PURPLE
+# The logo keeps Pydantic's brand colours under every palette; do not pass these through `color()`.
+LOGO = f'bold {LITHIUM}'
 BANNER = (LITHIUM, PURPLE, AI_CYAN)
 DIFF_ADDITION = '#465258'
 DIFF_DELETION = '#682B36'

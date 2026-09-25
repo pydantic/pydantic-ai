@@ -38,9 +38,8 @@ def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> N
     ):
         assert fragment in text.plain
     palette = PALETTES.get(name)
-    foreground = palette.ansi[12] if palette is not None else theme.LITHIUM
     header = text.get_style_at_offset(console, text.plain.index('CLAI 2.0'))
-    assert header.color == Color.parse(foreground)
+    assert header.color == Color.parse(theme.LITHIUM)
     assert header.bgcolor == (Color.parse(palette.bg) if palette is not None else None)
     assert text.get_style_at_offset(console, text.plain.index('return')).color == Color.parse(
         palette.ansi[4] if palette is not None else 'color(4)'

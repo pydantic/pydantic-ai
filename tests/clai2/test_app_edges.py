@@ -13,7 +13,9 @@ from prompt_toolkit.styles import BaseStyle
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
+from rich.color import Color
 from rich.console import Console
+from rich.text import Text
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
@@ -273,3 +275,32 @@ async def test_lazy_add_model_menu_and_named_selection(tmp_path: Path, monkeypat
     assert 'No changes.' in output.getvalue()
     assert 'Saved model. Applied.' in output.getvalue()
     assert store.load().model == 'test'
+
+
+@pytest.mark.parametrize('name', theme.names())
+@pytest.mark.parametrize(
+    ('width', 'expected'),
+    [
+        (160, [theme.LITHIUM, theme.LITHIUM, theme.PURPLE, theme.PURPLE, theme.AI_CYAN, theme.AI_CYAN]),
+        (40, [theme.LITHIUM]),
+    ],
+)
+async def test_banner_keeps_brand_colours_under_every_theme(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, width: int, expected: list[str]
+) -> None:
+    inputs(monkeypatch, ['/exit'])
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=width)
+    await chat(
+        Agent(TestModel()),
+        deps=None,
+        settings=Settings(model=None, theme=name),
+        store=SettingsStore(tmp_path / 'config.db'),
+        console=console,
+    )
+    text = Text.from_ansi(output.getvalue())
+    logo_rows = [line for line in text.split() if {'█', '═'} & set(line.plain) or line.plain == 'CLAI 2.0']
+    colours = [
+        line.get_style_at_offset(console, len(line.plain) - len(line.plain.lstrip())).color for line in logo_rows
+    ]
+    assert colours == [Color.parse(colour) for colour in expected]

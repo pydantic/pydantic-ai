@@ -25,7 +25,7 @@ def theme_preview(name: str, *, width: int) -> str:
     output = StringIO()
     console = Console(file=output, width=width - 2, force_terminal=True, color_system='truecolor', highlight=False)
     with theme.use(lambda: name):
-        console.print('CLAI 2.0', style=theme.color(theme.ACCENT))
+        console.print('CLAI 2.0', style=theme.LOGO)
         console.print('> Summarize this change')
         console.print('Thinking Checking the files...', style=theme.color(theme.THINKING))
         print_tool_header(console, name='read_file', argument='src/app.py')
