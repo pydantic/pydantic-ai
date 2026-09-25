@@ -232,45 +232,53 @@ class _ShellFilesystem(SupportsFilesystem):
 
     async def stat(self, path: str) -> FileEntry:
         quoted_path = shlex.quote(path)
+        # A leading `l` marks a symlink; the rest follows it, like the other operations.
         result = await self._backend.run(
+            f'if test -L {quoted_path}; then printf l; fi; '
             f"if test -d {quoted_path}; then printf 'directory\\n'; else wc -c < {quoted_path}; fi",
             shell=True,
         )
         await self._raise_for_error(result, path, missing=True)
         output = result.stdout.strip()
+        is_symlink = output.startswith('l')
+        output = output.removeprefix('l')
+        name = posixpath.basename(posixpath.normpath(path))
         if output == 'directory':
-            return FileEntry(name=posixpath.basename(posixpath.normpath(path)), path=path, is_dir=True, size=None)
+            return FileEntry(name=name, path=path, is_dir=True, size=None, is_symlink=is_symlink)
         try:
             size = int(output)
         except ValueError as error:
             raise WorkspaceError(f'shell filesystem returned an invalid size for {path!r}: {output!r}') from error
-        return FileEntry(name=posixpath.basename(posixpath.normpath(path)), path=path, is_dir=False, size=size)
+        return FileEntry(name=name, path=path, is_dir=False, size=size, is_symlink=is_symlink)
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
         quoted_path = shlex.quote(path)
         result = await self._list_paths(quoted_path)
         await self._raise_for_error(result, path, missing=True)
-        directory_result = await self._list_paths(quoted_path, directories_only=True)
-        await self._raise_for_error(directory_result, path, missing=True)
         try:
             entries = base64.b64decode(result.stdout).decode().split('\0')
-            directories = set(base64.b64decode(directory_result.stdout).decode().split('\0'))
         except (UnicodeDecodeError, ValueError) as error:
             raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}') from error
+        # Each entry is `<d|-><l|-><path>`: whether it is a directory (following a symlink), and a symlink.
         return tuple(
             FileEntry(
-                name=posixpath.basename(entry_path),
-                path=entry_path,
-                is_dir=entry_path in directories,
+                name=posixpath.basename(entry[2:]),
+                path=entry[2:],
+                is_dir=entry[0] == 'd',
                 size=None,
+                is_symlink=entry[1] == 'l',
             )
-            for entry_path in sorted(entry for entry in entries if entry)
+            for entry in sorted((entry for entry in entries if entry), key=lambda entry: entry[2:])
         )
 
-    async def _list_paths(self, quoted_path: str, *, directories_only: bool = False) -> WorkspaceResult:
+    async def _list_paths(self, quoted_path: str) -> WorkspaceResult:
         temporary_path = f'/tmp/.pydantic-ai-{uuid.uuid4().hex}.list'
         quoted_temporary = shlex.quote(temporary_path)
-        type_filter = r' -exec test -d {} \;' if directories_only else ''
+        # `test` and `printf` rather than `find -printf`, which BusyBox and macOS lack.
+        mark = (
+            ' -exec sh -c \'for f do test -d "$f" && d=d || d=-; test -L "$f" && l=l || l=-; '
+            'printf "%s%s%s\\000" "$d" "$l" "$f"; done\' sh {} +'
+        )
         # Do not pipe `find` into `base64`: a POSIX shell reports only `base64`'s exit status and
         # could turn a failed traversal into a successful partial listing. The temporary file keeps
         # `find`'s status authoritative, and the trap removes it on every shell exit path.
@@ -278,7 +286,7 @@ class _ShellFilesystem(SupportsFilesystem):
             f'file={quoted_temporary}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
             f'if ! test -d {quoted_path}; then '
             f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
-            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{type_filter} -print0 > "$file" && base64 < "$file"',
+            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" && base64 < "$file"',
             shell=True,
         )
 

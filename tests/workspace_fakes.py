@@ -38,6 +38,7 @@ class FakeEntry:
     path: str
     is_dir: bool = False
     size: int | None = None
+    is_symlink: bool | None = None
 
 
 _SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')

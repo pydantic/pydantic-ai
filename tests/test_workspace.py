@@ -438,20 +438,31 @@ async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_
         await workspace.read_bytes(filename)
 
 
-async def test_run_only_filesystem_lists_symlinked_directories(tmp_path: Path) -> None:
+@pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
+async def test_entries_follow_symlinks_for_is_dir_and_mark_the_link(tmp_path: Path, native: bool) -> None:
     target = tmp_path / 'target'
     child = target / 'child'
     child.mkdir(parents=True)
     (child / 'file.txt').write_text('content')
     (target / 'child-link').symlink_to(child, target_is_directory=True)
-    root_link = tmp_path / 'root-link'
-    root_link.symlink_to(target, target_is_directory=True)
+    (target / 'file-link').symlink_to(child / 'file.txt')
+    (target / 'dangling-link').symlink_to(tmp_path / 'gone')
+    (tmp_path / 'root-link').symlink_to(target, target_is_directory=True)
+    backend = LocalWorkspaceBackend(tmp_path)
+    workspace = Workspace(backend if native else RunOnlyWorkspaceBackend(backend))
 
-    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
-    entries = {entry.name: entry for entry in await workspace.list_dir(str(root_link))}
+    # Listed through a symlinked directory, which is followed.
+    entries = await workspace.list_dir('root-link')
 
-    assert entries['child'].is_dir
-    assert entries['child-link'].is_dir
+    assert {entry.name: (entry.is_dir, entry.is_symlink) for entry in entries} == {
+        'child': (True, False),
+        'child-link': (True, True),
+        'dangling-link': (False, True),
+        'file-link': (False, True),
+    }
+    link = await workspace.stat('root-link/file-link')
+    assert (link.is_dir, link.is_symlink, link.size) == (False, True, len('content'))
+    assert (await workspace.stat('root-link/child')).is_symlink is False
 
 
 async def test_run_only_filesystem_raises_builtin_path_errors_in_one_command(tmp_path: Path) -> None:

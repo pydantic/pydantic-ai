@@ -283,7 +283,9 @@ class ReadFileArguments:
 
 
 def _file_entry(entry: WorkspaceFileEntry) -> FileEntry:
-    return FileEntry(name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size)
+    return FileEntry(
+        name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size, is_symlink=entry.is_symlink
+    )
 
 
 @dataclass(frozen=True)

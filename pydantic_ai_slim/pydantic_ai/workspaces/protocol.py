@@ -194,7 +194,12 @@ class WorkspaceFileEntry(Protocol):
 
     @property
     def is_dir(self) -> bool:
-        """Whether the entry is a directory."""
+        """Whether the entry is a directory, following a symlink to its target."""
+        ...
+
+    @property
+    def is_symlink(self) -> bool | None:
+        """Whether the entry itself is a symlink, or `None` when the backend can't tell."""
         ...
 
     @property
@@ -214,6 +219,7 @@ class FileEntry:
     path: str
     is_dir: bool
     size: int | None
+    is_symlink: bool | None = None
 
 
 @runtime_checkable
