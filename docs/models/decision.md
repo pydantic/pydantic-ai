@@ -1,3 +1,7 @@
+---
+description: "Use a decision model with Pydantic AI for classification, routing and yes-or-no judgements: typed answers with a confidence, cheaper and faster than an LLM."
+---
+
 # Decision models
 
 A decision model answers typed questions about a text rather than writing text: is this true or not, which of these labels fits, where does this fall on a rubric. Each answer comes with a probability, or a distribution over the options, so you know how sure it is. An agent runs on one like on any other model, and uses it for the two things a decision can drive: filling a structured [output](../output.md), and picking which *route* to take — which output type, [output function](../output.md#output-functions) or [tool](../tools.md) the text calls for.
