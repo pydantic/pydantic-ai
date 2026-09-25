@@ -1,6 +1,6 @@
 ---
 title: Code Mode
-description: Wrap an agent's tools into a single sandboxed run_code tool so the model orchestrates many calls in one Python program instead of many round-trips.
+description: "Let a Pydantic AI agent call its tools from one sandboxed Python script (programmatic tool calling) instead of one model round-trip per tool call."
 ---
 
 # Code Mode

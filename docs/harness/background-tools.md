@@ -1,6 +1,6 @@
 ---
 title: Background Tools
-description: Let the agent keep working while selected tools run, then give it each result.
+description: "Run slow Pydantic AI tools in the background so the agent keeps working, then deliver each tool's result to the model as a follow-up message when it finishes."
 ---
 
 # Background Tools

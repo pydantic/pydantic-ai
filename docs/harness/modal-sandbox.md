@@ -1,6 +1,6 @@
 ---
 title: Modal Sandbox
-description: Give a Pydantic AI agent a per-run Modal sandbox with command and file tools.
+description: "Run a Pydantic AI agent's shell commands and file edits in an isolated Modal cloud sandbox instead of on your host, fresh per run or shared across runs."
 ---
 
 # Modal Sandbox

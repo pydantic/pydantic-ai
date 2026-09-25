@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent Notion tools through Notion's hosted MCP server: search and edit pages in a workspace, with per-user OAuth access tokens."
+---
+
 # Notion
 
 Let an agent search and change content in a Notion workspace. `Notion` gives the agent every tool Notion's hosted MCP server offers, including tools that make changes. The agent acts with the permissions of the Notion user it connects as.

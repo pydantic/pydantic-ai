@@ -1,6 +1,6 @@
 ---
 title: Playwright Browser
-description: Give a Pydantic AI agent a real, stateful Chromium browser via async Playwright -- navigate, click, type, scroll, extract page text, run JavaScript, and screenshot JS-heavy or authenticated pages.
+description: "Give a Pydantic AI agent a real Chromium browser through Playwright to navigate, click, type, read, run JavaScript, and screenshot dynamic or logged-in pages."
 ---
 
 # Playwright Browser

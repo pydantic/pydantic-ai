@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent Logfire tools through the hosted Logfire MCP server: query traces and telemetry and manage projects, with per-user API keys."
+---
+
 # Logfire MCP
 
 Let an agent query Logfire telemetry and manage Logfire projects. `LogfireMCP` gives the agent every tool Logfire's hosted MCP server offers, including tools that make changes. The credential you connect with decides what those tools can reach.

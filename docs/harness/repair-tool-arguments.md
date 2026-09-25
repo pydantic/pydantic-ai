@@ -1,6 +1,6 @@
 ---
 title: Repair Tool Arguments
-description: Repair malformed JSON tool arguments before schema validation.
+description: "Fix malformed JSON tool call arguments from the model, such as trailing commas, single quotes, or truncated JSON, before Pydantic AI validates them."
 ---
 
 # Repair Tool Arguments

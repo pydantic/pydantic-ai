@@ -1,6 +1,6 @@
 ---
 title: AWS Lambda Durability
-description: Checkpoint a Pydantic AI agent's model requests and tool calls into AWS Lambda durable steps.
+description: "Make a Pydantic AI agent durable on AWS Lambda durable functions: checkpoint model requests and tool calls so retried or timed-out invocations resume."
 ---
 
 # AWS Lambda Durability

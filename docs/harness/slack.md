@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent Slack tools through Slack's hosted MCP server: read and send messages, browse channels, and edit canvases as a Slack user."
+---
+
 # Slack
 
 Let an agent read and send Slack messages, browse channels, and work with canvases. `Slack` gives the agent every tool Slack's hosted MCP server offers, including tools that make changes. The token you connect with decides what those tools can reach.

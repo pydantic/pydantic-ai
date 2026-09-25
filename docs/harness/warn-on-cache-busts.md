@@ -1,6 +1,6 @@
 ---
 title: Warn On Cache Busts
-description: Warn when a conversation's prompt-cache hit collapses between model requests, within a run or across turns, so a moved prefix or an expired cache surfaces instead of silently re-charging tokens.
+description: "Catch prompt cache busts in Pydantic AI: warn when the cached prefix read back collapses between model requests or turns, from a moved prefix or expired cache."
 ---
 
 # Warn On Cache Busts

@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent Linear tools through Linear's hosted MCP server: read and update issues, projects, and comments, with per-user tokens or OAuth."
+---
+
 # Linear
 
 Let an agent read and change Linear issues, projects, teams, and comments. `Linear` gives the agent every tool Linear's hosted MCP server offers, including tools that make changes. The credential you connect with decides what those tools can reach.

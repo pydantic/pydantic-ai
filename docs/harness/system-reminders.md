@@ -1,6 +1,6 @@
 ---
 title: System Reminders
-description: Re-inject behavioral guidance mid-run -- on a cadence or reactively -- to counter instruction fade, without invalidating the prompt cache.
+description: "Re-inject reminders into a long Pydantic AI agent run on a cadence or condition to counter instruction fade, without breaking the prompt cache."
 ---
 
 # System Reminders

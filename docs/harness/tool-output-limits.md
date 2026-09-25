@@ -1,6 +1,6 @@
 ---
 title: Tool Output Limits
-description: Reduce oversized tool returns when they are produced -- truncate, spill to a queryable file, or summarize -- so a large payload does not persist in history.
+description: "Keep large tool outputs from filling a Pydantic AI agent's context window: truncate them, spill them to a file the model can page through, or summarize them."
 ---
 
 # Tool Output Limits

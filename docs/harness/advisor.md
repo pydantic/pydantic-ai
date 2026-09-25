@@ -1,6 +1,6 @@
 ---
 title: Advisor
-description: Let an executor model consult a separate advisor model through a provider-native tool or a local Pydantic AI fallback.
+description: "Let a Pydantic AI agent consult a second, often stronger model mid-run, via the provider-native advisor tool on Anthropic or OpenRouter, or a local fallback."
 ---
 
 # Advisor

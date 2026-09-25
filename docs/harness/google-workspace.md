@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent Gmail, Google Calendar, Drive, Docs, and Sheets tools through Google's hosted MCP servers, with per-user OAuth tokens."
+---
+
 # Google Workspace
 
 Let an agent use Gmail, Calendar, Drive, and other Google Workspace products. `GoogleWorkspace` gives the agent every tool Google's hosted MCP servers offer for the products you select, including tools that send, change, and delete. The token you connect with decides what those tools can reach.

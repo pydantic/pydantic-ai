@@ -1,6 +1,6 @@
 ---
 title: Planning
-description: Give an agent a structured, self-updating task list -- with a cache-safe live reminder, optional persistence, subtasks, dependencies, and events.
+description: "Give a Pydantic AI agent a todo list it plans and updates itself, with subtasks, dependencies, SQLite, Postgres, or Redis storage, and a cache-safe reminder."
 ---
 
 # Planning

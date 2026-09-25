@@ -1,6 +1,6 @@
 ---
 title: Media Externalization
-description: The storage plumbing behind Step Persistence, content-addressed stores and walker helpers that move large binary and text payloads out of message history and put them back on demand.
+description: "Store large images, audio, and text from Pydantic AI message history in content-addressed disk, SQLite, S3, or MongoDB stores to keep run snapshots small."
 ---
 
 # Media Externalization

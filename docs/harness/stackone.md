@@ -1,6 +1,6 @@
 ---
 title: StackOne
-description: Let a Pydantic AI agent use actions from one of the user's linked business applications through StackOne.
+description: "Connect a Pydantic AI agent to a user's linked business apps, such as BambooHR, Salesforce, Workday, or Zendesk, and run their actions through StackOne."
 ---
 
 # StackOne

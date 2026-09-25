@@ -1,6 +1,6 @@
 ---
 title: ACP (Agent Client Protocol)
-description: Serve a Pydantic AI agent to editors and terminal UIs over the Agent Client Protocol -- streamed text, diff-rendered file edits, human-in-the-loop tool approval, and per-workspace sessions.
+description: "Run a Pydantic AI agent inside Zed and other editors over the Agent Client Protocol (ACP), with streamed text, diff views, tool approval, and sessions."
 ---
 
 # ACP (Agent Client Protocol)

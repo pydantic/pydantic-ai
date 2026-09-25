@@ -1,6 +1,6 @@
 ---
 title: Input, Output & Tool Guardrails
-description: Validate the user prompt before it reaches the model, the tool calls the model makes, and the output before it reaches the caller, with allow/block/replace/retry/approve verdicts, chains of guards, ready-made secret and PII detectors, and optional parallel execution.
+description: "Add input, output, and tool call guardrails to a Pydantic AI agent: block, redact, retry, or require approval, with built-in secret and PII detectors."
 ---
 
 # Input, Output & Tool Guardrails

@@ -1,6 +1,6 @@
 ---
 title: Dynamic Workflow
-description: Let an orchestrator agent coordinate a catalog of sub-agents by writing one sandboxed Python script -- fan-out, chaining, voting, and retry loops in a single tool call.
+description: "Let a Pydantic AI orchestrator agent coordinate subagents by writing one sandboxed Python script: fan out in parallel, chain, vote, and retry in one tool call."
 ---
 
 # Dynamic Workflow

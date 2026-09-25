@@ -1,6 +1,6 @@
 ---
 title: Step Persistence
-description: Record what an agent did at each boundary, save continuable snapshots to resume or fork from, and track tool side effects across crashes.
+description: "Save Pydantic AI agent run snapshots to memory, files, SQLite, or MongoDB so you can resume or fork a run after a crash, with a ledger of tool side effects."
 ---
 
 # Step Persistence

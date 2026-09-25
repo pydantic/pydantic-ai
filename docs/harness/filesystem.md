@@ -1,6 +1,6 @@
 ---
 title: FileSystem
-description: Give a Pydantic AI agent sandboxed, glob-filtered file access scoped to a single directory tree, with symlink-safe containment checks.
+description: "Give a Pydantic AI agent tools to read, write, edit, list, and search files, confined to one directory with allow, deny, and read-only glob patterns."
 ---
 
 # FileSystem

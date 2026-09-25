@@ -1,6 +1,6 @@
 ---
 title: Ask User
-description: Let the model ask the user multiple-choice questions mid-run and wait for the answers; you supply the answerer, so it works from a terminal, a web UI, or a test.
+description: "Let a Pydantic AI agent ask the user clarifying multiple-choice questions mid-run and wait for answers, from a terminal, web UI, or test answerer you supply."
 ---
 
 # Ask User

@@ -1,6 +1,6 @@
 ---
 title: Browser Use
-description: Delegate open-ended web tasks from a Pydantic AI agent to an autonomous browser-use agent -- one browse_web tool hands over a natural-language goal, browser-use drives a real browser, and the result comes back as text or validated JSON.
+description: "Hand open-ended web tasks from a Pydantic AI agent to a browser-use agent that drives a real Chromium browser and returns text or validated JSON results."
 ---
 
 # Browser Use

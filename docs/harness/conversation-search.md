@@ -1,6 +1,6 @@
 ---
 title: Conversation Search
-description: BM25-search the history StepPersistence already stores -- turns that compaction dropped from the live context, and past runs in the same conversation.
+description: "Let a Pydantic AI agent search its past conversation history, including messages compaction removed from context, with BM25 over Step Persistence snapshots."
 ---
 
 # Conversation Search

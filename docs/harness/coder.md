@@ -1,6 +1,6 @@
 ---
 title: Coder
-description: Autonomous coding with six tools and context management.
+description: "Build a coding agent with Pydantic AI Harness: Coder gives any model read, write, edit, grep, and shell tools plus repo instructions and context management."
 goal: >-
   Show that Coder is an assembly of linked, individually usable capabilities. The composition
   list is the point of this page: keep every component hyperlinked to its own page, and keep this

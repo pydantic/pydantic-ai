@@ -1,6 +1,6 @@
 ---
 title: Compaction
-description: A menu of strategies -- clear, dedupe, trim, or summarize -- for keeping an agent's conversation history within the model's context window.
+description: "Keep a long Pydantic AI agent run within the context window on any model: clear old tool results, trim, or summarize history, with tiered escalation."
 ---
 
 # Compaction

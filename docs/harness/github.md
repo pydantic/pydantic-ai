@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent GitHub tools through GitHub's hosted MCP server: read and change repositories, issues, and pull requests with per-user tokens."
+---
+
 # GitHub
 
 Let an agent read and change GitHub repositories, issues, pull requests, and other resources. `GitHub` gives the agent the tools in GitHub's default tool groups, including tools that make changes; `toolsets` picks other groups. The credential you connect with decides what those tools can reach.

@@ -1,6 +1,6 @@
 ---
 title: Macroscope
-description: Give a Pydantic AI agent the same local Macroscope code review its editor plugins run -- streamed findings parsed into structured issues the agent validates and fixes with its own tools.
+description: "Run a local Macroscope code review from a Pydantic AI agent and get structured findings it can verify and fix with its own file and shell tools."
 ---
 
 # Macroscope

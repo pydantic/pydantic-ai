@@ -1,6 +1,6 @@
 ---
 title: Subagents
-description: Let an agent delegate self-contained tasks to named child agents via a single delegate_task tool, with per-delegate budgets and failure handling.
+description: "Let a Pydantic AI agent delegate tasks to named subagents through one delegate_task tool, with per-subagent budgets, model choice, and Markdown agent files."
 ---
 
 # Subagents

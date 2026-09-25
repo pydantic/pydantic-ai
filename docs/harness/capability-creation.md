@@ -1,6 +1,6 @@
 ---
 title: Runtime Capability Creation
-description: Let an agent create, validate, and persist Pydantic AI capabilities during one run for activation on the next.
+description: "Let a Pydantic AI agent write its own capabilities (tools, hooks, instructions) as Python during a run, validate them, and load them on the next run."
 ---
 
 # Runtime Capability Creation

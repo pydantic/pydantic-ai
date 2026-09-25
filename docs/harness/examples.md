@@ -1,6 +1,6 @@
 ---
 title: Examples
-description: Complete, self-contained agents built from harness capabilities, written to be read and copied.
+description: "Example Pydantic AI Harness agents to read and copy: a coding agent and a web research agent, each built from individual capabilities with full configuration."
 ---
 
 # Examples

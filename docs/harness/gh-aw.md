@@ -1,6 +1,6 @@
 ---
 title: Run your own Pydantic AI agent as a GitHub Agentic Workflow
-description: Run your own Pydantic AI agent headless in GitHub Actions, on issues, pull requests or a schedule, sandboxed, with MCP tools and safe outputs.
+description: "Run your own Pydantic AI agent in GitHub Agentic Workflows (gh-aw): headless in GitHub Actions on issues, pull requests, or a schedule, with MCP tools."
 ---
 
 # Run your own Pydantic AI agent as a GitHub Agentic Workflow

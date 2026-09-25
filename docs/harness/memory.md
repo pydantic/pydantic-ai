@@ -1,6 +1,6 @@
 ---
 title: Memory
-description: Persistent, namespaced agent notebooks with bounded prompt injection, on-demand search, and concurrency-safe stores.
+description: "Give a Pydantic AI agent long-term memory across runs: a Markdown notebook it writes and searches, per-user namespaces, and file, SQLite, or Postgres stores."
 ---
 
 # Memory

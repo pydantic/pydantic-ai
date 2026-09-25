@@ -1,6 +1,6 @@
 ---
 title: Repo Context
-description: Discover and load a repo's accumulated coding-assistant context engineering -- instruction files, skills, sub-agents, and hooks.
+description: "Load a repo's AGENTS.md and CLAUDE.md instruction files into a Pydantic AI agent and inventory its skills, subagents, and hooks under .claude or .agents."
 ---
 
 # Repo Context

@@ -1,6 +1,6 @@
 ---
 title: Trajectory Judge
-description: Review a live agent run with a second model on a cadence, and steer it back on course mid-run, while a correction is still cheap.
+description: "Use an LLM judge to review a live Pydantic AI agent run every N model requests and steer it back on course mid-run when it drifts from the task."
 ---
 
 # Trajectory Judge

@@ -1,6 +1,6 @@
 ---
 title: Spend
-description: Track what an agent costs and refuse the next request once a budget is spent, with windows longer than a run, per-tenant scopes, and a counter shared across worker processes.
+description: "Set daily, monthly, or per-tenant USD and token budgets for a Pydantic AI agent, track LLM cost per response, and stop requests once a budget is spent."
 ---
 
 # Spend
