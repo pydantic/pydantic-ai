@@ -2038,8 +2038,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -2050,7 +2048,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             model: Optional model to use for the agent run.
-            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is, or a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment. See the [workspace docs](../workspace.md).
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -2077,7 +2074,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model=model,
             model_settings=model_settings,
             usage_limits=usage_limits,
-            workspace=workspace,
         )
 
     def to_cli_sync(
@@ -2088,8 +2084,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -2100,7 +2094,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             model: Optional model to use for the agent run.
-            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is, or a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment. See the [workspace docs](../workspace.md).
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -2118,7 +2111,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
-                workspace=workspace,
             )
         )
 

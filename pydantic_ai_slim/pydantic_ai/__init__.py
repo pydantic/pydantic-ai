@@ -203,10 +203,6 @@ from .toolsets import (
     WrapperToolset,
 )
 from .usage import RequestUsage, RunUsage, UsageLimits
-from .workspaces import (
-    Workspace,
-    WorkspaceRef,
-)
 
 __all__ = (
     '__version__',
@@ -391,9 +387,6 @@ __all__ = (
     'AgentCapability',
     'Capability',
     'CapabilityFunc',
-    # workspaces
-    'Workspace',
-    'WorkspaceRef',
     # output
     'ToolOutput',
     'NativeOutput',

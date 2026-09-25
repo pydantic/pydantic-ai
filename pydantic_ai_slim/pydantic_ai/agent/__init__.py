@@ -4159,7 +4159,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         models: ModelsParam = None,
         deps: AgentDepsT = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
@@ -4174,7 +4173,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The returned Starlette application can be mounted into a FastAPI app or run directly
         with any ASGI server (uvicorn, hypercorn, etc.).
 
-        Note that the `deps`, `workspace`, and `model_settings` will be the same for each request.
+        Note that the `deps` and `model_settings` will be the same for each request.
         To provide different `deps` for each request use the lower-level adapters directly.
 
         The agent's configured native tools (registered via `capabilities=[NativeTool(...)]`
@@ -4189,7 +4188,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
             deps: Optional dependencies to use for all requests.
-            workspace: Optional workspace for all requests; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is, or a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment. See the [workspace docs](../workspace.md).
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
             html_source: Path or URL for the chat UI HTML. Can be:
@@ -4230,7 +4228,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self,
             models=models,
             deps=deps,
-            workspace=workspace,
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,
