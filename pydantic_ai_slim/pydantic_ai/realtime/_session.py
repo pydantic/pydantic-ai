@@ -3178,6 +3178,11 @@ class RealtimeSession:
         if batch.reply_due:
             # The last result: counted before it goes out, since a provider may answer on its arrival.
             self._count_tool_batch_reply(batch)
+        elif not batch.abandoned:
+            # Not known to be the last, so nothing is counted yet, but the reply it may complete is
+            # checked against `request_limit` before the result goes out: once out, the connection asks
+            # for that reply as soon as the calling response is done, before the session can refuse it.
+            self._check_request_limit()
         batch.sending += 1
         try:
             await self._send_frame(result)
@@ -3292,13 +3297,17 @@ class RealtimeSession:
         between: those solicited but not yet started, and the one in flight. Without them, sends
         issued back-to-back would each see the same count and oversubscribe the budget.
         """
+        self._check_request_limit()
+        self._pending_response_requests += 1
+
+    def _check_request_limit(self) -> None:
+        """Check `request_limit` against one more response than those finalized, reserved and in flight."""
         if self._usage_limits is not None and self._responses_are_requests:
             in_flight = 1 if self._response_limit_checked else 0
             projected = dataclasses.replace(
                 self.usage, requests=self.usage.requests + self._pending_response_requests + in_flight
             )
             self._usage_limits.check_before_request(projected)
-        self._pending_response_requests += 1
 
     def _begin_response(self) -> None:
         """Take the reservation for the response that's starting, or make the check now if it has none.

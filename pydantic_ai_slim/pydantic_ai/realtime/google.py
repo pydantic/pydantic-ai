@@ -1295,7 +1295,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
 
     @property
     def _answers_tool_calls_per_response(self) -> bool:
-        return True
+        # A blocking tool-call frame is answered once, when every call has its result. A non-blocking
+        # call's result cuts into the speech on its own, so it may get an answer of its own.
+        return not self._async_tool_calls_enabled
 
     @property
     def input_transcription_enabled(self) -> bool:
