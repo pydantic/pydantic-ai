@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         WarnNearLimits,
     )
     from .conversation_search import ConversationSearch
+    from .day_ai import DayAI
     from .dynamic_workflow import DynamicWorkflow
     from .exa import ExaAgent, ExaSearch
     from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
@@ -74,6 +75,7 @@ __all__ = [
     'Coder',
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
+    'DayAI',
     'DeduplicateFileReads',
     'DynamicWorkflow',
     'ExaAgent',
@@ -135,6 +137,7 @@ _CAPABILITY_EXPORTS = {
     'CodeMode': 'code_mode',
     'Coder': 'coder',
     'ConversationSearch': 'conversation_search',
+    'DayAI': 'day_ai',
     'DeduplicateFileReads': 'compaction',
     'DynamicWorkflow': 'dynamic_workflow',
     'ExaAgent': 'exa',

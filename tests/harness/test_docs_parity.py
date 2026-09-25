@@ -165,6 +165,7 @@ _CAPABILITY_PAGE_META = {
     'notion.md': ('notion', 'Notion'),
     'ordinal.md': ('ordinal', 'Ordinal'),
     'grain.md': ('grain', 'Grain'),
+    'day-ai.md': ('day_ai', 'Day AI'),
     'stackone.md': ('stackone', 'StackOne'),
     'slack.md': ('slack', 'Slack'),
     'acp.md': ('experimental/acp', 'ACP (Agent Client Protocol)'),

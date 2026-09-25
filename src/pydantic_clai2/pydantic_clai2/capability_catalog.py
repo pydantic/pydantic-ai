@@ -20,6 +20,7 @@ _FACTORIES = (
     ('tiered_compaction', 'compaction:TieredCompaction'),
     ('warn_near_limits', 'compaction:WarnNearLimits'),
     ('conversation_search', 'conversation_search:ConversationSearch'),
+    ('day_ai', 'day_ai:DayAI'),
     ('dynamic_workflow', 'dynamic_workflow:DynamicWorkflow'),
     ('exa_agent', 'exa:ExaAgent'),
     ('exa_search', 'exa:ExaSearch'),
