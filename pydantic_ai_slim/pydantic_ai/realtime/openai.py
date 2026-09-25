@@ -117,7 +117,6 @@ from .codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
-    ResponseRequestsMerged,
     SessionUsage,
     TextContext,
     ToolResult,
@@ -413,7 +412,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._deferred_response_inputs: list[int] = []
         self._response_request_inputs: tuple[int, ...] = ()
         # Inputs that shared a `response.create` with an earlier one and so get no response of their own,
-        # reported to the session as `ResponseRequestsMerged` with the next frame's events.
+        # reported to the session through `_take_merged_response_requests`.
         self._merged_response_requests = 0
         self._cancel_sent = False
         # Id of a response we cancelled (barge-in): the server keeps streaming a few straggler deltas
@@ -447,6 +446,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None:
         """The call so far, when a session has offered it for replay on reconnect."""
         return self._message_history
+
+    @property
+    def batches_tool_results(self) -> bool:
+        return True
+
+    def _take_merged_response_requests(self) -> int:
+        merged, self._merged_response_requests = self._merged_response_requests, 0
+        return merged
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
@@ -633,11 +640,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     except ValueError as e:
                         # A malformed frame (bad JSON or audio payload) shouldn't tear down the whole
                         # session; surface it as a recoverable error and keep reading.
-                        events = [_frame_error(e)]
-                    if merged := self._merged_response_requests:
-                        # Ahead of the frame's events, which may include the merged response's own.
-                        self._merged_response_requests = 0
-                        yield ResponseRequestsMerged(count=merged)
+                        yield _frame_error(e)
+                        continue
                     for event in events:
                         yield event
                 # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises

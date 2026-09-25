@@ -1247,6 +1247,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._tool_call_turn_unanswered = False
 
     @property
+    def batches_tool_results(self) -> bool:
+        # Gemini answers a tool-call frame once every call in it has a result, whatever `respond` says.
+        return True
+
+    @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
 

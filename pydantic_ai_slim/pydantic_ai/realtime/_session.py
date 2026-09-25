@@ -102,7 +102,6 @@ from .codec import (
     RealtimeInput,
     RealtimeSessionInput,
     ResponseDone,
-    ResponseRequestsMerged,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -371,22 +370,36 @@ class _ToolBatch:
     A model answers a response's tool calls together, with every result in hand: Gemini waits for the
     whole batch before it replies, and an OpenAI-protocol model asked to respond after each result
     answers before its sibling calls have results, then calls them again and speaks the answer twice.
-    Results still go out as they settle, but only the last asks for a response.
+    Each result goes out as its call settles, but only the one that completes the batch asks for the
+    answer. One that settles before the calling response is complete can't know it is the last, so
+    when every result is out by then, the answer is asked for once the response completes.
     """
 
-    unsent: set[str] = field(default_factory=set[str])
-    """Calls whose result hasn't gone out yet: still running, or waiting their turn to send."""
+    running: set[str] = field(default_factory=set[str])
+    """Calls still executing."""
+    sending: int = 0
+    """Results on their way to the wire."""
     closed: bool = False
     """Whether the response making the calls has been finalized, so no further call can join."""
     sent_unanswered: bool = False
-    """Whether a result went out without asking for a response, so the batch may still owe one."""
-    abandoned: bool = False
-    """Whether the provider lost the conversation the calls were made in, so no answer is asked for."""
+    """Whether a result went out without asking for the answer."""
+    answered: bool = False
+    """Whether the answer has been asked for."""
+    unanswerable: bool = False
+    """Whether the batch must not ask for an answer: the provider cancelled one of its calls (a barge-in
+    abandons the turn), lost the conversation it was made in, or one of its results failed to send."""
 
     @property
     def answer_owed(self) -> bool:
-        """Every result is out, none of them asked for the answer, and no call can still join."""
-        return self.closed and not self.unsent and self.sent_unanswered and not self.abandoned
+        """Every result is out, none asked for the answer, and nothing can still join or ask."""
+        return (
+            self.closed
+            and not self.running
+            and not self.sending
+            and self.sent_unanswered
+            and not self.answered
+            and not self.unanswerable
+        )
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -911,10 +924,11 @@ class RealtimeSession:
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
         # The batch the response being assembled is adding tool calls to, closed when that response is
-        # finalized; and the batch of every call whose result hasn't been sent. See `_ToolBatch`.
+        # finalized; the batch of every call whose result hasn't been sent; and batches just closed,
+        # which the pump checks for an answer still to ask for. See `_ToolBatch`.
         self._open_tool_batch: _ToolBatch | None = None
         self._tool_call_batches: dict[str, _ToolBatch] = {}
-        self._tool_batch_answer_owed = False
+        self._closed_tool_batches: list[_ToolBatch] = []
         # Set while a response the provider said isn't the last of its exchange is held open for the
         # tool call it was stalling for; the finish reason it will be recorded with if something else
         # arrives first. See `_handle_turn_complete`.
@@ -2838,8 +2852,9 @@ class RealtimeSession:
         # and the model is not asked to answer results it may never have received, even by a tool that
         # swallows its cancellation and returns anyway. Marked before the in-flight response is settled,
         # which would otherwise complete its batch and ask.
-        for batch in self._tool_call_batches.values():
-            batch.abandoned = True
+        for batch in {*self._tool_call_batches.values(), *self._closed_tool_batches}:
+            batch.unanswerable = True
+        self._closed_tool_batches.clear()
         self._open_tool_batch = None
         if self._response_in_flight:
             events.extend(self._finalize_assistant_part())
@@ -3104,27 +3119,37 @@ class RealtimeSession:
         return result_part, user_content
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
+        result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
+        if (batch := self._tool_call_batches.pop(call_part.tool_call_id, None)) is None:
+            # A connection that doesn't batch tool results (or a call dispatched outside the pump): the
+            # result asks for its own answer, as it always has.
+            await self._send_tool_result_frame(result, respond=True)
+            return
+        batch.running.discard(call_part.tool_call_id)
         # Decided with no await before `_send_frame` queues on the send lock, which is taken in arrival
-        # order: the result that asks for the answer is then the last of its batch to go out, not merely
-        # the last to settle.
-        batch = self._tool_call_batches.pop(call_part.tool_call_id, None)
-        if batch is not None:
-            batch.unsent.discard(call_part.tool_call_id)
-        respond = batch is None or (batch.closed and not batch.unsent and not batch.abandoned)
+        # order, so the result that asks for the answer goes out after every other result of the batch.
+        respond = batch.closed and not batch.running and not batch.unanswerable
+        batch.answered |= respond
+        batch.sending += 1
+        try:
+            await self._send_tool_result_frame(result, respond=respond)
+        except BaseException:
+            # A result the model never got can't be answered: nothing may ask for an answer to it.
+            batch.unanswerable = True
+            raise
+        finally:
+            batch.sending -= 1
+        if not respond:
+            batch.sent_unanswered = True
+            if batch.answer_owed:
+                # The calling response completed while this was going out.
+                await self._ask_for_tool_batch_answer(batch)
+
+    async def _send_tool_result_frame(self, result: ToolResult, *, respond: bool) -> None:
         if respond:
             self._reserve_response_request()
-        else:
-            assert batch is not None
-            batch.sent_unanswered = True
         try:
-            await self._send_frame(
-                ToolResult(
-                    tool_call_id=call_part.tool_call_id,
-                    output=output,
-                    content=wire_content or None,
-                    respond=respond,
-                )
-            )
+            await self._send_frame(replace(result, respond=respond))
         except BaseException:
             if respond:
                 self._release_response_reservation()
@@ -3132,45 +3157,30 @@ class RealtimeSession:
 
     def _close_tool_batch(self) -> None:
         """Close the batch of the response just finalized: its calls are all in, so it may owe the answer."""
-        if (batch := self._open_tool_batch) is not None:
-            self._open_tool_batch = None
-            batch.closed = True
-            self._answer_tool_batch_if_owed(batch)
+        if (batch := self._open_tool_batch) is None:
+            return
+        self._open_tool_batch = None
+        batch.closed = True
+        self._closed_tool_batches.append(batch)
 
-    def _leave_tool_batch(self, batch: _ToolBatch, tool_call_id: str) -> None:
-        """Take an abandoned call out of its batch, which its siblings may now have finished answering."""
-        batch.unsent.discard(tool_call_id)
-        self._answer_tool_batch_if_owed(batch)
+    async def _answer_closed_tool_batches(self) -> None:
+        """Ask for the answer to closed batches whose results all went out before they closed.
 
-    def _answer_tool_batch_if_owed(self, batch: _ToolBatch) -> None:
-        """Ask for the answer to a batch whose results all went out before the batch was complete.
-
-        A result is sent as soon as its call settles, so a fast tool's result is usually out before the
-        response that called it has finished: it can't ask for the answer, because a sibling call may
-        still be coming. Once the batch is complete, the answer is requested on its own. A provider
-        without manual turn control answers a batch of results by itself, so only the reply is counted.
+        Run by the pump once the event that closed them is fully handled: after that event's usage-limit
+        checks, so a response over its limit doesn't ask for the next one, and before any queued message
+        the pump delivers next, so the answer is not requested behind (and merged into) a later turn's.
         """
-        if not batch.answer_owed:
-            return
-        batch.sent_unanswered = False
-        try:
-            self._reserve_response_request()
-        except UsageLimitExceeded as exceeded:
-            self._park_error(exceeded)
-            return
-        if self._profile.get('supports_manual_turn_control', False):
-            self._tool_batch_answer_owed = True
+        while self._closed_tool_batches:
+            batch = self._closed_tool_batches.pop(0)
+            if batch.answer_owed:
+                await self._ask_for_tool_batch_answer(batch)
 
-    async def _request_owed_tool_batch_answer(self) -> None:
-        """Send the request `_answer_tool_batch_if_owed` reserved, from the pump that completed the batch.
-
-        Sent before the pump goes on, so queued messages it delivers next can't ask for a response of
-        their own first and leave this one to be answered separately.
-        """
-        if not self._tool_batch_answer_owed:
+    async def _ask_for_tool_batch_answer(self, batch: _ToolBatch) -> None:
+        batch.answered = True
+        self._reserve_response_request()
+        if not self._profile.get('supports_manual_turn_control', False):
+            # The provider answers a complete batch by itself (Gemini Live); only the reply is counted.
             return
-        self._tool_batch_answer_owed = False
-        # Queued on the send lock behind any result still going out, so the request follows it.
         try:
             await self._send_frame(CreateResponse())
         except BaseException:
@@ -3301,11 +3311,11 @@ class RealtimeSession:
             # itself, which resets the accumulator.
             response_input_tokens = (self._pending_response_usage + event.usage).input_tokens
             events.extend(self._accumulate_response_usage(event))
-            await self._request_owed_tool_batch_answer()
             if self._usage_limits is not None:
                 self._usage_limits.check_per_request_input_tokens(response_input_tokens)
         # Response pricing happens at finalization, so cost is provisionally unavailable here.
         self._check_usage_limits(warn_if_cost_unavailable=False)
+        await self._answer_closed_tool_batches()
         if self._asap_drain_ready:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')
@@ -3335,7 +3345,8 @@ class RealtimeSession:
                 reserved_budget=reserved_budget,
             )
         except asyncio.CancelledError:
-            self._tool_call_batches.pop(call_part.tool_call_id, None)
+            if (batch := self._tool_call_batches.pop(call_part.tool_call_id, None)) is not None:
+                batch.running.discard(call_part.tool_call_id)
             raise
         except BaseException as e:
             self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
@@ -3404,12 +3415,6 @@ class RealtimeSession:
             if self._accept_item(event.item_id, event.tool_call_id):
                 await self._dispatch_tool_call(event)
             return False
-        if isinstance(event, ResponseRequestsMerged):
-            # Bookkeeping about requests already sent, not something the model did, so it must not
-            # settle a response held for a tool call the way any other event does below.
-            self._pending_response_requests = max(0, self._pending_response_requests - event.count)
-            self._exchange_progress.set()
-            return False
         return await self._handle_non_tool_pump_event(event)
 
     async def _dispatch_tool_call(self, event: ToolCall) -> None:
@@ -3427,11 +3432,12 @@ class RealtimeSession:
             self._tool_calls_in_flight += 1
         # Joined before the call is folded into the response below, which finalizes a response whose
         # usage doesn't follow and so closes the batch with this call in it.
-        batch = self._open_tool_batch
-        if batch is None:
-            batch = self._open_tool_batch = _ToolBatch()
-        batch.unsent.add(event.tool_call_id)
-        self._tool_call_batches[event.tool_call_id] = batch
+        if self._connection.batches_tool_results:
+            batch = self._open_tool_batch
+            if batch is None:
+                batch = self._open_tool_batch = _ToolBatch()
+            batch.running.add(event.tool_call_id)
+            self._tool_call_batches[event.tool_call_id] = batch
         # Captured at dispatch so every call from one response runs at the step in effect when the
         # response produced them, the way a graph run's whole batch shares the step advanced before
         # its request. Read at execution time instead, a call held behind a `sequential` barrier
@@ -3507,11 +3513,10 @@ class RealtimeSession:
 
     async def _handle_non_tool_pump_event(self, event: RealtimeCodecEvent) -> bool:
         """Process an upstream event other than a tool call; return `True` to stop the pump."""
-        # `_handle_pump_event` routes every `ToolCall` to `_dispatch_tool_call` and handles
-        # `ResponseRequestsMerged` itself, so the remaining union is what `_translate_event` accepts;
-        # asserted rather than re-tested so a future codec event that slips past the dispatcher fails
-        # loudly instead of reaching the wrong translator.
-        assert not isinstance(event, (ToolCall, ResponseRequestsMerged))
+        # `_handle_pump_event` routes every `ToolCall` to `_dispatch_tool_call`, so the remaining union
+        # is what `_translate_event` accepts; asserted rather than re-tested so a future codec event
+        # that slips past the dispatcher fails loudly instead of reaching the wrong translator.
+        assert not isinstance(event, ToolCall)
         self._settle_deferred_response()
         if isinstance(event, ConversationCreated):
             return False
@@ -3524,9 +3529,11 @@ class RealtimeSession:
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:
                 if (batch := self._tool_call_batches.pop(tool_call_id, None)) is not None:
-                    # Its siblings still answer the batch without it.
-                    self._leave_tool_batch(batch, tool_call_id)
-                    await self._request_owed_tool_batch_answer()
+                    # A cancelled call means the model abandoned the turn (usually a barge-in): its
+                    # siblings' results still go out, but nothing asks for an answer to them, since the
+                    # interruption starts the next reply.
+                    batch.unanswerable = True
+                    batch.running.discard(tool_call_id)
                 if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
                     continue
                 task, call_part = pending
@@ -3557,7 +3564,7 @@ class RealtimeSession:
                 # barge-in rather than racing the session to handle it.
                 await self._auto_barge_in(out)
             self._queue_put(out)
-        await self._request_owed_tool_batch_answer()
+        await self._answer_closed_tool_batches()
         if isinstance(event, ResponseDone):
             await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
@@ -3568,8 +3575,14 @@ class RealtimeSession:
         token = otel_context.attach(context) if context is not None else None
         try:
             async for event in self._connection:
+                if merged := self._connection._take_merged_response_requests():  # pyright: ignore[reportPrivateUsage]
+                    # Requests the connection answered with a response it was already asking for: none of
+                    # them gets one of its own.
+                    self._pending_response_requests = max(0, self._pending_response_requests - merged)
+                    self._exchange_progress.set()
                 if await self._handle_pump_event(event):
                     return  # a usage limit tripped: stop reading the upstream
+                await self._answer_closed_tool_batches()
         except Exception as e:
             self._pump_error = e
         finally:
