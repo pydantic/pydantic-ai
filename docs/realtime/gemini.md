@@ -245,6 +245,9 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
   follows within the second, it goes out as a video frame, so a camera without a microphone still
   streams. A question typed later than that may not see the image, so send the two together:
   `session.send([image, 'What is this?'])`.
+- Gemini 3.x Live models transcribe the user's speech even with input transcription
+  [turned off](audio.md#input-transcription). Pydantic AI discards those transcripts, so the setting
+  still keeps the user's words out of history, but they are still produced on Google's side.
 - Native transcription can produce only a completed sentence on some models.
   [Caption UIs](audio.md#live-captions) should replace text from `TranscriptUpdate.transcript`
   rather than assume incremental deltas.

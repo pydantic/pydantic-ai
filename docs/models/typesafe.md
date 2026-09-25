@@ -124,7 +124,30 @@ What one request can carry is limited, and `TypeSafeModel` keeps to the first tw
 
 - **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type, so 255 tools is already one too many once the output type is counted beside them. A 256th option is a 400 from the API, so a question over it is refused with a [`UserError`][pydantic_ai.exceptions.UserError] instead.
 - **10 levels in one rubric.** An 11th is a 400 from the API, so eleven or more whole numbers from 0 are not a rubric, and are [asked as a pick-one](decision.md#what-each-field-type-does) instead.
-- **64k tokens** for the state and questions together on `jev-1.13`, with 32k for the state plus the longest question. Past that the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (`max_tokens_exceeded`), which a `FallbackModel` hands to the model behind Jev like any API error, so an over-long conversation quietly becomes a language model call. [Compact](decision.md#judging-a-conversation) earlier than a language model would need.
+- **32k tokens** for the state plus the longest question on `jev-1.13`, and 64k for the state and every question together. The state is counted once per request, so the 32k is the limit a long conversation reaches; the 64k only binds when the questions themselves are very large. Past it the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (`max_tokens_exceeded`), which a `FallbackModel` hands to the model behind Jev like any API error. See [keeping a conversation under the limit](#compaction).
+
+### Keeping a conversation under the limit {#compaction}
+
+The whole message history is the state, so each turn adds to every request after it, and tool results, which go along whole, fill the budget fastest. Once a conversation is over the limit, every later turn fails on Jev, so behind a `FallbackModel` every one of them goes to the language model until the history is compacted.
+
+Jev's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] is the 32k limit, filled in from [genai-prices](https://github.com/pydantic/genai-prices) like any model's, so [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] measures against the limit that binds, and the [compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) processor works on a Jev agent unchanged. A `FallbackModel` measures against the smallest window among its models, which is Jev's.
+
+```python {title="jev_compaction.py" requires="compact_when_window_fills.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.models.fallback import FallbackModel
+
+from compact_when_window_fills import compact_when_window_fills
+
+agent = Agent(
+    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
+    output_type=bool,
+    instructions='Does the customer want a refund?',
+    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+)
+```
+
+To keep what the dropped turns said, summarize them instead, with a history processor like [summarize old messages](../message-history.md#summarize-old-messages) or the [harness](https://pydantic.dev/docs/ai/harness/compaction/)'s `SummarizingCompaction`. Either way the summary has to be written by a language model: Jev does not write text, so pass `SummarizingCompaction` a language model as `model=` rather than letting it default to the agent's. Give it a `max_tokens=` with headroom under 32k, such as `20_000`: it counts from the usage Jev reported for the last request, but estimates anything newer, and any history with no reported usage, at about four characters a token, which undercounts the JSON Jev is sent by about a quarter.
 
 ## What Jev answers badly
 
