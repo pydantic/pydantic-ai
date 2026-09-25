@@ -1294,7 +1294,7 @@ def test_map_tool_call_and_usage() -> None:
         usage_metadata=genai_types.UsageMetadata(prompt_token_count=7, response_token_count=2),
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
-        ToolCall(tool_call_id='c1', tool_name='calc', args='{"x":1}'),
+        ToolCall(tool_call_id='c1', tool_name='calc', args='{"x":1}', response_usage_follows=True),
         SessionUsage(usage=RequestUsage(input_tokens=7, output_tokens=2)),
     ]
 
@@ -2251,8 +2251,9 @@ async def test_reconnect_closes_orphaned_turn_opened_by_a_tool_call() -> None:
 
     events = [e async for e in conn]
 
-    assert events[:4] == [
-        ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'),
+    assert events[:5] == [
+        ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}', response_usage_follows=True),
+        SessionUsage(usage=RequestUsage()),
         ResponseDone(interrupted=True),
         RealtimeSessionReconnectEvent(state_restored=True),
         OutputTranscript(text='back', is_final=True),
@@ -2277,8 +2278,9 @@ async def test_reconnect_without_state_abandons_outstanding_tool_calls() -> None
 
     events = [e async for e in conn]
 
-    assert events[:5] == [
-        ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'),
+    assert events[:6] == [
+        ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}', response_usage_follows=True),
+        SessionUsage(usage=RequestUsage()),
         ToolCallCancelled(tool_call_ids=['c1']),
         ResponseDone(interrupted=True),
         RealtimeSessionReconnectEvent(state_restored=False),
@@ -2649,3 +2651,75 @@ def test_declared_tool_behavior_per_model(
     assert isinstance(genai_tool, genai_types.Tool) and genai_tool.function_declarations
     behavior = genai_tool.function_declarations[0].behavior
     assert (behavior.value if behavior else None) == expected_behavior
+
+
+async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
+    """A tool-call frame's calls are one response, and Gemini answers them once: nothing is left owed.
+
+    The session used to finalize a response per call and reserve a reply per result, while Gemini waits
+    for every result and answers them with one turn, so `wait_for_reply()` hung for the rest of the
+    session.
+    """
+    answered = asyncio.Event()
+
+    class _AnswersOnceAllResultsArrive(_RecordingSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            await super().send_tool_response(function_responses=function_responses)
+            if len(self.tool_responses) == 2:
+                answered.set()
+
+        async def receive(self) -> AsyncIterator[Any]:
+            if self._turn:
+                await asyncio.Event().wait()
+            self._turn += 1
+            yield genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[
+                        genai_types.FunctionCall(id='c1', name='fast', args={}),
+                        genai_types.FunctionCall(id='c2', name='slow', args={}),
+                    ]
+                )
+            )
+            await answered.wait()
+            yield genai_types.LiveServerMessage(
+                server_content=genai_types.LiveServerContent(
+                    output_transcription=genai_types.Transcription(text='Both done.')
+                )
+            )
+            yield genai_types.LiveServerMessage(
+                server_content=genai_types.LiveServerContent(turn_complete=True),
+                usage_metadata=genai_types.UsageMetadata(prompt_token_count=7, response_token_count=2),
+            )
+
+    release_slow = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        if name == 'slow':
+            await release_slow.wait()
+        return f'{name} result'
+
+    provider_session = _AnswersOnceAllResultsArrive()
+    connection = _conn(provider_session)
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, model_name='gemini-live', system='google'),
+        tool_manager=make_tool_manager(runner),
+    )
+    async with session:
+        await session.send('Look both up.')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(50):
+            await asyncio.sleep(0)
+        assert not waiting.done()
+        release_slow.set()
+        with anyio.fail_after(5):
+            await waiting
+        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+
+    assert [response.id for response in provider_session.tool_responses] == ['c1', 'c2']
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [[type(part).__name__ for part in response.parts] for response in responses] == [
+        ['ToolCallPart', 'ToolCallPart'],
+        ['SpeechPart'],
+    ]
+    assert session.usage.requests == 2

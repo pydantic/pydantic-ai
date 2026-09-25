@@ -112,6 +112,7 @@ from .codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    ResponseRequestsMerged,
     SessionUsage,
     TextContext,
     ToolResult,
@@ -399,6 +400,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # a re-dial replays the finalized call but never re-asks for the answer the caller is waiting on.
         self._response_started = False
         self._pending_response = False
+        # Requests merged into `_pending_response` since the last frame, reported to the session as
+        # `ResponseRequestsMerged` so it stops counting on a response of their own.
+        self._merged_response_requests = 0
         self._cancel_sent = False
         # Id of a response we cancelled (barge-in): the server keeps streaming a few straggler deltas
         # before its `response.done`, and mapping them would surface speech the user already interrupted.
@@ -466,31 +470,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             text = content if isinstance(content, str) else content.text
             await self._send_text(text, respond=isinstance(content, str))
         elif isinstance(content, ToolResult):
-            # Normalize any follow-up content (downloading and re-encoding media) before the first
-            # frame goes out, so content this provider can't carry fails with nothing sent rather than
-            # leaving the result on the wire without the material that explains it.
-            item = (
-                await user_message_item(
-                    content.content,
-                    provider_name=self._provider_name,
-                    supports_images=self._supports_tool_result_images,
-                )
-                if content.content
-                else None
-            )
-            await self._send_event(
-                {
-                    'type': CONVERSATION_ITEM_CREATE_EVENT,
-                    'item': {
-                        'type': 'function_call_output',
-                        'call_id': content.tool_call_id,
-                        'output': content.output,
-                    },
-                }
-            )
-            if item:
-                await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
-            await self._request_response()
+            await self._send_tool_result(content)
         elif isinstance(content, BinaryImage):
             # An image is added as conversation context (like a video frame), not a turn of its own,
             # so it doesn't trigger a response — drive that with audio (VAD) or `CreateResponse`.
@@ -548,6 +528,34 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         else:
             raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
 
+    async def _send_tool_result(self, content: ToolResult) -> None:
+        # Normalize any follow-up content (downloading and re-encoding media) before the first
+        # frame goes out, so content this provider can't carry fails with nothing sent rather than
+        # leaving the result on the wire without the material that explains it.
+        item = (
+            await user_message_item(
+                content.content,
+                provider_name=self._provider_name,
+                supports_images=self._supports_tool_result_images,
+            )
+            if content.content
+            else None
+        )
+        await self._send_event(
+            {
+                'type': CONVERSATION_ITEM_CREATE_EVENT,
+                'item': {
+                    'type': 'function_call_output',
+                    'call_id': content.tool_call_id,
+                    'output': content.output,
+                },
+            }
+        )
+        if item:
+            await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
+        if content.respond:
+            await self._request_response()
+
     async def _send_text(self, text: str, *, respond: bool) -> None:
         await self._send_event(
             {
@@ -565,6 +573,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def _request_response(self) -> None:
         """Ask the model to respond now, or defer until the active response completes."""
         if self._response_active:
+            if self._pending_response:
+                # One deferred `response.create` answers everything added before it goes out, so a second
+                # request joins it rather than asking for a response that would repeat the first.
+                self._merged_response_requests += 1
             self._pending_response = True
         else:
             self._response_active = True
@@ -588,6 +600,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 async for raw in self._ws:
                     if not isinstance(raw, str):
                         continue
+                    if merged := self._merged_response_requests:
+                        # Merged by sends made since the last frame; reported before this frame's events,
+                        # which may already include the response that answers them.
+                        self._merged_response_requests = 0
+                        yield ResponseRequestsMerged(count=merged)
                     try:
                         events = await self._decode_frame(raw)
                     except ValueError as e:

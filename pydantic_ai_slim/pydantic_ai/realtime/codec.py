@@ -64,6 +64,12 @@ class ToolResult:
     """The tool's output, rendered as a string."""
     content: Sequence[UserContent] | None = None
     """Additional user content to send after the tool output when the provider supports it."""
+    respond: bool = True
+    """Whether the model should respond once this result is delivered.
+
+    The session sends the results of every tool call a model response made together, and only the last
+    of them asks for a response, so the model answers once with all the results in hand. A provider that
+    answers a batch of results on its own (Gemini Live) can ignore it."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -330,6 +336,28 @@ class ConversationCreated:
 
 
 @dataclass(repr=False)
+class ResponseRequestsMerged:
+    """Several requests for a response were merged, so fewer responses will come than were requested.
+
+    A connection that can't start a response while one is in progress holds a request made in the
+    meantime until that response is done, and requests made while one is already being held join it:
+    the response they get answers all of them. The session counts one response per request (a text
+    turn, [`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse], or a
+    [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] with `respond=True`), so without this event
+    [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would keep waiting for the
+    responses that were merged away.
+    """
+
+    count: int
+    """How many requests joined one already being held, and so will get no response of their own."""
+
+    event_kind: Literal['response_requests_merged'] = 'response_requests_merged'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class ConversationItemCreated:
     """An OpenAI-protocol server reported a conversation item.
 
@@ -367,6 +395,7 @@ RealtimeCodecEvent = TypeAliasType(
     | RealtimeSessionReconnectEvent
     | ConversationCreated
     | ConversationItemCreated
+    | ResponseRequestsMerged
     | PartStartEvent
     | PartEndEvent
     | RealtimeSessionErrorEvent,
@@ -500,6 +529,7 @@ __all__ = (
     'ResponseDone',
     'ConversationCreated',
     'ConversationItemCreated',
+    'ResponseRequestsMerged',
     'SessionUsage',
     # Turn-control verbs a connection accepts.
     'CommitAudio',
