@@ -1450,6 +1450,49 @@ def test_map_code_execution_to_native_tool_parts() -> None:
     ]
 
 
+def test_search_status_after_code_execution_is_skipped() -> None:
+    """A search status line after a real code execution doesn't pair with the spent call's id.
+
+    The result consumes its `executable_code`'s id, so the bare `code_execution_result` a native-audio
+    model sends to announce a Google Search is skipped like it is when no code ran, rather than recorded
+    as a second return for the earlier call.
+    """
+    conn = _conn(_RecordingSession())
+
+    def message(*parts: genai_types.Part) -> genai_types.LiveServerMessage:
+        return genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(model_turn=genai_types.Content(parts=list(parts)))
+        )
+
+    code_run = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        message(
+            genai_types.Part(
+                executable_code=genai_types.ExecutableCode(code='print(1 + 1)', language=genai_types.Language.PYTHON)
+            ),
+            genai_types.Part(
+                code_execution_result=genai_types.CodeExecutionResult(
+                    outcome=genai_types.Outcome.OUTCOME_OK, output='2\n'
+                )
+            ),
+        )
+    )
+    search_status = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        message(
+            genai_types.Part(
+                code_execution_result=genai_types.CodeExecutionResult(
+                    outcome=genai_types.Outcome.OUTCOME_OK, output='Looking up information on Google Search.\n'
+                )
+            )
+        )
+    )
+
+    assert [type(event.part).__name__ for event in code_run if isinstance(event, PartStartEvent)] == [
+        'NativeToolCallPart',
+        'NativeToolReturnPart',
+    ]
+    assert search_status == []
+
+
 def test_native_tool_part_indexes_increase_across_messages_and_reset_each_turn() -> None:
     conn = _conn(_RecordingSession())
 

@@ -1058,7 +1058,8 @@ async def test_session_captures_transcript_messages() -> None:
 
 async def test_session_span_counts_dropped_audio_chunks() -> None:
     settings, exporter = _settings()
-    chunks = [bytes([index]) for index in range(40)]
+    # Minute-long chunks of 24 kHz PCM16, so seven of them overflow the view's five-minute window by two.
+    chunks = [bytes([index]) * 60 * 48000 for index in range(7)]
     session = RealtimeSession(
         _Connection([AudioDelta(chunk) for chunk in chunks]),
         _ok_runner,
@@ -1067,11 +1068,11 @@ async def test_session_span_counts_dropped_audio_chunks() -> None:
     )
 
     async with session:
-        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-5:]
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
-    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 8
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 2
     assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 0
 
 

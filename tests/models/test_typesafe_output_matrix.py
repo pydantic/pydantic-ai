@@ -460,12 +460,12 @@ ACCEPTED = [
     Accepted('a rubric field', Graded, Graded(clarity=Clarity.partial)),
     Accepted('field: yes/no from two options', TrueFalse, TrueFalse(which=True)),
     Accepted('field: yes/no with each answer described', Settled, Settled(refunded=Refunded.yes)),
-    # A union is a route set: one request picks the member, a second asks only that member's fields.
+    # A union is a route set: each member's fields are asked beside the route question, and only the picked
+    # member's answers are read back.
     Accepted(
         'a union of output types',
         [Ticket, Escalation],
         Escalation(security=True),
-        requests=2,
         picks='Escalation',
     ),
     # With one output type and one output function the route question rides along with the fields, so the
@@ -482,7 +482,6 @@ ACCEPTED = [
         'union | None, filled',
         Ticket | Escalation | None,
         Escalation(security=True),
-        requests=2,
         picks='Escalation',
     ),
     Accepted('output function | None', [escalate, None], None, picks='None'),
@@ -537,7 +536,12 @@ ACCEPTED = [
                 'area': {
                     'type': 'choice',
                     'criteria': {'10': None, '20': None, '30': None},
-                    'instructions': {'field': 'area', 'question': 'Which area?', 'goal': 'Triage the ticket.'},
+                    'instructions': {
+                        'field': 'area',
+                        'context': ['Codes: Which area, as codes.'],
+                        'question': 'Which area?',
+                        'goal': 'Triage the ticket.',
+                    },
                 }
             }
         ),
@@ -625,6 +629,7 @@ ACCEPTED = [
                     'criteria': {'200': None, '404': None, '500': None},
                     'instructions': {
                         'field': 'check.status',
+                        'context': ['Status: Report what the service returned.'],
                         'question': 'Which status did the service return?',
                         'goal': 'Check the service.',
                     },
@@ -636,20 +641,34 @@ ACCEPTED = [
         'a union member with a pick-one of ints',
         [Ticket, Status],
         Status(status=200),
-        requests=2,
         picks='Status',
         questions=snapshot(
             {
-                'status': {
+                'Ticket.urgent': {
+                    'type': 'noul',
+                    'instructions': {
+                        'field': 'urgent',
+                        'premise': "If the user's request calls for Ticket: Triage the ticket.",
+                        'question': 'Is this urgent?',
+                    },
+                },
+                'Status.status': {
                     'type': 'choice',
                     'criteria': {'200': None, '404': None, '500': None},
                     'instructions': {
                         'field': 'status',
+                        'premise': "If the user's request calls for Status: Report what the service returned.",
                         'question': 'Which status did the service return?',
-                        'chosen': 'Status',
-                        'goal': 'Report what the service returned.',
                     },
-                }
+                },
+                'route': {
+                    'type': 'choice',
+                    'criteria': {
+                        Ticket.__qualname__: 'Triage the ticket.',
+                        Status.__qualname__: 'Report what the service returned.',
+                    },
+                    'instructions': 'Which of these does this call for?',
+                },
             }
         ),
     ),
