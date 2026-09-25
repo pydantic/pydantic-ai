@@ -305,9 +305,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if not delta.content_delta:
             return  # pragma: no cover
 
-        assert self._reasoning_message_id is not None, (
-            'handle_thinking_start must be called before handle_thinking_delta'
-        )
+        if self._reasoning_message_id is None:
+            # A thinking delta can arrive with no open reasoning message: providers
+            # whose streaming adapters reattach reasoning that resumes after text to
+            # the already-ended `ThinkingPart` (#8726). Reinitialize the same state
+            # `handle_thinking_start` does so the impl sees an unstarted reasoning
+            # message and emits its lazy start events for a second envelope.
+            self._reasoning_message_id = str(uuid4())
+            self._reasoning_started = False
 
         if self._use_reasoning:
             from ._thinking_0_11 import handle_thinking_delta as _impl

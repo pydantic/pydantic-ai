@@ -6499,6 +6499,82 @@ async def test_thinking_end_v011_no_encrypted_metadata() -> None:
     )
 
 
+@requires_ag_ui('0.1.11')
+async def test_thinking_delta_resumes_after_text_v011() -> None:
+    """Test that a thinking delta reattached to an ended `ThinkingPart` starts a new reasoning envelope (#8726)."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Reasoning'))
+        yield PartEndEvent(index=0, part=ThinkingPart(content='Reasoning'), next_part_kind='text')
+        yield PartStartEvent(index=1, part=TextPart(content='Text'), previous_part_kind='thinking')
+        yield PartEndEvent(index=1, part=TextPart(content='Text'))
+        # The OpenAI streaming adapter reattaches this delta to the ended ThinkingPart at index 0 (#8726).
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' resumed'))
+
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert not any(event['type'] == 'RUN_ERROR' for event in events)
+    assert [event['type'] for event in events] == [
+        'RUN_STARTED',
+        'REASONING_START',
+        'REASONING_MESSAGE_START',
+        'REASONING_MESSAGE_CONTENT',
+        'REASONING_MESSAGE_END',
+        'REASONING_END',
+        'TEXT_MESSAGE_START',
+        'TEXT_MESSAGE_CONTENT',
+        'TEXT_MESSAGE_END',
+        # The resumed delta opens a second reasoning envelope; it is left open at stream end.
+        'REASONING_START',
+        'REASONING_MESSAGE_START',
+        'REASONING_MESSAGE_CONTENT',
+        'RUN_FINISHED',
+    ]
+    reasoning_message_ids = [event['messageId'] for event in events if event['type'] == 'REASONING_START']
+    assert len(reasoning_message_ids) == 2
+    assert reasoning_message_ids[1] != reasoning_message_ids[0]
+    resumed_delta = [event['delta'] for event in events if event['type'] == 'REASONING_MESSAGE_CONTENT'][1]
+    assert resumed_delta == ' resumed'
+
+
+@requires_ag_ui('0.1.11')
+async def test_thinking_text_then_run_finished_v011() -> None:
+    """Test that the reasoning envelope closes at the text boundary when no resumed delta follows (#8726 control)."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Reasoning'))
+        yield PartEndEvent(index=0, part=ThinkingPart(content='Reasoning'), next_part_kind='text')
+        yield PartStartEvent(index=1, part=TextPart(content='Text'), previous_part_kind='thinking')
+        yield PartEndEvent(index=1, part=TextPart(content='Text'))
+
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert not any(event['type'] == 'RUN_ERROR' for event in events)
+    assert [event['type'] for event in events] == [
+        'RUN_STARTED',
+        'REASONING_START',
+        'REASONING_MESSAGE_START',
+        'REASONING_MESSAGE_CONTENT',
+        'REASONING_MESSAGE_END',
+        'REASONING_END',
+        'TEXT_MESSAGE_START',
+        'TEXT_MESSAGE_CONTENT',
+        'TEXT_MESSAGE_END',
+        'RUN_FINISHED',
+    ]
+    assert len([event for event in events if event['type'] == 'REASONING_START']) == 1
+
+
 # endregion
 
 # region: Coverage — encrypted_metadata branch gap
