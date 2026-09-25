@@ -27,7 +27,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_core import core_schema
-from pydantic_monty import Monty
+from pydantic_monty import AsyncMonty
 
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
@@ -362,10 +362,11 @@ done -- instead of delegating to one sub-agent at a time.
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**.
 - **Importable standard-library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
-  `unicodedata`, `datetime`, `os`, and `pathlib`. Import what you use at the top of the script.
-  Filesystem, environment, and clock operations are not configured for workflow scripts.
-- **No wall-clock or timing primitives** (`asyncio.sleep`, `datetime.datetime.now()`,
-  `datetime.date.today()`, the `time` module).
+  `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use at the top
+  of the script. Filesystem, environment, and clock operations are not configured for workflow
+  scripts.
+- **No clock or randomness**: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`,
+  and unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait.
 
 Each sub-agent below is an async function. Await it and pass `task` by keyword:
 `result = await reviewer(task="...")`, not `reviewer("...")`; all parameters are keyword-only. A
@@ -464,6 +465,26 @@ async def test_single_sub_agent_call() -> None:
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent('looks good', 'reviewer')])
     out = await _run_script(ts, "await reviewer(task='check')")
     assert out == 'looks good'
+
+
+@pytest.mark.parametrize(
+    'code',
+    [
+        pytest.param('import time\ntime.sleep(0.01)', id='time.sleep'),
+        pytest.param('import asyncio\nawait asyncio.sleep(0.01)', id='asyncio.sleep'),
+    ],
+)
+async def test_sleep_completes_without_an_os_handler(code: str) -> None:
+    """Workflows have no OS handler; the executor answers sleeps itself instead of reporting them unsupported."""
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
+    out = await _run_script(ts, f'{code}\n"awake"')
+    assert out == 'awake'
+
+
+async def test_sleeps_are_charged_to_max_duration_secs() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 1})
+    with pytest.raises(ModelRetry, match=r'TimeoutError: sleeping 5s would exceed the 1s this code may sleep'):
+        await _run_script(ts, 'import time\ntime.sleep(5)')
 
 
 async def test_parallel_fan_out() -> None:
@@ -979,7 +1000,7 @@ async def test_worker_crash_becomes_model_retry(monkeypatch: pytest.MonkeyPatch)
     # or subclassed from Python, so injection is not an option.
 
     monkeypatch.setattr(
-        'pydantic_ai_harness.dynamic_workflow._toolset.Monty', functools.partial(Monty, request_timeout=0.5)
+        'pydantic_ai_harness._monty_exec.AsyncMonty', functools.partial(AsyncMonty, request_timeout=0.5)
     )
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
     with pytest.raises(ModelRetry, match='crashed the sandbox worker') as exc_info:
@@ -992,7 +1013,7 @@ async def test_worker_crash_after_budget_exhaustion_returns_terminal_result(
 ) -> None:
 
     monkeypatch.setattr(
-        'pydantic_ai_harness.dynamic_workflow._toolset.Monty', functools.partial(Monty, request_timeout=0.5)
+        'pydantic_ai_harness._monty_exec.AsyncMonty', functools.partial(AsyncMonty, request_timeout=0.5)
     )
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent('counted-result', 'counted')], max_agent_calls=1)
     code = (
@@ -1312,12 +1333,12 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
         started.set()
         await asyncio.Event().wait()  # block forever; only cancellation ends this
 
-    with Monty() as pool:
-        with pool.checkout() as session:
-            state = session.feed_start("import asyncio\nawait asyncio.gather(sub(task='a'), sub(task='b'))")
+    code = "import asyncio\nawait asyncio.gather(sub(task='a'), sub(task='b'))"
+    async with AsyncMonty() as pool:
+        async with pool.checkout() as session:
             executor = MontyExecutor(dispatch=dispatch, valid_names={'sub'}, global_sequential=True)
             # The first call is awaited inline and blocks; the second is still a bare coroutine.
-            task = asyncio.ensure_future(executor.run(state))
+            task = asyncio.ensure_future(executor.run(functools.partial(session.feed_start, code)))
             await started.wait()
             task.cancel()
             with pytest.raises(asyncio.CancelledError):  # pragma: no branch

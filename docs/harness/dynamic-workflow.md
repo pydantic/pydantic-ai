@@ -206,9 +206,10 @@ DynamicWorkflow(
 The script runs in Monty, a subset of Python. Knowing the edges matters:
 
 - No third-party libraries.
-- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `os`, and `pathlib`. Import what you use. Filesystem, environment, and clock operations are not configured for workflow scripts.
-- No wall-clock or timing primitives -- no `asyncio.sleep`, no `datetime.datetime.now()`, no
-  `datetime.date.today()`, and no `time` module.
+- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use. Filesystem, environment, and clock operations are not configured for workflow scripts.
+- No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
+  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
+  a script may sleep for at most that long in total.
 - `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
   arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
 
@@ -216,6 +217,15 @@ Before a script runs it is statically type-checked against the sub-agent signatu
 
 !!! warning "An uncaught error aborts the whole script"
     A sub-agent failure surfaces as `RuntimeError`. The script can catch it with `try`/`except RuntimeError`; an uncaught failure aborts the whole script and the model retries it. If a script fails after some sub-agents already finished, the retry prompt lists bounded previews of up to the 20 most recent completed results. The model can reuse an untruncated preview as a plain value instead of paying for the same call again.
+
+## Running inside a Temporal workflow
+
+Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each
+sub-agent whose model requests should run as activities, then register every agent with its own
+`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](/ai/harness/code-mode/#temporal-durability),
+and is re-executed during replay against the recorded sub-agent results.
+Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
+runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
 ## Observability
 

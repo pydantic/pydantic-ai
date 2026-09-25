@@ -1,40 +1,54 @@
 """Shared Monty execution loop for code-execution capabilities.
 
-Drives a Monty REPL via the synchronous snapshot API (`feed_start`/`resume`),
-dispatching external function calls back to a host-supplied async callback.
+Drives a Monty REPL via the snapshot API (`feed_start`/`resume`), dispatching external
+function calls back to a host-supplied async callback.
 
 Two capabilities build on this:
 
 - `code_mode`: the dispatch callback runs the agent's own tools.
 - `dynamic_workflow`: the dispatch callback runs sub-agents.
 
-The synchronous snapshot API (rather than `AsyncMonty`) is used deliberately: it exposes
-each suspension to this host-controlled loop without a background async adapter. Under
-Temporal, this loop runs workflow-side and replays. Monty's passed-through native module
-owns its worker subprocess outside the restricted Python module sandbox, while nested
-durable-wrapped tools cross their configured activity boundaries.
+The snapshot API (rather than `feed_run`) is used deliberately: it exposes each suspension
+to this host-controlled loop, which owns sequential barriers, dispatch cancellation, and
+trace context. Workers come from Monty's async bindings (`MontyRunState`); inside a Temporal
+workflow each call into them goes through a blocking portal (see `call_monty`).
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Container, Coroutine
+import inspect
+import sys
+from collections.abc import Awaitable, Callable, Container, Coroutine
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar
 
 import anyio
+from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
+from typing_extensions import TypeVarTuple, Unpack
 
 try:
     from pydantic_monty import (
+        NOT_HANDLED,
+        AsyncFunctionSnapshot,
+        AsyncFutureSnapshot,
+        AsyncMonty,
+        AsyncMontySession,
+        AsyncMontyWebsocket,
+        AsyncNameLookupSnapshot,
+        AsyncSnapshot,
         CollectString,
         ExternalException,
+        ExternalFuture,
         ExternalReturnValue,
         ExternalSettledResult,
-        FunctionSnapshot,
-        FutureSnapshot,
         MontyComplete,
-        NameLookupSnapshot,
+        OsFunction,
+        OsHandler,
+        OSPolicy,
+        ResourceLimits,
     )
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -46,7 +60,141 @@ except ImportError as _import_error:  # pragma: no cover
 # perform the host-side work (tool call or sub-agent run) and return the result.
 DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
 
-MontyState = FunctionSnapshot | FutureSnapshot | NameLookupSnapshot | MontyComplete
+_T = TypeVar('_T')
+_Args = TypeVarTuple('_Args')
+
+
+def in_temporal_workflow() -> bool:
+    """Whether this code runs in a Temporal workflow, where Monty must be called through the portal.
+
+    Reads `sys.modules` so the optional extra is never imported.
+    """
+    workflow = sys.modules.get('temporalio.workflow')
+    return workflow is not None and workflow.in_workflow()
+
+
+# Running Monty inside a Temporal workflow
+# ----------------------------------------
+# Monty's bindings are async and complete each awaited call from Monty's own I/O thread by waking
+# the event loop the `await` started on (`loop.call_soon_threadsafe`). A Temporal workflow's event
+# loop cannot be woken that way, so the call would never complete. Inside a workflow, the
+# helpers below therefore route every Monty call through an `anyio` blocking portal: a helper
+# thread running a normal asyncio loop. The workflow thread blocks until the sandbox suspends or
+# completes, exactly as it did with Monty's former sync bindings, and control is back in the
+# workflow between calls, where nested tools run as activities. Outside a workflow the portal is
+# `None` and every helper is a plain `await`.
+
+
+async def call_monty(
+    portal: BlockingPortal | None, fn: Callable[[Unpack[_Args]], Awaitable[_T]], *args: Unpack[_Args]
+) -> _T:
+    """Await one call into Monty's async bindings, `fn(*args)`, through `portal` when there is one."""
+    if portal is None:
+        return await fn(*args)
+    return portal.call(fn, *args)
+
+
+async def _enter_monty(
+    stack: AsyncExitStack, resource: AbstractAsyncContextManager[_T], portal: BlockingPortal | None
+) -> _T:
+    """Enter a Monty pool or session on `stack`, through `portal` when there is one."""
+    if portal is None:
+        return await stack.enter_async_context(resource)
+    return stack.enter_context(portal.wrap_async_context_manager(resource))
+
+
+async def _release_monty(stack: AsyncExitStack) -> None:
+    """Exit the Monty resources on `stack`, even while the run is being cancelled.
+
+    Cancellation is delivered again at every suspension point while an enclosing cancel scope
+    stays cancelled, which would abandon the session or pool exit half way and leak the worker.
+    The exit waits for a snippet that is still running, so it is bounded by
+    `max_feed_duration_secs` (and, for a remote worker, the transport's per-turn deadline); Monty
+    offers no way to interrupt a running feed.
+    """
+    with anyio.CancelScope(shield=True):
+        await stack.aclose()
+
+
+# Extra time the WebSocket transport allows on top of `max_feed_duration_secs`, so the sandbox's own
+# limit fires first and the model sees a time-limit error rather than a dropped connection.
+_REMOTE_TURN_SLACK_SECS = 10.0
+
+# Route the clock and unseeded randomness to the `os=` handler, as before Monty 1.0: without one they are
+# unavailable, which keeps sandbox code deterministic when a Temporal workflow replays it. Sleeps come back to
+# `MontyExecutor`, which waits on the run's own event loop (a durable timer inside a Temporal workflow).
+_OS_POLICY: OSPolicy = {'datetime': 'call_host', 'sleep': 'call_host', 'random_start': 'call_host'}
+
+
+@dataclass
+class MontyRunState:
+    """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
+
+    Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
+    `AsyncMontyWebsocket` when `monty_sandbox_url` is set. Inside a Temporal workflow every Monty
+    call goes through `portal`, opened with the pool and closed after it.
+    """
+
+    monty_sandbox_url: str | None = None
+    pool: AsyncMonty | AsyncMontyWebsocket | None = None
+    session: AsyncMontySession | None = None
+    portal: BlockingPortal | None = None
+    has_executed_feed: bool = False
+    _pool_stack: AsyncExitStack = field(default_factory=AsyncExitStack, repr=False)
+    _session_stack: AsyncExitStack = field(default_factory=AsyncExitStack, repr=False)
+
+    async def get_session(
+        self,
+        *,
+        type_check: bool,
+        type_check_stubs: str | None,
+        limits: ResourceLimits,
+        in_temporal_workflow: bool = False,
+    ) -> AsyncMontySession:
+        """Return the live REPL session, spawning or dialing the pool on first use."""
+        if self.pool is None:
+            try:
+                if in_temporal_workflow:
+                    self.portal = self._pool_stack.enter_context(start_blocking_portal())
+                if self.monty_sandbox_url is None:
+                    pool = AsyncMonty()
+                else:
+                    max_feed_duration_secs = limits.get('max_feed_duration_secs')
+                    timeout = (
+                        None if max_feed_duration_secs is None else max_feed_duration_secs + _REMOTE_TURN_SLACK_SECS
+                    )
+                    pool = AsyncMontyWebsocket(self.monty_sandbox_url, request_timeout=timeout)
+                self.pool = await _enter_monty(self._pool_stack, pool, self.portal)
+            except BaseException:
+                await self._release_pool()  # a failed spawn or dial must not leave the portal thread behind
+                raise
+        if self.session is None:
+            checkout = self.pool.checkout(
+                limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=_OS_POLICY
+            )
+            self.session = await _enter_monty(self._session_stack, checkout, self.portal)
+        return self.session
+
+    async def reset(self) -> None:
+        """Return the current worker and make the next call start a fresh REPL."""
+        # Detach before awaiting the exit, so a session checked out meanwhile is not dropped.
+        stack, self._session_stack = self._session_stack, AsyncExitStack()
+        self.session = None
+        self.has_executed_feed = False
+        await _release_monty(stack)
+
+    async def close(self) -> None:
+        """Return the checked-out worker, then close the owning pool (and portal) even if that fails."""
+        try:
+            await self.reset()
+        finally:
+            await self._release_pool()
+
+    async def _release_pool(self) -> None:
+        stack, self._pool_stack = self._pool_stack, AsyncExitStack()
+        self.pool = None
+        self.portal = None
+        await _release_monty(stack)
 
 
 @dataclass
@@ -107,7 +255,17 @@ class MontyExecutor:
     valid_names: Container[str]
     sequential_names: set[str] = field(default_factory=set[str])
     global_sequential: bool = False
+    # Set inside a Temporal workflow; see `call_monty`.
+    portal: BlockingPortal | None = None
+    # Total seconds the code may sleep, or `None` for no cap. Sleep time does not count toward
+    # Monty's execution-time limit, so it gets the same allowance separately.
+    max_sleep_secs: float | None = None
+    # Replaced in tests, to observe sleeps without waiting.
+    sleep: Callable[[float], Coroutine[Any, Any, None]] = asyncio.sleep
+    # CodeMode's `os_access`. Only needed here to answer host-state calls inside a Temporal workflow.
+    os_handler: OsHandler | None = None
 
+    _slept_secs: float = field(default=0.0, init=False)
     # Parallel calls deferred but not yet resolved, keyed by Monty call id.
     _pending: dict[int, PendingCall] = field(default_factory=dict[int, PendingCall], init=False)
     # Parallel results awaited early at a sequential barrier, before their FutureSnapshot is reached.
@@ -115,14 +273,15 @@ class MontyExecutor:
         default_factory=dict[int, ExternalSettledResult], init=False
     )
 
-    async def run(self, state: MontyState) -> MontyComplete:
-        """Drive the REPL from `state` until it completes."""
+    async def run(self, feed_start: Callable[[], Awaitable[AsyncSnapshot]]) -> MontyComplete:
+        """Drive the REPL from `feed_start` (a bound `AsyncMontySession.feed_start`) until it completes."""
         try:
+            state = await call_monty(self.portal, feed_start)
             while not isinstance(state, MontyComplete):
-                if isinstance(state, NameLookupSnapshot):
+                if isinstance(state, AsyncNameLookupSnapshot):
                     # Leave the name undefined so the sandbox raises `NameError`.
-                    state = state.resume()
-                elif isinstance(state, FunctionSnapshot):
+                    state = await call_monty(self.portal, state.resume)
+                elif isinstance(state, AsyncFunctionSnapshot):
                     state = await self._handle_function(state)
                 else:
                     state = await self._resolve_futures(state)
@@ -151,20 +310,30 @@ class MontyExecutor:
                     await asyncio.gather(*cancelled, return_exceptions=True)
         return state
 
-    async def _handle_function(self, snapshot: FunctionSnapshot) -> MontyState:
+    async def _handle_function(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
         """Dispatch (or defer) a single external function call."""
+        if snapshot.is_os_function and snapshot.function_name in ('time.sleep', 'asyncio.sleep'):
+            return await self._sleep(snapshot)
         if snapshot.is_os_function:
+            if self.portal is not None and self.os_handler is not None:
+                match snapshot.function_name:
+                    case (
+                        'os.getenv' | 'os.environ' | 'date.today' | 'datetime.now' | 'os.urandom' | 'time.time' as name
+                    ):
+                        return await self._answer_os_call(snapshot, self.os_handler, name)
+                    case _:  # file calls: Monty answers them from the mounts first
+                        pass
             # OS calls (env, clock, filesystem) are answered from the feed's mounts and the
             # `os=` handler captured at `feed_start`, falling back to monty's unhandled default.
-            return snapshot.resume_auto()
+            return await call_monty(self.portal, snapshot.resume_auto)
 
         name = snapshot.function_name
         if name not in self.valid_names:
-            return snapshot.resume({'exception': NameError(f'Unknown function: {name}')})
+            return await self._raise_in_sandbox(snapshot, NameError(f'Unknown function: {name}'))
 
         if snapshot.args:
-            return snapshot.resume(
-                {'exception': TypeError(f'{name}() does not accept positional arguments; use keyword arguments')}
+            return await self._raise_in_sandbox(
+                snapshot, TypeError(f'{name}() does not accept positional arguments; use keyword arguments')
             )
 
         if name in self.sequential_names:
@@ -178,10 +347,10 @@ class MontyExecutor:
             try:
                 call = self._dispatch(snapshot, parallel=False)
             except Exception as exc:
-                return snapshot.resume({'exception': exc})
+                return await self._raise_in_sandbox(snapshot, exc)
             # The wrapped outcome (`{'return_value': ...}` / `{'exception': ...}`) is already
             # exactly the payload `resume` expects.
-            return snapshot.resume(await _await_external(call))
+            return await call_monty(self.portal, snapshot.resume, await _await_external(call))
 
         # Deferred execution -- resolved later at FutureSnapshot.
         try:
@@ -193,14 +362,63 @@ class MontyExecutor:
             # feed: calls that already completed keep the results the host recorded for them, and
             # the snippet can still return them. Nothing was scheduled, so there is no task to
             # clean up and no further work is admitted.
-            return snapshot.resume({'exception': exc})
+            return await self._raise_in_sandbox(snapshot, exc)
         self._pending[snapshot.call_id] = call
-        return snapshot.resume({'future': ...})
+        return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
 
-    def _dispatch(self, snapshot: FunctionSnapshot, *, parallel: bool) -> PendingCall:
-        # Compatibility with Monty before https://github.com/pydantic/monty/pull/885.
-        trace_context: Callable[[], otel_context.Context] = getattr(snapshot, 'trace_context', otel_context.get_current)
-        context = trace_context()
+    async def _sleep(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
+        """Wait for a sandbox sleep here rather than in Monty, charging it to `max_sleep_secs`.
+
+        Monty has already validated the duration: `args` is one non-negative float.
+        """
+        secs: float = snapshot.args[0]
+        if self.max_sleep_secs is not None and self._slept_secs + secs > self.max_sleep_secs:
+            remaining = self.max_sleep_secs - self._slept_secs
+            return await self._raise_in_sandbox(
+                snapshot,
+                TimeoutError(
+                    f'sleeping {secs:g}s would exceed the {self.max_sleep_secs:g}s this code may sleep '
+                    f'(max_duration_secs); {remaining:g}s left'
+                ),
+            )
+        self._slept_secs += secs
+        if snapshot.function_name == 'time.sleep':
+            await self.sleep(secs)
+            return await call_monty(self.portal, snapshot.resume, ExternalReturnValue(return_value=None))
+        # `asyncio.sleep` is awaitable, so defer it like a parallel call and gathered sleeps overlap.
+        sleep = self.sleep(secs)
+        parallel = not self.global_sequential
+        task = asyncio.ensure_future(sleep) if parallel else sleep
+        self._pending[snapshot.call_id] = PendingCall(task, otel_context.get_current())
+        return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
+
+    async def _answer_os_call(
+        self, snapshot: AsyncFunctionSnapshot, handler: OsHandler, name: OsFunction
+    ) -> AsyncSnapshot:
+        """Call `os_access` on the workflow's own thread, so it can use `temporalio.workflow` APIs.
+
+        Through the portal Monty would call it from another thread. File calls are not routed here:
+        they go to Monty, which answers them from the mounts first.
+        """
+        token = otel_context.attach(snapshot.trace_context())
+        try:
+            value = handler(name=name, args=snapshot.args, kwargs=snapshot.kwargs, is_async=True)
+            if inspect.isawaitable(value):
+                value = await value
+        except Exception as exc:
+            return await self._raise_in_sandbox(snapshot, exc)
+        finally:
+            otel_context.detach(token)
+        if value is NOT_HANDLED:
+            return await call_monty(self.portal, snapshot.resume_not_handled)
+        return await call_monty(self.portal, snapshot.resume, ExternalReturnValue(return_value=value))
+
+    async def _raise_in_sandbox(self, snapshot: AsyncFunctionSnapshot, exc: Exception) -> AsyncSnapshot:
+        """Resume the suspended call by raising `exc` at its sandbox call site."""
+        return await call_monty(self.portal, snapshot.resume, ExternalException(exception=exc))
+
+    def _dispatch(self, snapshot: AsyncFunctionSnapshot, *, parallel: bool) -> PendingCall:
+        context = snapshot.trace_context()
         token = otel_context.attach(context)
         try:
             call = self.dispatch(snapshot.function_name, snapshot.kwargs)
@@ -209,7 +427,7 @@ class MontyExecutor:
         finally:
             otel_context.detach(token)
 
-    async def _resolve_futures(self, snapshot: FutureSnapshot) -> MontyState:
+    async def _resolve_futures(self, snapshot: AsyncFutureSnapshot) -> AsyncSnapshot:
         """Resolve the deferred calls a `FutureSnapshot` is waiting on."""
         pending_ids = snapshot.pending_call_ids
         results: dict[int, ExternalSettledResult] = {}
@@ -228,7 +446,7 @@ class MontyExecutor:
                 del self._pending[cid]
                 results[cid] = _wrap_gathered(outcome)
 
-        return snapshot.resume(results)
+        return await call_monty(self.portal, snapshot.resume, results)
 
 
 async def _await_external(call: PendingCall) -> ExternalReturnValue | ExternalException:

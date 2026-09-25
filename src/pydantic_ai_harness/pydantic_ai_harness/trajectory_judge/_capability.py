@@ -409,9 +409,8 @@ class _Durability(Protocol):
     in_durable_context: bool
 
 
-# Mirrors `code_mode._toolset._in_temporal_workflow`, which checks Temporal alone because only
-# Temporal replays `run_code`. This one covers every engine because the judge launch is unsafe
-# under all of them; fold the two together if a shared durable-detection helper ever lands.
+# `_monty_exec.in_temporal_workflow` asks Temporal directly, because only Temporal replays
+# `run_code`. This one covers every engine because the judge launch is unsafe under all of them.
 def _in_durable_context(ctx: RunContext[AgentDepsT]) -> bool:
     """Whether this run executes inside a durable workflow or flow, without importing the optional extras."""
     return any(

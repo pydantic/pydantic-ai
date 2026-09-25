@@ -26,6 +26,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOS,
     CodeModeResourceLimits,
     CodeModeToolset,
+    as_os_handler,
     in_durable_execution,
 )
 
@@ -108,20 +109,26 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """
 
     os_access: CodeModeOS | None = None
-    """Give sandboxed code environment variables, the clock, and file I/O through a handler you provide; unset, they are unavailable."""
+    """Give sandboxed code environment variables, the clock, and file I/O through a handler you provide; unset, they are unavailable.
+
+    Pass an `AbstractOS` such as `OSAccess`, or a handler called with keyword arguments (see
+    `pydantic_monty.OsHandler`). A plain function is called from a Monty thread, not the event
+    loop's thread, with the run's contextvars set, so it must not touch asyncio objects; an `async`
+    handler is awaited on an event loop instead. Inside a Temporal workflow, clock, environment, and
+    randomness calls run on the workflow's own thread, so the handler can use `workflow.now()`.
+    The positional `(name, args, kwargs)` form is deprecated.
+    """
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
-    """Sandbox execution limits, applied per Monty session.
+    """Sandbox execution limits.
 
-    `None` applies a 30-second execution and 256 MiB heap backstop. The guarantee is per snippet:
-    no single `run_code` snippet runs longer than `max_duration_secs`. It is not a run-wide budget,
-    since consecutive calls share one session allowance and any reset of the session (`restart:
-    true`, a crash, a type error, a host-side failure) starts a fresh one. `'unlimited'` removes
-    the time and memory caps, but Monty's finite suspension budget still applies. Set
-    `max_suspensions` to bound cumulative host interactions across consecutive snippets.
+    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_secs` is per
+    snippet: no single `run_code` snippet runs longer than it, and it is not a run-wide budget.
+    `'unlimited'` removes the time and memory caps, but Monty's finite suspension budget still
+    applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
     """
 
     eager: bool = False
@@ -144,6 +151,16 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     unclaimed launches are extra bounded work alongside the dispatches the snippet makes.
     Composes with `eager`. Inactive under durable execution and when the run's parallel
     execution mode is sequential. See the Code Mode guide for the mechanics.
+    """
+
+    monty_sandbox_url: str | None = None
+    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
+
+    Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
+    over the connection.
+
+    Use `wss://` unless the server is on a network you trust: the connection carries the tool calls
+    your agent executes, so anyone who can intercept it can choose what your tools run.
     """
 
     dynamic_catalog: bool = False
@@ -184,6 +201,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     _announced_tools: set[str] = field(default_factory=set[str], init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
+        self.os_access = as_os_handler(self.os_access)
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -224,6 +243,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
+                monty_sandbox_url=self.monty_sandbox_url,
                 capability=self,
                 speculation=self._speculation,
             )
@@ -236,6 +256,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
+            monty_sandbox_url=self.monty_sandbox_url,
             capability=self,
             speculation=self._speculation,
         )

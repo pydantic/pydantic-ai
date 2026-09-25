@@ -335,7 +335,7 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             await self.execution.discard(call)
             run_state = self._run_state
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
-            run_state.reset()
+            await run_state.reset()
             raise ModelRetry(
                 'The submitted code no longer matches the prefix eager execution already ran, '
                 'so the session was restarted. Send the snippet again.'

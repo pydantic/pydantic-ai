@@ -153,8 +153,7 @@ class TestEagerCodeMode:
 
     async def test_nested_tool_hooks_apply_to_eager_fragments(self):
         seen: list[str] = []
-        stream_finished = asyncio.Event()
-        search_ran_early = False
+        search_started = asyncio.Event()
 
         class RecordTools(AbstractCapability[None]):
             async def before_tool_execute(
@@ -169,8 +168,7 @@ class TestEagerCodeMode:
                 return args
 
         async def search(query: str) -> str:
-            nonlocal search_ran_early
-            search_ran_early = not stream_finished.is_set()
+            search_started.set()
             return query
 
         code = 'value = await search(query="alpha")\nx = 1\ny = 2\nz = 3\nvalue'
@@ -181,10 +179,13 @@ class TestEagerCodeMode:
                 return
             chunks = stream_json_args(code, chunk_size=4)
             yield {1: DeltaToolCall(name='run_code')}
-            for chunk in chunks:
+            for chunk in chunks[:-1]:
                 yield {1: DeltaToolCall(json_args=chunk)}
                 await asyncio.sleep(0)
-            stream_finished.set()
+            # The first statement is complete by now: `search` must run before the stream ends.
+            # A hang guard, not a timing assertion: without eager execution `search` would never start.
+            await asyncio.wait_for(search_started.wait(), timeout=30)
+            yield {1: DeltaToolCall(json_args=chunks[-1])}
 
         agent: Agent[None, str] = Agent(
             FunctionModel(stream_function=stream_code),
@@ -195,7 +196,6 @@ class TestEagerCodeMode:
 
         await agent.run('go')
 
-        assert search_ran_early
         assert seen == ['search', 'run_code']
 
     async def test_failure_preserves_state_and_reports_prior_output(self):

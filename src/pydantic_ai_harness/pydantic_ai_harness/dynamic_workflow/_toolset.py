@@ -14,6 +14,7 @@ import keyword
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Annotated, Any, Generic, Literal, cast
 
 from pydantic import Field, TypeAdapter
@@ -31,7 +32,6 @@ from typing_extensions import Self, TypedDict
 
 try:
     from pydantic_monty import (
-        Monty,
         MontyCrashedError,
         MontyRuntimeError,
         MontySyntaxError,
@@ -44,7 +44,13 @@ except ImportError as _import_error:  # pragma: no cover
         'Install it with: uv add "pydantic-ai-harness[dynamic-workflow]"'
     ) from _import_error
 
-from pydantic_ai_harness._monty_exec import MontyExecutor, PrintCapture, is_sandbox_panic
+from pydantic_ai_harness._monty_exec import (
+    MontyExecutor,
+    MontyRunState,
+    PrintCapture,
+    in_temporal_workflow,
+    is_sandbox_panic,
+)
 
 # Set while a workflow script is executing, so a sub-agent that itself tries to run a workflow can
 # be refused -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
@@ -66,7 +72,8 @@ class WorkflowResourceLimits(TypedDict, total=False):
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
     the host, not running sandbox code. There is no default cap. Set one to bound a pure-CPU
     `while True` loop, which would otherwise burn a core and block the event loop -- the one
-    runaway the sub-agent budgets do not catch."""
+    runaway the sub-agent budgets do not catch. Sleeping is not execution time either, so when set,
+    the script may also sleep for up to this long in total."""
 
     max_memory: int
     """Maximum sandbox memory, in bytes."""
@@ -105,7 +112,12 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
         raise UserError(
             f'Unknown `resource_limits` key(s): {sorted(unknown)}. Valid keys are {sorted(_RESOURCE_LIMIT_KEYS)}.'
         )
-    return {**_default_resource_limits(), **limits}
+    resolved = _default_resource_limits()
+    if 'max_memory' in limits:
+        resolved['max_memory'] = limits['max_memory']
+    if 'max_duration_secs' in limits:
+        resolved['max_feed_duration_secs'] = limits['max_duration_secs']
+    return resolved
 
 
 class _WorkflowArguments(TypedDict):
@@ -134,10 +146,11 @@ done -- instead of delegating to one sub-agent at a time.
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**.
 - **Importable standard-library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
-  `unicodedata`, `datetime`, `os`, and `pathlib`. Import what you use at the top of the script.
-  Filesystem, environment, and clock operations are not configured for workflow scripts.
-- **No wall-clock or timing primitives** (`asyncio.sleep`, `datetime.datetime.now()`,
-  `datetime.date.today()`, the `time` module).
+  `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use at the top
+  of the script. Filesystem, environment, and clock operations are not configured for workflow
+  scripts.
+- **No clock or randomness**: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`,
+  and unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait.
 
 Each sub-agent below is an async function. Await it and pass `task` by keyword:
 `result = await reviewer(task="...")`, not `reviewer("...")`; all parameters are keyword-only. A
@@ -722,19 +735,26 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             completed_dispatches.append(_CompletedDispatch(agent_name=agent_name, task=task, result=output))
             return output
 
+        in_temporal = in_temporal_workflow()
         limits = _resolve_resource_limits(self.resource_limits)
         capture = PrintCapture()
         type_check_stubs = self._build_type_check_stubs()
         in_workflow_token = _in_workflow.set(True)
+        monty = MontyRunState()
         try:
-            with Monty() as monty_pool:
-                with monty_pool.checkout(limits=limits, type_check=True, type_check_stubs=type_check_stubs) as session:
-                    monty_state = session.feed_start(code, print_callback=capture.callback)
-                    # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
-                    # which does not interleave with `call_tool`), so it is a stable name registry for
-                    # the whole script. Sub-agents always run concurrently (the executor's defaults);
-                    # durable ordering (global_sequential) lands with durability.
-                    completed = await MontyExecutor(dispatch=dispatch, valid_names=self._by_name).run(monty_state)
+            session = await monty.get_session(
+                type_check=True, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_temporal
+            )
+            # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
+            # which does not interleave with `call_tool`), so it is a stable name registry for
+            # the whole script. Sub-agents always run concurrently (the executor's defaults);
+            # durable ordering (global_sequential) lands with durability.
+            completed = await MontyExecutor(
+                dispatch=dispatch,
+                valid_names=self._by_name,
+                portal=monty.portal,
+                max_sleep_secs=limits.get('max_feed_duration_secs'),
+            ).run(partial(session.feed_start, code, print_callback=capture.callback))
         except MontyTypingError as e:
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontySyntaxError as e:  # pragma: no cover -- backstop; the type checker parses first
@@ -781,6 +801,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             ) from e
         finally:
             _in_workflow.reset(in_workflow_token)
+            await monty.close()
 
         # Monty lets workflow code catch host exceptions. Exhausting the budget remains
         # terminal even if the script catches that error and otherwise finishes normally.

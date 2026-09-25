@@ -83,8 +83,8 @@ The sandbox also has direct capabilities, no function call needed:
 
 {workspace}
 - Environment variables (isolated) and in-memory scratch files work. For the
-  real clock use `datetime.datetime.now()` or `datetime.date.today()`; the
-  `time` module and `asyncio.sleep` are unavailable.
+  real clock use `datetime.datetime.now()` or `datetime.date.today()`.
+  `time.sleep` and `asyncio.sleep` really wait.
 - There is NO network in the sandbox: anything remote goes through a
   function like `shell` (e.g. `curl`).
 

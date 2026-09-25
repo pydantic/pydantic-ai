@@ -460,10 +460,11 @@ worth knowing where the edges are:
 
 - No third-party libraries.
 - Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
-  `unicodedata`, `datetime`, `os`, and `pathlib`. Import what you use. Filesystem, environment, and
-  clock operations are not configured for workflow scripts.
-- No wall-clock or timing primitives. There is no `asyncio.sleep`, no
-  `datetime.datetime.now()`, no `datetime.date.today()`, and no `time` module.
+  `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use.
+  Filesystem, environment, and clock operations are not configured for workflow scripts.
+- No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
+  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
+  a script may sleep for at most that long in total.
 - `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
   arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
 
@@ -479,6 +480,15 @@ reach runtime validation; they are still rejected before a sub-agent runs.
 > If a script does fail after some sub-agents already finished, the retry prompt lists bounded
 > previews of up to the 20 most recent completed results. The model can reuse an untruncated preview
 > as a plain value instead of paying for the same call again.
+
+## Running inside a Temporal workflow
+
+Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each
+sub-agent whose model requests should run as activities, then register every agent with its own
+`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](../code_mode/README.md#temporal-durability),
+and is re-executed during replay against the recorded sub-agent results.
+Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
+runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
 ## What is coming
 

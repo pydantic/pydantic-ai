@@ -21,6 +21,7 @@ runs `temporalite` automatically.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import subprocess
 import sys
@@ -56,10 +57,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 
 from pydantic_ai_harness import CodeMode
+from tests.code_mode.conftest import websocket_relay_server  # pyright: ignore[reportMissingTypeStubs]
 
 pytestmark = pytest.mark.anyio
 
 TEMPORAL_PORT = 7244  # avoid conflict with other test suites
+# Fixed because the agent below is built at import time, before any fixture runs.
+MONTY_RELAY_PORT = 7246
 TASK_QUEUE = 'pydantic-ai-harness-code-mode-queue'
 BASE_ACTIVITY_CONFIG = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60),
@@ -111,6 +115,13 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
         f'localhost:{TEMPORAL_PORT}',
         plugins=[PydanticAIPlugin()],
     )
+
+
+@pytest.fixture
+async def monty_relay() -> AsyncIterator[None]:
+    """Serve remote Monty workers on the port `remote_code_mode_agent` is configured with."""
+    async with websocket_relay_server(MONTY_RELAY_PORT):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +176,48 @@ code_mode_agent = Agent(
 )
 
 
+# Set by the workflow and read by `os_access`, which runs on the workflow's own thread.
+_request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='unset')
+
+
+def _workflow_os(*, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object) -> object:
+    if name == 'datetime.now':
+        # Raises "Not in workflow event loop" anywhere but the workflow's own thread.
+        return workflow.now()
+    return _request_id.get()
+
+
+def _remote_code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    """Model that adds with a tool, sleeps, and reads the workflow's contextvar through `os_access`."""
+    returns = [
+        part
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    if returns:
+        return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])
+    # The 31 s sleep is one second past the default allowance, so it is refused without waiting.
+    code = (
+        'import asyncio, datetime, os\ntotal = await add(a=3, b=4)\nawait asyncio.sleep(0.1)\n'
+        'try:\n    await asyncio.sleep(31)\n    capped = "uncapped"\nexcept TimeoutError:\n    capped = "capped"\n'
+        'f\'{total} {os.getenv("REQUEST_ID")} {capped} {datetime.datetime.now().year > 2000}\''
+    )
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='remote_tc_1')])
+
+
+remote_code_mode_agent = Agent(
+    FunctionModel(_remote_code_mode_model),
+    name='code_mode_temporal_remote_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        CodeMode(monty_sandbox_url=f'ws://127.0.0.1:{MONTY_RELAY_PORT}', os_access=_workflow_os),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
 @workflow.defn
 class CodeModeWorkflow:
     @workflow.run
@@ -187,6 +240,17 @@ class SandboxRestrictionWorkflow:
         except RestrictedWorkflowAccessError as e:
             return e.qualified_name
         return 'subprocess was allowed'  # pragma: no cover
+
+
+@workflow.defn
+class RemoteCodeModeWorkflow:
+    """`CodeModeWorkflow` against remote workers reached over `monty_sandbox_url`."""
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        _request_id.set('req-42')
+        result = await remote_code_mode_agent.run(prompt)
+        return str(result.output)
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +357,41 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     replay_result = await Replayer(
         workflows=[CodeModeWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=_workflow_runner(),
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
+
+
+@pytest.mark.usefixtures('monty_relay')
+async def test_code_mode_runs_over_websocket_in_temporal_workflow(client: Client) -> None:
+    """Remote workers run and replay in a workflow like local ones do.
+
+    Every Monty call inside a workflow goes through the blocking portal, so this covers that
+    path for both bindings, including `os_access` seeing the workflow's contextvars, and a
+    sandbox sleep becoming a durable timer rather than blocking the workflow, still capped by the
+    `max_duration_secs` allowance even though the execution-time limit is off in a workflow.
+    """
+    workflow_id = 'test_code_mode_temporal_remote_1'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RemoteCodeModeWorkflow],
+        plugins=[AgentPlugin(remote_code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            RemoteCodeModeWorkflow.run,
+            args=['Calculate 3 + 4'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'done: 7 req-42 capped True'
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert any(e.HasField('timer_started_event_attributes') for e in history.events)
+    replay_result = await Replayer(
+        workflows=[RemoteCodeModeWorkflow],
         plugins=[PydanticAIPlugin()],
         workflow_runner=_workflow_runner(),
     ).replay_workflow(history)
