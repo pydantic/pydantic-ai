@@ -235,9 +235,9 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
 
     Handles the OpenAI inbound shape (`{'type': 'response.output_audio.delta', 'delta': <b64>}`), the
     OpenAI outbound shape (`{'type': 'input_audio_buffer.append', 'audio': <b64>}`), and the Gemini
-    shape (`inlineData.data`, used in both directions, and the `realtime_input.audio.data` the SDK sends
-    for microphone audio). Transcript deltas (also keyed `delta` on
-    OpenAI, but on non-audio event types) are left untouched.
+    shape (`inlineData.data`, used in both directions, and the `realtime_input.audio.data` /
+    `realtime_input.video.data` the SDK sends for microphone audio and images). Transcript deltas
+    (also keyed `delta` on OpenAI, but on non-audio event types) are left untouched.
 
     Outbound audio matters as much as inbound: a test that streams a microphone for several turns
     sends megabytes of PCM, and a cassette is a file in git that a human is meant to be able to read.
@@ -251,6 +251,13 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
     if (audio := _gemini_realtime_audio(frame)) is not None and isinstance(audio.get('data'), str):
         audio = {**audio, 'data': _truncate_b64_audio(audio['data'])}
         return {**frame, 'realtime_input': {**frame['realtime_input'], 'audio': audio}}
+    realtime_input = frame.get('realtime_input')
+    if isinstance(realtime_input, dict):
+        # A Gemini video frame (`session.send(image)`): as large as any audio, and just as unasserted.
+        video = cast('dict[str, Any]', realtime_input).get('video')
+        if isinstance(video, dict) and isinstance(data := cast('dict[str, Any]', video).get('data'), str):
+            video = {**cast('dict[str, Any]', video), 'data': _truncate_b64_audio(data)}
+            return {**frame, 'realtime_input': {**cast('dict[str, Any]', realtime_input), 'video': video}}
 
     def _walk(value: Any) -> Any:
         if isinstance(value, dict):

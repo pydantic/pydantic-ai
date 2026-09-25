@@ -22,6 +22,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, RequestUsage, RunContext
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
@@ -161,6 +162,79 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
     # session captures it in `details` rather than dropping it.
     assert response.usage.details.get('thoughts_tokens') == snapshot(24)
+
+
+@pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
+async def test_image_then_typed_question(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str
+) -> None:
+    """An image sent right before a typed question is seen: it rides in the question's client content.
+
+    Sent as a video frame instead, Gemini 3.8 answers that it can't see an image and 2.5 sees a
+    low-detail version, because a typed turn only sees images in its own content.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(model_name, provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    image = BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+
+    async with agent.realtime(model).session() as session:
+        await session.send(image)
+        await session.send('What fruit is in the image?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [question] = sent_frames_containing(cassette, 'What fruit is in the image?')
+    assert [list(part) for part in question['client_content']['turns'][0]['parts']] == [['inlineData'], ['text']]
+    assert not sent_frames_containing(cassette, '"video"')
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == ['ModelRequest', 'ModelRequest', 'ModelResponse']
+    response = messages[-1]
+    assert isinstance(response, ModelResponse) and isinstance(response.parts[0], SpeechPart)
+    assert 'kiwi' in (response.parts[0].transcript or '').lower()
+
+
+@pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
+async def test_image_then_spoken_question(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str
+) -> None:
+    """An image sent right before a spoken question is seen: it goes out as a video frame first.
+
+    A spoken turn only sees video frames: in a client-content turn, Gemini 2.5 answers that it can't
+    see an image.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(model_name, provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    image = BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+    # The question, then a second of silence so voice activity detection ends the turn.
+    pcm = assets_path.joinpath('what_fruit_is_in_the_image_16khz.pcm').read_bytes() + bytes(32000)
+
+    async with agent.realtime(model).session() as session:
+        await session.send(image)
+        for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
+            await session.send_audio(pcm[start : start + 3200])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    realtime_inputs = [
+        next(iter(frame['realtime_input']))
+        for frame in sent_frames_containing(cassette, 'realtime_input')
+        if 'realtime_input' in frame
+    ]
+    assert realtime_inputs[0] == 'video'
+    assert set(realtime_inputs[1:]) == {'audio'}
+
+    messages = session.all_messages()
+    assert isinstance(messages[0], ModelRequest) and isinstance(messages[0].parts[0], UserPromptPart)
+    response = messages[-1]
+    assert isinstance(response, ModelResponse) and isinstance(response.parts[0], SpeechPart)
+    assert 'kiwi' in (response.parts[0].transcript or '').lower()
 
 
 async def test_text_context_waits_for_next_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

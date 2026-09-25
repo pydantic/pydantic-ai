@@ -1024,12 +1024,134 @@ async def test_send_text_context() -> None:
     assert sent['turns'].parts[0].text == 'background'
 
 
-async def test_send_image_as_video_frame() -> None:
+_IMAGE = BinaryImage(data=b'\xff\xd8', media_type='image/jpeg')
+_OTHER_IMAGE = BinaryImage(data=b'\xff\xd9', media_type='image/png')
+
+
+async def test_send_image_then_text_carries_image_in_text_turn() -> None:
+    # A typed turn only sees images in its own client content (a video frame is invisible to it on
+    # Gemini 3.8 and low-detail on 2.5), so an image followed by text rides in the text's turn, in order.
     session = _RecordingSession()
-    await _conn(session).send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'))
-    blob = session.realtime[0]['video']
-    assert blob.data == b'\xff\xd8'
-    assert blob.mime_type == 'image/jpeg'
+    conn = _conn(session)
+    await conn.send(_IMAGE)
+    await conn.send('What is on it?')
+    await conn.send(_OTHER_IMAGE)
+    await conn.send(TextContext('Background.'))
+    assert session.realtime == []
+    assert [(sent['turns'].parts, sent['turn_complete']) for sent in session.client_content] == [
+        (
+            [
+                genai_types.Part(inline_data=genai_types.Blob(data=b'\xff\xd8', mime_type='image/jpeg')),
+                genai_types.Part(text='What is on it?'),
+            ],
+            True,
+        ),
+        (
+            [
+                genai_types.Part(inline_data=genai_types.Blob(data=b'\xff\xd9', mime_type='image/png')),
+                genai_types.Part(text='Background.'),
+            ],
+            False,
+        ),
+    ]
+
+
+async def test_send_image_then_audio_sends_video_frame_first() -> None:
+    # A spoken turn only sees video frames, so audio sends the held image as one before itself.
+    session = _RecordingSession()
+    conn = _conn(session)
+    await conn.send(_IMAGE)
+    await conn.send(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    await conn.send(BinaryAudio(data=b'\x01\x00', media_type='audio/pcm'))
+    assert [list(frame) for frame in session.realtime] == [['video'], ['audio'], ['audio']]
+    assert session.realtime[0]['video'] == genai_types.Blob(data=b'\xff\xd8', mime_type='image/jpeg')
+
+
+async def test_send_newer_image_sends_held_one_as_video_frame() -> None:
+    # A camera stream: each new frame sends the previous one as video and is held in its place, so a
+    # question typed mid-stream still carries the latest frame.
+    session = _RecordingSession()
+    conn = _conn(session)
+    await conn.send(_IMAGE)
+    await conn.send(_OTHER_IMAGE)
+    assert session.realtime == [{'video': genai_types.Blob(data=b'\xff\xd8', mime_type='image/jpeg')}]
+    await conn.send('And now?')
+    assert session.client_content[0]['turns'].parts[0].inline_data.data == b'\xff\xd9'
+
+
+async def test_held_image_goes_out_as_video_frame_when_nothing_follows(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A camera without a microphone: nothing follows the frame, so it goes out on its own.
+    monkeypatch.setattr(rt_google, '_IMAGE_HOLD_SECONDS', 0.01)
+    session = _RecordingSession()
+    conn = _conn(session)
+    await conn.send(_IMAGE)
+    assert session.realtime == []
+    await asyncio.sleep(0.05)
+    assert session.realtime == [{'video': genai_types.Blob(data=b'\xff\xd8', mime_type='image/jpeg')}]
+    # Sent once: the text that follows doesn't carry it again.
+    await conn.send('What was that?')
+    assert session.client_content[0]['turns'].parts == [genai_types.Part(text='What was that?')]
+
+
+async def test_held_image_timer_does_nothing_once_the_image_was_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rt_google, '_IMAGE_HOLD_SECONDS', 0.01)
+    session = _RecordingSession()
+    conn = _conn(session)
+    await conn.send(_IMAGE)
+    await conn.send('What is on it?')
+    await conn.send(_OTHER_IMAGE)  # a later image is held when the first image's timer fires
+    await conn.send('And this?')
+    await asyncio.sleep(0.05)
+    assert session.realtime == []
+    assert len(session.client_content) == 2
+
+
+async def test_held_image_survives_a_dropped_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The timer's send fails on a dropped socket: the image is held again for the next input rather
+    # than failing the connection from a background task.
+    monkeypatch.setattr(rt_google, '_IMAGE_HOLD_SECONDS', 0.01)
+
+    class _DroppedSession(_RecordingSession):
+        async def send_realtime_input(self, **kwargs: Any) -> None:
+            raise ConnectionClosed(None, None)
+
+    session = _DroppedSession()
+    conn = _conn(session)
+    await conn.send(_IMAGE)
+    await asyncio.sleep(0.05)
+    await conn.send('What is on it?')
+    assert session.client_content[0]['turns'].parts[0].inline_data.data == b'\xff\xd8'
+
+
+async def test_newer_image_supersedes_one_whose_send_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rt_google, '_IMAGE_HOLD_SECONDS', 0.01)
+    sending = asyncio.Event()
+    drop = asyncio.Event()
+
+    class _DroppingSession(_RecordingSession):
+        async def send_realtime_input(self, **kwargs: Any) -> None:
+            sending.set()
+            await drop.wait()
+            raise ConnectionClosed(None, None)
+
+    session = _DroppingSession()
+    conn = _conn(session)
+    await conn.send(_IMAGE)
+    await sending.wait()  # the timer is sending the first image
+    await conn.send(_OTHER_IMAGE)
+    drop.set()
+    await asyncio.sleep(0)
+    await conn.send('What is on it?')
+    assert session.client_content[0]['turns'].parts[0].inline_data.data == b'\xff\xd9'
+
+
+async def test_close_discards_held_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rt_google, '_IMAGE_HOLD_SECONDS', 0.01)
+    session = _RecordingSession()
+    async with _connect(_model(session), 'x') as conn:
+        await conn.send(_IMAGE)
+    await asyncio.sleep(0.05)
+    assert session.realtime == []
 
 
 async def test_send_tool_result_echoes_name() -> None:

@@ -238,9 +238,13 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
 - [Seeded](history.md#seeding-a-session) function calls/results are represented as readable text
   because Live cannot accept function parts in seeded turns.
-- Gemini receives an [image](audio.md#images) sent with `send()` as a live video frame. The next
-  spoken turn sees it, but a typed turn sent right after it may not: Gemini 3.8 replies that it
-  can't see an image, and Gemini 2.5 reads a low-detail version. Ask about a sent image by voice.
+- A Gemini turn only sees the [images](audio.md#images) sent on its own channel: a spoken turn sees
+  live video frames, and a typed turn sees images in its own content. So an image sent with `send()`
+  waits for the next input for up to a second. A text turn carries it in its own content, and
+  anything else (audio, another image, a tool result) sends it as a video frame first. If nothing
+  follows within the second, it goes out as a video frame, so a camera without a microphone still
+  streams. A question typed later than that may not see the image, so send the two together:
+  `session.send([image, 'What is this?'])`.
 - Native transcription can produce only a completed sentence on some models.
   [Caption UIs](audio.md#live-captions) should replace text from `TranscriptUpdate.transcript`
   rather than assume incremental deltas.
