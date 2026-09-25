@@ -816,8 +816,6 @@ async def test_an_explicit_ref_without_a_workspace_capability_is_an_error() -> N
 
 def test_has_get_workspace_mirrors_the_capability_tree() -> None:
     supplier = WorkspaceCapability()
-    deferred = WorkspaceCapability()
-    deferred.defer_loading = True
 
     class Policy(WrapperCapability[Any]):
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
@@ -826,7 +824,6 @@ def test_has_get_workspace_mirrors_the_capability_tree() -> None:
     assert supplier.has_get_workspace
     assert not AbstractCapability[Any]().has_get_workspace
     assert CombinedCapability([AbstractCapability[Any](), supplier]).has_get_workspace
-    assert not CombinedCapability([AbstractCapability[Any](), deferred]).has_get_workspace
     assert WrapperCapability(supplier).has_get_workspace
     assert not WrapperCapability(AbstractCapability[Any]()).has_get_workspace
     assert Policy(AbstractCapability[Any]()).has_get_workspace
@@ -852,21 +849,13 @@ async def test_new_workspace_without_a_supplier_raises() -> None:
         await agent.run('go', workspace='new')
 
 
-async def test_deferred_capability_never_contributes_a_backend() -> None:
-    capability = WorkspaceCapability()
-    capability.defer_loading = True
-    observed: list[Workspace] = []
-    agent = Agent(_tool_call_model(), capabilities=[capability])
+async def test_a_workspace_capability_cannot_be_deferred(tmp_path: Path) -> None:
+    message = "supplies the run's workspace, which is chosen when the run starts, so it can't be deferred"
+    with pytest.raises(UserError, match=f'`WrapperCapability` {message}'):
+        Agent(TestModel(), capabilities=[WrapperCapability(LocalWorkspace(tmp_path), defer_loading=True, id='ws')])
 
-    @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
-        observed.append(ctx.workspace)
-        return 'ok'
-
-    await agent.run('go')
-
-    assert isinstance(observed[0].backend, UnavailableWorkspace)
-    assert capability.refs == []
+    with pytest.raises(UserError, match=f'`LocalWorkspace` {message}'):
+        await Agent(TestModel()).run('go', capabilities=[LocalWorkspace(tmp_path, defer_loading=True)])
 
 
 async def test_wrapper_composes_workspace_policy_over_combined_capability() -> None:

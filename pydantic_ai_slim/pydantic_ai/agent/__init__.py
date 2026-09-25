@@ -4519,11 +4519,7 @@ def _select_workspace(
         from_run = [branch for branch in branches if any(id(leaf) in run_leaves for leaf in leaf_capabilities(branch))]
         ordered = [*from_run, *(branch for branch in branches if all(branch is not run for run in from_run))]
         selected = next(
-            (
-                workspace
-                for branch in ordered
-                if branch.defer_loading is not True and (workspace := branch.get_workspace(ctx, ref=ref)) is not None
-            ),
+            (workspace for branch in ordered if (workspace := branch.get_workspace(ctx, ref=ref)) is not None),
             None,
         )
     return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
@@ -4621,6 +4617,11 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     """
     owners: dict[str, type[AbstractCapability[Any]]] = {}
     for cap in capabilities:
+        if cap.defer_loading is True and cap.has_get_workspace:
+            raise exceptions.UserError(
+                f"`{type(cap).__name__}` supplies the run's workspace, which is chosen when the run starts, so it "
+                "can't be deferred. Remove `defer_loading=True`."
+            )
         if cap.defer_loading is True and cap.id is None:
             raise exceptions.UserError(
                 'Deferred capabilities must use stable explicit `id` values. '
