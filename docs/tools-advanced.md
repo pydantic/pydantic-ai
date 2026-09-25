@@ -442,6 +442,9 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | `['tool_a', ...]` | Restrict to specific tools by name. Excludes output tools — same dynamic/direct requirement as `'required'`. |
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
+A plain list may only name function tools. Naming an output tool raises a `UserError`; use
+[`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] to make selected function tools and output tools available together.
+
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
 hidden is ignored when forcing by name, and an explicit choice raises only when every requested
 tool is hidden. `'required'` raises when every function

@@ -56,6 +56,8 @@ def resolve_tool_choice(  # noqa: C901
     # exists at all — `RunContext.is_tool_available`'s narrower sense would reject a real but
     # not-yet-revealed tool as a typo.
     known_tool_names = set(model_request_parameters.tool_defs.keys())
+    known_function_tool_names = {tool.name for tool in model_request_parameters.function_tools}
+    output_tool_names = {tool.name for tool in model_request_parameters.output_tools}
 
     def _filter_withheld_tools(chosen_tool_names: set[str], *, has_output_fallback: bool = False) -> set[str]:
         # Named for the `ToolVisibility` literal it filters on rather than the looser "hidden":
@@ -105,8 +107,6 @@ def resolve_tool_choice(  # noqa: C901
 
     # none / []: disable function tools, but output tools may still exist
     elif function_tool_choice in ('none', []):
-        output_tool_names = {t.name for t in model_request_parameters.output_tools}
-
         if output_tool_names:
             if allow_direct_output:
                 mode: Literal['auto', 'required'] = 'auto'
@@ -146,20 +146,26 @@ def resolve_tool_choice(  # noqa: C901
     # list[str]: required, restricted to these tools
     elif isinstance(function_tool_choice, list):
         chosen_set = set(function_tool_choice)
-        _check_invalid_tools(chosen_set, known_tool_names, known_label='Known tools')
+        if chosen_output_tools := chosen_set & output_tool_names:
+            raise UserError(
+                f'`tool_choice` lists may only contain function tool names, but these names refer to output tools: '
+                f'{sorted(chosen_output_tools)}. Use `ToolOrOutput` with `function_tools` to allow specific function '
+                "tools alongside output tools, or `'none'` to disable function tools while retaining output tools."
+            )
+        _check_invalid_tools(chosen_set, known_function_tool_names, known_label='Known function tools')
         # A deferred declaration or a tool-addition definition is already on the wire and remains
         # callable; only tools absent from the wire cannot be forced by name.
         chosen_set = _filter_withheld_tools(chosen_set)
 
-        if chosen_set == known_tool_names:
+        # A bare `required` also permits output tools, so it is only equivalent to a list naming
+        # every function tool when there are no output tools in the request.
+        if not output_tool_names and chosen_set == known_function_tool_names:
             return 'required'
 
         return ('required', chosen_set)
 
     # ToolOrOutput: specific function tools + all output tools or direct text/image output
     elif isinstance(function_tool_choice, ToolOrOutput):
-        output_tool_names = {t.name for t in model_request_parameters.output_tools}
-
         if not function_tool_choice.function_tools:
             if output_tool_names:
                 mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'
@@ -167,7 +173,6 @@ def resolve_tool_choice(  # noqa: C901
             return 'none'
 
         chosen_function_set = set(function_tool_choice.function_tools)
-        known_function_tool_names = {t.name for t in model_request_parameters.function_tools}
         _check_invalid_tools(
             chosen_function_set,
             known_function_tool_names,

@@ -6243,6 +6243,30 @@ async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model
         )
 
 
+async def test_openai_list_tool_choice_rejects_output_tools(allow_model_requests: None):
+    """Direct requests reject output tools in the function-only list form before reaching OpenAI."""
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    mrp = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='search', parameters_json_schema={'type': 'object', 'properties': {}})],
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object', 'properties': {}})],
+        output_mode='tool',
+        allow_text_output=True,
+    )
+
+    with pytest.raises(
+        UserError,
+        match=r'`tool_choice` lists may only contain function tool names.*final_result.*`ToolOrOutput`',
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings={'tool_choice': ['search', 'final_result']},
+            model_request_parameters=mrp,
+        )
+
+
 def test_transformer_adds_properties_to_object_schemas():
     """OpenAI drops object schemas without a 'properties' key. The transformer must add it."""
 

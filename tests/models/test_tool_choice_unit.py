@@ -196,6 +196,17 @@ TUPLE_CASES = [
         expected_tools={'a', 'c'},
     ),
     dict(
+        id='list_all_function_tools_with_output_tool',
+        tool_choice=['a', 'b'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        expected_mode='required',
+        expected_tools={'a', 'b'},
+    ),
+    dict(
         id='tool_or_output_empty_with_output_tools_direct_output',
         tool_choice=ToolOrOutput(function_tools=[]),
         params_kwargs={'output_tools': [make_tool('final_result')], 'allow_text_output': True},
@@ -258,13 +269,33 @@ RAISES_CASES = [
         id='list_all_invalid',
         tool_choice=['x', 'y'],
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
-        match=r'Invalid tool names in `tool_choice`:.*Known tools:',
+        match=r'Invalid tool names in `tool_choice`:.*Known function tools:',
     ),
     dict(
         id='list_invalid_no_function_tools',
         tool_choice=['x'],
         params_kwargs={'function_tools': [], 'allow_text_output': True},
-        match=r'Invalid tool names.*Known tools: none',
+        match=r'Invalid tool names.*Known function tools: none',
+    ),
+    dict(
+        id='list_output_tool_only',
+        tool_choice=['final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('search')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        match=r'`tool_choice` lists may only contain function tool names.*final_result.*`ToolOrOutput`',
+    ),
+    dict(
+        id='list_function_and_output_tool',
+        tool_choice=['search', 'final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('search')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        match=r'`tool_choice` lists may only contain function tool names.*final_result.*`ToolOrOutput`',
     ),
     dict(
         id='tool_or_output_all_invalid',
@@ -394,7 +425,7 @@ WARNS_CASES = [
         id='list_partial_invalid',
         tool_choice=['a', 'typo'],
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
-        match=r"Some tools.*'typo'.*Known tools: \['a', 'b'\]",
+        match=r"Some tools.*'typo'.*Known function tools: \['a', 'b'\]",
         expected_mode='required',
         expected_tools={'a', 'typo'},
     ),

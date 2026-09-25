@@ -1733,18 +1733,19 @@ def test_standing_system_prompt_stays_ahead_of_sorted_tool_returns() -> None:
     ]
 
 
-async def test_responses_output_tool_stays_forceable_alongside_reveal(allow_model_requests: None) -> None:
-    """Output-tool forcing remains independent from a revealed function in `additional_tools`."""
+async def test_responses_none_tool_choice_forces_output_tool_alongside_reveal(allow_model_requests: None) -> None:
+    """Disabling function tools still forces the sole output tool alongside a revealed function."""
     client = MockOpenAIResponses.create_mock(_empty_responses_message())
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=client))
     revealed = ToolDefinition(name='revealed_tool', description='Revealed.', defer_loading=True)
     output = ToolDefinition(name='final_result', description='Return the result.')
     settings, parameters = model.prepare_request(
-        OpenAIResponsesModelSettings(tool_choice=['final_result']),
+        OpenAIResponsesModelSettings(tool_choice='none'),
         ModelRequestParameters(
             function_tools=[revealed],
             output_tools=[output],
             output_mode='tool',
+            # With direct text disabled, `'none'` leaves the sole output tool required rather than optional.
             allow_text_output=False,
             revealed_tool_names={revealed.name},
         ),
