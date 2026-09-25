@@ -6850,6 +6850,7 @@ async def test_completed_streamed_response_replay_events(
 @pytest.mark.parametrize('read_each', [False, True])
 @pytest.mark.parametrize('details', [None, {}, {'initial': 1}], ids=['no-details', 'empty-details', 'details'])
 async def test_replay_text_preserves_snapshots(read_each: bool, details: dict[str, Any] | None) -> None:
+    """Replay preserves live reads and independent snapshots without a model request."""
     start = TextPart('a', id='part', provider_name='first', provider_details=details)
     response = ModelResponse(
         parts=[TextPart('abc', id='part', provider_name='second', provider_details={**(details or {}), 'added': 2})]
@@ -6884,6 +6885,7 @@ async def test_replay_text_preserves_snapshots(read_each: bool, details: dict[st
 
 @pytest.mark.parametrize('custom_part', [False, True])
 async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
+    """Replay preserves user-defined part initialization and delta application."""
     seen_lengths: list[int] = []
 
     @dataclass
@@ -6917,6 +6919,7 @@ async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
 
 
 async def test_replay_text_requires_start() -> None:
+    """Replaying a malformed event list raises instead of inventing a missing part."""
     stream = CompletedStreamedResponse(
         ModelResponse(parts=[]),
         model_request_parameters=models.ModelRequestParameters(),
@@ -6928,6 +6931,7 @@ async def test_replay_text_requires_start() -> None:
 
 
 async def test_replay_text_cancel_preserves_buffered_content() -> None:
+    """Canceling replay preserves partial text without a live transport."""
     events: list[ModelResponseStreamEvent] = [
         PartStartEvent(index=0, part=TextPart('a')),
         PartDeltaEvent(index=0, delta=TextPartDelta('b')),
