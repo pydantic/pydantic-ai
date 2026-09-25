@@ -330,6 +330,7 @@ async def test_recording_truncates_outbound_gemini_microphone_audio() -> None:
     untouched = [
         {'realtime_input': {'text': 'hi'}},
         {'realtime_input': {'audio': {'mime_type': 'audio/pcm;rate=16000'}}},
+        {'realtime_input': {'video': {'mime_type': 'image/jpeg'}}},
     ]
     for frame in [_GEMINI_MIC, *untouched]:
         await recording.send(json.dumps(frame))

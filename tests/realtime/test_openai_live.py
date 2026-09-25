@@ -153,10 +153,12 @@ def test_profile(model: OpenAILiveModel) -> None:
         synthesizes_turn_boundary=True,
         # Its spoken replies are inferred turns; the requests that spend tokens are the backend's.
         responses_are_requests=False,
+        # Live reports its own context usage; the tokens it reports are the delegated backend's.
+        response_usage_covers_context=False,
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
-        context_window=None,
+        context_window=128_000,
     )
 
 
@@ -448,6 +450,25 @@ def test_usage_is_reported_as_an_increment() -> None:
     assert usage(25.0) == [SessionUsage(_request_usage(14.5), response_scoped=False)]
     # A repeat of the same total adds nothing.
     assert usage(25.0) == []
+
+
+def test_context_window_usage_ratio_is_passed_on_as_a_snapshot() -> None:
+    """Live's `context_window.usage_ratio` is the fraction in use, reported as is rather than summed.
+
+    It rides on the seconds report when there is one, and on its own when no more seconds were billed:
+    it's a snapshot, which can go down once Live compacts, and a report without it says nothing.
+    """
+    connection = _connection()
+
+    def usage(seconds: float, ratio: float | None) -> list[Any]:
+        frame: dict[str, Any] = {'type': 'session.usage.updated', 'event_id': 'e', 'usage': {'seconds': seconds}}
+        if ratio is not None:
+            frame['context_window'] = {'usage_ratio': ratio}
+        return connection._map_event(_event(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert usage(10.0, 0.25) == [SessionUsage(_request_usage(10.0), response_scoped=False, context_window_used=0.25)]
+    assert usage(10.0, 0.1) == [SessionUsage(RequestUsage(), response_scoped=False, context_window_used=0.1)]
+    assert usage(12.0, None) == [SessionUsage(_request_usage(2.0), response_scoped=False)]
 
 
 def _request_usage(seconds: float) -> Any:
