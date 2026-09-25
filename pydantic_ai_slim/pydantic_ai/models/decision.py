@@ -1505,11 +1505,17 @@ def _map_request(message: ModelRequest, *, latest: bool) -> tuple[list[JsonValue
 
 
 def _response_entries(message: ModelResponse) -> list[JsonValue]:
-    """Map a response to history entries, excluding the model's private thinking."""
+    """Map a response to history entries, in the order the model produced them."""
     entries: list[JsonValue] = []
     for part in message.parts:
         if isinstance(part, TextPart):
             entries.append({'assistant': part.content})
+        elif isinstance(part, ThinkingPart):
+            # What a model thought is part of what it did: a judgment can be about the reasoning itself, and a
+            # conversation continued from the history should see it as the model that wrote it would.
+            # Thinking a provider only returned encrypted, as a `signature` with no text, has nothing to show.
+            if part.content:
+                entries.append({'thinking': part.content})
         elif isinstance(part, ToolCallPart | NativeToolCallPart):
             entries.append({'tool_call': {'name': part.tool_name, 'args': part.args_as_dict()}})
         elif isinstance(part, NativeToolReturnPart):
@@ -1523,8 +1529,6 @@ def _response_entries(message: ModelResponse) -> list[JsonValue]:
             )
         elif isinstance(part, SpeechPart):  # pragma: no cover
             raise _unconverted_speech_part_error()
-        elif isinstance(part, ThinkingPart):
-            pass  # The model's own reasoning, not part of the conversation.
         else:
             assert_never(part)
     return entries
