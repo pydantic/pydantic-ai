@@ -1071,3 +1071,39 @@ def test_provider_from_xai_client_without_exposed_key_raises() -> None:
     provider = XaiProvider(xai_client=AsyncClient(api_key='hidden'))
     with pytest.raises(UserError, match='pre-configured `xai_client`'):
         XaiRealtimeModel('grok-voice-latest', provider=provider)
+
+
+def _done_with_billed_seconds(total: int) -> str:
+    return json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'id': f'resp-{total}', 'status': 'completed', 'output': [], 'usage': None},
+            'usage': {'input_tokens': 3, 'output_tokens': 40, 'billable_audio_seconds': total},
+        }
+    )
+
+
+async def test_billable_audio_seconds_running_total_is_split_per_response() -> None:
+    """xAI reports the session's running total; each response is credited only its own increase.
+
+    Recorded live against `grok-voice-latest`: three turns of 0.71s, 0.71s and 0.87s of audio reported
+    `billable_audio_seconds` of 1, 2 and 3. Summing those as-is would bill 6 seconds for a 3-second
+    session, and the overcount grows with every turn.
+    """
+    frames = [_done_with_billed_seconds(total) for total in (1, 2, 3)]
+    conn = XaiRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    usages = [event.usage for event in events if isinstance(event, SessionUsage)]
+    assert [usage.audio_seconds for usage in usages] == [1, 1, 1]
+    assert [usage.details['billable_audio_seconds'] for usage in usages] == [1, 1, 1]
+
+
+async def test_billable_audio_seconds_total_that_drops_starts_a_new_count() -> None:
+    """A total lower than the last one means xAI started counting afresh, so it is not subtracted."""
+    frames = [_done_with_billed_seconds(total) for total in (4, 1, 2)]
+    conn = XaiRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    usages = [event.usage for event in events if isinstance(event, SessionUsage)]
+    assert [usage.audio_seconds for usage in usages] == [4, 1, 1]

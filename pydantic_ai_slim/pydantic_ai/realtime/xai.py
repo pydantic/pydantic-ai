@@ -276,6 +276,11 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._restores_state_on_reconnect = True
         self._conversation_id = conversation_id
         self._replayed_items = replayed_items if replayed_items is not None else []
+        # xAI reports `billable_audio_seconds` as the session's running total, not the response's own
+        # share (live: three turns of 0.71s, 0.71s and 0.87s report 1, 2 and 3), so each response is
+        # credited the increase since the last report. Kept on the connection, which outlives a resumed
+        # session, as does xAI's total.
+        self._billed_audio_seconds = 0
 
     def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         mapped = super()._map_response_usage(usage)
@@ -289,19 +294,29 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         for key, raw in (
             ('input_grok_tokens', (inp.model_extra or {}).get('grok_tokens') if inp is not None else None),
             ('output_grok_tokens', (out.model_extra or {}).get('grok_tokens') if out is not None else None),
-            ('billable_audio_seconds', (usage.model_extra or {}).get('billable_audio_seconds')),
+            ('billable_audio_seconds', self._billed_audio_seconds_increase(usage)),
         ):
             if isinstance(raw, int) and not isinstance(raw, bool) and raw:
                 mapped.details[key] = raw
         # Also reported under the name pricing knows it by. Grok Voice has *no* token prices at all — it
         # bills per audio hour — so without this the token counts price to a confident `Decimal('0')`
         # rather than to nothing: `cost_limit` never trips and no unavailable-cost warning is emitted.
-        # `details` cannot carry it, being both unpriced by design and typed `dict[str, int]` while these
-        # durations are fractional.
-        billable_seconds = (usage.model_extra or {}).get('billable_audio_seconds')
-        if isinstance(billable_seconds, (int, float)) and not isinstance(billable_seconds, bool):
-            mapped.audio_seconds = billable_seconds
+        mapped.audio_seconds = mapped.details.get('billable_audio_seconds', 0)
         return mapped
+
+    def _billed_audio_seconds_increase(self, usage: RealtimeResponseUsage) -> int | None:
+        """This response's share of xAI's running `billable_audio_seconds` total.
+
+        The session sums each response's usage, so passing the running total through would count every
+        earlier second again on each turn. A total lower than the last one means xAI started counting
+        afresh, so it is this response's share in full.
+        """
+        total = (usage.model_extra or {}).get('billable_audio_seconds')
+        if not isinstance(total, int) or isinstance(total, bool):
+            return None
+        increase = total - self._billed_audio_seconds if total >= self._billed_audio_seconds else total
+        self._billed_audio_seconds = total
+        return increase
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         """Ignored: xAI restores the conversation itself, so replaying it would say everything twice."""
