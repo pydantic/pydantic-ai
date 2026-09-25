@@ -563,15 +563,18 @@ class FallbackModel(Model):
                     attributes=attributes,
                     start_time=started_at,
                 )
-                if isinstance(failure, Exception):
-                    include_content = span_include_content(span)
-                    record_exception(attempt_span, failure, include_content=include_content)
-                    set_error_status(attempt_span, failure, include_content=include_content)
-                else:
-                    attempt_span.set_status(
-                        Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler')
-                    )
-                attempt_span.end(time_ns())
+                # Ended even if describing the failure raises, or the span would never be exported.
+                try:
+                    if isinstance(failure, Exception):
+                        include_content = span_include_content(span)
+                        record_exception(attempt_span, failure, include_content=include_content)
+                        set_error_status(attempt_span, failure, include_content=include_content)
+                    else:
+                        attempt_span.set_status(
+                            Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler')
+                        )
+                finally:
+                    attempt_span.end(time_ns())
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

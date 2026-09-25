@@ -3895,3 +3895,27 @@ def test_failed_attempt_span_leaves_request_span_ok(capfire: CaptureLogfire) -> 
             {'name': 'invoke_agent agent', 'parent': None, 'status': 'UNSET', 'attributes': {}},
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_failed_attempt_span_ends_when_recording_the_error_fails(capfire: CaptureLogfire) -> None:
+    """An error that can't be described still leaves its attempt span ended, and so exported."""
+
+    class UndescribableError(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError('cannot describe')
+
+    def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise UndescribableError
+
+    agent = Agent(
+        FallbackModel(
+            FunctionModel(fail, model_name='undescribable'), success_model, fallback_on=(UndescribableError,)
+        ),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    assert agent.run_sync('hello').output == 'success'
+
+    assert [span['name'] for span in capfire.exporter.exported_spans_as_dict()] == snapshot(
+        ['fallback attempt undescribable', 'chat function:success_response:', 'invoke_agent agent']
+    )
