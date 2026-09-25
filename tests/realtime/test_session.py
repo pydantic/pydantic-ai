@@ -5101,8 +5101,9 @@ async def test_parked_send_is_not_retried_after_close() -> None:
         lock = session._send_lock  # pyright: ignore[reportPrivateUsage]
         await lock.acquire()
         conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
-        while session._reconnects_handled == 0:  # pyright: ignore[reportPrivateUsage]
-            await asyncio.sleep(0)
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            while session._reconnects_handled == 0:  # pyright: ignore[reportPrivateUsage]
+                await asyncio.sleep(0)
         await _parked(parked)
         closing = asyncio.create_task(session.close())
         await asyncio.sleep(0)
