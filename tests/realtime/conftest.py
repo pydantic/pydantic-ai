@@ -399,14 +399,14 @@ def azure_ws_sideband_cassette(
 
 
 @pytest.fixture
-def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
+def blockbuster_enabled(realtime_recording: bool) -> bool:
     """Leave the blocking-call detector on for replay, which is what CI runs.
 
     Recording dials the provider for real, and building the TLS context reads CA bundles from disk
     inside the event loop. That is the recording harness's own blocking call, not the library's, and
     it cannot happen on the replay path, where nothing dials.
     """
-    return _record_mode(request) is None
+    return not realtime_recording
 
 
 @pytest.fixture

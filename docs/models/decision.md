@@ -101,7 +101,7 @@ With an output type to describe, the agent's `instructions` are no longer the qu
 
 Every field is asked as one of a few kinds of question: a yes or no (`bool`), a pick-one (`Literal`, `Enum` or [`Choices`](#options-known-only-at-run-time), optionally `| None`), a probability (a bounded `float`), a score against a rubric (an `IntEnum` of described levels), or a yes or no per option (a `list` or `dict` of options). A nested model of these is a question per field. [What each field type does](#what-each-field-type-does) has the full table.
 
-A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type the model is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-pick-then-fill) the model cannot fill is not an error — it is still offered as a route, and picking it [escalates](#escalating-to-a-language-model) the step to the model behind it.
+A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type the model is asked to fill. An output type beside other [routes](#routes-which-thing-to-do), a [union member](#a-union-of-output-types) or a [tool](#tools-pick-then-fill) the model cannot fill is not an error — it is still offered as a route, and picking it [escalates](#escalating-to-a-language-model) the step to the model behind it.
 
 A backend can also cap how many options a pick-one or how many levels a rubric may have, through [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels]. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-field-type-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits).
 
@@ -228,7 +228,7 @@ Each ticket is a run, and Jev takes every step it can:
 1. **The route question.** The first request asks Jev one pick-one question over the ticket: does it call for `Triage`, `Refund`, `Reply`, or `check_status`? Each option is described by its docstring. No fields are asked yet, since until a route is picked there is no telling which fields apply.
 2. **The fill.** A second request asks only the picked route's questions, over the same ticket: `Refund`'s `reason`, or all four of `Triage`'s fields at once. The run ends with that output. The first two tickets go this way, and cost two Jev requests each and no language model call.
 3. **A tool call.** A picked tool is filled the same way — here, `check_status`'s `service`. Your function runs, and the next step asks Jev the route question again, with the result in the history. `check_status` is not offered a second time in the same run.
-4. **Escalation.** `Reply` has a field Jev cannot fill, so picking it — like picking a tool with such an argument — raises [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The `FallbackModel` hands the whole step to the language model, with the same tools and output types, and the language model decides afresh: it could triage, refund or check the status as well. On the third ticket, Jev checked the status and then picked `Reply`, so the language model wrote the reply with the status in view, and the response names it as the model that answered. That one step is the only language model call; the steps before it stayed on Jev.
+4. **Escalation.** `Reply` has a field Jev cannot fill, so picking it — like picking a tool with such an argument — raises [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The `FallbackModel` hands the whole step to the language model, with the same tools and output types, and the language model decides afresh: it could triage, refund or check the status as well. On the third ticket, Jev checked the status and then picked `Reply`, so the language model wrote the reply with the status in view, and the response names it as the model that answered. That one step is the only language model call; the steps before it stayed on Jev.
 
 The rest of this page takes each piece in turn: [where the wording comes from](#where-the-wording-comes-from), [each field type](#what-each-field-type-does), [routes](#routes-which-thing-to-do) through [tools](#tools-pick-then-fill) and [unions](#a-union-of-output-types), [escalation](#escalating-to-a-language-model), and [confidence](#confidence-and-thresholds) — where the same `FallbackModel` can also take the steps Jev was unsure about.
 
@@ -449,7 +449,16 @@ Each option goes by the name you gave the route:
 
 Where a tool and an output type would share a name, the tool keeps it and the output type's option becomes, say, `Refund (output)`.
 
-The route the model picks is the one that runs, and how much it costs to fill depends on which route it is. A single output type's fields ride along in the *same* request as the route question, so its answers are already in hand when the pick comes back. Every other route is picked first and filled after: a chosen tool's arguments, or a chosen [union](#a-union-of-output-types) member's fields, go out in a second request carrying only that route's questions. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone, with no second request at all.
+The route the model picks is the one that runs, and how much it costs to fill depends on which route it is. A single output type's fields, when the model can fill them, ride along in the *same* request as the route question, so its answers are already in hand when the pick comes back. Every other route is picked first and filled after: a chosen tool's arguments, or a chosen [union](#a-union-of-output-types) member's fields, go out in a second request carrying only that route's questions. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone, with no second request at all.
+
+Fields are never merged across routes: a tool's arguments are only asked once the tool is picked, and a union member's fields once that member is. A route with even one field or argument the model cannot fill is still offered, and picking it [escalates](#escalating-to-a-language-model) the step:
+
+| Route | How it is asked | If the model cannot fill it |
+|---|---|---|
+| a single output type or output function with arguments | its fields in the same request as the route question, or alone when nothing else is on offer | only the route is asked, and picking it escalates; with no route beside it that the model can take, a [`UserError`][pydantic_ai.exceptions.UserError] |
+| a member of a union of output types or output functions | picked, then its fields in a second request | picking it escalates |
+| a tool with arguments | picked, then its arguments in a second request | picking it escalates |
+| an output function with no arguments, `None`, or a tool with no arguments | picked, and taken with nothing to fill | — |
 
 The pick is on the response, in `provider_details['route']`, under the same names: `choice` is the route the model picked, `probabilities` the probability it gave every route, and `offered` the routes the question offered. `provider_details` describes the response rather than each request: `confidence`, `probabilities` and `scores` are for the answers the output or the tool call was built from, which are the second request's when there was one, and are empty for a route called on the pick alone. A single output type's answers that rode along with the pick of something else built nothing, so they are not reported.
 
@@ -474,12 +483,12 @@ With tools attached, the first request carries the route question, with every ou
 | a tool with no arguments | your function, then the decision model again with its result in view | none |
 | an output function with no arguments | your function, and the run ends | only if the function makes one |
 | a tool whose arguments the model can express | the decision model fills its arguments in a second request, then your function runs | none |
-| a tool with any unsupported argument | the model behind the decision model [takes the whole step](#escalating-to-a-language-model), tools and all | one |
+| a tool, output type or output function with any field or argument the model cannot fill | the model behind the decision model [takes the whole step](#escalating-to-a-language-model), tools and all | one |
 | any route, below [`decision_route_threshold`](#handing-off-an-unsure-route) when you set one | the model behind the decision model takes the whole step | one |
 
 The route taken is the likeliest one, however sure the model is of it. To hand the unsure picks to a language model instead, set [`decision_route_threshold`](#handing-off-an-unsure-route).
 
-With no output type to fill and every other route already returned this turn, the one route left is taken without a route question at all: the model still fills its supported arguments in one request, and a route with no arguments costs no request.
+With no output type to fill and every other route already returned this turn, the one route left is taken without a route question at all: the model still fills its supported arguments in one request, and a route with no arguments costs no request. A single output type left on its own the same way is filled without a route question too, and one the model cannot fill escalates without a request.
 
 A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool that sends mail or charges an account is one a decision model can set off, and approval and limits are the agent's job here as anywhere.
 
@@ -607,13 +616,22 @@ The way out is a route that hands the step on: an output type like the [support 
 
 ## Escalating to a language model
 
-A route the model cannot fill is still offered, and picking it hands the step on: a tool with any unsupported argument, such as a plain `str` or an unbounded number, or a union member with such a field, like the support desk's `Reply`. The pick becomes a [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] rather than a response. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind the decision model hands that model the whole step, with the same tools and output types, and the language model decides the step again for itself. The rest of the requests never leave the decision model. Without a model behind it, the proposal is the error, and it says which route the model wanted and how sure it was. The request that proposed the call is not on the fallback response's usage.
+A route the model cannot fill is still offered, and picking it hands the step on: a tool with any unsupported argument, such as a plain `str` or an unbounded number, or an output type with such a field, like the support desk's `Reply`. The pick becomes an [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] rather than a response. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind the decision model hands that model the whole step, with the same tools and output types, and the language model decides the step again for itself. The rest of the requests never leave the decision model. Without a model behind it, the hand-off is the error, and it says which route the model picked and how sure it was. The request that proposed the call is not on the fallback response's usage.
 
 The decision model answers the tickets it can and hands over the ones that need writing, so only those cost a language model call. How many that is depends on your tickets and on [`decision_route_threshold`](#handing-off-an-unsure-route) if you set it, and `provider_details['route']` on each response is how to see it.
 
-A lone `output_type` the model cannot fill is refused before any request instead. There is no other route the run could have taken, so an unfillable one can only ever fail — that is a coding error, and finding out at setup beats finding out from the bill. Offered beside others, it is a route like any other; a union in which *no* member can be filled is refused the same way, since every answer to the question would hand off and the request asking it would buy nothing.
+An agent on which *every* route would hand off is refused before any request instead: an `output_type` the model cannot fill, or a union of them, with no route beside it that the model can take — a tool or output type it can fill, or one with nothing to fill. Every answer could only hand off, so the request asking for one would buy nothing — that is a coding error, and finding out at setup beats finding out from the bill. With such a route on offer, an output type the model cannot fill is a route like any other, whether it is alone or in a union.
 
 The same `FallbackModel` can also take the steps the decision model answered but [was unsure about](#falling-back-on-low-confidence).
+
+`UnfillableRoute` and [`UnsureRoute`](#handing-off-an-unsure-route) are both a [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff]: the decision model handing the step on, rather than failing. A `FallbackModel` falls back on every `ModelAPIError` by default, which includes an outage of the decision model's backend. To hand the language model only the steps the decision model hands off, and let a backend error fail the run instead of quietly costing a language model call on every step, pass `fallback_on=DecisionHandOff`:
+
+```python {title="hand_offs_only.py"}
+from pydantic_ai.models.decision import DecisionHandOff
+from pydantic_ai.models.fallback import FallbackModel
+
+model = FallbackModel('typesafe:jev-latest', 'anthropic:claude-opus-5-5', fallback_on=DecisionHandOff)
+```
 
 !!! warning "Watch the hand-off rate"
     A union that hands off on most requests costs a language model call **plus** a decision model call, and is
@@ -622,13 +640,12 @@ The same `FallbackModel` can also take the steps the decision model answered but
 
     Note where the number is. On a request the decision model answers, its pick and the probability of every
     route are in `provider_details['route']`. On a hand-off they are not:
-    [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] or
-    [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute] is raised instead of a response, and
+    a [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff] is raised instead of a response, and
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] returns the *next* model's response, which carries
     none of the decision model's numbers. So counting hand-offs by their absence in `provider_details` is the
-    measurement. If you would rather catch the exceptions, `ToolCallProposed` carries `tool_name` and `probability`,
-    and `UnsureRoute` carries `route`, `probability` and `probabilities`: run the models separately, or wrap the
-    fallback, when you want both.
+    measurement. If you would rather catch the exceptions, each hand-off carries the `route` the model picked and
+    its `probability`, and `UnsureRoute` the `probabilities` of every route as well: run the models separately, or
+    wrap the fallback, when you want both.
 
 ## Confidence and thresholds
 
@@ -1144,8 +1161,8 @@ Two things to hold on to. A classifier in the loop is a component like any other
 
 A decision model does not write text or read files, and it only fills tool arguments that map to the [typed questions](#supported-field-types) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
-- The `output_type` must be made of the field types above: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-pick-then-fill) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
-- No native tools. A function tool is offered to the model; supported arguments are [filled after it is picked](#tools-pick-then-fill), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
+- The `output_type` must be made of the field types above, or be [handed off](#escalating-to-a-language-model) when it is picked from beside other routes: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-pick-then-fill) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
+- No native tools. A function tool is offered to the model; supported arguments are [filled after it is picked](#tools-pick-then-fill), while any unsupported argument makes the pick an `UnfillableRoute` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 - A pick-one needs two or more options, each a string or a whole number: one option leaves nothing to pick, and `True` is not a label.
 - No more options in one question than the backend's `max_choice_options`, where it sets one. A pick-one field counts its own options, and the route question counts every tool plus every output type, so on Jev 255 tools is already one too many once the output type is counted beside them.

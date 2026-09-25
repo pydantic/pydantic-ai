@@ -63,12 +63,18 @@ _OPENAI_AUDIO_DELTA_TYPES = frozenset(
 _AUDIO_APPEND_TYPES = frozenset({'input_audio_buffer.append', 'session.input_audio.append'})
 
 
+def _gemini_realtime_audio(frame: dict[str, Any]) -> dict[str, Any] | None:
+    """The `realtime_input.audio` blob of an outbound Gemini microphone frame, if it is one."""
+    realtime_input = frame.get('realtime_input')
+    if not isinstance(realtime_input, dict):
+        return None
+    audio = cast('dict[str, Any]', realtime_input).get('audio')
+    return cast('dict[str, Any]', audio) if isinstance(audio, dict) else None
+
+
 def _is_audio_send(frame: dict[str, Any]) -> bool:
     """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, or Gemini protocol."""
-    if frame.get('type') in _AUDIO_APPEND_TYPES:
-        return True
-    realtime_input = frame.get('realtime_input')
-    return isinstance(realtime_input, dict) and 'audio' in realtime_input
+    return frame.get('type') in _AUDIO_APPEND_TYPES or _gemini_realtime_audio(frame) is not None
 
 
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
@@ -151,9 +157,9 @@ class RealtimeCassette:
         await self._disconnect()
 
     async def before_audio_send(self) -> None:
-        """Hold a microphone frame until it is the next thing the recording sends. A no-op when recording.
+        """Hold a microphone frame until it is the next thing the recording has happen. A no-op when recording.
 
-        Call it before each `send_audio()` in a test that streams a microphone alongside other sends:
+        Call it before each `send_audio()` in a test that streams a microphone alongside other traffic:
         see `ReplayWebSocket.wait_for_audio_send_turn`.
         """
         if self._replay is not None:
@@ -234,8 +240,9 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
     Handles the OpenAI inbound shape (`{'type': 'response.output_audio.delta', 'delta': <b64>}`), the
     OpenAI outbound shape (`{'type': 'input_audio_buffer.append', 'audio': <b64>}`), their GPT-Live
     counterparts (`session.output_audio.delta` / `session.input_audio.append`), and the Gemini shape
-    (`inlineData.data`, used in both directions). Transcript deltas (also keyed `delta` on OpenAI, but
-    on non-audio event types) are left untouched.
+    (`inlineData.data`, used in both directions, and the `realtime_input.audio.data` the SDK sends for
+    microphone audio). Transcript deltas (also keyed `delta` on OpenAI, but on non-audio event types)
+    are left untouched.
 
     Outbound audio matters as much as inbound: a test that streams a microphone for several turns
     sends megabytes of PCM, and a cassette is a file in git that a human is meant to be able to read.
@@ -246,6 +253,9 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
         return {**frame, 'delta': _truncate_b64_audio(frame['delta'])}
     if frame.get('type') in _AUDIO_APPEND_TYPES and isinstance(frame.get('audio'), str):
         return {**frame, 'audio': _truncate_b64_audio(frame['audio'])}
+    if (audio := _gemini_realtime_audio(frame)) is not None and isinstance(audio.get('data'), str):
+        audio = {**audio, 'data': _truncate_b64_audio(audio['data'])}
+        return {**frame, 'realtime_input': {**frame['realtime_input'], 'audio': audio}}
 
     def _walk(value: Any) -> Any:
         if isinstance(value, dict):
@@ -284,9 +294,9 @@ class _SentFrameNormalizer:
         return value
 
 
-# How long replay waits for someone else's move (a direct `recv()` caller consuming a recorded inbound
-# frame, or another sender sending the frame recorded before a microphone frame) before concluding it
-# won't come. Generous, because it only bounds how long a real mismatch takes to report; replay that is
+# How long replay waits for someone else's move (the reader consuming a recorded inbound frame, or
+# another sender sending the frame recorded before a microphone frame) before concluding it won't
+# come. Generous, because it only bounds how long a real mismatch takes to report; replay that is
 # making progress never comes near it.
 _REPLAY_PROGRESS_GRACE = 2.0
 
@@ -337,31 +347,32 @@ class ReplayWebSocket:
                 )
             self._position += 1
             self._condition.notify_all()
-        assert actual == interaction.data, (
+        # Truncated on this side too: cassettes recorded before Gemini's microphone frames were
+        # truncated hold them in full.
+        expected = _truncate_audio(interaction.data)
+        assert actual == expected, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
-            f'expected={interaction.data!r}\nactual={actual!r}'
+            f'expected={expected!r}\nactual={actual!r}'
         )
 
     async def wait_for_audio_send_turn(self) -> None:
-        """Wait until the recording's next outbound frame is microphone audio.
+        """Wait until the recording's next interaction is a microphone frame.
 
-        A microphone task and the session's own sends (a tool result, say) are separate senders, and a
-        recording made at a microphone's pace interleaves them. Replay streams the microphone as fast as
-        it can, so without this it would take the slot of a frame another sender was recorded sending.
-        The wait has to happen here, before the audio send, because the session holds its send lock for
-        the whole of a send: an audio send waiting inside `send()` would block the very frame it waits
-        for. Returns once no progress is being made, leaving `send()` to report the mismatch.
+        A recording made at a microphone's pace interleaves the microphone with everything else: the
+        frames the provider sent in between, and the session's own sends (a tool result, say). Replay
+        streams the microphone as fast as it can, so without this a microphone frame would take the slot
+        of a frame another sender was recorded sending, and the session would handle it before the
+        provider frames that preceded it on the wire. The wait has to happen here, before the audio send,
+        because the session holds its send lock for the whole of a send: an audio send waiting inside
+        `send()` would block the very frame it waits for. Returns once no progress is being made, leaving
+        `send()` to report the mismatch.
         """
         async with self._condition:
-            while (upcoming := self._next_send()) is not None and not _is_audio_send(upcoming.data):
+            while (upcoming := self._peek()) is not None and not (
+                isinstance(upcoming, CassetteMessage) and upcoming.direction == 'sent' and _is_audio_send(upcoming.data)
+            ):
                 if not await self._progressed():
                     return
-
-    def _next_send(self) -> CassetteMessage | None:
-        for interaction in self._interactions[self._position :]:
-            if isinstance(interaction, CassetteMessage) and interaction.direction == 'sent':
-                return interaction
-        return None
 
     async def _progressed(self) -> bool:
         """Wait for the replay position to move, reporting whether it did within the grace period."""
