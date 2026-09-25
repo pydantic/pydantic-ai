@@ -317,7 +317,9 @@ class LivePrompt:
         title = ''
         if self.interrupts.active:
             head, glyph = ' Working ', self.spinner().frame(self.clock())
-            title = truncate(f'{head}{glyph} | Enter: queue | Alt+Enter: steer queued ', width)
+            # Queue and steer hints only matter once something is queued, matching pi and Claude Code.
+            hints = '| Enter: queue | Alt+Enter: steer queued ' if self.queued_messages else ''
+            title = truncate(f'{head}{glyph} {hints}', width)
             if title.startswith(head + glyph):
                 title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)

@@ -33,7 +33,7 @@ def spinner_preview(spinner: Spinner, *, interval: float, now: float) -> str:
         f'{accent}{spinner.name}{reset}{muted} ({spinner.source}){reset}',
         spinner.description,
         '',
-        f'{muted}─ Working {reset}{accent}{frame}{reset}{muted} | Enter: queue ─{reset}',
+        f'{muted}─ Working {reset}{accent}{frame}{reset}{muted} ─{reset}',
         '',
         f'{muted}{len(spinner.frames)} frames at {interval:.2f}s per frame{reset}',
         f'{muted}-/+ or left/right: slower/faster{reset}',

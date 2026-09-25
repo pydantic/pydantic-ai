@@ -696,7 +696,7 @@ next opportunity without cancelling in-flight tools or changing your draft.
 Each Alt+Enter sends one message. If the run is no longer accepting steering,
 the message stays queued. Slash commands, `!` shell commands, and exit signals
 are not steered or skipped over. With no queued message, Alt+Enter does nothing.
-While running, the input box shows both shortcuts.
+While running with at least one queued message, the input box shows both shortcuts.
 Shift-Enter inserts a newline. CLAI requests modified
 key reporting while the editor is active and releases it for menus and on exit.
 Ctrl-R searches history; Enter accepts a search
