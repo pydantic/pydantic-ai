@@ -42,30 +42,40 @@ _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 
 @dataclass
 class DeferredCapabilityCatalog:
-    """Every deferred capability's id and description, resolved once per run step.
+    """Every deferred capability's id and description, for the current run step.
 
     The one source for what the catalog lists, both where it is rendered into the instructions and where it is
-    carried on the `load_capability` tool's `metadata`. Both read it in the same step, so a callable `description`
-    is resolved once per step, as it was before the tool carried it. It includes capabilities already loaded, as
-    the rendered catalog must.
+    carried on the `load_capability` tool's `metadata`. It is resolved where it always was, when the instructions
+    are rendered: that is after the step's tools are prepared, so a callable `description` sees them in
+    `ctx.tools`, and it is called as often as before the tool carried the catalog. The tool is built earlier in the
+    step, so its `metadata` holds the step's mapping, which the rendering fills in place before any model reads it.
+    It includes capabilities already loaded, as the rendered catalog must.
     """
 
     _step: tuple[str | None, int] | None = field(default=None, init=False)
     _entries: dict[str, str | None] = field(default_factory=dict[str, str | None], init=False)
 
-    async def get(self, ctx: RunContext[AgentDepsT]) -> dict[str, str | None]:
+    def for_step(self, ctx: RunContext[AgentDepsT]) -> dict[str, str | None]:
+        """This step's mapping, empty until `resolve` fills it."""
         step = (ctx.run_id, ctx.run_step)
         if step != self._step:
-            entries: dict[str, str | None] = {}
-            for capability_id, capability in ctx.capabilities.items():
-                if capability.defer_loading is not True:
-                    continue
-                description = capability.get_description()
-                if description is not None and not isinstance(description, str):
-                    description = await SystemPromptRunner[AgentDepsT](description).run(ctx)
-                entries[capability_id] = description
-            self._step, self._entries = step, entries
+            self._step, self._entries = step, {}
         return self._entries
+
+    async def resolve(self, ctx: RunContext[AgentDepsT]) -> dict[str, str | None]:
+        """Resolve every deferred capability's description, into this step's mapping."""
+        resolved: dict[str, str | None] = {}
+        for capability_id, capability in ctx.capabilities.items():
+            if capability.defer_loading is not True:
+                continue
+            description = capability.get_description()
+            if description is not None and not isinstance(description, str):
+                description = await SystemPromptRunner[AgentDepsT](description).run(ctx)
+            resolved[capability_id] = description
+        entries = self.for_step(ctx)
+        entries.clear()
+        entries.update(resolved)
+        return entries
 
 
 @dataclass
@@ -89,7 +99,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
             tool_kind='capability-load',
-            metadata={LOAD_CAPABILITY_CATALOG_METADATA_KEY: await self.catalog.get(ctx)},
+            metadata={LOAD_CAPABILITY_CATALOG_METADATA_KEY: self.catalog.for_step(ctx)},
         )
 
         load_tool = ToolsetTool(

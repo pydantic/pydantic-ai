@@ -2460,3 +2460,25 @@ async def test_a_load_capability_tool_without_its_catalog_hands_off(allow_model_
             ),
         )
     assert exc_info.value.route == 'load_capability'
+
+
+@pytest.mark.anyio
+async def test_a_lone_capability_is_loaded_without_a_question(allow_model_requests: None):
+    """With no output type and one capability to load, loading it is the only route, taken without a request."""
+    load_capability = ToolDefinition(
+        name='load_capability',
+        parameters_json_schema={'type': 'object', 'properties': {'id': {'type': 'string'}}, 'required': ['id']},
+        tool_kind='capability-load',
+        metadata={'capabilities': {'refunds': 'Use for refund eligibility or status.'}},
+    )
+    model = InMemoryDecisionModel()
+    response = await model.request(
+        [ModelRequest(parts=[UserPromptPart('Has my refund gone through?')])],
+        None,
+        ModelRequestParameters(function_tools=[load_capability], allow_text_output=False),
+    )
+
+    assert [(part.tool_name, part.args) for part in response.parts if isinstance(part, ToolCallPart)] == [
+        ('load_capability', {'id': 'refunds'})
+    ]
+    assert model.requests == []

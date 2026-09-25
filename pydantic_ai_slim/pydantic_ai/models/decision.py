@@ -538,7 +538,13 @@ class DecisionModel(Model[InterfaceClient]):
         offered = [*hand_offs, *function_tools]
         tools, done = _tools_left(messages, offered)
         routes = _route_labels(output_tools, tools, output_name)
-        forced_tool = tools[0] if not output_tools and len(tools) == 1 and len(offered) > 1 else None
+        # The one route left once the others have returned this turn, or a lone capability to load: loading it
+        # is the only thing to do, and there is no other route to ask about.
+        forced_tool = (
+            tools[0]
+            if not output_tools and len(tools) == 1 and (len(offered) > 1 or _capability_id(tools[0]) is not None)
+            else None
+        )
         if forced_tool is not None and _fixed_args(forced_tool) is not None:
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool, next(iter(routes)))

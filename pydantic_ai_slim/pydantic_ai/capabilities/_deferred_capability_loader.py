@@ -80,7 +80,7 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
         return self._render_catalog
 
     async def _render_catalog(self, ctx: RunContext[AgentDepsT]) -> str:
-        return await _render_deferred_capability_catalog(ctx, await self._catalog.get(ctx))
+        return await _render_deferred_capability_catalog(ctx, await self._catalog.resolve(ctx))
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         # Named so a model can tell the catalog from the rest of the instructions: a decision model offers
