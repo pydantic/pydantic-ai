@@ -69,7 +69,7 @@ from restate.ext.pydantic import RestateAgent, restate_context
 
 weather_agent = Agent(  # (1)!
     'openai:gpt-5.2',
-    system_prompt='You are a helpful agent that provides weather updates.',
+    instructions='You are a helpful agent that provides weather updates.',
 )
 
 
