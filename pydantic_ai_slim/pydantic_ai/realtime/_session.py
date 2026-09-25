@@ -387,6 +387,9 @@ class _ToolBatch:
     """Whether a result went out without asking for the answer."""
     answered: bool = False
     """Whether the answer has been asked for."""
+    awaiting_reply: bool = False
+    """Whether a reply is counted for the batch's answer and that answer hasn't begun: kept reachable until
+    it does, so a cancellation the provider sends meanwhile can still give the reply back."""
     answer_reserved: bool = False
     """Whether the reply of a provider that answers the batch by itself has been counted, before the
     results that trigger it are all out: given back if one of them then fails to send."""
@@ -944,6 +947,9 @@ class RealtimeSession:
         self._tool_call_batches: dict[str, _ToolBatch] = {}
         self._provider_answers_tool_batches = not self._profile.get('supports_manual_turn_control', False)
         self._closed_tool_batches: list[_ToolBatch] = []
+        # Batches whose answer is counted but hasn't begun, in the order they asked: the next response to
+        # take a reservation is the oldest one's answer.
+        self._batches_awaiting_reply: list[_ToolBatch] = []
         # Set while a response the provider said isn't the last of its exchange is held open for the
         # tool call it was stalling for; the finish reason it will be recorded with if something else
         # arrives first. See `_handle_turn_complete`.
@@ -2880,6 +2886,10 @@ class RealtimeSession:
             batch.unanswerable = True
             # No call can join it any more, so it retires once its running calls are cancelled below.
             batch.closed = True
+        # A counted answer is settled with the rest of the lost state (the reconnect re-asks where the
+        # provider replays), so its batch stops waiting for it.
+        for batch in list(self._batches_awaiting_reply):
+            self._stop_awaiting_tool_batch_reply(batch)
         self._closed_tool_batches.clear()
         self._open_tool_batch = None
         if self._response_in_flight:
@@ -3162,20 +3172,19 @@ class RealtimeSession:
             # whichever send settles last (below).
             respond = batch.settled and not batch.unanswerable
         batch.answered |= respond
-        if respond and self._provider_answers_tool_batches:
+        if respond:
+            # Counted (and tracked, so a cancellation can give it back) before the result goes out.
             self._reserve_tool_batch_reply(batch, at_risk=True)
         batch.sending += 1
         try:
-            await self._send_tool_result_frame(
-                result, respond=respond, reserve=respond and not self._provider_answers_tool_batches
-            )
+            await self._send_tool_result_frame(result, respond=respond, reserve=False)
         except BaseException:
             # A result the model never got can't be answered: nothing may ask for an answer to it, and a
             # provider missing one of the batch's results won't answer it by itself either.
             batch.unanswerable = True
             if batch.answer_reserved:
                 batch.answer_reserved = False
-                self._release_response_reservation()
+                self._give_back_tool_batch_reply(batch)
             raise
         finally:
             batch.sending -= 1
@@ -3189,8 +3198,8 @@ class RealtimeSession:
                 await self._ask_for_tool_batch_answer(batch)
 
     def _retire_tool_batch_if_settled(self, batch: _ToolBatch) -> None:
-        """Forget a batch whose calls can no longer run or send, so nothing else can reach it."""
-        if batch.settled:
+        """Forget a batch whose calls can no longer run or send and whose answer isn't still to begin."""
+        if batch.settled and not batch.awaiting_reply:
             for call_id in batch.calls:
                 self._tool_call_batches.pop(call_id, None)
 
@@ -3205,14 +3214,31 @@ class RealtimeSession:
                 self._release_response_reservation()
             raise
 
-    def _reserve_tool_batch_reply(self, batch: _ToolBatch, *, at_risk: bool) -> None:
-        """Count the reply of a provider that answers `batch` by itself, before its last result is out.
+    def _await_tool_batch_reply(self, batch: _ToolBatch) -> None:
+        batch.awaiting_reply = True
+        self._batches_awaiting_reply.append(batch)
 
-        `at_risk` while a result is still on its way: given back if one of them then fails to send,
-        settled once every one has gone out.
+    def _give_back_tool_batch_reply(self, batch: _ToolBatch) -> None:
+        """Release the reply counted for `batch`, unless a response has already begun and taken it."""
+        if batch.awaiting_reply:
+            self._stop_awaiting_tool_batch_reply(batch)
+            self._release_response_reservation()
+
+    def _stop_awaiting_tool_batch_reply(self, batch: _ToolBatch) -> None:
+        batch.awaiting_reply = False
+        self._batches_awaiting_reply.remove(batch)
+        self._retire_tool_batch_if_settled(batch)
+
+    def _reserve_tool_batch_reply(self, batch: _ToolBatch, *, at_risk: bool) -> None:
+        """Count the reply to `batch`'s answer before the frame that asks for it (or triggers it) goes out.
+
+        Tracked until the answer begins, so a failed send or a provider cancellation can give it back.
+        `at_risk` while one of the batch's results is still on its way: given back if one then fails to
+        send, since the model can't answer a batch it didn't get whole.
         """
         self._reserve_response_request()
         batch.answer_reserved = at_risk
+        self._await_tool_batch_reply(batch)
 
     def _close_tool_batch(self) -> None:
         """Close the batch of the response just finalized: its calls are all in, so it may owe the answer."""
@@ -3241,11 +3267,11 @@ class RealtimeSession:
             # The provider answers a complete batch by itself (Gemini Live); only the reply is counted.
             self._reserve_tool_batch_reply(batch, at_risk=bool(batch.sending))
             return
-        self._reserve_response_request()
+        self._reserve_tool_batch_reply(batch, at_risk=False)
         try:
             await self._send_frame(CreateResponse())
         except BaseException:
-            self._release_response_reservation()
+            self._give_back_tool_batch_reply(batch)
             raise
 
     # --- streaming --------------------------------------------------------------------------------
@@ -3337,6 +3363,9 @@ class RealtimeSession:
             return
         if self._pending_response_requests:
             self._pending_response_requests -= 1
+            if self._batches_awaiting_reply:
+                # The oldest counted answer has begun: its batch has nothing left to wait for.
+                self._stop_awaiting_tool_batch_reply(self._batches_awaiting_reply[0])
         elif self._usage_limits is not None and self._responses_are_requests:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
@@ -3615,9 +3644,10 @@ class RealtimeSession:
                 if (batch := self._tool_call_batches.get(tool_call_id)) is not None:
                     # A cancelled call means the model abandoned the turn (usually a barge-in): its
                     # siblings' results still go out, but nothing asks for an answer to them, since the
-                    # interruption starts the next reply.
+                    # interruption starts the next reply. An answer already counted won't come either.
                     batch.unanswerable = True
                     batch.running.discard(tool_call_id)
+                    self._give_back_tool_batch_reply(batch)
                     self._retire_tool_batch_if_settled(batch)
                 if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
                     continue
