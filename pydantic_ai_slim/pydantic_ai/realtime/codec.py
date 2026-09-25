@@ -353,6 +353,7 @@ class ResponseRequestsMerged:
 
     count: int
     """How many requests joined one already being held, and so will get no response of their own."""
+    _: KW_ONLY
 
     event_kind: Literal['response_requests_merged'] = 'response_requests_merged'
     """Event type identifier, used as a discriminator."""
