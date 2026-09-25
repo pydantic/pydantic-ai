@@ -69,17 +69,25 @@ class _ShellFilesystem(SupportsFilesystem):
         quoted_path = shlex.quote(path)
         # Classify the path in the same command: `base64 < directory` succeeds with empty output
         # on macOS and fails generically on GNU, and every call is a round trip on a remote backend.
+        # The byte count comes first so output a backend lost in transit is an error, not a shorter file.
         result = await self._backend.run(
             f'if test -d {quoted_path}; then exit {_SHELL_EXIT_IS_DIRECTORY}; '
-            f'elif test -e {quoted_path}; then base64 < {quoted_path}; '
+            f'elif test -e {quoted_path}; then wc -c < {quoted_path} && base64 < {quoted_path}; '
             f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
             shell=True,
         )
         await self._raise_for_error(result, path, missing=True)
+        size, _, encoded = result.stdout.partition('\n')
         try:
-            return base64.b64decode(result.stdout)
+            data = base64.b64decode(encoded)
         except ValueError as error:
             raise WorkspaceError(f'shell filesystem returned invalid base64 while reading {path!r}') from error
+        if not size.strip().isdigit() or int(size) != len(data):
+            raise WorkspaceError(
+                f'shell filesystem returned incomplete output while reading {path!r}: '
+                f'got {len(data)} bytes, expected {size.strip()!r}'
+            )
+        return data
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         parent = posixpath.dirname(path)
