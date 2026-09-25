@@ -121,10 +121,8 @@ def _run_conformance_command(
         raise ValueError('cwd must be absolute')
     if not isinstance(command, str) and list(command) == ['sh', '-c', 'sleep 30'] and timeout is not None:
         raise WorkspaceTimeoutError('command timed out')
-    if isinstance(command, str):
-        if command == 'printf out; printf err >&2; exit 7':
-            return FakeWorkspaceResult(exit_code=7, stdout='out', stderr='err')
-        return None
+    if command == 'printf out; printf err >&2; exit 7':
+        return FakeWorkspaceResult(exit_code=7, stdout='out', stderr='err')
     if list(command) == ['pydantic-ai-conformance-missing-program']:
         return FakeWorkspaceResult(exit_code=127, stderr=f'{command[0]}: command not found\n')
     if list(command[:3]) == ['sh', '-c', 'pwd -P']:
@@ -188,18 +186,6 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
         await self.ensure_ready()
-        conformance_result = _run_conformance_command(
-            command,
-            shell=shell,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-            working_dir='/workspace',
-            files=self.files,
-            directories=self.directories,
-        )
-        if conformance_result is not None:
-            return conformance_result
         self.commands.append(command)
         return FakeWorkspaceResult(stdout='connected')
 
@@ -479,9 +465,6 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         )
         if conformance_result is not None:
             return conformance_result
-        if isinstance(command, str) or command[0] in ('head', 'sed'):
-            # No shell utilities: the facade's bounded read falls back to the filesystem.
-            return FakeWorkspaceResult(exit_code=127, stderr='not found')
         return FakeWorkspaceResult(stdout=f'ran:{" ".join(command)}')
 
     async def working_dir(self) -> str:

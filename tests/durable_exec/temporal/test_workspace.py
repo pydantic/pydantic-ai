@@ -146,9 +146,6 @@ class RemoteBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._files()
         if isinstance(command, str) != shell:
             raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
-        if isinstance(command, str) or command[0] in ('head', 'sed'):
-            # No shell utilities: the facade's bounded read falls back to the filesystem.
-            return CommandResult(exit_code=127, stdout='', stderr='not found')
         return CommandResult(exit_code=0, stdout=f'ran:{" ".join(command)}', stderr='')
 
     async def working_dir(self) -> str:
