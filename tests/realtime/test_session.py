@@ -85,6 +85,7 @@ from pydantic_ai.realtime import (
     TranscriptUpdate,
 )
 from pydantic_ai.realtime._session import (
+    _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
     _AUDIO_TAP_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _pending_message_text,  # pyright: ignore[reportPrivateUsage]
     _TapView,  # pyright: ignore[reportPrivateUsage]
@@ -561,6 +562,16 @@ async def test_audio_view_drops_oldest_chunk_on_overflow_without_instrumentation
         assert [chunk async for chunk in session.stream_audio()] == chunks[-5:]
         assert len(await drain_events(session)) == 8
         assert session._audio_tap_drops == 2  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_audio_view_caps_the_number_of_tiny_chunks_it_buffers() -> None:
+    # A byte budget alone would let tiny deltas queue without bound, so the chunk count is capped too.
+    chunks = [index.to_bytes(2, 'big') for index in range(_AUDIO_TAP_MAX_CHUNKS + 5)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-_AUDIO_TAP_MAX_CHUNKS:]
+        assert session._audio_tap_drops == 5  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
@@ -5289,7 +5300,7 @@ async def test_unconsumed_session_queue_keeps_structural_events_and_latest_delta
     )
 
     async with RealtimeSession(connection) as session:
-        # Two thousand 2-byte chunks are far inside the audio view's window, so it keeps them all.
+        # Two thousand 2-byte chunks are far inside the audio view's windows, so it keeps them all.
         assert [chunk async for chunk in session.stream_audio()] == chunks
 
         queued = _queued_realtime_events(session)

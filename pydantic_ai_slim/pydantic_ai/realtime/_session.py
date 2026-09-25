@@ -246,6 +246,9 @@ _FULL_PROFILE = RealtimeModelProfile(
 # 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
 # the text a user is reading, so they get a deep window for a trivial cost.
 _AUDIO_TAP_SECONDS = 300
+# The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
+# also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
+_AUDIO_TAP_MAX_CHUNKS = 30_000
 _TRANSCRIPT_TAP_SIZE = 512
 _SESSION_DELTA_QUEUE_SIZE = 512
 # Structural events are some five per turn against one delta per audio frame, so they are not what
@@ -334,13 +337,15 @@ class _AudioTap:
     ended: bool = False
 
     def put(self, chunk: bytes) -> int:
-        """Queue a chunk without blocking the pump, dropping the oldest to stay within the byte budget.
+        """Queue a chunk without blocking the pump, dropping the oldest to stay within the byte and chunk budgets.
 
         The newest chunk is always kept, even on its own over budget. Returns how many chunks were
         dropped; their bytes become a gap ahead of the consumer.
         """
         dropped = 0
-        while self.buffered_bytes and self.buffered_bytes + len(chunk) > self.max_buffered_bytes:
+        while self.buffered_bytes and (
+            self.buffered_bytes + len(chunk) > self.max_buffered_bytes or self.queue.qsize() >= _AUDIO_TAP_MAX_CHUNKS
+        ):
             # The sentinel can't be dropped: it is only enqueued once the pump has finished, after
             # which nothing publishes.
             oldest = self.queue.get_nowait()
