@@ -5809,14 +5809,31 @@ async def test_response_cut_off_by_a_reconnect_keeps_its_id() -> None:
     ]
 
 
+async def test_response_cut_off_names_the_response_its_latest_content_came_from() -> None:
+    """A reply whose content moved on to a new response before it was cut off is named after that one."""
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='One, ', response_id='resp_a'),
+            OutputTranscript(text='two', response_id='resp_b'),
+            RealtimeSessionReconnectEvent(state_restored=True),
+        ],
+        reconnect_restores_in_flight_state=False,
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
+    assert [(r.state, r.provider_response_id) for r in responses] == [('interrupted', 'resp_b')]
+
+
 async def test_response_cut_off_by_close_keeps_its_id() -> None:
     """Closing the session mid-reply records the partial reply with the response id its content carried."""
     conn = BlockingRealtimeConnection([OutputTranscript(text='One, two, three', response_id='resp_cut')])
     async with RealtimeSession(conn) as session:
-        async for event in session:  # pragma: no branch
-            # The reply's first event: close with it in flight.
-            assert isinstance(event, PartStartEvent)
-            break
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            async for event in session:  # pragma: no branch
+                # The reply's first event: close with it in flight.
+                assert isinstance(event, PartStartEvent)
+                break
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
