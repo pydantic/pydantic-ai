@@ -1,12 +1,4 @@
-"""A policy wrapper that makes an existing workspace backend read-only.
-
-[`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] wraps any
-[`Workspace`][pydantic_ai.workspaces.Workspace] facade: file reads pass through unchanged,
-while command execution and file mutation raise
-[`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError]. Commands are blocked
-along with writes because they execute against the same filesystem (the one-environment contract): a
-workspace that refused `write_bytes` but ran `rm` would not be read-only.
-"""
+"""A policy wrapper that makes a workspace read-only."""
 
 from __future__ import annotations
 
@@ -27,20 +19,9 @@ _READ_ONLY_REASON = (
 
 
 class ReadOnlyWorkspace(WrapperWorkspace):
-    """A [`Workspace`][pydantic_ai.workspaces.Workspace] facade that forwards reads and refuses mutations.
+    """A [`Workspace`][pydantic_ai.workspaces.Workspace] that allows reads and refuses commands and file changes.
 
-    Reads (`working_dir`, `read_bytes`, `stat`, `list_dir`, `exists`, `realpath`) forward to the wrapped
-    backend, using its native filesystem methods or the shell fallback; `run` and file mutations raise
-    [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError] explaining the restriction. `ref`
-    is the wrapped backend's own: a
-    [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] names the environment, never the policy,
-    so whoever supplies the workspace re-applies the wrapper on every (re)connection.
-
-    The wrapper is a policy boundary for access through the workspace API, not an isolation
-    mechanism. Read-only *with* command execution is only possible when the environment itself
-    enforces it (e.g. a read-only mount). Over a backend without native file methods, reads run
-    standard utilities such as `base64` inside the environment, so an environment someone has
-    tampered with is not protected by this wrapper.
+    Commands are refused too, since they could change files. This restricts the workspace API; it is not isolation.
     """
 
     @property

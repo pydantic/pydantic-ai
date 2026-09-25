@@ -83,37 +83,18 @@ async def _shielded(awaitable: Awaitable[None]) -> None:
 
 
 class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
-    """Run commands as subprocesses on this machine and use its filesystem.
+    """Run commands as subprocesses on this machine and use its filesystem (POSIX only).
 
-    This isolates nothing and is not a jail. `working_dir` is only where commands start and what
-    relative workspace paths resolve against: absolute paths, `..`, and commands reach anywhere on
-    the host that this process can. Use it for trusted local work, tests, and development; run
-    untrusted code in a container or VM through a provider workspace.
-
-    Commands inherit only `PATH` and `HOME` from the agent process's environment, so they find the
-    host's tools (Homebrew, `~/.local/bin`) and user configuration (git, uv). `env` is layered on
-    top, then the per-call `env`; set a variable to override it. Nothing else is inherited: passing
-    `os.environ` wholesale would hand the model's commands every secret in the process, LLM API
-    keys included.
-
-    It supports POSIX platforms only. A command that calls `setsid` can move its own processes
-    outside the process group that this workspace kills on cancellation or timeout.
-
-    The directory is the environment: [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
-    names it from construction, and the first operation that needs it raises
-    [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] when it does
-    not exist, the way a provider backend does for a sandbox that is gone. Nothing creates it.
+    This isolates nothing: commands and absolute paths reach anywhere this process can. Commands
+    inherit only `PATH` and `HOME`, so they find the host's tools and config but none of its secrets.
+    The directory is the environment: its [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
+    exists from construction, and the first operation raises
+    [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing.
 
     Args:
-        working_dir: The default working directory for commands and the base for relative
-            workspace paths. A leading `~` is expanded to the user's home directory, and relative
-            paths resolve against the current directory when the workspace is constructed. It is not
-            a confinement boundary. The caller creates and removes it. It is canonicalized on first
-            use so [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir] reports
-            the directory commands actually run in.
-        env: Environment variables every command in this workspace gets, layered on top of the
-            inherited `PATH` and `HOME`. The per-call `env` of
-            [`run`][pydantic_ai.workspaces.SupportsCommands.run] is layered on top.
+        working_dir: Where commands start and relative paths resolve; `~` is expanded and a relative
+            path is taken from the current directory. The caller creates and removes it.
+        env: Environment variables for every command, on top of `PATH` and `HOME`; the per-call `env` goes on top.
     """
 
     def __init__(self, working_dir: str | Path, *, env: Mapping[str, str] | None = None):
@@ -135,16 +116,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     @property
     def ref(self) -> WorkspaceRef:
-        """`WorkspaceRef(provider='local', id=...)` naming `working_dir` as an absolute path, with `~` expanded.
-
-        The directory is the environment, so this is the one backend whose ref precedes its first
-        operation: it is available from construction and involves no I/O, so symlinks are not
-        resolved. It says which directory on this host the workspace was configured with, and means
-        nothing on another machine. Whether the directory exists is checked by the first operation,
-        like [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir], which raises
-        [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] when it
-        is missing.
-        """
+        """`WorkspaceRef(provider='local', id=<absolute working_dir>)`, available from construction."""
         return self._ref
 
     async def _get_working_dir(self) -> Path:

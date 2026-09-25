@@ -1,12 +1,4 @@
-"""A workspace backend that reports why execution is unavailable.
-
-[`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] gives workspace operations
-the same explicit failure mode. Pydantic AI uses it where a live execution
-environment cannot safely exist, and applications can pass one deliberately to disable
-execution with a policy-specific explanation.
-
-It implements the required backend operations so every operation surfaces the configured reason.
-"""
+"""A workspace backend whose every operation explains why no workspace is available."""
 
 from __future__ import annotations
 

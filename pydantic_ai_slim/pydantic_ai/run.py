@@ -733,14 +733,9 @@ class AgentRunResult(Generic[OutputDataT]):
 
     @property
     def workspace(self) -> Workspace:
-        """The [`Workspace`][pydantic_ai.workspaces.Workspace] the run used.
+        """The [`Workspace`][pydantic_ai.workspaces.Workspace] the run used, still usable after it.
 
-        Pass it to a later run or a subagent as `workspace=result.workspace` to keep working in the same
-        environment. Nothing tears it down when the run ends, so it is still usable here: copy files
-        out, or retain the concrete provider backend and await its native workspace for lifecycle methods.
-
-        A result that did not come from a run — one deserialized from JSON, or built by hand — has
-        a placeholder whose operations explain that no workspace is attached.
+        Pass it as `workspace=` to continue in it. A result not produced by a run has a placeholder.
         """
         # Set by `AgentRun.result`; see there.
         workspace = self.__dict__.get('_workspace')

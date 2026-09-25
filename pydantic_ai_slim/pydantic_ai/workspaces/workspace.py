@@ -1,11 +1,4 @@
-"""The user-facing workspace API.
-
-Workspace backends implement the small
-[`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] protocol and typically also
-[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem]. The `Workspace` object owns
-model-facing semantics such as path resolution and text decoding. Capabilities and user tools
-consume it through [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace].
-"""
+"""`Workspace`, what tools and hooks get as `ctx.workspace`: a backend plus path resolution and text helpers."""
 
 from __future__ import annotations as _annotations
 
@@ -237,13 +230,7 @@ class _ShellFilesystem(SupportsFilesystem):
 
 
 class Workspace(WorkspaceBackend):
-    """Rich workspace interface exposed to tools and capabilities.
-
-    `Workspace` forwards the backend's supported command and filesystem operations and adds path
-    resolution plus text helpers. Use
-    [`backend`][pydantic_ai.workspaces.Workspace.backend] to reach provider-specific
-    functionality.
-    """
+    """The workspace API tools and hooks use as `ctx.workspace`: the backend's operations, relative paths, and text."""
 
     def __init__(
         self,
@@ -258,33 +245,20 @@ class Workspace(WorkspaceBackend):
 
     @property
     def read_only(self) -> bool:
-        """Whether this workspace refuses mutations (writes, `make_dir`, `remove`, `run`).
-
-        `False` for a plain facade. Policy wrappers that refuse mutations, such as
-        [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], return `True`, and any
-        wrapper that adds the same policy must override this the same way. Tool providers use it
-        to leave mutation tools unregistered instead of offering tools that can only fail.
-        """
+        """Whether this workspace refuses commands and file changes, so tools can leave those out."""
         return False
 
     @property
     def attached(self) -> bool:
-        """Whether this workspace reaches a real environment.
+        """Whether this workspace reaches an environment.
 
-        `False` for the placeholder a run gets when nothing supplies a workspace, and for a
-        deliberate [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace]. A
-        capability that needs a workspace checks this in `before_run`, so a missing one fails at
-        run start instead of on the first tool call.
+        `False` for an [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace], like a run's placeholder.
         """
         return not isinstance(self._backend, UnavailableWorkspace)
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        """The wrapped backend's [`ref`][pydantic_ai.workspaces.WorkspaceBackend.ref]: `None` until an environment exists.
-
-        A ref names an environment, never the facade or a policy wrapper around it, so the same
-        value is reported through every layer.
-        """
+        """The environment's [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], `None` until it exists."""
         return self._backend.ref
 
     @property
@@ -309,12 +283,9 @@ class Workspace(WorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> WorkspaceResult:
-        """Execute a command and wait for it to complete.
+        """Run a command and wait for it; a relative `cwd` resolves against the working directory.
 
-        A relative `cwd` resolves against [`working_dir`][pydantic_ai.workspaces.Workspace.working_dir],
-        like every path the facade takes. Delegates to
-        [`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run]. Raises `UserError` when
-        the backend is filesystem-only.
+        There is no default `timeout`. Raises `UserError` if the backend can't run commands.
         """
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
@@ -324,11 +295,7 @@ class Workspace(WorkspaceBackend):
         return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
-        """The workspace's default working directory (absolute, filesystem-canonical POSIX path).
-
-        The canonicality contract is documented on
-        [`WorkspaceBackend.working_dir`][pydantic_ai.workspaces.WorkspaceBackend.working_dir].
-        """
+        """The default working directory, which relative paths resolve against."""
         return await self._backend.working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
@@ -388,14 +355,11 @@ class Workspace(WorkspaceBackend):
         return posixpath.normpath(path)
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
-        """Read text from `path`, resolving relative paths through the backend first.
-
-        Decoding is strict: undecodable bytes raise `UnicodeDecodeError`.
-        """
+        """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""
         return (await self.read_bytes(path)).decode(encoding)
 
     async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
-        """Write text to `path`, resolving relative paths through the backend first."""
+        """Write text to a file."""
         await self.write_bytes(path, content.encode(encoding))
 
 

@@ -586,27 +586,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return type(self).get_workspace is not AbstractCapability.get_workspace
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        """Supply the run's workspace backend, or `None` if this capability does not provide one.
+        """Return the run's workspace backend for `ref`, or `None` to leave it to another capability.
 
-        Called synchronously on each run, before `for_run`, so `for_run` can read from the workspace.
-        A capability that exists only after `for_run` (one a capability function returns) is asked
-        afterwards. Several workspace capabilities may be attached: they are asked in order and the
-        first that returns a workspace wins. Return `None` for a `ref` this capability does not own.
-
-        It must have no side effects, including bookkeeping: return a backend configured from this
-        capability's own settings, carrying `ref` when one was recovered or passed in. The backend
-        creates or attaches on its first operation, so nothing here reaches the network. This is
-        the only place a ref is turned back into a workspace, so a capability that creates
-        environments must also recognize the refs it hands out.
-
-        `ref` is the identity of an environment the run should continue in when the caller passed
-        a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through `workspace=`. The backend
-        attaches to it on first use and raises
-        [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is
-        gone; it never creates a replacement for a ref. `None` means the backend should create a
-        fresh environment on first use and report its identity as its `ref` from then on. When
-        continuing from message history, the latest response's `workspace_ref` is used unless the
-        caller passes an explicit backend, facade, or ref.
+        `ref` names an environment to continue in (from `workspace=` or the message history); `None`
+        asks for a fresh one. Build the backend only, without I/O or side effects: it creates or
+        attaches on first use. Capabilities are asked in order before `for_run`, and the first answer wins.
         """
         return None
 
