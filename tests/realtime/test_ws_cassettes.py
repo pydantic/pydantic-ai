@@ -449,8 +449,7 @@ async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.Monk
         await ReplayWebSocket(wrong_content).send(json.dumps({'type': 'client.unexpected'}))
 
 
-_AUDIO = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
-_TOOL_RESULT = {'type': 'response.create'}
+_LIVE_MIC_FRAME = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
 
 
 @pytest.mark.anyio
@@ -476,11 +475,11 @@ async def test_replay_waits_for_a_direct_recv_reader() -> None:
 @pytest.mark.parametrize(
     ('frame', 'is_audio'),
     [
-        (_AUDIO, True),
+        (_LIVE_MIC_FRAME, True),
         ({'type': 'input_audio_buffer.append', 'audio': 'AAAA'}, True),
         ({'realtime_input': {'audio': {'data': 'AAAA'}}}, True),
         ({'realtime_input': {'text': 'hi'}}, False),
-        (_TOOL_RESULT, False),
+        ({'type': 'response.create'}, False),
     ],
 )
 def test_is_audio_send(frame: dict[str, object], is_audio: bool) -> None:

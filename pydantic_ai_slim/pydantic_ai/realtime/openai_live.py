@@ -707,6 +707,11 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(event, OutputTranscriptDeltaEvent):
             return [*self._open_response(), OutputTranscript(self._fragment('output', event.delta))]
         if isinstance(event, InputTranscriptDeltaEvent):
+            if self._response_open and not any(char.isalnum() for char in event.delta):
+                # The tail of a user turn the reply already closed: Live transcribes the user's closing
+                # punctuation after the model has started answering over it. Only words can start a new
+                # turn, and opening one for a lone `'.'` would record it as a request of its own.
+                return []
             self._input_open = True
             self._heard_voice()
             return [InputTranscript(self._fragment('input', event.delta))]

@@ -516,6 +516,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_thinking': False,
         'emits_input_speech_events': False,
         'synthesizes_turn_boundary': True,
+        # The spoken replies are inferred turns; the requests that spend tokens are the backend's.
+        'responses_are_requests': False,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
     }

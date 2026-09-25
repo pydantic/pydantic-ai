@@ -284,6 +284,7 @@ def test_profile() -> None:
         supports_tool_return_schema=False,
         emits_input_speech_events=True,
         synthesizes_turn_boundary=False,
+        responses_are_requests=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),

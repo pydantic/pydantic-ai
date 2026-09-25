@@ -632,6 +632,7 @@ class RealtimeSession:
         self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
+        self._responses_are_requests = self._profile.get('responses_are_requests', True)
         # Whether this session owns the audio transport. `False` for a WebRTC sideband session: the
         # browser exchanges audio with the provider directly, and this connection is only the control
         # plane, so the audio methods are unavailable and no audio bytes flow over it (transcripts still
@@ -2158,7 +2159,10 @@ class RealtimeSession:
                 # The model has said what it had to say (a tool call means its answer is still to come),
                 # so audio from here on can be the user's next turn again.
                 self._anonymous_user_turn_awaiting_answer = False
-            self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
+            # Counted here unless the profile says the requests are reported with usage instead.
+            self.usage.requests += int(
+                self._responses_are_requests
+            )  # usage-attribution: the session owns its spans; `wrap_run` opens none
             self._tool_run_step += 1
             for part in parts:
                 if isinstance(part, ToolCallPart):
@@ -3071,7 +3075,7 @@ class RealtimeSession:
         between: those solicited but not yet started, and the one in flight. Without them, sends
         issued back-to-back would each see the same count and oversubscribe the budget.
         """
-        if self._usage_limits is not None:
+        if self._usage_limits is not None and self._responses_are_requests:
             in_flight = 1 if self._response_limit_checked else 0
             projected = dataclasses.replace(
                 self.usage, requests=self.usage.requests + self._pending_response_requests + in_flight
@@ -3090,7 +3094,7 @@ class RealtimeSession:
             return
         if self._pending_response_requests:
             self._pending_response_requests -= 1
-        elif self._usage_limits is not None:
+        elif self._usage_limits is not None and self._responses_are_requests:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
         self._response_active = True
@@ -3117,6 +3121,12 @@ class RealtimeSession:
         events: list[RealtimeEvent] = []
         if event.response_scoped:
             self._begin_response()
+            if not self._responses_are_requests:
+                # Each report is a request the model has already made, so the one past the limit is
+                # caught as it arrives rather than before it starts.
+                if self._usage_limits is not None:
+                    self._usage_limits.check_before_request(self.usage)
+                self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
         self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
         if event.response_scoped:
             # Measured before accumulating: a tool-call response is finalized by the accumulation

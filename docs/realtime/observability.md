@@ -58,7 +58,10 @@ tool-calling turn can span several responses, so use `session.usage` for the cum
 Token, cost, and tool-call limits are checked as usage accrues. Request limits are checked before
 sending text, sending an image with `respond=True`, explicitly creating a response, or returning a
 tool result. With server-side VAD, the provider can begin a response without a client request; that
-limit is checked at the first response event. Breaches raise
+limit is checked at the first response event. On a model whose profile reports
+`responses_are_requests=False` (OpenAI GPT-Live), requests are the delegated backend's responses
+instead, counted and checked as each one's usage arrives: see
+[GPT-Live usage](openai-live.md#usage-is-measured-in-seconds). Breaches raise
 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from iteration, or when the
 session context exits if only an audio or transcript view is consumed.
 

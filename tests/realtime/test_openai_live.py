@@ -21,7 +21,7 @@ from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
@@ -40,7 +40,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.realtime import RealtimeError, RealtimeModelProfile, infer_realtime_model
+from pydantic_ai.realtime import RealtimeError, RealtimeModelProfile, RealtimeTurnCompleteEvent, infer_realtime_model
 from pydantic_ai.realtime.codec import (
     CancelResponse,
     ClearAudio,
@@ -56,7 +56,7 @@ from pydantic_ai.realtime.codec import (
     TruncateOutput,
 )
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import try_import
 
@@ -141,6 +141,8 @@ def test_profile(model: OpenAILiveModel) -> None:
         emits_input_speech_events=False,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.
         synthesizes_turn_boundary=True,
+        # Its spoken replies are inferred turns; the requests that spend tokens are the backend's.
+        responses_are_requests=False,
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
@@ -1671,3 +1673,119 @@ def test_the_wait_after_a_delegated_call_is_not_spoken() -> None:
     _open_delegation(connection, call_ids=('c1',))
 
     assert connection._map_event(silence) == []  # pyright: ignore[reportPrivateUsage]
+
+
+def _live_frames(*frames: dict[str, Any]) -> list[str]:
+    started = {'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}}
+    return [json.dumps(frame) for frame in (started, *frames)]
+
+
+def _backend_completion(delegation_id: str) -> dict[str, Any]:
+    usage = {
+        'input_tokens': 10,
+        'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+        'output_tokens': 2,
+        'output_tokens_details': {'reasoning_tokens': 0},
+        'total_tokens': 12,
+    }
+    return {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': delegation_id,
+        'event': _backend_terminal(usage=usage),
+    }
+
+
+def _delegation_created(delegation_id: str) -> dict[str, Any]:
+    return {
+        'type': 'session.delegation.created',
+        'event_id': 'e',
+        'offset_ms': 0,
+        'delegation': {'id': delegation_id, 'type': 'delegation', 'target': 'responses'},
+    }
+
+
+async def test_requests_count_backend_responses_not_spoken_replies() -> None:
+    """Live's spoken replies are turns the session infers; the requests that spend tokens are the backend's.
+
+    Counting each recorded response made `request_limit` a cap on how many times the model spoke.
+    """
+    ws = _FakeWebSocket(
+        _live_frames(
+            {
+                'type': 'session.output_transcript.delta',
+                'delta': 'Hi there.',
+                'start_ms': 0,
+                'end_ms': 1,
+                'event_id': 'e',
+            },
+            _delegation_created('d1'),
+            _backend_completion('d1'),
+            {'type': 'session.output_transcript.delta', 'delta': 'Sunny.', 'start_ms': 2, 'end_ms': 3, 'event_id': 'e'},
+        ),
+        delay=0.05,
+    )
+    model = OpenAILiveModel(
+        'gpt-live-1', provider='openai', settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10)
+    )
+    with _patched_connect(ws):
+        async with Agent().realtime(model, usage_limits=UsageLimits(request_limit=1)).session() as session:
+            with anyio.fail_after(5):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, RealtimeTurnCompleteEvent) and len(session.all_messages()) >= 2:
+                        break
+
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert len(responses) == 2
+    assert session.usage.requests == 1
+
+
+async def test_request_limit_is_checked_as_backend_responses_arrive() -> None:
+    """The backend has already made a request by the time its usage arrives, so the one past the limit ends the session."""
+    ws = _FakeWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            _backend_completion('d1'),
+            _delegation_created('d2'),
+            _backend_completion('d2'),
+        )
+    )
+    with _patched_connect(ws):
+        with pytest.raises(UsageLimitExceeded, match='request_limit of 1'):
+            async with (
+                Agent()
+                .realtime(OpenAILiveModel('gpt-live-1', provider='openai'), usage_limits=UsageLimits(request_limit=1))
+                .session() as session
+            ):
+                with anyio.fail_after(5):
+                    async for _ in session:
+                        pass
+
+
+def test_closing_punctuation_after_the_reply_began_is_not_a_new_turn() -> None:
+    """Live transcribes the user's closing punctuation after the model has started answering over it.
+
+    Recorded live over an always-on microphone: `' Alice'`, then the reply's `' Hi Alice'`, then the
+    user's `'.'`. Opening a turn for it recorded a request holding nothing but the full stop.
+    """
+    connection = _connection()
+
+    def fragment(delta: str, speaker: str) -> list[Any]:
+        return connection._map_event(  # pyright: ignore[reportPrivateUsage]
+            _event(
+                {
+                    'type': f'session.{speaker}_transcript.delta',
+                    'delta': delta,
+                    'start_ms': 0,
+                    'end_ms': 1,
+                    'event_id': 'e',
+                }
+            )
+        )
+
+    fragment(' Alice', 'input')
+    assert fragment(' Hi Alice', 'output') == [InputTranscript('', is_final=True), OutputTranscript(' Hi Alice')]
+    assert fragment('.', 'input') == []
+    assert fragment(' ', 'input') == []
+    # Words while the model is talking are still the user's.
+    assert fragment(' Wait', 'input') == [InputTranscript(' Wait')]

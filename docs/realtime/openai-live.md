@@ -296,10 +296,13 @@ For [usage limits](observability.md#usage-and-limits), that means a `cost_limit`
 together, as long as both are priced; token limits bound only the backend. No field caps duration
 directly, so cap an unpriced call with your own timer or by closing the session.
 
-`request_limit` counts every [`ModelResponse`][pydantic_ai.messages.ModelResponse] the session
-records, as in a standard run, and on Live most of those are spoken replies, whose boundaries are
-[inferred](#the-turn-boundary-is-inferred), rather than backend requests. Size it to the turns you
-expect rather than to the backend calls, and use `tool_calls_limit` to bound delegated work.
+`usage.requests`, and the `request_limit` that bounds it, count the backend's responses rather than
+every [`ModelResponse`][pydantic_ai.messages.ModelResponse] the session records: on Live most of those
+are spoken replies, turns whose boundaries are [inferred](#the-turn-boundary-is-inferred), while the
+backend's responses are the requests that spend tokens. The profile says so with
+`responses_are_requests=False`. A backend response is counted when its usage arrives, after it has
+run, so the limit ends the session at the first response past it rather than before that response
+starts.
 
 ## Feature support and limitations
 

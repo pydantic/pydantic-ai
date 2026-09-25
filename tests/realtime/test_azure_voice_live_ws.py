@@ -193,6 +193,7 @@ async def test_audio_in_server_vad_turn(
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         emits_input_speech_events=True,
         synthesizes_turn_boundary=False,
+        responses_are_requests=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supports_thinking=False,

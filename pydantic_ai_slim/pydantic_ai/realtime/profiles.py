@@ -122,6 +122,16 @@ class RealtimeModelProfile(TypedDict, total=False):
     the boundary from output timing, so it is a good guess rather than a guarantee: a long pause
     mid-sentence can end a turn early, and an application that must not act on a partial reply should
     confirm against the transcript. OpenAI GPT-Live is the only model that sets it."""
+    responses_are_requests: bool
+    """Whether each response the session records is one request to the model, for `usage.requests` and
+    the [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] that bounds it.
+
+    `True` (the default) counts every recorded [`ModelResponse`][pydantic_ai.messages.ModelResponse], as a
+    standard run does, and checks the limit before each response starts. `False` is for a model whose
+    recorded responses aren't what it is asked for: OpenAI GPT-Live's spoken replies are turns the
+    session infers, while the requests that spend tokens go to the backend it delegates to. There, each
+    response-scoped usage report counts as one request, and the limit is checked as each arrives, so the
+    report that would go past it ends the session."""
     audio_input_sample_rate: int
     """The sample rate, in Hz, expected for raw PCM audio input.
 
@@ -162,6 +172,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,
     'synthesizes_turn_boundary': False,
+    'responses_are_requests': True,
     'audio_input_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'audio_output_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'context_window': None,
