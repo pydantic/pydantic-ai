@@ -2326,7 +2326,7 @@ class RealtimeSession:
             and self._pending_finish_reason is None
             and self._pending_response_usage == RequestUsage()
         )
-        if not already_finalized:
+        if not already_finalized and not self._held_response_split:
             self._begin_response()
         # Whether the model will speak again: it always responds to a tool's result, so a response that
         # called one, that left one still running, or whose content was already recorded (making this the
@@ -2432,7 +2432,7 @@ class RealtimeSession:
             self._finalize_response()
         return events
 
-    def _record_held_tool_call_response(self) -> None:
+    def _record_held_tool_call_response(self, *, interrupted: bool = False) -> None:
         """Record the response held open for an asynchronous call, as far as it has got.
 
         History is append-only, so a response is recorded once, whole. The one carrying an asynchronous
@@ -2440,14 +2440,22 @@ class RealtimeSession:
         it: the call's result, or a user turn starting. Speech in progress is split there — what was said
         so far belongs to the response with the call, and the rest becomes the next response — so history
         keeps the order things happened in and each result still directly follows its call.
+
+        `interrupted` records it cut off: the model abandoned the call, and with it what it was saying.
         """
         if not self._held_tool_call_ids:
             return
         events = self._finalize_assistant_part()
-        self._finalize_response()
-        # The provider's turn goes on, and it was already checked against the request limit when it began:
-        # what follows is the rest of it, so it takes no reservation and makes no new check.
-        self._response_limit_checked = True
+        try:
+            self._finalize_response(interrupted=interrupted)
+        except UsageLimitExceeded as exceeded:
+            # The response is recorded by then; only the limit check after it failed. Raised here, the
+            # tool task (or the caller's microphone task, for a user turn) would lose the result the call
+            # needs next in history, so the error reaches the caller the way a failing tool's does.
+            self._park_error(exceeded)
+        # What's left of the provider's turn after this is its own response. Until it says something, its
+        # boundaries (a usage report, the turn's end) don't start one: they belong to the turn already
+        # checked against the request limit, and must leave the result's reservation to the reply.
         self._held_response_split = True
         for event in events:
             # Queued directly, whatever triggered this: the tool task that finished, or a user turn
@@ -2465,7 +2473,9 @@ class RealtimeSession:
         if content:
             request_parts.append(UserPromptPart(content=content))
         if call_part.tool_call_id in self._held_tool_call_ids:
-            self._record_held_tool_call_response()
+            self._record_held_tool_call_response(
+                interrupted=isinstance(result_part, ToolReturnPart) and result_part.outcome == 'interrupted'
+            )
         self._insert_tool_return(call_part, self._new_request(request_parts))
         return [FunctionToolResultEvent(part=result_part, content=content)]
 
@@ -3121,10 +3131,18 @@ class RealtimeSession:
             # `CancelledError`. Its call already has an interrupted return in history and there is no
             # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
             return result_part, user_content
-        if not response_usage_follows:
-            await self._drain_pending_messages('asap')
+        await self._prepare_to_send_tool_result(call_part, response_usage_follows=response_usage_follows)
         await self._send_tool_result(call_part, output, wire_content)
         return result_part, user_content
+
+    async def _prepare_to_send_tool_result(self, call_part: ToolCallPart, *, response_usage_follows: bool) -> None:
+        """Settle what has to come before a tool's result on the wire."""
+        if call_part.tool_call_id in self._held_tool_call_ids:
+            # Recorded before the result goes out, as a call recorded at its own frame would be, so the
+            # model's own words stay ahead of it and a message enqueued `asap` can still precede it.
+            self._record_held_tool_call_response()
+        if not response_usage_follows:
+            await self._drain_pending_messages('asap')
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
         self._reserve_response_request()
@@ -3255,7 +3273,8 @@ class RealtimeSession:
     async def _handle_usage_event(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
         if event.response_scoped:
-            self._begin_response()
+            if not self._held_response_split:
+                self._begin_response()
             if not self._responses_are_requests:
                 # Each report is a request the model has already made: it is recorded in full, and the
                 # one past the limit ends the session below, once it is.

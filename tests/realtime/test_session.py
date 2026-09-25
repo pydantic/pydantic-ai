@@ -1553,6 +1553,9 @@ class _ToolResultGatedConnection(FakeRealtimeConnection):
         super().__init__(first, **kwargs)
         self._after_result = after_result
         self._result_sent = asyncio.Event()
+        # Set once the session has taken in the whole first batch: a tool that waits on it finishes only
+        # after what the model said before its result, as a slow tool would.
+        self.first_played = asyncio.Event()
 
     async def send(self, content: RealtimeInput) -> None:
         await super().send(content)
@@ -1562,6 +1565,7 @@ class _ToolResultGatedConnection(FakeRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
+        self.first_played.set()
         await self._result_sent.wait()
         for event in self._after_result:
             yield event
@@ -3510,6 +3514,10 @@ async def test_cancelled_async_tool_call_records_its_held_response() -> None:
         assert _history_shape(session.all_messages()) == snapshot(
             [('ModelResponse', ['ToolCallPart', 'Let me check.']), ('ModelRequest', ['ToolReturnPart'])]
         )
+        # The model abandoned the call, so what it was saying was cut off, not finished.
+        response = session.all_messages()[0]
+        assert isinstance(response, ModelResponse)
+        assert response.state == 'interrupted'
         await session.close()
         await consumer
 
@@ -3631,6 +3639,7 @@ async def test_split_turn_usage_lands_on_a_recorded_response(remainder: str) -> 
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await conn.first_played.wait()
         return 'result'
 
     session = RealtimeSession(conn, runner, model_name='m')
@@ -3643,6 +3652,96 @@ async def test_split_turn_usage_lands_on_a_recorded_response(remainder: str) -> 
     )
     assert sum(r.usage.input_tokens for r in responses) == session.usage.input_tokens == 30
     assert session.usage.requests == len(responses)
+
+
+async def test_answer_in_the_turn_that_was_split_claims_the_result_reservation() -> None:
+    """An answer that follows the result without a turn boundary is the reply the result was sent for.
+
+    Gemini 3.8 extended thinking answers in the very turn that made the asynchronous call. The reply the
+    tool result reserved must be claimed by that answer, or `wait_for_reply()` waits on it for good.
+    """
+
+    idle = asyncio.Event()
+
+    class _StaysOpen(_ToolResultGatedConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            async for event in super().__aiter__():
+                yield event
+            # Still connected, with nothing more to say: a reply still owed would be waited on for good.
+            idle.set()
+            await asyncio.Event().wait()
+
+    conn = _StaysOpen(
+        [ToolCall(tool_call_id='bg_1', tool_name='fast', args='{}', runs_asynchronously=True)],
+        [OutputTranscript(text='The cheapest is KLM.', is_final=True), ResponseDone()],
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await conn.first_played.wait()
+        return 'KLM'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    async with session:
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await idle.wait()
+        assert not session._reply_outstanding()  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
+    assert session.usage.requests == 2
+
+
+async def test_cost_limit_at_the_split_still_records_the_tool_result() -> None:
+    """A usage limit tripped by recording the held response doesn't leave its call without a result."""
+    conn = _ToolResultGatedConnection(
+        [
+            OutputTranscript(text='Let me look.', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=1000, output_tokens=500)),
+            ToolCall(tool_call_id='bg_1', tool_name='fast', args='{}', runs_asynchronously=True),
+        ],
+        [OutputTranscript(text='Found it.', is_final=True), ResponseDone()],
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await conn.first_played.wait()
+        return 'found'
+
+    session = RealtimeSession(
+        conn,
+        runner,
+        model_name='gpt-realtime',
+        provider_name='openai',
+        usage_limits=UsageLimits(cost_limit=Decimal('0.0001')),
+    )
+    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
+        await collect_events(session)
+
+    shape = _history_shape(session.all_messages())
+    assert shape[:2] == [('ModelResponse', ['Let me look.', 'ToolCallPart']), ('ModelRequest', ['ToolReturnPart'])]
+
+
+async def test_asap_message_from_an_async_tool_goes_out_before_its_result() -> None:
+    """A message a tool enqueues `asap` is delivered before the tool's result, as for any other call."""
+    conn = _ToolResultGatedConnection(
+        [ToolCall(tool_call_id='bg_1', tool_name='fast', args='{}', runs_asynchronously=True)],
+        [OutputTranscript(text='Done.', is_final=True), ResponseDone()],
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await conn.first_played.wait()
+        session.enqueue('a note for the model')
+        return 'result'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert [
+        'text' if isinstance(content, str) else type(content).__name__
+        for content in conn.sent
+        if isinstance(content, (str, ToolResult))
+    ] == ['text', 'ToolResult']
 
 
 async def test_async_tool_result_mid_speech_splits_the_response() -> None:
@@ -3664,6 +3763,7 @@ async def test_async_tool_result_mid_speech_splits_the_response() -> None:
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await conn.first_played.wait()
         return 'result'
 
     session = RealtimeSession(conn, runner, model_name='m')
@@ -3710,6 +3810,7 @@ async def test_async_tool_result_mid_speech_before_a_second_call() -> None:
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await conn.first_played.wait()
         return call_id
 
     session = RealtimeSession(conn, runner, model_name='m')
@@ -3875,6 +3976,7 @@ async def _speech_while_tool_ran_history() -> list[ModelMessage]:
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await conn.first_played.wait()
         return 'Sunny, 24C'
 
     session = RealtimeSession(
