@@ -3677,13 +3677,15 @@ async def test_truncate_skips_an_item_the_connection_no_longer_tracks() -> None:
 
 
 @pytest.mark.anyio
-async def test_websocket_clear_active_response_keeps_output_item() -> None:
-    """A connection that observes output audio keeps the item past `response.done` for barge-in."""
+async def test_websocket_clear_active_response_keeps_output_item_reachable_by_name() -> None:
+    """Over a WebSocket a finished item is no longer the current one, but a barge-in can still name it."""
     ws = FakeWebSocket([_audio_delta('item_ws')])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     _ = await collect_codec_events(conn)
     conn._clear_active_response()  # pyright: ignore[reportPrivateUsage]
     await conn.send(TruncateOutput(audio_end_ms=800))
+    assert ws.sent == []
+    await conn.send(TruncateOutput(audio_end_ms=800, item_id='item_ws'))
     assert json.loads(ws.sent[0])['item_id'] == 'item_ws'
 
 
@@ -3756,13 +3758,51 @@ async def test_truncate_after_response_done_names_the_finished_item() -> None:
     ws = FakeWebSocket([_audio_delta('item_9', audio_bytes=4800), done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     _ = [e async for e in conn]
-    await conn.send(TruncateOutput(audio_end_ms=500))
+    await conn.send(TruncateOutput(audio_end_ms=500, item_id='item_9'))
     assert json.loads(ws.sent[0]) == {
         'type': 'conversation.item.truncate',
         'item_id': 'item_9',
         'content_index': 0,
         'audio_end_ms': 100,
     }
+
+
+@pytest.mark.anyio
+async def test_unnamed_truncate_after_response_done_leaves_a_finished_reply_alone() -> None:
+    """An unnamed truncate means the item being generated; a finished reply may have been heard in full.
+
+    With the next response started but no audio from it yet, `interrupt(played_ms=...)` only cancels.
+    """
+    done = json.dumps({'type': 'response.done', 'response': {'id': 'resp_a', 'status': 'completed', 'output': []}})
+    created = json.dumps({'type': 'response.created', 'response': {'id': 'resp_b'}})
+    created_a = json.dumps({'type': 'response.created', 'response': {'id': 'resp_a'}})
+    ws = FakeWebSocket([created_a, _audio_delta('item_a', audio_bytes=4800), done, created])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=0))
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['response.cancel']
+
+
+@pytest.mark.anyio
+async def test_unnamed_truncates_after_a_turn_detection_cancel_send_nothing() -> None:
+    """The provider's own VAD cancelled the response: its item is no longer the current one."""
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {
+                'status': 'cancelled',
+                'status_details': {'type': 'cancelled', 'reason': 'turn_detected'},
+                'output': [],
+            },
+        }
+    )
+    ws = FakeWebSocket([_audio_delta('item_a', audio_bytes=4800), done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=40))
+    await conn.send(TruncateOutput(audio_end_ms=60))
+    assert ws.sent == []
 
 
 @pytest.mark.anyio
