@@ -45,6 +45,7 @@ _FACTORIES = (
     ('posthog', 'posthog:PostHog'),
     ('prompt_injection_defender', 'prompt_injection_defender:PromptInjectionDefender'),
     ('pydantic_ai_docs', 'pydantic_ai_docs:PydanticAIDocs'),
+    ('pylon', 'pylon:Pylon'),
     ('repair_tool_arguments', 'repair_tool_arguments:RepairToolArguments'),
     ('researcher', 'researcher:Researcher'),
     ('shell', 'shell:Shell'),

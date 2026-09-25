@@ -167,6 +167,7 @@ _CAPABILITY_PAGE_META = {
     'grain.md': ('grain', 'Grain'),
     'day-ai.md': ('day_ai', 'Day AI'),
     'posthog.md': ('posthog', 'PostHog'),
+    'pylon.md': ('pylon', 'Pylon'),
     'stackone.md': ('stackone', 'StackOne'),
     'slack.md': ('slack', 'Slack'),
     'acp.md': ('experimental/acp', 'ACP (Agent Client Protocol)'),

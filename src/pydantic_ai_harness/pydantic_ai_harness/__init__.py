@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
+    from .pylon import Pylon
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -104,6 +105,7 @@ __all__ = [
     'PostHog',
     'PromptInjectionDefender',
     'PydanticAIDocs',
+    'Pylon',
     'READ_ONLY_TOOL_NAMES',
     'ReportContextUsage',
     'RepoContext',
@@ -157,6 +159,7 @@ _CAPABILITY_EXPORTS = {
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
+    'Pylon': 'pylon',
     'ReportContextUsage': 'compaction',
     'RepoContext': 'repo_context',
     'Researcher': 'researcher',
