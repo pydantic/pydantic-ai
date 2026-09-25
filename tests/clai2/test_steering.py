@@ -17,6 +17,7 @@ from test_live_prompt import editor
 
 from pydantic_clai2._app import create_shell
 from pydantic_clai2._session import Session
+from pydantic_clai2.live_prompt import LivePrompt
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
 
@@ -272,3 +273,168 @@ async def test_shell_routes_steering_and_reports_expired_images(tmp_path: Path) 
         live.feed('alt-enter')
         assert 'expired' in shell.images.notice
         assert live.queued_messages == ()
+
+
+def queue(live: LivePrompt, *texts: str) -> None:
+    for text in texts:
+        live.buffer.replace(text)
+        live.feed('enter')
+
+
+def queue_rows(live: LivePrompt) -> list[str]:
+    return [Text.from_ansi(row).plain for row in live.frame()[: len(live.queued_messages)]]
+
+
+async def test_up_walks_queue_newest_first_then_history() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.history = ['old']
+        queue(live, 'first', 'second')
+        live.buffer.replace('draft')
+        walk = [live.feed('up') or live.buffer.text for _ in range(4)]
+        # History already holds the queued prompts; the walk skips those copies.
+        assert walk == ['second', 'first', 'old', 'old']
+        walk = [live.feed('down') or live.buffer.text for _ in range(4)]
+        assert walk == ['first', 'second', 'draft', 'draft']
+        assert live.queued_messages == ('first', 'second')
+
+
+async def test_up_moves_within_a_multiline_draft_before_reaching_the_queue() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'queued')
+        live.buffer.replace('one\ntwo')
+        live.feed('up')
+        assert (live.buffer.text, live.buffer.cursor, live.buffer.recall_offset) == ('one\ntwo', 3, None)
+        live.feed('up')
+        assert live.buffer.text == 'queued'
+        live.feed('down')
+        assert live.buffer.text == 'one\ntwo'
+
+
+async def test_enter_rewrites_recalled_queued_prompt_in_place() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'a', 'b', 'c')
+        live.feed('up')
+        live.feed('up')
+        assert queue_rows(live) == ['Follow-up: a', 'Follow-up (editing): b', 'Follow-up: c']
+        live.feed('ctrl-u')
+        live.buffer.insert('b2')
+        live.feed('enter')
+        assert live.queued_messages == ('a', 'b2', 'c')
+        assert live.buffer.text == ''
+        assert live.buffer.history[-1] == 'b2'
+        assert queue_rows(live) == ['Follow-up: a', 'Follow-up: b2', 'Follow-up: c']
+        live.feed('up')
+        live.feed('enter')
+        assert live.queued_messages == ('a', 'b2', 'c')
+        assert live.buffer.history[-1] == 'b2'
+        # The replaced draft stays in history; only the queued prompts' own copies are skipped.
+        walk = [live.feed('up') or live.buffer.text for _ in range(5)]
+        assert walk == ['c', 'b2', 'a', 'b', 'b']
+
+
+async def test_walk_skips_only_the_history_copy_of_each_queued_prompt() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.history = ['deploy']
+        queue(live, 'deploy', 'clear')
+        walk = [live.feed('up') or (live.buffer.text, live.buffer.recall_offset) for _ in range(4)]
+        # The older `deploy` stays reachable, and raw `clear` is not shown beside its `/clear` expansion.
+        assert walk == [('/clear', -1), ('deploy', -2), ('deploy', -3), ('deploy', -3)]
+
+
+async def test_edited_queued_draft_survives_a_second_walk() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'a', 'b')
+        live.feed('up')
+        live.buffer.insert('x')
+        live.feed('up')
+        assert live.buffer.text == 'b'
+        live.feed('down')
+        assert live.buffer.text == 'bx'
+        live.feed('enter')
+        assert live.queued_messages == ('a', 'bx')
+
+
+async def test_deleting_from_a_recalled_queued_prompt_survives_navigation() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'a', 'bc')
+        live.feed('up')
+        live.feed('backspace')
+        live.feed('up')
+        assert live.buffer.text == 'bc'
+        live.feed('down')
+        assert live.buffer.text == 'b'
+        live.feed('enter')
+        assert live.queued_messages == ('a', 'b')
+
+
+async def test_history_search_from_a_recalled_queued_prompt() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.history = ['old']
+        queue(live, 'b')
+        live.feed('up')
+        for key in ('ctrl-r', 'o', 'enter', 'enter'):
+            live.feed(key)
+        # A picked history match is a new follow-up; the recalled queued prompt stays as it was.
+        assert live.queued_messages == ('b', 'old')
+        live.feed('up')
+        live.feed('up')
+        live.buffer.insert('x')
+        for key in ('ctrl-r', 'o', 'ctrl-g'):
+            live.feed(key)
+        assert live.buffer.text == 'bx'
+        live.feed('enter')
+        # Cancelling the search keeps editing the queued prompt it started from.
+        assert live.queued_messages == ('bx', 'old')
+
+
+async def test_clearing_a_recalled_queued_prompt_removes_it() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.feed('up')
+        live.feed('ctrl-u')
+        live.feed('enter')
+        assert live.queued_messages == ()
+        live.submit('later')
+        assert await live.read() == 'later'
+
+
+async def test_recalling_history_leaves_the_queued_prompt_alone() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.history = ['old']
+        queue(live, 'queued')
+        live.feed('up')
+        live.feed('up')
+        assert live.buffer.text == 'old'
+        assert queue_rows(live) == ['Follow-up: queued']
+        live.feed('enter')
+        assert live.queued_messages == ('queued', 'old')
+
+
+async def test_edit_of_a_consumed_prompt_becomes_a_new_follow_up() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'taken')
+        live.feed('up')
+        assert await live.read() == 'taken'
+        live.buffer.insert(' again')
+        live.feed('enter')
+        assert live.queued_messages == ('taken again',)
+
+
+async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue() -> None:
+    ran: list[str] = []
+
+    def run_now(text: str) -> bool:
+        ran.append(text)
+        return text == '/now'
+
+    async with editor() as (live, _, _):
+        queue(live, 'keep', 'swap')
+        live.run_now = run_now
+        live.feed('up')
+        live.buffer.replace('/now')
+        live.feed('enter')
+        live.feed('up')
+        live.buffer.replace('changed')
+        live.feed('enter')
+        assert ran == ['/now', 'changed']
+        assert live.queued_messages == ('changed',)

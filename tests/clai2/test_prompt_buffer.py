@@ -141,6 +141,19 @@ def test_empty_history_and_line_end_movement() -> None:
     assert buffer.cursor == len(buffer.text)
 
 
+@pytest.mark.parametrize('key', ['backspace', 'ctrl-w', 'x'])
+def test_any_edit_to_recalled_history_becomes_the_restored_draft(key: str) -> None:
+    buffer = PromptBuffer(history=['older', 'recalled word'])
+    buffer.edit('up')
+    buffer.edit(key)
+    edited = buffer.text
+    assert edited != 'recalled word'
+    buffer.edit('up')
+    assert buffer.text == 'recalled word'
+    buffer.edit('down')
+    assert buffer.text == edited
+
+
 def test_history_control_bytes_are_not_terminal_instructions() -> None:
     buffer = PromptBuffer()
     buffer.replace('bad\x1b[2J')

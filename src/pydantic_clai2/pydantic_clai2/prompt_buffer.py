@@ -1,5 +1,6 @@
 """Pure draft editing and history navigation for the pinned prompt."""
 
+from contextlib import suppress
 from dataclasses import dataclass, field
 
 from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
@@ -17,6 +18,7 @@ class PromptBuffer:
     search: str | None = None
     search_original: str = ''
     _pastes: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]], init=False, repr=False)
+    _entries: list[str] = field(default_factory=list[str], init=False, repr=False)
 
     def replace(self, text: str) -> None:
         """Set a draft and put its cursor at the end."""
@@ -24,7 +26,13 @@ class PromptBuffer:
         self._pastes.clear()
 
     def replace_range(self, start: int, end: int, text: str) -> None:
-        """Replace an editing range, revealing overlapping pastes."""
+        """Replace an editing range, revealing overlapping pastes.
+
+        An edit that changes text ends a recall walk, so the edited text becomes the draft the
+        next walk restores. A no-op deletion at either end keeps the walk going.
+        """
+        if text or start != end:
+            self.history_index = None
         shift = len(text) - (end - start)
         self._pastes = [
             (left, right) if right <= start else (left + shift, right + shift)
@@ -40,20 +48,36 @@ class PromptBuffer:
         text = ''.join(char for char in text if char.isprintable() or char in ('\n', '\t'))
         start = self.cursor
         self.replace_range(start, start, text)
-        self.history_index = None
         if paste and (len(text.splitlines()) >= 5 or len(text) >= 1000):
             self._pastes.append((start, self.cursor))
             self._pastes.sort()
 
-    def recall(self, *, backwards: bool) -> None:
-        """Walk chronological history, preserving the draft beyond its newest entry."""
+    @property
+    def recall_offset(self) -> int | None:
+        """Steps back from the draft during a recall walk: 0 is the draft, -1 the newest entry."""
+        return None if self.history_index is None else self.history_index - len(self._entries)
+
+    def recall(self, *, backwards: bool, queued: tuple[str, ...] = (), recorded: tuple[str, ...] = ()) -> None:
+        """Walk chronological history, preserving the draft beyond its newest entry.
+
+        `queued` prompts are newer than any history, so a walk that starts here visits them
+        between the draft and history. `recorded` holds the raw history copies made when they
+        were queued; the newest match of each is skipped, so older identical history stays.
+        """
         if self.history_index is None:
             self.saved_draft = self.text
-            self.history_index = len(self.history)
-        self.history_index = min(len(self.history), max(0, self.history_index + (-1 if backwards else 1)))
-        self.replace(self.saved_draft if self.history_index == len(self.history) else self.history[self.history_index])
+            newest_first = self.history[::-1]
+            for text in recorded:
+                with suppress(ValueError):
+                    newest_first.remove(text)
+            self._entries = newest_first[::-1] + list(queued)
+            self.history_index = len(self._entries)
+        self.history_index = min(len(self._entries), max(0, self.history_index + (-1 if backwards else 1)))
+        self.replace(
+            self.saved_draft if self.history_index == len(self._entries) else self._entries[self.history_index]
+        )
 
-    def vertical(self, *, backwards: bool) -> None:
+    def vertical(self, *, backwards: bool, queued: tuple[str, ...] = (), recorded: tuple[str, ...] = ()) -> None:
         """Move within multiline text before falling back to history recall."""
         lines = self.text.split('\n')
         before = self.text[: self.cursor]
@@ -62,7 +86,7 @@ class PromptBuffer:
         if len(lines) > 1 and 0 <= target < len(lines):
             self.cursor = sum(len(line) + 1 for line in lines[:target]) + min(column, len(lines[target]))
         else:
-            self.recall(backwards=backwards)
+            self.recall(backwards=backwards, queued=queued, recorded=recorded)
 
     def search_key(self, key: str) -> None:
         """Search backwards without submitting the selected history entry."""
@@ -81,6 +105,7 @@ class PromptBuffer:
             if matches:
                 index = (matches.index(self.text) + 1) % len(matches) if key == 'ctrl-r' and self.text in matches else 0
                 self.replace(matches[index])
+                self.history_index = None
 
     def edit(self, key: str) -> bool:
         """Apply an editing key; return false when the owner should handle it."""

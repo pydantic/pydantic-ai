@@ -689,7 +689,15 @@ the agent's configured tools determine how it can access it. Separately, bracket
 paste of existing image paths creates attachments as described in
 [Pasting images](#pasting-images).
 
-Up/down move through multiline drafts, then recall saved prompt history.
+Up/down move through multiline drafts, then recall queued messages and saved
+prompt history. Queued messages come first, newest first, because they are
+your most recent input; Up then continues into history, skipping the copies of
+queued messages that history already holds. Enter on a recalled queued message
+rewrites it in place, keeping its position in the queue, and the queue row
+shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
+message from the queue. If the run takes the message before you press Enter,
+the edit is queued as a new follow-up. With nothing queued, Up/down only walk
+history.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer instead, first queue the message with Enter, then press Alt+Enter
 (Option+Enter). This sends the oldest queued follow-up to the active run at its
