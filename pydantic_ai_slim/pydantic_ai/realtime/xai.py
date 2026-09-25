@@ -279,8 +279,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # xAI reports `billable_audio_seconds` as the session's running total, not the response's own
         # share (live: three turns of 0.71s, 0.71s and 0.87s report 1, 2 and 3), so each response is
         # credited the increase since the last report. Kept on the connection, which outlives a resumed
-        # session, as does xAI's total.
+        # session, as does xAI's total. The total restarts only with a new conversation.
         self._billed_audio_seconds = 0
+        self._billed_conversation_id = conversation_id
 
     def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         mapped = super()._map_response_usage(usage)
@@ -308,14 +309,18 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """This response's share of xAI's running `billable_audio_seconds` total.
 
         The session sums each response's usage, so passing the running total through would count every
-        earlier second again on each turn. A total lower than the last one means xAI started counting
-        afresh, so it is this response's share in full.
+        earlier second again on each turn. xAI keeps counting across a resumed connection and starts
+        afresh only in a new conversation, so that is the one boundary the baseline resets on; a lower
+        total within the same conversation is not new usage, and adds nothing.
         """
         total = (usage.model_extra or {}).get('billable_audio_seconds')
         if not isinstance(total, int) or isinstance(total, bool):
             return None
-        increase = total - self._billed_audio_seconds if total >= self._billed_audio_seconds else total
-        self._billed_audio_seconds = total
+        if self._conversation_id != self._billed_conversation_id:
+            self._billed_conversation_id = self._conversation_id
+            self._billed_audio_seconds = 0
+        increase = max(total - self._billed_audio_seconds, 0)
+        self._billed_audio_seconds = max(total, self._billed_audio_seconds)
         return increase
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:

@@ -53,6 +53,7 @@ from ..conftest import IsStr, try_import
 from .ws_helpers import collect_codec_events, collect_session_events
 
 with try_import() as imports_successful:
+    from openai.types.realtime import RealtimeResponseUsage
     from xai_sdk import AsyncClient
 
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -1099,11 +1100,27 @@ async def test_billable_audio_seconds_running_total_is_split_per_response() -> N
     assert [usage.details['billable_audio_seconds'] for usage in usages] == [1, 1, 1]
 
 
-async def test_billable_audio_seconds_total_that_drops_starts_a_new_count() -> None:
-    """A total lower than the last one means xAI started counting afresh, so it is not subtracted."""
-    frames = [_done_with_billed_seconds(total) for total in (4, 1, 2)]
-    conn = XaiRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
+async def test_billable_audio_seconds_lower_total_in_the_same_conversation_adds_nothing() -> None:
+    """xAI's total only grows within a conversation, so a lower one is not new usage to bill again."""
+    frames = [_done_with_billed_seconds(total) for total in (2, 4, 2, 5)]
+    conn = XaiRealtimeConnection(FakeWebSocket(frames), conversation_id='conv-1')  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
 
     usages = [event.usage for event in events if isinstance(event, SessionUsage)]
-    assert [usage.audio_seconds for usage in usages] == [4, 1, 1]
+    assert [usage.audio_seconds for usage in usages] == [2, 2, 0, 1]
+
+
+async def test_billable_audio_seconds_restart_with_a_new_conversation() -> None:
+    """A new conversation is the one place xAI's count starts again from zero."""
+    conn = XaiRealtimeConnection(FakeWebSocket([]), conversation_id='conv-1')  # type: ignore[arg-type]
+    usage = RealtimeResponseUsage.model_validate({'input_tokens': 1, 'output_tokens': 1, 'billable_audio_seconds': 4})
+    first = conn._map_response_usage(usage)  # pyright: ignore[reportPrivateUsage]
+
+    conn.conversation_id = 'conv-2'
+    restarted = RealtimeResponseUsage.model_validate(
+        {'input_tokens': 1, 'output_tokens': 1, 'billable_audio_seconds': 1}
+    )
+    second = conn._map_response_usage(restarted)  # pyright: ignore[reportPrivateUsage]
+
+    assert first is not None and second is not None
+    assert (first.audio_seconds, second.audio_seconds) == (4, 1)
