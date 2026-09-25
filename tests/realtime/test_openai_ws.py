@@ -337,6 +337,60 @@ async def test_image_can_solicit_one_response(
     assert len(responses) == 1
 
 
+async def test_failed_response_surfaces_its_error(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A response the server fails reports its error, which OpenAI sends only inside `response.done`."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime-2.1-mini', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Reply in at most five words.')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send(BinaryContent(data=b'this is not a png', media_type='image/png'))
+        await session.send('What is in the image?')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == snapshot(
+        [
+            RealtimeSessionErrorEvent(
+                message='Input image was rejected by the safety system. If you believe this is an error, contact us at help.openai.com and include the request ID sess_ERrGMIS70H4J8DcCl7sFe',
+                type='invalid_request_error',
+                code='input_image_safety_violation',
+            )
+        ]
+    )
+    assert session.all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[],
+            usage=RequestUsage(
+                details={'input_text_tokens': 0, 'input_image_tokens': 0, 'output_text_tokens': 0, 'audio_tokens': 0},
+                cost=Decimal('0.00'),
+            ),
+            model_name='gpt-realtime-2.1-mini',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={
+                'status': 'failed',
+                'error': {
+                    'code': 'input_image_safety_violation',
+                    'type': 'invalid_request_error',
+                    'message': 'Input image was rejected by the safety system. If you believe this is an error, contact us at help.openai.com and include the request ID sess_ERrGMIS70H4J8DcCl7sFe',
+                },
+            },
+            provider_response_id='resp_ERrGMce4TS5sXXTRnSOkR',
+            finish_reason='error',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
 @pytest.mark.realtime_ws_hold_open
 async def test_media_views_subscribe_before_iteration(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
