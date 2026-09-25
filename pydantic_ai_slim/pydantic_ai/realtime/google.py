@@ -1281,12 +1281,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         """
         if isinstance(content, BinaryImage):
             await self._send_held_image()
-            self._held_image = content
-            self._held_image_count += 1
-            timer = asyncio.create_task(self._send_held_image_later(self._held_image_count))
-            # asyncio keeps only a weak reference to a running task.
-            self._held_image_timers.add(timer)
-            timer.add_done_callback(self._held_image_timers.discard)
+            self._hold_image(content)
             return
         if isinstance(content, (str, TextContext)):
             image = self._take_held_image()
@@ -1365,6 +1360,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
             video=genai_types.Blob(data=image.data, mime_type=image.media_type)
         )
 
+    def _hold_image(self, image: BinaryImage) -> None:
+        """Hold `image` for the next input, and start the timer that sends it on its own."""
+        self._held_image = image
+        self._held_image_count += 1
+        timer = asyncio.create_task(self._send_held_image_later(self._held_image_count))
+        # asyncio keeps only a weak reference to a running task.
+        self._held_image_timers.add(timer)
+        timer.add_done_callback(self._held_image_timers.discard)
+
     def _take_held_image(self) -> BinaryImage | None:
         """Take the held image for the input about to be sent; its timer then finds nothing to send."""
         image, self._held_image = self._held_image, None
@@ -1389,10 +1393,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
             await self._send_video_frame(image)
         except self.transport_errors:
             # The connection dropped. The receive loop reconnects (or reports the loss), so hold the image
-            # again for the next input to send, rather than failing the whole connection from a timer —
-            # unless a newer image was sent meanwhile, which supersedes it.
+            # again, with a fresh timer, rather than failing the whole connection from a timer — unless
+            # a newer image was sent meanwhile, which supersedes it.
             if self._held_image is None:
-                self._held_image = image
+                self._hold_image(image)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # `session.receive()` yields a single model turn and then returns, so loop to keep serving

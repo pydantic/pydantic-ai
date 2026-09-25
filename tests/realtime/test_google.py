@@ -1112,15 +1112,26 @@ async def test_held_image_survives_a_dropped_connection(monkeypatch: pytest.Monk
     monkeypatch.setattr(rt_google, '_IMAGE_HOLD_SECONDS', 0.01)
 
     class _DroppedSession(_RecordingSession):
+        drops = 1
+
         async def send_realtime_input(self, **kwargs: Any) -> None:
-            raise ConnectionClosed(None, None)
+            if self.drops:
+                self.drops -= 1
+                raise ConnectionClosed(None, None)
+            await super().send_realtime_input(**kwargs)
 
     session = _DroppedSession()
     conn = _conn(session)
     await conn.send(_IMAGE)
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.015)  # the first send drops
     await conn.send('What is on it?')
     assert session.client_content[0]['turns'].parts[0].inline_data.data == b'\xff\xd8'
+
+    # With nothing following it, the re-held image goes out on its own once the connection is back.
+    session.drops = 1
+    await conn.send(_OTHER_IMAGE)
+    await asyncio.sleep(0.05)
+    assert session.realtime == [{'video': genai_types.Blob(data=b'\xff\xd9', mime_type='image/png')}]
 
 
 async def test_newer_image_supersedes_one_whose_send_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
