@@ -4957,10 +4957,15 @@ class _DroppingConnection(FakeRealtimeConnection):
 
     transport_errors = (ConnectionResetError,)
 
-    def __init__(self) -> None:
+    def __init__(self, *, reconnects: bool = True) -> None:
         super().__init__([])
         self.inbox: asyncio.Queue[RealtimeCodecEvent | None] = asyncio.Queue()
         self.dropped = False
+        self._reconnects = reconnects
+
+    @property
+    def reconnects(self) -> bool:
+        return self._reconnects
 
     async def send(self, content: RealtimeInput) -> None:
         if self.dropped:
@@ -5044,35 +5049,11 @@ async def test_parked_send_waits_out_a_second_drop() -> None:
     assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [b'\x01', b'\x02']
 
 
-async def test_cancelling_a_parked_tool_result_after_a_response_took_its_reservation() -> None:
-    # Reservations are a count, so a response that starts while a tool result is parked on the dropped
-    # connection takes that result's reservation. Cancelling the call afterwards has nothing left to give
-    # back; releasing anyway drove the count negative and `wait_for_reply()` waited forever.
-    conn = _DroppingConnection()
-
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        return 'sunny'
-
-    session = RealtimeSession(conn, runner, model_name='gpt-realtime')
-    async with session:
-        await session.wait_for_reply()
-        conn.dropped = True
-        conn.inbox.put_nowait(ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'))
-        conn.inbox.put_nowait(ResponseDone())
-        for _ in range(20):
-            await asyncio.sleep(0)
-        assert list(session._tool_result_reservations) == ['c1']  # pyright: ignore[reportPrivateUsage]
-        conn.inbox.put_nowait(OutputTranscript(text='Meanwhile.', is_final=True))
-        conn.inbox.put_nowait(ToolCallCancelled(tool_call_ids=['c1']))
-        conn.inbox.put_nowait(ResponseDone())
-        await asyncio.wait_for(session.wait_for_reply(), _LIVENESS_TIMEOUT)
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-
-
 async def test_turn_boundary_send_while_a_send_is_parked_does_not_end_the_session() -> None:
     # Gemini closes a turn the drop cut off with a synthetic boundary *before* its reconnect event, and
     # the pump delivers queued messages at a boundary. The pump can't wait behind a parked send (only it
-    # can deliver the reconnect that send waits for), so its own send goes straight out on the new link.
+    # can deliver the reconnect that send waits for), so the queued message is handed to a background
+    # drain, which goes out after the parked send, in order.
     conn = _DroppingConnection()
     session = RealtimeSession(conn, model_name='gpt-realtime')
     async with session:
@@ -5091,37 +5072,11 @@ async def test_turn_boundary_send_while_a_send_is_parked_does_not_end_the_sessio
         for _ in range(20):
             await asyncio.sleep(0)
         assert not session._pump_finished  # pyright: ignore[reportPrivateUsage]
-    assert [content for content in conn.sent if not isinstance(content, BinaryAudio)] == ['by the way']
-    assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [b'\x01', b'\x02']
-
-
-async def test_cancelling_a_parked_tool_result_keeps_a_later_sends_reservation() -> None:
-    # Reservations belong to the send that made them. A response starting while tool result A and typed
-    # turn B are both parked takes the oldest (A's); cancelling A afterwards must not give back B's, or
-    # `wait_for_reply()` would stop waiting for B's reply before it starts.
-    conn = _DroppingConnection()
-
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        return 'sunny'
-
-    session = RealtimeSession(conn, runner, model_name='gpt-realtime')
-    async with session:
-        await session.wait_for_reply()
-        conn.dropped = True
-        conn.inbox.put_nowait(ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'))
-        conn.inbox.put_nowait(ResponseDone())
-        for _ in range(20):
-            await asyncio.sleep(0)
-        typed = asyncio.create_task(session.send('And tomorrow?'))
-        await _parked(typed)
-        assert session._pending_response_requests == 2  # pyright: ignore[reportPrivateUsage]
-        conn.inbox.put_nowait(OutputTranscript(text='Meanwhile.', is_final=True))
-        conn.inbox.put_nowait(ToolCallCancelled(tool_call_ids=['c1']))
-        conn.inbox.put_nowait(ResponseDone())
-        conn.dropped = False
-        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
-        await asyncio.wait_for(typed, _LIVENESS_TIMEOUT)
-        assert session._pending_response_requests == 1  # pyright: ignore[reportPrivateUsage]
+    assert [content.data if isinstance(content, BinaryAudio) else content for content in conn.sent] == [
+        b'\x01',
+        b'\x02',
+        'by the way',
+    ]
 
 
 async def test_a_typed_turn_is_resent_unless_the_replay_carried_it() -> None:
@@ -5185,6 +5140,45 @@ async def test_a_group_cut_off_part_way_is_resent_whole() -> None:
         conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
         await asyncio.wait_for(sending, _LIVENESS_TIMEOUT)
         assert conn.sent[:2] == [image, CreateResponse()]
+
+
+def test_a_connection_does_not_reconnect_by_default() -> None:
+    assert FakeRealtimeConnection([]).reconnects is False
+
+
+async def test_send_on_a_dropped_connection_without_a_reconnect_policy_fails_at_once() -> None:
+    # Nothing will replace the link, so a failed send raises right away instead of waiting for receiving
+    # to notice the drop (which it may not, if the provider leaves the socket's read side open).
+    conn = _DroppingConnection(reconnects=False)
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.dropped = True
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            await asyncio.wait_for(session.send_audio(b'\x02'), _LIVENESS_TIMEOUT)
+        conn.inbox.put_nowait(None)
+
+
+async def test_barge_in_while_a_send_is_parked_stops_playback_at_once() -> None:
+    # A barge-in only stops or trims playback, and the pump that runs it can't wait behind a parked send
+    # for a reconnect only it can deliver, so its cancel goes straight out on the link.
+    conn = _DroppingConnection()
+    session = RealtimeSession(conn, _noop_runner, model_name='gpt-realtime', handle_barge_in=True)
+    async with session:
+        stream = session.stream_audio()
+        conn.inbox.put_nowait(AudioDelta(b'a' * _CHUNK))
+        assert await anext(stream) == b'a' * _CHUNK
+        conn.dropped = True
+        parked = asyncio.create_task(session.send_audio(b'\x02'))
+        await _parked(parked)
+        conn.dropped = False
+        conn.inbox.put_nowait(RealtimeInputSpeechStartEvent())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert any(isinstance(content, CancelResponse) for content in conn.sent)
+        assert not parked.done()
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        await asyncio.wait_for(parked, _LIVENESS_TIMEOUT)
 
 
 async def test_parked_send_fails_when_receiving_ends_right_after_the_reconnect() -> None:

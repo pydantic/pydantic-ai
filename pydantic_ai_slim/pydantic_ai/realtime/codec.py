@@ -501,6 +501,17 @@ class RealtimeConnection(ABC):
         return False
 
     @property
+    def reconnects(self) -> bool:
+        """Whether this connection re-dials when its link drops, emitting a [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent].
+
+        A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] send that hits a dropped link waits for
+        that reconnect only when one can come; otherwise it fails at once. Defaults to `False`; the
+        connections that honor a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect]
+        policy override it.
+        """
+        return False
+
+    @property
     def reconnect_restores_in_flight_state(self) -> bool:
         """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
 

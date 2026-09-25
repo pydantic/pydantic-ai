@@ -108,14 +108,14 @@ completes with the response terminal as usual, and `state_restored` stays `True`
 reports `False` and cancels running tools) but closes the cut reply as an interrupted response
 (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input. Gemini issues no handle while a tool call is running, and a session
-resumed from an earlier handle never answers that call's result. So a tool still running at the drop
-is cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
-the call was interrupted, and `state_restored` is `False`. On Gemini 2.5, which only issues a handle
-once a turn completes, the same goes for a typed turn sent after the latest handle whose reply hadn't
-started yet: the resumed session never saw it, so
-[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] stops waiting for its reply,
-the turn stays in history, and `state_restored` is `False`. Send it again to get an answer.
+quiet until the next input. Gemini issues no handle while a tool call is running, so a resumed
+session never has a call still running at the drop, and never answers its result. Such a call is
+cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
+the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
+works on a turn, so a typed turn not yet followed by a handle after its reply is missing from the
+resumed session too: if its reply hadn't started,
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] stops waiting for it, the
+turn stays in history, and `state_restored` is `False`. Send it again to get an answer.
 
 Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply

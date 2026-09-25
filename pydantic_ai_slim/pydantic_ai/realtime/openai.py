@@ -446,6 +446,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return self._message_history
 
     @property
+    def reconnects(self) -> bool:
+        return self._dial is not None and self._reconnect is not None
+
+    @property
     def reconnect_restores_in_flight_state(self) -> bool:
         # Local replay restores only the finalized turns; the response and tool calls in flight when
         # the socket dropped are gone, so the session settles them. (The xAI clone resumes natively and

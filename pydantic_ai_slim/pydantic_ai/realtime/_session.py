@@ -575,6 +575,11 @@ class _RealtimePendingMessages(PendingMessageQueue):
             return any(pending.priority == priority for pending in self)
 
 
+def _is_playback_control(contents: Sequence[RealtimeInput]) -> bool:
+    """Whether a send group only stops or trims the model's playback (a barge-in's cancel and truncate)."""
+    return all(isinstance(content, (CancelResponse, TruncateOutput)) for content in contents)
+
+
 class RealtimeSession:
     """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection], building message history and auto-executing tools.
 
@@ -773,10 +778,7 @@ class RealtimeSession:
         self._provider_segments_input = False
         self._pending_response_usage = RequestUsage()
         self._response_limit_checked = False
-        # Outstanding response reservations, oldest first. Each is owned by the send that made it, so a
-        # send can take back its own (and only its own) if the response it asked for won't come; a
-        # response that starts takes the oldest.
-        self._response_reservations: deque[object] = deque()
+        self._pending_response_requests = 0
         # Whether a response has actually begun, cleared at the exchange boundary that
         # `RealtimeTurnCompleteEvent` marks. A tool-calling turn spans several responses, so the
         # per-response flags above would read as "done" in the gaps. Reads pair with
@@ -879,9 +881,6 @@ class RealtimeSession:
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
-        # Calls whose result send holds a response reservation (see `_send_tool_result`), so cancelling
-        # one can give its reservation back at once rather than when the task gets round to unwinding.
-        self._tool_result_reservations: dict[str, object] = {}
         # Tool execution is gated inside each task so the receive pump remains free to deliver audio,
         # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
         # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
@@ -1328,25 +1327,14 @@ class RealtimeSession:
                 return
             await self._exchange_progress.wait()
 
-    @property
-    def _pending_response_requests(self) -> int:
-        return len(self._response_reservations)
-
-    def _release_response_reservation(self, reservation: object | None = None) -> None:
+    def _release_response_reservation(self) -> None:
         """Give back a reservation for a response that will never arrive, waking any waiter.
 
-        Rolled back by every outbound call that reserved a response and then failed to send it, which
-        passes the reservation it made: that one is released if it is still outstanding, and nothing if
-        a response has already taken it. Without one, the newest is released. The release and the wake
-        belong together: a caller parked in `wait_for_reply()` on that single reservation has nothing
-        else coming to wake it.
+        Rolled back by every outbound call that reserved a response and then failed to send it. The
+        decrement and the wake belong together: a caller parked in `wait_for_reply()` on that single
+        reservation has nothing else coming to wake it.
         """
-        if reservation is None:
-            self._response_reservations.pop()
-        elif reservation in self._response_reservations:
-            self._response_reservations.remove(reservation)
-        else:
-            return
+        self._pending_response_requests -= 1
         self._exchange_progress.set()
 
     def _reply_outstanding(self) -> bool:
@@ -1520,7 +1508,8 @@ class RealtimeSession:
             assert_never(content)
 
     async def _send_text(self, content: str, *, respond: bool) -> ModelRequest:
-        reservation = self._reserve_response_request() if respond else None
+        if respond:
+            self._reserve_response_request()
         request = self._new_request([UserPromptPart(content=content)])
         self._record_sent_request(request)
         try:
@@ -1531,8 +1520,8 @@ class RealtimeSession:
                 replayed=[CreateResponse()] if respond else [],
             )
         except BaseException:
-            if reservation is not None:
-                self._release_response_reservation(reservation)
+            if respond:
+                self._release_response_reservation()
             self._remove_sent_request(request)
             raise
         return request
@@ -1617,7 +1606,8 @@ class RealtimeSession:
                 )
         elif respond:
             self._require_capability('supports_manual_turn_control', method='send', feature='manual turn-taking')
-        reservation = self._reserve_response_request() if respond else None
+        if respond:
+            self._reserve_response_request()
         request: ModelRequest | None = None
         if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
             request = self._new_request([UserPromptPart(content=[content])])
@@ -1631,8 +1621,8 @@ class RealtimeSession:
             else:
                 await self._send_frame(image, request=request)
         except BaseException:
-            if reservation is not None:
-                self._release_response_reservation(reservation)
+            if respond:
+                self._release_response_reservation()
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
             if request is not None:
@@ -1768,11 +1758,11 @@ class RealtimeSession:
         """
         self._ensure_can_send()
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
-        reservation = self._reserve_response_request()
+        self._reserve_response_request()
         try:
             await self._send_frame(CreateResponse())
         except BaseException:
-            self._release_response_reservation(reservation)
+            self._release_response_reservation()
             raise
 
     @overload
@@ -2000,10 +1990,15 @@ class RealtimeSession:
                     if ticket is not None and not self._link_usable():
                         # Closed or finished between the wake-up and taking the lock.
                         raise self._link_lost_error()
-                    if self._parked_sends and self._parked_sends[0] is not ticket and not self._sending_from_pump():
-                        # An earlier send is still waiting out a reconnect: queue behind it. Not the pump's
-                        # own sends (queued messages and barge-in frames at a boundary): the parked send
-                        # waits for a reconnect only the pump can deliver, so those go straight out.
+                    if (
+                        self._parked_sends
+                        and self._parked_sends[0] is not ticket
+                        and not (self._sending_from_pump() and _is_playback_control(contents))
+                    ):
+                        # An earlier send is still waiting out a reconnect: queue behind it. The one
+                        # exception is the pump's barge-in, which can't wait for a reconnect only the pump
+                        # can deliver: it only stops playback, so it goes straight out (the pump hands its
+                        # other sends, queued messages, to a background drain; see `_drain_from_pump`).
                         ticket = self._park_send(ticket)
                         continue
                     if (
@@ -2043,11 +2038,11 @@ class RealtimeSession:
     def _park_send(self, ticket: object | None) -> object:
         """Take (or keep) a place in the queue of sends waiting out a reconnect.
 
-        Only a running pump can deliver a reconnect, and it can't wait on its own, so without one (a
-        session never entered) or from the pump itself (draining queued messages at a turn boundary) a
-        send fails as it always has.
+        Only a connection that reconnects, through a running pump, can deliver a reconnect, and the pump
+        can't wait on its own, so without a reconnect policy, without a pump (a session never entered),
+        or from the pump itself a send fails as it always has.
         """
-        if self._pump_task is None or self._sending_from_pump():
+        if self._pump_task is None or self._sending_from_pump() or not self._connection.reconnects:
             raise self._link_lost_error()
         if ticket is None:
             ticket = object()
@@ -2948,7 +2943,6 @@ class RealtimeSession:
         for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
             self._pending_tool_calls.pop(tool_call_id, None)
             task.cancel()
-            self._release_tool_result_reservation(tool_call_id)
             cancelled_part = ToolReturnPart(
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
@@ -3206,25 +3200,18 @@ class RealtimeSession:
         return result_part, user_content
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
-        tool_call_id = call_part.tool_call_id
-        self._tool_result_reservations[tool_call_id] = self._reserve_response_request()
+        self._reserve_response_request()
         try:
-            await self._send_frame(ToolResult(tool_call_id=tool_call_id, output=output, content=wire_content or None))
+            await self._send_frame(
+                ToolResult(
+                    tool_call_id=call_part.tool_call_id,
+                    output=output,
+                    content=wire_content or None,
+                )
+            )
         except BaseException:
-            self._release_tool_result_reservation(tool_call_id)
+            self._release_response_reservation()
             raise
-        self._tool_result_reservations.pop(tool_call_id, None)
-
-    def _release_tool_result_reservation(self, tool_call_id: str) -> None:
-        """Give back the reservation of a tool result that won't be sent, if it still holds one.
-
-        A result send parked on a dropped connection (see `_send_frame`) is cancelled when the reconnect
-        loses its call. The release happens right at that cancellation, not once the task unwinds, and
-        only if a response hasn't already taken that reservation: the reconnect's own response boundary
-        is processed in between.
-        """
-        if (reservation := self._tool_result_reservations.pop(tool_call_id, None)) is not None:
-            self._release_response_reservation(reservation)
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -3289,7 +3276,7 @@ class RealtimeSession:
         self._usage_limits.check_tokens(self.usage)
         self._usage_limits.check_cost(self.usage, warn_if_cost_unavailable=warn_if_cost_unavailable)
 
-    def _reserve_response_request(self) -> object:
+    def _reserve_response_request(self) -> None:
         """Claim the request budget for a response this session is about to solicit.
 
         `usage.requests` only counts responses already finalized, so a reservation covers the ones
@@ -3302,9 +3289,7 @@ class RealtimeSession:
                 self.usage, requests=self.usage.requests + self._pending_response_requests + in_flight
             )
             self._usage_limits.check_before_request(projected)
-        reservation = object()
-        self._response_reservations.append(reservation)
-        return reservation
+        self._pending_response_requests += 1
 
     def _begin_response(self) -> None:
         """Take the reservation for the response that's starting, or make the check now if it has none.
@@ -3315,8 +3300,8 @@ class RealtimeSession:
         """
         if self._response_limit_checked:
             return
-        if self._response_reservations:
-            self._response_reservations.popleft()
+        if self._pending_response_requests:
+            self._pending_response_requests -= 1
         elif self._usage_limits is not None and self._responses_are_requests:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
@@ -3370,7 +3355,7 @@ class RealtimeSession:
             )
         if self._asap_drain_ready:
             self._asap_drain_ready = False
-            await self._drain_pending_messages('asap')
+            await self._drain_from_pump('asap')
         return events
 
     async def _run_tool(
@@ -3574,7 +3559,6 @@ class RealtimeSession:
                     continue
                 task, call_part = pending
                 task.cancel()
-                self._release_tool_result_reservation(tool_call_id)
                 # Record a cancelled result so the call still has a matching return in history (kept
                 # valid for a handoff), and deliberately don't send a `ToolResult` back to the model —
                 # it abandoned the call.
@@ -3602,9 +3586,20 @@ class RealtimeSession:
                 await self._auto_barge_in(out)
             self._queue_put(out)
         if isinstance(event, ResponseDone):
-            await self._drain_pending_messages('asap')
-            await self._drain_pending_messages('when_idle')
+            await self._drain_from_pump('asap')
+            await self._drain_from_pump('when_idle')
         return False
+
+    async def _drain_from_pump(self, priority: PendingMessagePriority) -> None:
+        """Deliver queued messages at a boundary the pump reached, without making the pump wait on itself.
+
+        While a send is parked waiting out a reconnect, the messages would have to queue behind it for a
+        reconnect only the pump can deliver, so they are handed to a background drain instead.
+        """
+        if self._parked_sends:
+            self._start_pending_message_drain(priority)
+        else:
+            await self._drain_pending_messages(priority)
 
     async def _pump(self, context: Context | None) -> None:
         """Drain the connection into the session queue under the explicit session-span context."""

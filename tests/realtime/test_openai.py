@@ -4382,6 +4382,43 @@ async def test_sends_during_a_reconnect_go_out_on_the_new_connection(monkeypatch
 
 
 @pytest.mark.anyio
+async def test_an_image_sent_during_a_reconnect_arrives_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The re-dial replays only the words of the recorded history, so a retained image isn't in it.
+
+    The image send waiting out the reconnect therefore goes out whole on the new socket, and the model
+    sees the image exactly once, rather than a reply request with no image.
+    """
+    first, second = _DroppableWebSocket(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(model).session() as session:
+        await session.send_audio(b'\x00\x01')
+        first.drop()
+        await connect.redialing.wait()
+        sending = asyncio.create_task(
+            session.send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'), respond=True)
+        )
+        await _settle()
+        connect.release.set()
+        await asyncio.wait_for(sending, 5)
+
+    images = [
+        frame
+        for frame in second.sent
+        if frame['type'] == 'conversation.item.create'
+        and any(part.get('type') == 'input_image' for part in frame['item'].get('content', []))
+    ]
+    assert len(images) == 1
+    assert second.sent[-1]['type'] == 'response.create'
+
+
+@pytest.mark.anyio
 async def test_a_response_request_lost_to_a_drop_is_asked_for_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `response.create` that hit the dead socket never reached the server, so it isn't left active.
 
