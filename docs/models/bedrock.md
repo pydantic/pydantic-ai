@@ -368,7 +368,7 @@ AWS Bedrock supports [custom application inference profiles](https://docs.aws.am
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
 from pydantic_ai.providers.bedrock import BedrockProvider
 
 provider = BedrockProvider(region_name='us-east-2')
@@ -376,9 +376,9 @@ provider = BedrockProvider(region_name='us-east-2')
 model = BedrockConverseModel(
     'us.anthropic.claude-opus-4-5-20251101-v1:0',
     provider=provider,
-    settings={
-        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
-    },
+    settings=BedrockModelSettings(
+        bedrock_inference_profile='arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    ),
 )
 
 agent = Agent(model)

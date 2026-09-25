@@ -53,8 +53,12 @@ _PREFIX_OVERRIDES = {'mcp_sampling': 'mcp_'}
 def test_specific_prefix_settings(settings_cls: type):
     module_name = settings_cls.__module__.rsplit('.', maxsplit=1)[-1]
     prefix = _PREFIX_OVERRIDES.get(module_name, f'{module_name}_')
-    global_settings = set(ModelSettings.__annotations__.keys())
-    specific_settings = set(settings_cls.__annotations__.keys()) - global_settings
+    # A `TypedDict`'s annotations include every field it inherits, and a field declared by another settings
+    # class it builds on (`TypeSafeModelSettings` on `DecisionModelSettings`) is that class's to prefix.
+    inherited = {
+        key for base in getattr(settings_cls, '__orig_bases__', ()) for key in getattr(base, '__annotations__', {})
+    }
+    specific_settings = set(settings_cls.__annotations__.keys()) - inherited
     assert all(setting.startswith(prefix) for setting in specific_settings), (
         f'{prefix} is not a prefix for {specific_settings}'
     )

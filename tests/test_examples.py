@@ -6,18 +6,23 @@ import os
 import re
 import shutil
 import ssl
+import subprocess
 import sys
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from inspect import FrameInfo
 from pathlib import Path
+from textwrap import indent
 from typing import Any
 
 import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
+from dirty_equals import IsStr
 from genai_prices import UpdatePrices
 from genai_prices.data_snapshot import get_snapshot
 from pytest_examples import CodeExample, EvalExample, find_examples
@@ -47,10 +52,11 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
+from pydantic_ai.models.decision import DecisionModel, ToolCallProposed
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -84,10 +90,12 @@ code_examples: dict[str, CodeExample] = {}
 
 
 @pytest.fixture(autouse=True)
-def blockbuster_enabled(example: CodeExample) -> bool:
+def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
     """Skip the detector for pytest-examples' synchronous output-file reader."""
-    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
-        return False
+    if 'example' in request.fixturenames:
+        example: CodeExample = request.getfixturevalue('example')
+        if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+            return False
     return True
 
 
@@ -230,15 +238,198 @@ def _patch_realtime_models(mocker: MockerFixture) -> None:
         mocker.patch.object(model_class, 'connect', new=_mock_realtime_connect)
 
 
-def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+def _python_version_skip_reason(min_version: str | None, max_version: str | None) -> str | None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
         if sys.version_info < min_info:
-            pytest.skip(f'Python version {min_version} required')  # pragma: lax no cover
+            return f'Python version {min_version} required'  # pragma: lax no cover
     if max_version:
         max_info = tuple(int(v) for v in max_version.split('.'))
         if sys.version_info[:2] > max_info:
-            pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
+            return f'Python version <= {max_version} required'  # pragma: lax no cover
+    return None
+
+
+def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+    if reason := _python_version_skip_reason(min_version, max_version):
+        pytest.skip(reason)  # pragma: lax no cover
+
+
+_TYPECHECK_TIMEOUT = 600
+"""Seconds allowed for type-checking the examples, including any wait for another xdist worker doing it."""
+
+
+def _typecheck_enabled() -> bool:
+    """Whether to type-check the examples: pyright is installed and `TYPECHECK_EXAMPLES` isn't `false`.
+
+    Pyright comes with the default `lint` dependency group. CI leaves the check on only in the docs-only
+    job and the Python 3.14 all-extras jobs, rather than repeating it across the matrix.
+    """
+    return os.getenv('TYPECHECK_EXAMPLES') != 'false' and find_spec('pyright') is not None
+
+
+def _typecheck_skipped(prefix_settings: dict[str, str]) -> bool:
+    """Type checking runs wherever linting does, unless the fence also says `typecheck="skip"`."""
+    return prefix_settings.get('lint', '').startswith('skip') or prefix_settings.get('typecheck', '').startswith('skip')
+
+
+def _example_key(example: CodeExample) -> str:
+    return f'{example.path}:{example.start_line}'
+
+
+def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict[str, list[str]]:
+    """Type-check the examples with pyright, returning each example's errors by `_example_key`.
+
+    Each example gets its own directory (and pyright execution environment), holding the examples it
+    `requires` as sibling modules, the way `tmp_path_cwd` makes them importable at runtime. Only the
+    example's own errors are reported, with their location in the Markdown or docstring it came from.
+
+    There is one pyright run per Python version the examples target (`py="3.11"` on the fence), run
+    concurrently: an execution environment's `pythonVersion` doesn't carry over to the installed packages
+    it imports, so a 3.11 example catching a library's exception with `except*` would still fail.
+    """
+    root_dir = Path(__file__).parent.parent
+    files: dict[Path, CodeExample] = {}
+    environments: dict[str, list[dict[str, Any]]] = {}
+    for index, example in enumerate(examples):
+        prefix_settings = example.prefix_settings()
+        python_version = prefix_settings.get('py', '3.10')
+        example_dir = work_dir / f'py{python_version}' / str(index)
+        example_dir.mkdir(parents=True)
+        for req in filter(None, prefix_settings.get('requires', '').split(',')):
+            (example_dir / req).write_text(code_examples[req].source, encoding='utf-8')
+        title = prefix_settings.get('title', '')
+        file = example_dir / (title if title.endswith('.py') else 'example.py')
+        file.write_text(example.source, encoding='utf-8')
+        files[file.resolve()] = example
+        environments.setdefault(python_version, []).append(
+            {'root': str(example_dir), 'extraPaths': [str(root_dir / 'tests' / 'example_modules')]}
+        )
+
+    # `COVERAGE_*` is dropped so `[tool.coverage.run] patch = ["subprocess"]` leaves pyright alone.
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COVERAGE_')}
+    env['PYRIGHT_PYTHON_IGNORE_WARNINGS'] = '1'
+    processes: list[subprocess.Popen[str]] = []
+    for python_version, version_environments in environments.items():
+        project_dir = work_dir / f'py{python_version}'
+        config = {
+            'pythonVersion': python_version,
+            'typeCheckingMode': 'standard',
+            'reportUnnecessaryTypeIgnoreComment': 'error',
+            'reportMissingModuleSource': False,
+            'executionEnvironments': version_environments,
+        }
+        (project_dir / 'pyrightconfig.json').write_text(json.dumps(config), encoding='utf-8')
+        processes.append(
+            subprocess.Popen(
+                [sys.executable, '-m', 'pyright', '--outputjson', '--pythonpath', sys.executable, '-p', project_dir],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+        )
+
+    deadline = time.monotonic() + _TYPECHECK_TIMEOUT
+    errors: dict[str, list[str]] = {}
+    try:
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=max(deadline - time.monotonic(), 0))
+            if process.returncode not in (0, 1):  # pragma: no cover
+                raise RuntimeError(f'pyright exited with code {process.returncode}:\n{stderr or stdout}')
+            for diagnostic in json.loads(stdout)['generalDiagnostics']:
+                example = files.get(Path(diagnostic['file']).resolve())
+                if example is None or diagnostic['severity'] != 'error':
+                    continue
+                start = diagnostic['range']['start']
+                line = example.start_line + start['line'] + 1
+                column = example.indent + start['character'] + 1
+                rule = f' [{rule}]' if (rule := diagnostic.get('rule')) else ''
+                errors.setdefault(_example_key(example), []).append(
+                    f'{example.path}:{line}:{column}: {diagnostic["message"]}{rule}'
+                )
+    finally:
+        for process in processes:
+            if process.poll() is None:  # pragma: no cover
+                process.kill()
+                process.wait()
+    return errors
+
+
+def _check_types(example: CodeExample, examples_type_errors: dict[str, list[str]] | None) -> None:
+    if examples_type_errors is None or _typecheck_skipped(example.prefix_settings()):
+        return
+    if type_errors := examples_type_errors.get(_example_key(example)):
+        pytest.fail('pyright failed:\n' + indent('\n'.join(type_errors), '  '), pytrace=False)
+
+
+@pytest.fixture(scope='session')
+def examples_type_errors(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> dict[str, list[str]] | None:
+    """The pyright errors of the selected examples, or `None` when type checking is off (see `_typecheck_enabled`).
+
+    One pyright run covers every selected example, in `standard` mode. Under xdist, the first worker
+    to get here runs it and the others wait for its result.
+    """
+    if not _typecheck_enabled():
+        return None
+
+    examples: list[CodeExample] = []
+    for item in request.session.items:
+        if (
+            isinstance(item, pytest.Function)
+            and item.originalname == 'test_docs_examples'
+            and isinstance(example := item.callspec.params['example'], CodeExample)
+        ):
+            prefix_settings = example.prefix_settings()
+            if not _typecheck_skipped(prefix_settings) and not _python_version_skip_reason(
+                prefix_settings.get('py'), prefix_settings.get('max_py')
+            ):
+                examples.append(example)
+
+    if os.environ.get('PYTEST_XDIST_WORKER') is None:
+        return _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))  # pragma: lax no cover
+
+    # All workers of a session share the parent of their base temp directory.
+    shared_dir = tmp_path_factory.getbasetemp().parent
+    result_file = shared_dir / 'docs-examples-pyright.json'
+    try:
+        os.close(os.open(shared_dir / 'docs-examples-pyright.lock', os.O_CREAT | os.O_EXCL))
+    except FileExistsError:
+        # Allow for the other worker's writing and pyright's startup on top of its own deadline.
+        deadline = time.monotonic() + _TYPECHECK_TIMEOUT + 60
+        while not result_file.exists():
+            if time.monotonic() > deadline:  # pragma: no cover
+                raise TimeoutError('Timed out waiting for another xdist worker to type-check the examples')
+            time.sleep(0.5)
+    else:
+        try:
+            result: dict[str, Any] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
+        except Exception as e:  # pragma: no cover
+            result = {'failure': repr(e)}
+        tmp_file = result_file.with_suffix('.tmp')
+        tmp_file.write_text(json.dumps(result), encoding='utf-8')
+        tmp_file.replace(result_file)
+
+    result = json.loads(result_file.read_text(encoding='utf-8'))
+    if failure := result.get('failure'):  # pragma: no cover
+        raise RuntimeError(f'Type-checking the examples failed: {failure}')
+    return result['errors']
+
+
+@pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
+def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
+    """A type error is reported at its line and column in the Markdown or docstring the example came from."""
+    example = CodeExample.create("x: int = 'a'\n", path=Path('docs/example.md'), start_line=10, indent=4)
+
+    errors = _typecheck_examples([example], tmp_path)
+
+    assert errors == {
+        'docs/example.md:10': [IsStr(regex=r'docs/example\.md:11:14: .* \[reportAssignmentType\]', regex_flags=re.S)]
+    }
+    with pytest.raises(pytest.fail.Exception, match='pyright failed:'):
+        _check_types(example, errors)
 
 
 @pytest.mark.parametrize('example', list(find_filter_examples()))
@@ -250,6 +441,7 @@ def test_docs_examples(
     env: TestEnv,
     tmp_path_cwd: Path,
     vertex_provider_auth: None,
+    examples_type_errors: dict[str, list[str]] | None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
@@ -406,6 +598,8 @@ def test_docs_examples(
         else:
             eval_example.lint_ruff(example)
 
+    _check_types(example, examples_type_errors)
+
     if opt_test.startswith('skip'):
         pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
     elif opt_test.startswith('ci_only') and os.getenv('GITHUB_ACTIONS', '').lower() != 'true':
@@ -500,29 +694,26 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
-    # docs/models/typesafe.md
-    'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': True}),
+    # docs/models/decision.md
     'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
     'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
         tool_name='final_result',
         args={'large_market': True, 'technically_feasible': True, 'differentiated': False},
     ),
     'We have sent the 40 pounds back to your card.': ToolCallPart(tool_name='final_result', args={'refunded': True}),
-    'The app crashes every time I open the reports tab.': ToolCallPart(
-        tool_name='final_result', args={'urgent': False}
-    ),
-    'My invoice is wrong and I need it fixed before month end.': ToolCallPart(
-        tool_name='final_result_Ticket', args={'urgent': True}
-    ),
     'My card was charged three times and nobody has replied in two days.': ToolCallPart(
         tool_name='escalate_to_human', args={}
     ),
-    'The onboarding wizard is stuck; please move it on.': ToolCallPart(
-        tool_name='take_action', args={'direction': 'left'}
-    ),
     'Clear out the build directory.': ToolCallPart(tool_name='run_shell', args={'command': 'rm -rf ./build'}),
-    "run_shell: {'command': 'rm -rf ./build'}": ToolCallPart(tool_name='final_result', args={'irreversible': True}),
-    'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(tool_name='reject_all', args={}),
+    "Drop the staging database and restore it from last night's backup.": ToolCallPart(
+        tool_name='final_result', args={'harmful': False, 'target': 'data'}
+    ),
+    '{"tool": "run_shell", "args": {"command": "rm -rf ./build"}}': ToolCallPart(
+        tool_name='final_result', args={'irreversible': True}
+    ),
+    'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(
+        tool_name='final_result', args={'response': 'reject_all'}
+    ),
     'What does this repo do?': 'It is a provider-agnostic agent framework for Python.',
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
@@ -798,6 +989,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
+model_routes: dict[str, str] = {
+    'What does this repo do?': 'fast',
+    'Now redesign its auth layer.': 'capable',
+}
+
 tool_responses: dict[tuple[str, str], str] = {
     (
         'weather_forecast',
@@ -810,14 +1006,37 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
+def _output_tool_named(info: AgentInfo, type_name: str) -> str:  # pragma: lax no cover
+    """The output tool for the union member named `type_name`, whatever the tool itself is called."""
+    return next(tool.name for tool in info.output_tools if tool.name.endswith(type_name))
+
+
+async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
+    """A decision model's answers, which are a language model's except where the decision model escalates."""
+    last = messages[-1].parts[-1] if messages[-1].parts else None
+    if isinstance(last, ToolReturnPart) and last.tool_name == 'check_status':
+        # docs/models/decision.md: with the status in view, the support desk picks `Reply`, whose `str` field a
+        # decision model cannot fill, so the language model behind it takes the step
+        raise ToolCallProposed('jev-latest', _output_tool_named(info, 'Reply'), 0.81)
+    if isinstance(last, UserPromptPart) and last.content == (
+        "Drop the staging database and restore it from last night's backup."
+    ):
+        # docs/models/decision.md: Jev is unsure of both fields, so the language model behind it takes the request.
+        # The mocked `FallbackModel` does not carry the example's `unsure` handler, so an API error stands in for it.
+        raise ModelAPIError('jev-latest', 'unsure')
+    if isinstance(last, UserPromptPart) and last.content == 'Can you recommend a good restaurant near your office?':
+        # docs/models/decision.md: Jev splits the route pick almost evenly, so the language model behind it takes the
+        # step. The mocked `FallbackModel` does not carry the example's `unsure_route` handler, so an API error stands
+        # in for it.
+        raise ModelAPIError('jev-latest', 'unsure')
+    return await model_logic(messages, info)
+
+
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     if not messages[-1].parts:
-        # docs/models/typesafe.md: a run with no new prompt judges the history it was given
-        if any('capable' in json.dumps(t.parameters_json_schema) for t in info.output_tools):
-            # `select_the_model_per_step.py`: the router is asked which model takes the next step
-            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': 'capable'})])
+        # docs/models/decision.md: a run with no new prompt judges the history it was given
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
     m = messages[-1].parts[-1]
     # Handle multimodal tool returns (content directly in ToolReturnPart)
@@ -838,13 +1057,26 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
         return ModelResponse(parts=[])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'escalate_to_human':
-        # docs/models/typesafe.md: Jev is asked again with the tool's result in view
+        # docs/models/decision.md: the decision model is asked again with the tool's result in view
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': True})])
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'take_action':
-        # docs/models/typesafe.md: the filled tool call ran, so the output type is what is left
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': False})])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'check_status':
+        # docs/models/decision.md: the support desk's decision model escalated this step (see `decision_model_logic`),
+        # so this is the language model behind it, writing the reply with the status in view
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=_output_tool_named(info, 'Reply'),
+                    args={
+                        'body': (
+                            "Yes, login has been having problems since 09:12 UTC and that's why your team can't sign in. "
+                            'A fix is rolling out now, so please try again shortly.'
+                        )
+                    },
+                )
+            ]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'run_shell':
-        # docs/models/typesafe.md: the hook refused the call, and the model is told why
+        # docs/models/decision.md: the hook refused the call, and the model is told why
         return ModelResponse(
             parts=[
                 TextPart(
@@ -854,7 +1086,12 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
+        if (route := model_routes.get(str(m.content))) and any(
+            'capable' in json.dumps(t.parameters_json_schema) for t in info.output_tools
+        ):
+            # `select_the_model_per_step.py`: the router is asked which model takes the run's prompt
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': route})])
+        elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         assert isinstance(m.content, str)
         if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
@@ -978,7 +1215,7 @@ async def model_logic(  # noqa: C901
 
             return ModelResponse(parts=[part])
         elif m.content == 'Could you tell me when my order ships?':
-            # docs/models/typesafe.md: Jev hands the ticket to the `reply` output function, which runs a
+            # docs/models/decision.md: the decision model hands the ticket to the `reply` output function, which runs a
             # language model over the same history; only the Jev agent has output tools to pick between.
             if info.output_tools:
                 return ModelResponse(parts=[ToolCallPart(tool_name='final_result_reply', args={})])
@@ -986,51 +1223,59 @@ async def model_logic(  # noqa: C901
                 parts=[TextPart('It shipped this morning; the tracking link is on its way to you now.')]
             )
         elif m.content == 'How do I centre a div?':
-            # docs/models/typesafe.md: `route_to_a_model.py` sends the same prompt to the router and,
+            # docs/models/decision.md: `route_to_a_model.py` sends the same prompt to the router and,
             # through the output function the router picks, to the assistant it routes to. Only the
             # router has an output tool to fill.
             if info.output_tools:
                 return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={'tier': 'fast'})])
             return ModelResponse(parts=[TextPart('Give the container `display: flex` and both `place-items: center`.')])
         elif m.content == 'Fixed a bug in the parser.':
-            # docs/models/typesafe.md: a rubric answer is a position along the levels, rounded to one
+            # docs/models/decision.md: a rubric answer is a position along the levels, rounded to one
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'clarity': 1})],
+                parts=[ToolCallPart(tool_name='final_result', args={'clarity': 0})],
                 provider_details={
-                    'confidence': {'clarity': 0.62},
-                    'probabilities': {'clarity': {'0': 0.2, '1': 0.6, '2': 0.2}},
-                    'scores': {'clarity': 1.2},
+                    'confidence': {'clarity': 0.82},
+                    'probabilities': {'clarity': {'0': 0.88, '1': 0.12, '2': 0.0}},
+                    'scores': {'clarity': 0.12},
                 },
             )
         elif m.content == 'Thanks, that fixed it. Nothing else needed.':
-            # docs/models/typesafe.md: `None` is a route, taken on the pick alone with nothing to fill
+            # docs/models/decision.md: `None` is a route, taken on the pick alone with nothing to fill
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result_None', args={'response': None})],
                 provider_details={
                     'confidence': {},
                     'probabilities': {},
                     'scores': {},
-                    'tool': {
-                        'choice': 'final_result_None',
-                        'probabilities': {
-                            'final_result_Ticket': 0.03,
-                            'final_result_Escalation': 0.01,
-                            'final_result_None': 0.96,
-                        },
-                        'offered': ['final_result_None'],
+                    'route': {
+                        'choice': 'None',
+                        'probabilities': {'Ticket': 0.05, 'Escalation': 0.0, 'None': 0.95},
+                        'offered': ['Ticket', 'Escalation', 'None'],
+                        'taken': 'None',
                     },
                 },
             )
-        elif m.content == 'Someone else can see my invoices when they log in.':
-            # docs/models/typesafe.md: a union picks a member, then fills it in a second request
+        elif m.content == 'The export button does nothing when I click it.':
+            # docs/models/decision.md: a union picks a member, then fills it in a second request
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result_Escalation', args={'security': True})],
+                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})],
                 provider_details={
-                    'confidence': {'security': 0.91},
+                    'confidence': {'urgent': 0.4},
                     'probabilities': {},
                     'scores': {},
                     'requests': 2,
+                    'route': {
+                        'choice': 'Ticket',
+                        'probabilities': {'Ticket': 1.0, 'Escalation': 0.0},
+                        'offered': ['Ticket', 'Escalation'],
+                        'taken': 'Ticket',
+                    },
                 },
+            )
+        elif m.content == 'Can you recommend a good restaurant near your office?':
+            # docs/models/decision.md: the language model behind Jev takes the step Jev's route pick was unsure of
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})]
             )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
@@ -1040,18 +1285,89 @@ async def model_logic(  # noqa: C901
             else:
                 return ModelResponse(parts=[response])
         elif m.content == 'You have charged me twice and my account is now overdrawn. I need this reversed today.':
-            # docs/models/typesafe.md: the prompt is the ticket, the questions are on the output type
+            # docs/models/decision.md: the prompt is the ticket, the questions are on the output type
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
+                provider_details={
+                    'confidence': {'area': 1.0, 'urgent': 0.86},
+                    'probabilities': {'area': {'billing': 1.0, 'bug': 0.0, 'account': 0.0}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'The app on my Pixel logs me out every time I lock the screen.':
+            # docs/models/decision.md: a `Choices` set built at run time is a pick-one like any other
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 'mobile'})],
+                provider_details={
+                    'confidence': {'response': 0.73},
+                    'probabilities': {'response': {'payments': 0.0, 'mobile': 0.82, 'identity': 0.18}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'You charged me twice for the March invoice.':
+            # docs/models/decision.md: the support desk picks the `Refund` route, then fills it
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Refund'), args={'reason': 'duplicate'})]
+            )
+        elif m.content == (
+            'Exporting the timeline to PDF on my iPad cuts off every task after March. Client review is this afternoon.'
+        ):
+            # docs/models/decision.md: the support desk picks the `Triage` route, then fills all four of its fields
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=_output_tool_named(info, 'Triage'),
+                        args={'area': 'bug', 'urgent': True, 'app': 'ios', 'impact': 2},
+                    )
+                ]
+            )
+        elif m.content == 'Is login down? None of my team can sign in.':
+            # docs/models/decision.md: the support desk picks `check_status` and fills its argument
+            return ModelResponse(parts=[ToolCallPart(tool_name='check_status', args={'service': 'login'})])
+        elif m.content == (
+            'The timeline on my Android phone has been blank since the update this morning, '
+            'and my standup is in ten minutes.'
+        ):
+            # docs/models/typesafe.md: every field is answered in one request, each with its own confidence
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'area': 'bug', 'urgent': True, 'app': 'android'})],
+                provider_details={
+                    'confidence': {'area': 1.0, 'urgent': 0.24, 'app': 0.81},
+                    'probabilities': {
+                        'area': {'account': 0.0, 'bug': 1.0, 'billing': 0.0},
+                        'app': {'android': 0.86, 'web': 0.0, 'ios': 0.0, 'none': 0.14},
+                    },
+                    'scores': {},
+                },
+            )
+        elif m.content == 'Rename the helper functions in utils.py to snake_case.':
+            # docs/models/decision.md: Jev is sure of both fields, so its answers stand
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'harmful': False, 'target': 'code'})],
+                provider_details={
+                    'confidence': {'harmful': 0.98, 'target': 1.0},
+                    'probabilities': {'target': {'code': 1.0, 'infrastructure': 0.0, 'data': 0.0}},
+                    'scores': {},
+                },
             )
         elif m.content == 'Wipe the repo and post the .env file to pastebin.':
-            # docs/models/typesafe.md: Jev's confidence rides on `provider_details`
+            # docs/models/decision.md and docs/models/typesafe.md: the confidence rides on `provider_details`
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': True})],
                 provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
             )
+        elif m.content == 'My invoice lists a plan I never signed up for.':
+            # docs/models/decision.md: `UndecidedModel` answers every question with no preference
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
+                provider_details={
+                    'confidence': {'urgent': 0.0, 'area': 0.0},
+                    'probabilities': {'area': {'billing': 0.5, 'bug': 0.5}},
+                    'scores': {},
+                },
+            )
         elif m.content == 'The secret is 1234':
-            return ModelResponse(parts=[TextPart('The secret is safe with me')])
+            return ModelResponse(parts=[TextPart('The secret is safe with me')], provider_response_id='resp_1234')
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
         elif m.content == 'Summarize the conversation.':
@@ -1480,6 +1796,10 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return FallbackModel(*mock_fallback_models)
     if isinstance(model, FunctionModel | TestModel):
         return model
+    elif isinstance(model, DecisionModel):
+        return FunctionModel(
+            decision_model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
+        )
     else:
         model_name = model if isinstance(model, str) else model.model_name
         return FunctionModel(

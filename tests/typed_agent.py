@@ -6,15 +6,25 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import partial
-from typing import Any, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias, TypeVar
 
+from pydantic import Field
 from starlette.requests import Request
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
-from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.agent import AgentRun, AgentRunResult
 from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
-from pydantic_ai.output import Choice, Choices, NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.output import (
+    Choice,
+    Choices,
+    NativeOutput,
+    OutputSpec,
+    PromptedOutput,
+    StructuredDict,
+    TextOutput,
+    ToolOutput,
+)
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -214,6 +224,32 @@ def run_with_override() -> None:
         typed_agent.run_sync('testing', deps=MyDeps(3, 4))
 
 
+T = TypeVar('T')
+
+
+# A generic `OutputSpec[T]` passed on to a run keeps its type variable (issue #8717)
+async def run_with_output_spec(output_type: OutputSpec[T]) -> T:
+    result = await typed_agent.run('testing', deps=MyDeps(1, 2), output_type=output_type)
+    assert_type(result, AgentRunResult[T])
+    return result.output
+
+
+def run_sync_with_output_spec(output_type: OutputSpec[T]) -> T:
+    result = typed_agent.run_sync('testing', deps=MyDeps(1, 2), output_type=output_type)
+    assert_type(result, AgentRunResult[T])
+    return result.output
+
+
+async def run_stream_with_output_spec(output_type: OutputSpec[T]) -> T:
+    async with typed_agent.run_stream('testing', deps=MyDeps(1, 2), output_type=output_type) as streamed_result:
+        return await streamed_result.get_output()
+
+
+async def iter_with_output_spec(output_type: OutputSpec[T]) -> None:
+    async with typed_agent.iter('testing', deps=MyDeps(1, 2), output_type=output_type) as agent_run:
+        assert_type(agent_run, AgentRun[MyDeps, T])
+
+
 @dataclass
 class Foo:
     a: int
@@ -238,7 +274,8 @@ MyUnion: TypeAlias = 'Foo | Bar'
 union_agent2: Agent[object, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
 assert_type(union_agent2, Agent[object, MyUnion])
 
-# `None` is only an output type alongside another one: on its own, it raises a `UserError`
+# `None` is only an output type alongside another one: on its own, it raises a `UserError`.
+# mypy refuses it, but pyright accepts it as a `TypeForm`, the same way it accepts `[Foo, None]`.
 Agent(output_type=None)  # type: ignore[call-overload]
 
 structured_dict = StructuredDict(
@@ -339,7 +376,8 @@ if MYPY:
     none_output_agent = Agent[object, Foo | Bar | None](output_type=[Foo, Bar, None])
     assert_type(none_output_agent, Agent[object, Foo | Bar | None])
 
-    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
+    # Whether mypy accepts the union as a `TypeForm` depends on the Python version it checks against
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type,unused-ignore]
     complex_output_agent = Agent[object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker, TextOutput(str_to_regex)]
     )
@@ -385,6 +423,26 @@ else:
     assert_type(Agent(output_type=[[Foo, None], Bar]), Agent[object, Foo | None | Bar])
     assert_type(Agent(output_type=Foo | None), Agent[object, Foo | None])
     assert_type(typed_agent.run_sync('x', deps=MyDeps(foo=1, bar=2), output_type=[Foo, None]).output, Foo | None)
+
+    # A type form such as `Annotated[...]`, `Literal[...]` or a class union binds the type it spells
+    Confidence = Annotated[float, Field(ge=0, le=1)]
+    assert_type(Agent(output_type=Confidence), Agent[object, float])
+    assert_type(Agent(output_type=Annotated[float, Field(ge=0, le=1)]), Agent[object, float])
+    assert_type(Agent(output_type=Annotated[Foo, 'meta']), Agent[object, Foo])
+    assert_type(Agent(output_type=[Annotated[Foo, 'meta'], Bar]), Agent[object, Foo | Bar])
+    assert_type(Agent(output_type=[Confidence, None]), Agent[object, float | None])
+    assert_type(
+        Agent(output_type=[Foo, Annotated[None, Field(description='Nothing to do.')]]), Agent[object, Foo | None]
+    )
+    assert_type(Agent(output_type=ToolOutput(Confidence)), Agent[object, float])
+    assert_type(Agent(output_type=NativeOutput([Confidence, Foo])), Agent[object, float | Foo])
+    assert_type(Agent(output_type=PromptedOutput(Confidence)), Agent[object, float])
+    assert_type(typed_agent.run_sync('x', deps=MyDeps(foo=1, bar=2), output_type=Confidence).output, float)
+    assert_type(Agent(output_type=Literal['a', 'b']), Agent[object, Literal['a', 'b']])
+    assert_type(Agent(output_type=Foo | Bar), Agent[object, Foo | Bar])
+    assert_type(Agent(output_type=Annotated[Foo, 'meta'] | Bar), Agent[object, Foo | Bar])
+    assert_type(Agent(output_type=Confidence | None), Agent[object, float | None])
+    assert_type(ToolOutput(bool | tuple[str, int]), ToolOutput[bool | tuple[str, int]])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
     complex_output_agent = Agent(

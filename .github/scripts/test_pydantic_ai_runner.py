@@ -434,8 +434,7 @@ def test_harness_backed_tools_are_async_and_pin_the_remaining_gaps():
 
     The harness-backed tools delegate to pydantic-ai-harness and are async:
     `Bash`/`Read`/`Write`/`Edit`/`Grep`/`Glob`/`LS` to `FileSystemToolset` /
-    `ShellToolset`, and `TodoWrite` to the experimental `planning` capability's
-    `write_plan` (experimental is acceptable; the warning is silenced at import).
+    `ShellToolset`, and `TodoWrite` to the `planning` capability's `render_plan`.
 
     The remaining tools have no harness equivalent and stay sync:
 
@@ -804,7 +803,7 @@ def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatc
 
 def test_todo_write_renders_plan_via_harness():
     # TodoWrite maps Claude's todo schema onto the harness `planning` capability
-    # and returns its `write_plan` rendering (a checklist with a progress line).
+    # and returns its `render_plan` checklist (with a progress line).
     out = asyncio.run(pkg.todo_write([{'content': 'do x', 'status': 'in_progress', 'activeForm': 'doing x'}]))
     assert 'do x' in out and '[~]' in out and '(0/1 completed)' in out
     # A completed step shows as done; an unknown status falls back to pending.
@@ -813,10 +812,12 @@ def test_todo_write_renders_plan_via_harness():
             [
                 {'content': 'a', 'status': 'completed', 'activeForm': ''},
                 {'content': 'b', 'status': 'bogus', 'activeForm': ''},
+                # `blocked` is a harness status Claude's schema doesn't have.
+                {'content': 'c', 'status': 'blocked', 'activeForm': ''},
             ]
         )
     )
-    assert '[x] a' in out2 and '[ ] b' in out2 and '(1/2 completed)' in out2
+    assert '[x] a' in out2 and '[ ] b' in out2 and '[ ] c' in out2 and '(1/3 completed)' in out2
 
 
 def test_exit_plan_mode_returns_ack():

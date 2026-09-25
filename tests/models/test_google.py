@@ -817,7 +817,12 @@ async def test_google_model_mobile_youtube_video_url_input(
                 {
                     'parts': [
                         {'text': 'Explain me this video in a few sentences'},
-                        {'fileData': {'fileUri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU', 'mimeType': 'video/mp4'}},
+                        {
+                            'fileData': {
+                                'file_uri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU',
+                                'mime_type': 'video/mp4',
+                            }
+                        },
                     ],
                     'role': 'user',
                 }
@@ -827,19 +832,10 @@ async def test_google_model_mobile_youtube_video_url_input(
         }
     )
     assert result.output == snapshot(
-        'This video demonstrates an AI assistant within a code editor analyzing recent 404 HTTP responses from a logfile database. The AI queries the database, identifies common patterns related to specific endpoints, request types, timeline issues, and authentication problems. Finally, it provides a detailed analysis of these patterns along with actionable recommendations to resolve the identified issues.'
+        'This video showcases an AI assistant diagnosing recent HTTP 404 errors. The assistant queries a logging database (LogLine) to identify patterns in the error responses, such as common problematic endpoints, request patterns, and issues related to timeline queries or authentication. Finally, the AI provides a detailed analysis of the identified problems and offers specific recommendations for resolution, interactively highlighting relevant sections in the code editor.'
     )
     assert result.usage.details == snapshot(
-        {
-            'cached_content_tokens': 17379,
-            'thoughts_tokens': 821,
-            'text_prompt_tokens': 16,
-            'video_prompt_tokens': 15780,
-            'audio_prompt_tokens': 1917,
-            'audio_cache_tokens': 1881,
-            'text_cache_tokens': 15,
-            'video_cache_tokens': 15483,
-        }
+        {'thoughts_tokens': 1091, 'text_prompt_tokens': 16, 'video_prompt_tokens': 15780, 'audio_prompt_tokens': 1917}
     )
 
 
@@ -2050,6 +2046,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5478,6 +5475,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5521,6 +5519,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',

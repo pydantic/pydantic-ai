@@ -445,11 +445,13 @@ agent = Agent('google:gemini-3.7-flash', capabilities=[Thinking(effort='medium')
 For advanced usage, you can pass Google's native thinking config through [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config]:
 
 ```python
+from google.genai.types import ThinkingLevel
+
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 model = GoogleModel('gemini-3.7-flash')
-model_settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
+model_settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': ThinkingLevel.MEDIUM})
 agent = Agent(model, model_settings=model_settings)
 ...
 ```
@@ -510,8 +512,9 @@ agent = Agent(model, model_settings=model_settings)
 
 result = agent.run_sync('Your prompt here')
 # Access logprobs from provider_details
-logprobs = result.response.provider_details.get('logprobs')
-avg_logprobs = result.response.provider_details.get('avg_logprobs')
+provider_details = result.response.provider_details or {}
+logprobs = provider_details.get('logprobs')
+avg_logprobs = provider_details.get('avg_logprobs')
 ```
 
 See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.

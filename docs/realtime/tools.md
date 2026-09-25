@@ -117,7 +117,7 @@ def issue_refund(order_id: str, amount: float) -> str:
 
 
 async def refund_policy(
-    ctx: RunContext[None], requests: DeferredToolRequests
+    ctx: RunContext, requests: DeferredToolRequests
 ) -> DeferredToolResults:
     results = DeferredToolResults()
     for call in requests.approvals:
@@ -235,7 +235,7 @@ agent = Agent(instructions='When the caller says goodbye, call `hang_up`.')
 
 
 @agent.tool
-async def hang_up(ctx: RunContext[None]) -> None:
+async def hang_up(ctx: RunContext) -> None:
     assert ctx.realtime_session is not None
     await ctx.realtime_session.close()
 ```
