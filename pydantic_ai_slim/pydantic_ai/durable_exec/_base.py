@@ -55,7 +55,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.workspaces import Workspace, WrapperWorkspace
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces.workspace import policy_chain
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -239,23 +240,6 @@ def _supplies_workspace(capability: AbstractCapability[Any]) -> bool:
             capability = capability.wrapped
             continue
         return type(capability).get_workspace is not AbstractCapability.get_workspace
-
-
-def _policy_chain(workspace: Workspace) -> list[tuple[type[Workspace], dict[str, Any]]]:
-    """Each facade layer from the outside in, with its own state, which is where workspace policy lives.
-
-    A layer's state is its instance attributes other than the wrapped workspace, compared with
-    `==`, so two `ReadOnlyWorkspace`s match while two allowlisting wrappers with different lists do
-    not. The innermost backend is left out: both sides are built from the same ref, so they name
-    the same environment, and a backend's configuration has no general comparison.
-    """
-    chain: list[tuple[type[Workspace], dict[str, Any]]] = []
-    while True:
-        state = {name: value for name, value in vars(workspace).items() if name != '_backend'}
-        chain.append((type(workspace), state))
-        if not isinstance(workspace, WrapperWorkspace):
-            return chain
-        workspace = workspace.wrapped
 
 
 class _TypedResultCodec(ResultCodec[_T]):
@@ -551,8 +535,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         assert self._agent is not None
         construction = resolve_run_workspace(self._agent.root_capability, ctx, workspace.ref)
-        run_chain = _policy_chain(workspace)
-        construction_chain = _policy_chain(construction) if construction is not None else None
+        run_chain = policy_chain(workspace)
+        construction_chain = policy_chain(construction) if construction is not None else None
         if construction_chain == run_chain:
             return
         run_layers = ', '.join(cls.__name__ for cls, _ in run_chain)

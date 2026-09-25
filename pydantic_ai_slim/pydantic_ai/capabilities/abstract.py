@@ -583,7 +583,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Supply the run's workspace backend, or `None` if this capability does not provide one.
 
-        Called synchronously on each run. The first non-deferred capability, in capability order,
+        Called synchronously on each run, before `for_run`, so `for_run` can read from the workspace.
+        A capability that exists only after `for_run` (one a capability function returns) is asked
+        afterwards if no other capability supplied one. The first non-deferred capability, in capability order,
         that returns a backend supplies the run's workspace, and the capabilities after it are not
         asked. Attaching several workspace capabilities is therefore how an agent stays able to
         continue in an environment from any of their providers: each returns `None` for a `ref` it

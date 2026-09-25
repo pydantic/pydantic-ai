@@ -132,6 +132,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from ..workspaces.workspace import same_workspace
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -1717,17 +1718,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             workspace=unattached_workspace(),
         )
 
-        # A caller-provided live workspace is already known and is visible to `for_run`. A workspace
-        # supplied by a capability is selected from the final per-run capability tree below, so a
-        # capability that replaces itself in `for_run` cannot leave behind the bootstrap backend.
+        # The workspace is selected before `for_run`, the way the bootstrap model is above, so `for_run`
+        # can read from it: a caller-provided one, else one from the capabilities that exist before
+        # `for_run`. Nothing here does I/O: a backend creates or attaches on its first operation.
         run_workspace = initial_ctx.workspace
         explicit_workspace = False
+        explicit_ref = workspace if isinstance(workspace, WorkspaceRef) else None
+        # `'new'` asks for a fresh environment, so the ref in history is deliberately not offered.
+        selection_ref = historical_workspace_ref if workspace is None else explicit_ref
         if workspace is not None and workspace != 'new' and not isinstance(workspace, WorkspaceRef):
             # An explicit backend, or an existing `Workspace` passed straight through from a
             # parent run or a previous result.
             run_workspace = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
-            initial_ctx.workspace = run_workspace
             explicit_workspace = True
+        # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
+        _, workspace_capability = _compose_layers([base_capability], extra_capabilities)
+        bootstrap_selection = (
+            None
+            if explicit_workspace
+            else _as_workspace(workspace_capability.get_workspace(initial_ctx, ref=selection_ref))
+        )
+        if bootstrap_selection is not None:
+            run_workspace = bootstrap_selection
+        # The wrap hook sees the tree it selected from, so a durability capability can rebuild the
+        # selection through it and `for_run` reads run as durable operations.
+        initial_ctx.root_capability = workspace_capability
+        run_workspace = workspace_capability._wrap_workspace(  # pyright: ignore[reportPrivateUsage]
+            initial_ctx, run_workspace, explicit=explicit_workspace
+        )
+        initial_ctx.workspace = run_workspace
         # An explicit `Instrumentation` capability (agent- or call-level) replaces the one injected from
         # `instrumentation_settings` (see `_resolve_run_capabilities`), so `for_run` hooks and metadata
         # factories are shown the settings of the one that will actually instrument the run.
@@ -1771,36 +1790,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_model_settings = resolved_caps.model_settings
         cap_toolsets = resolved_caps.toolsets
 
-        # Nothing here does I/O: the backend creates or attaches on its first operation. Resolve
-        # capability-provided workspaces only now, after `for_run()` has chosen the instances whose
-        # hooks and durable operations this run will actually use.
-        if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef):
-            explicit_ref = workspace if isinstance(workspace, WorkspaceRef) else None
-            # `'new'` asks for a fresh environment, so the ref in history is deliberately not offered.
-            selection_ref = historical_workspace_ref if workspace is None else explicit_ref
-            selection = run_capability.get_workspace(initial_ctx, ref=selection_ref)
-            if selection is not None:
-                run_workspace = selection if isinstance(selection, Workspace) else Workspace(selection)
-            elif workspace == 'new':
-                raise exceptions.UserError(
-                    "`workspace='new'` needs a capability that can create a workspace, but every `get_workspace` "
-                    "returned `None`. Attach one, such as `capabilities=[LocalWorkspace('.')]`."
-                )
-            elif explicit_ref is not None:
-                raise exceptions.UserError(
-                    f'No capability can supply workspace {explicit_ref.id!r}: every `get_workspace` returned '
-                    '`None`. Attach a capability whose `get_workspace` recognizes it.'
-                )
-            # Without an explicit request, no answer leaves the placeholder in place; this includes
-            # a run with no workspace and no historical ref.
-        # The wrap hook sees the composed per-run tree on the context, so a durability capability can
-        # rebuild the selection through it; `build_run_context` sets the same value later.
-        initial_ctx.root_capability = run_capability
-        run_workspace = run_capability._wrap_workspace(  # pyright: ignore[reportPrivateUsage]
-            initial_ctx, run_workspace, explicit=explicit_workspace
-        )
-        initial_ctx.workspace = run_workspace
-
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
         # per-step model-selection block below keys off this. The model layers are the tail of the
         # resolved layers (the `Instrumentation` capability, when injected, sits at the front).
@@ -1809,6 +1798,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_layers_unchanged = all(
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
         )
+
+        # A workspace a capability contributes only in `for_run`, such as a capability function's, can't
+        # answer before it, so it is selected now if nothing was. One selected before `for_run` is final:
+        # `for_run` may have used it, and a durable run rebuilds that one in every unit.
+        initial_ctx.root_capability = run_capability
+        final_selection = bootstrap_selection
+        if not explicit_workspace and not model_layers_unchanged:
+            selection = _as_workspace(run_capability.get_workspace(initial_ctx, ref=selection_ref))
+            if bootstrap_selection is None:
+                final_selection = selection
+                if selection is not None:
+                    run_workspace = run_capability._wrap_workspace(  # pyright: ignore[reportPrivateUsage]
+                        initial_ctx, selection, explicit=False
+                    )
+                    initial_ctx.workspace = run_workspace
+            elif selection is None or not same_workspace(bootstrap_selection, selection):
+                raise exceptions.UserError(
+                    "A capability's `for_run` changed the workspace this run selected before `for_run`. The "
+                    'workspace is selected first so that `for_run` can use it; configure it on the capability the '
+                    'agent is built with, or pass it to the run with `workspace=`.'
+                )
+        if not explicit_workspace and final_selection is None:
+            if workspace == 'new':
+                raise exceptions.UserError(
+                    "`workspace='new'` needs a capability that can create a workspace, but every `get_workspace` "
+                    "returned `None`. Attach one, such as `capabilities=[LocalWorkspace('.')]`."
+                )
+            if explicit_ref is not None:
+                raise exceptions.UserError(
+                    f'No capability can supply workspace {explicit_ref.id!r}: every `get_workspace` returned '
+                    '`None`. Attach a capability whose `get_workspace` recognizes it.'
+                )
+            # Without an explicit request, no answer leaves the placeholder in place; this includes
+            # a run with no workspace and no historical ref.
 
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
@@ -3188,18 +3211,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # namesake outright -- `run(capabilities=[WebSearch(allowed_domains=[...])])` states what
         # this run may reach, and merging it into the agent's list would widen the restriction it
         # was passed to impose.
-        combined_layers = [
-            _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
-            for layer in (resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras)
-            if layer
-        ]
-        run_capability = (
-            _combine_duplicate_capabilities(
-                CombinedCapability(combined_layers) if len(combined_layers) > 1 else combined_layers[0],
-                [[layer] for layer in combined_layers],
-            )
-            if len(combined_layers) > 1
-            else combined_layers[0]
+        combined_layers, run_capability = _compose_layers(
+            resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras
         )
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
@@ -4479,6 +4492,27 @@ def _run_instrumentation_settings(
             if isinstance(leaf, InstrumentationCap):
                 instrumentations.append(leaf)
     return instrumentations[-1].settings if instrumentations else default
+
+
+def _compose_layers(
+    agent_layer: Sequence[AbstractCapability[AgentDepsT]], run_layer: Sequence[AbstractCapability[AgentDepsT]]
+) -> tuple[list[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]:
+    """Combine each layer's duplicates, then the layers, so a run's capability overrides the agent's namesake."""
+    combined_layers = [
+        _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
+        for layer in (agent_layer, run_layer)
+        if layer
+    ]
+    root = (
+        _combine_duplicate_capabilities(CombinedCapability(combined_layers), [[layer] for layer in combined_layers])
+        if len(combined_layers) > 1
+        else combined_layers[0]
+    )
+    return combined_layers, root
+
+
+def _as_workspace(selection: WorkspaceBackend | Workspace | None) -> Workspace | None:
+    return selection if selection is None or isinstance(selection, Workspace) else Workspace(selection)
 
 
 def _set_run_context_instrumentation(ctx: RunContext[Any], settings: InstrumentationSettings | None) -> None:

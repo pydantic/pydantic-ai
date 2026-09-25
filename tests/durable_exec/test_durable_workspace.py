@@ -435,16 +435,14 @@ async def test_forwarded_durable_workspace_without_a_ref_asks_for_a_fresh_enviro
 
 
 async def test_per_run_policy_must_match_the_construction_tree_when_units_rebuild(tmp_path: Path) -> None:
-    class ReadOnlyPerRun(LocalWorkspace[Any]):
-        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
-            return LocalWorkspace(self.working_dir, read_only=True)
-
-    agent = Agent(TestModel(), name='ws', capabilities=[ReadOnlyPerRun(tmp_path), RebuildingDurability()])
+    read_only = LocalWorkspace[Any](tmp_path, read_only=True)
+    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path), RebuildingDurability()])
     with pytest.raises(UserError, match=r'\(ReadOnlyWorkspace, Workspace\) differs from .* \(Workspace\)'):
-        await agent.run('go')
+        await agent.run('go', capabilities=[read_only])
 
-    # The same replacement is fine for an engine whose units use the run's live workspace.
-    result = await Agent(TestModel(), name='ws', capabilities=[ReadOnlyPerRun(tmp_path), FakeDurability()]).run('go')
+    # The same override is fine for an engine whose units use the run's live workspace.
+    live = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path), FakeDurability()])
+    result = await live.run('go', capabilities=[read_only])
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await result.workspace.make_dir('sub')
 
@@ -456,24 +454,21 @@ async def test_per_run_policy_must_match_the_construction_tree_when_units_rebuil
             self.allowed = allowed
 
     class Allowlisted(AbstractCapability[Any]):
-        def __init__(self, allowed: frozenset[str], *, per_run: frozenset[str] | None = None) -> None:
-            self.allowed = allowed
-            self.per_run = per_run
+        id = 'allowlisted'
 
-        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
-            return self if self.per_run is None else Allowlisted(self.per_run)
+        def __init__(self, allowed: frozenset[str]) -> None:
+            self.allowed = allowed
 
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
             # Only ever asked for its own local ref (or none), so there is nothing to decline.
             return Allowlist(Workspace(LocalWorkspaceBackend(tmp_path)), self.allowed)
 
-    same = Allowlisted(frozenset({'src'}), per_run=frozenset({'src'}))
-    result = await Agent(TestModel(), name='ws', capabilities=[same, RebuildingDurability()]).run('go')
+    agent = Agent(TestModel(), name='ws', capabilities=[Allowlisted(frozenset({'src'})), RebuildingDurability()])
+    result = await agent.run('go', capabilities=[Allowlisted(frozenset({'src'}))])
     assert isinstance(result.workspace, DurableWorkspace) and isinstance(result.workspace.wrapped, Allowlist)
 
-    narrowed = Allowlisted(frozenset({'src'}), per_run=frozenset({'src', 'secrets'}))
     with pytest.raises(UserError, match=r'\(Allowlist, Workspace\) is configured differently .* wrappers are the same'):
-        await Agent(TestModel(), name='ws', capabilities=[narrowed, RebuildingDurability()]).run('go')
+        await agent.run('go', capabilities=[Allowlisted(frozenset({'src', 'secrets'}))])
 
 
 async def test_sub_agent_run_from_a_unit_uses_the_forwarded_workspace_directly() -> None:

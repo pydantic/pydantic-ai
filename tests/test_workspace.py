@@ -13,7 +13,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, LocalWorkspace, WrapperCapability
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
@@ -1048,29 +1048,44 @@ async def test_missing_paths_raise_the_builtin_error_through_the_workspace() -> 
         await workspace.read_file('gone.txt', limit=1)
 
 
-async def test_workspace_is_selected_from_the_per_run_capability() -> None:
-    bootstrap_backend = FakeWorkspace('bootstrap')
-    run_backend = FakeWorkspace('per-run')
+async def test_for_run_sees_the_workspace_the_run_uses(tmp_path: Path) -> None:
+    (tmp_path / 'catalog.txt').write_text('from the workspace')
+    seen: list[str] = []
 
-    class PerRunWorkspace(AbstractCapability[Any]):
-        id = 'per_run_workspace'
-
-        def __init__(self, backend: FakeWorkspace, replacement: PerRunWorkspace | None = None) -> None:
-            self.backend = backend
-            self.replacement = replacement
-
+    class ReadsInForRun(AbstractCapability[Any]):
         async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
-            return self.replacement or self
+            seen.append(await ctx.workspace.read_text('catalog.txt'))
+            return self
 
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            return self.backend
+    result = await Agent(TestModel(), capabilities=[ReadsInForRun(), LocalWorkspace(tmp_path)]).run('go')
 
-    run_capability = PerRunWorkspace(run_backend)
-    bootstrap_capability = PerRunWorkspace(bootstrap_backend, run_capability)
-    result = await Agent(TestModel(), capabilities=[bootstrap_capability]).run('go')
+    assert seen == ['from the workspace']
+    assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
-    assert result.workspace.backend is run_backend
-    assert bootstrap_backend.ref is None
+
+async def test_a_run_workspace_capability_overrides_the_agents(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path / 'agent')])
+
+    result = await agent.run('go', capabilities=[LocalWorkspace(tmp_path)])
+
+    assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
+
+
+async def test_a_capability_function_supplies_the_workspace_after_for_run(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), deps_type=Path, capabilities=[lambda ctx: LocalWorkspace(ctx.deps)])
+
+    result = await agent.run('go', deps=tmp_path)
+
+    assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
+
+
+async def test_for_run_cannot_change_the_workspace_selected_before_it(tmp_path: Path) -> None:
+    class ReadOnlyPerRun(LocalWorkspace[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return LocalWorkspace(self.working_dir, read_only=True)
+
+    with pytest.raises(UserError, match="A capability's `for_run` changed the workspace"):
+        await Agent(TestModel(), capabilities=[ReadOnlyPerRun(tmp_path)]).run('go')
 
 
 async def test_the_result_carries_the_workspace_the_run_used() -> None:

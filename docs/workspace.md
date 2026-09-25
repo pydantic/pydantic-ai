@@ -194,9 +194,10 @@ With `workspace=None`, the hook receives the `workspace_ref` on the most recent 
 the run continues with a placeholder whose operations explain how to attach one. An unrecognized
 historical reference does not raise an error.
 
-Selection happens after each capability's `for_run` hook. `for_run` sees the placeholder unless the
-caller passed an explicit backend or `Workspace`. `before_run`, `wrap_run`, and tools see the
-selected workspace.
+The workspace is selected before each capability's `for_run` hook, so `for_run` can already read
+from it. A capability that only exists once `for_run` has run, such as one returned by a capability
+function, supplies the workspace when no other capability did. A `for_run` hook can't change a
+workspace that was already selected; that raises `UserError`.
 
 `get_workspace` is synchronous and must have no side effects.
 
