@@ -557,7 +557,7 @@ agent = Agent(
 
 ## Forced tool choice
 
-Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled — [adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) is compatible with forcing. Anthropic documents **Claude Fable 5.1**, **Claude Mythos 5.1**, and **Claude Opus 5.5** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice].
+Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled — [adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) is compatible with forcing. Anthropic documents **Claude Fable 5.1**, **Claude Mythos 5.1**, and **Claude Opus 5.5** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those with [`supports_forced_tool_choice=False`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice].
 
 On a model that doesn't support forcing:
 

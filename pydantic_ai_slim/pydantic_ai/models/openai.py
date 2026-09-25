@@ -105,7 +105,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingLevel, ToolOrOutput, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -122,7 +122,12 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from ._tool_choice import (
+    ResolvedToolChoice,
+    resolve_tool_choice,
+    support_tool_forcing,
+    tool_forcing_unavailable_reason,
+)
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
@@ -532,7 +537,7 @@ def _reasoning_active(
     thinking = model_request_parameters.thinking
     if thinking is not None:
         return thinking is not False
-    return profile.get('openai_reasoning_enabled_by_default', False)
+    return profile.get('thinking_enabled_by_default', False)
 
 
 def _drop_sampling_params_for_reasoning(
@@ -547,7 +552,7 @@ def _drop_sampling_params_for_reasoning(
     Reasoning models don't support sampling parameters while reasoning is active. For models that
     can turn reasoning off (`openai_supports_reasoning_effort_none`), sampling params are allowed
     when reasoning is off. Whether reasoning is on when no effort is set depends on the model's
-    default (`openai_reasoning_enabled_by_default`): the GPT-5.1..5.4 mainline models default to
+    default (`thinking_enabled_by_default`): the GPT-5.1..5.4 mainline models default to
     off, while the o-series, the original GPT-5, and GPT-5.5+ default to on.
     """
     if not profile.get('openai_supports_reasoning', False):
@@ -5104,48 +5109,15 @@ def _support_tool_forcing(
     model_request_parameters: ModelRequestParameters,
 ) -> bool:
     """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
-    if not openai_profile.get('openai_supports_tool_choice_required', True):
-        return _reject_tool_forcing(
-            model_name,
-            model_settings,
-            model_request_parameters,
-            'This model does not support forcing tool use.',
-        )
-    if not openai_profile.get('openai_supports_forced_tool_choice_with_thinking', True) and _reasoning_active(
-        openai_profile, model_settings, model_request_parameters
-    ):
-        return _reject_tool_forcing(
-            model_name,
-            model_settings,
-            model_request_parameters,
-            'This model does not support forcing tool use while thinking is enabled. '
-            "Disable thinking with `thinking=False` or `openai_reasoning_effort='none'`, "
-            "or use `tool_choice='auto'`.",
-        )
-    return True
-
-
-def _reject_tool_forcing(
-    model_name: str,
-    model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
-    model_request_parameters: ModelRequestParameters,
-    reason: str,
-) -> bool:
-    """Fall back to unforced tool choice, unless the user asked for forcing explicitly."""
-    explicit_choice = model_settings.get('tool_choice')
-    # `resolve_tool_choice` maps `ToolOrOutput` to required mode when direct output isn't allowed,
-    # so that shape requests forcing just as explicitly as `'required'` or a tool list.
-    explicit_forcing = (
-        explicit_choice == 'required'
-        or isinstance(explicit_choice, list)
-        or (
-            isinstance(explicit_choice, ToolOrOutput)
-            and not (model_request_parameters.allow_text_output or model_request_parameters.allow_image_output)
-        )
+    return support_tool_forcing(
+        model_name,
+        model_settings,
+        tool_forcing_unavailable_reason(
+            openai_profile,
+            thinking=_reasoning_active(openai_profile, model_settings, model_request_parameters),
+            thinking_remedy="Disable thinking with `thinking=False` or `openai_reasoning_effort='none'`",
+        ),
     )
-    if explicit_forcing:
-        raise UserError(f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {reason}')
-    return False
 
 
 def _map_compaction_item(

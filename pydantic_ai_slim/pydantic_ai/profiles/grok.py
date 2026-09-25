@@ -61,7 +61,10 @@ class GrokModelProfile(ModelProfile, total=False):
     """Whether the model supports builtin tools (web_search, x_search, code_execution, mcp). Default: `False`."""
 
     grok_supports_tool_choice_required: bool
-    """Whether the provider accepts the value `tool_choice='required'` in the request payload. Default: `True`."""
+    """Deprecated: use [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] instead.
+
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
 
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     """Native `reasoning_effort` values supported by the Grok model. Default: empty (`frozenset()`)."""

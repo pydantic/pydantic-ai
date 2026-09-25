@@ -1,4 +1,4 @@
-"""The v2.23-released spellings of the reveal-channel profile keys translate with a warning."""
+"""Deprecated profile key spellings translate to their current ones with a warning."""
 
 import pytest
 
@@ -54,3 +54,40 @@ def test_legacy_keys_reach_resolution_through_model_profile_argument():
     hidden = ToolDefinition(name='hidden_tool', defer_loading=True, capability_id='refunds')
     _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden]))
     assert prepared.tool_visibility == {'hidden_tool': 'withheld'}
+
+
+@pytest.mark.parametrize(
+    ('legacy_key', 'key'),
+    [
+        ('openai_supports_tool_choice_required', 'supports_forced_tool_choice'),
+        ('grok_supports_tool_choice_required', 'supports_forced_tool_choice'),
+        ('anthropic_supports_forced_tool_choice', 'supports_forced_tool_choice'),
+        ('openai_supports_forced_tool_choice_with_thinking', 'supports_forced_tool_choice_with_thinking'),
+        ('openrouter_supports_forced_tool_choice_with_thinking', 'supports_forced_tool_choice_with_thinking'),
+        ('openai_reasoning_enabled_by_default', 'thinking_enabled_by_default'),
+    ],
+)
+def test_legacy_provider_keys_translate_to_model_profile_keys(legacy_key: str, key: str):
+    """Provider-prefixed tool-forcing and thinking keys moved to `ModelProfile`, so every model family shares them."""
+    with pytest.warns(PydanticAIDeprecationWarning, match=f'`{legacy_key}` is deprecated, use `{key}` instead'):
+        assert merge_profile(ModelProfile(), {legacy_key: False}) == {key: False}  # pyright: ignore[reportArgumentType]
+    with pytest.warns(PydanticAIDeprecationWarning):
+        model = TestModel(profile={legacy_key: False})  # pyright: ignore[reportArgumentType]
+        assert model.profile.get(key) is False
+        assert legacy_key not in model.profile
+
+
+def test_two_legacy_spellings_of_a_capability_must_both_allow_it():
+    with pytest.warns(PydanticAIDeprecationWarning):
+        profile = merge_profile(
+            {'openai_supports_tool_choice_required': True, 'anthropic_supports_forced_tool_choice': False}  # pyright: ignore[reportArgumentType]
+        )
+    assert profile == {'supports_forced_tool_choice': False}
+
+
+def test_current_provider_key_spelling_wins_over_legacy_in_the_same_profile():
+    with pytest.warns(PydanticAIDeprecationWarning):
+        profile = merge_profile(
+            {'openai_supports_tool_choice_required': False, 'supports_forced_tool_choice': True}  # pyright: ignore[reportArgumentType]
+        )
+    assert profile == {'supports_forced_tool_choice': True}
