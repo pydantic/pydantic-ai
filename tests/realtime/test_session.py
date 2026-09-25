@@ -4952,6 +4952,63 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     assert exc_info.value.model_name == 'unknown'
 
 
+class _ReconnectingDisconnectedConnection(FakeRealtimeConnection):
+    """Fails every send while `dropped`, as a link its reconnect policy is still replacing does."""
+
+    transport_errors = (ConnectionResetError,)
+
+    def __init__(self, *, reconnects: bool = True) -> None:
+        super().__init__([])
+        self.dropped = False
+        self._reconnects = reconnects
+
+    @property
+    def reconnects(self) -> bool:
+        return self._reconnects
+
+    async def send(self, content: RealtimeInput) -> None:
+        if self.dropped:
+            raise ConnectionResetError('connection reset by peer')
+        self.sent.append(content)
+
+
+async def test_audio_chunk_that_hits_a_reconnecting_link_is_dropped() -> None:
+    # An always-on microphone streams a chunk every ~100 ms and a reconnect's backoff is longer, so a
+    # chunk used to hit the dead socket on every reconnect and raise, killing the capture task. While
+    # the connection is reconnecting, the chunk is dropped instead (live audio is worthless late) and
+    # the capture loop carries on. Other sends still raise, as does audio without a reconnect policy.
+    conn = _ReconnectingDisconnectedConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime', audio_retention='input_audio')
+
+    async def microphone() -> AsyncIterator[bytes]:
+        yield b'\x01\x01'
+        conn.dropped = True
+        yield b'\x02\x02'
+        conn.dropped = False
+        yield b'\x03\x03'
+
+    await session.send_audio(microphone())
+    assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [
+        b'\x01\x01',
+        b'\x03\x03',
+    ]
+    # The dropped chunk isn't retained as audio the user said to the model either.
+    assert bytes(session._input_audio) == b'\x01\x01\x03\x03'  # pyright: ignore[reportPrivateUsage]
+
+    conn.dropped = True
+    with pytest.raises(RealtimeError, match='failed while sending'):
+        await session.send('anyone there?')
+
+    without_policy = _ReconnectingDisconnectedConnection(reconnects=False)
+    without_policy.dropped = True
+    with pytest.raises(RealtimeError, match='failed while sending'):
+        await RealtimeSession(without_policy, model_name='gpt-realtime').send_audio(b'\x01\x01')
+
+
+def test_a_connection_does_not_reconnect_by_default() -> None:
+    assert FakeRealtimeConnection([]).reconnects is False
+
+
 async def test_undeclared_send_failure_is_left_alone() -> None:
     # A connection that fails for a reason it didn't declare as a transport error is reporting a bug,
     # not a lost connection; dressing it up as a `RealtimeError` would hide that.

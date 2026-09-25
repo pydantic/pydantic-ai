@@ -525,6 +525,17 @@ class RealtimeConnection(ABC):
         return False
 
     @property
+    def reconnects(self) -> bool:
+        """Whether this connection re-dials when its link drops, emitting a [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent].
+
+        While it does, a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] drops an audio chunk
+        that hits the dropped link instead of raising, so a microphone task survives the reconnect.
+        Defaults to `False`; the connections that honor a
+        [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy override it.
+        """
+        return False
+
+    @property
     def reconnect_restores_in_flight_state(self) -> bool:
         """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
 

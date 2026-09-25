@@ -1731,10 +1731,20 @@ class RealtimeSession:
             if self._retain_input:
                 self._input_audio.extend(data)
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
-        except BaseException:
+        except BaseException as e:
             self._user_turn_active = user_turn_was_active
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):
                 del self._input_audio[previous_length:]
+            if (
+                isinstance(e, RealtimeError)
+                and isinstance(e.__cause__, self._connection.transport_errors)
+                and self._connection.reconnects
+            ):
+                # The link dropped and the connection's reconnect policy is replacing it. A chunk of live
+                # audio is worthless once late, so it is dropped rather than raised: the capture loop
+                # outlives the reconnect instead of dying on it. If the reconnect fails, the next chunk
+                # raises that failure.
+                return
             raise
 
     async def commit_audio(self) -> None:

@@ -1270,6 +1270,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._turn_open = False
 
     @property
+    def reconnects(self) -> bool:
+        return self._dial is not None and self._reconnect is not None
+
+    @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
 

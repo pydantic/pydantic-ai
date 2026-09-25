@@ -3172,6 +3172,14 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_openai_connection_reconnects_only_with_a_policy() -> None:
+    async def dial() -> Any:
+        raise NotImplementedError  # pragma: no cover
+
+    assert OpenAIRealtimeConnection(FakeWebSocket([])).reconnects is False  # type: ignore[arg-type]
+    assert OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect={}).reconnects  # type: ignore[arg-type]
+
+
 def test_openai_connection_does_not_restore_in_flight_state_on_reconnect() -> None:
     # OpenAI reconnects by replaying finalized history only, so the session settles the in-flight turn.
     conn = OpenAIRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]

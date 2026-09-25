@@ -164,6 +164,14 @@ def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
     return GoogleRealtimeConnection(cast('AsyncSession', session))
 
 
+async def test_google_connection_reconnects_only_with_a_policy() -> None:
+    async def dial(handle: str | None) -> AsyncSession:
+        raise NotImplementedError  # pragma: no cover
+
+    assert _conn(_RecordingSession()).reconnects is False
+    assert GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), dial=dial, reconnect={}).reconnects
+
+
 def test_google_connection_restores_in_flight_state_on_reconnect() -> None:
     # Gemini settles the cut turn in the connection itself and resumes conversation state on re-dial, so
     # the session does not settle again — it keeps the base connection's default.
