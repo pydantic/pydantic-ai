@@ -9,9 +9,8 @@ see [Questions from the model](#questions-from-the-model). The built-in
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 Context management is the built-in `compaction` plugin,
 [described below](#compacting-the-conversation).
-The `/plugins` menu also lists every other harness capability, disabled by
-default. Press Space to enable one. Some need optional packages, credentials,
-or constructor settings first; see [optional harness capabilities](PLUGINS.md#optional-harness-capabilities).
+Other harness capabilities are not listed in `/plugins`; add one on purpose with
+`/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON

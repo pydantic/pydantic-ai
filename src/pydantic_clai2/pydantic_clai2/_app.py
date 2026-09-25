@@ -30,7 +30,6 @@ from ._branding import print_banner
 from ._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from ._rendering import StreamRenderer
 from ._session import Session
-from .capability_catalog import HARNESS_PLUGINS
 from .command_context import CommandContext, CommandProvider
 from .commands import (
     Command,
@@ -97,9 +96,10 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
-    *HARNESS_PLUGINS,
 )
-"""Built-in declarations, including opt-in harness capabilities. `remove` restores their defaults.
+"""Built-in declarations, each integrated with the shell. `remove` restores their defaults.
+
+Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
 
 `coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
 """
