@@ -1437,7 +1437,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # distinct from the spoken-audio transcription in `output_transcription` below, so it
                     # becomes a `TextPart` rather than a `SpeechPart`.
                     events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
-        if content.input_transcription is not None and content.input_transcription.text:
+        # Gemini 3.x models transcribe the user's speech even when the setup asks for no input
+        # transcription (verified live), so honor the setting here: with it off, the user's words must
+        # stay out of history.
+        if (
+            self._input_transcription_enabled
+            and content.input_transcription is not None
+            and content.input_transcription.text
+        ):
             events.append(
                 InputTranscript(
                     text=content.input_transcription.text, is_final=bool(content.input_transcription.finished)
