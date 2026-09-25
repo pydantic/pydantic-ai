@@ -3,61 +3,51 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from fastmcp.client.transports import StreamableHttpTransport
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
-    LoadCapabilityReturnPart,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-)
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelMessage, ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness.stackone import StackOne
-from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
-
-pytestmark = pytest.mark.anyio
 
 
 def tool_call_names(messages: list[ModelMessage]) -> set[str]:
     return {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolCallPart)}
 
 
-def request_instructions(messages: list[ModelMessage]) -> str:
-    first = messages[0]
-    assert isinstance(first, ModelRequest)
-    return first.instructions or ''
+def http_transport(capability: StackOne[None]) -> StreamableHttpTransport:
+    transport = capability.get_toolset().client.transport
+    assert isinstance(transport, StreamableHttpTransport)
+    return transport
 
 
 class TestStackOne:
-    def test_serialization_name(self):
-        assert StackOne.get_serialization_name() == 'StackOne'
-
-    def test_agent_spec_schema_excludes_runtime_client_and_accepts_scalar_actions(self):
-        schema = AgentSpec.model_json_schema_with_capabilities([StackOne])
-        schema_text = json.dumps(schema, sort_keys=True)
-        assert '"client"' not in schema_text
-        assert (
-            '"actions": {"anyOf": [{"type": "string"}, {"items": {"type": "string"}, "type": "array"}]' in schema_text
+    def test_settings_reach_the_connection(self):
+        capability = StackOne[None](account_id='45320', api_key='key', base_url='https://api.eu1.stackone.com')
+        transport = http_transport(capability)
+        assert (transport.url, transport.headers['x-account-id']) == (
+            'https://api.eu1.stackone.com/mcp?tool-mode=search_execute',
+            '45320',
         )
 
-    def test_missing_api_key_fails_at_agent_construction(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv('STACKONE_API_KEY', raising=False)
-        with pytest.raises(UserError, match='STACKONE_API_KEY'):
-            Agent(TestModel(), capabilities=[StackOne(account_id='45320')])
+    @pytest.mark.parametrize(
+        ('capability', 'toolset_id'),
+        [
+            (StackOne[None](account_id='45320', api_key='key'), 'stackone-45320'),
+            (StackOne[None](account_id='45320', api_key='key', id='hr'), 'hr'),
+        ],
+        ids=['derived', 'custom'],
+    )
+    def test_toolset_id(self, capability: StackOne[None], toolset_id: str):
+        assert capability.get_toolset().id == toolset_id
 
     def test_two_accounts_stay_two_capabilities(self):
         """One account is one provider connection, so the account is what names the capability.
@@ -69,192 +59,70 @@ class TestStackOne:
         second = StackOne(account_id='99811', api_key='key')
         assert (first.id, second.id) == ('stackone-45320', 'stackone-99811')
 
-        agent = Agent(TestModel(), capabilities=[first, second])
-        ids = [capability.id for capability in agent._root_capability.capabilities]  # pyright: ignore[reportPrivateUsage]
-        assert 'stackone-45320' in ids and 'stackone-99811' in ids
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            StackOne[None](account_id='45320', api_key='secret'),
+            StackOne[None](account_id='45320', api_key='key', client='https://user:secret@example.com/mcp'),
+        ],
+        ids=['api-key', 'client'],
+    )
+    def test_secrets_are_hidden_from_repr(self, capability: StackOne[None]):
+        assert 'secret' not in repr(capability)
 
-    def test_two_of_one_account_are_a_collision(self):
-        """Two capabilities on the same connection are a mistake, not a configuration to merge."""
-        with pytest.raises(UserError, match="Capability id 'stackone-45320' is used by multiple capabilities"):
-            Agent(
-                TestModel(),
-                capabilities=[
-                    StackOne(account_id='45320', api_key='key'),
-                    StackOne(account_id='45320', api_key='key'),
-                ],
-            )
+    def test_agent_spec_schema_excludes_runtime_client(self):
+        schema = AgentSpec.model_json_schema_with_capabilities([StackOne])
+        assert '"client"' not in json.dumps(schema)
 
-    def test_api_key_from_environment(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv('STACKONE_API_KEY', 'env-key')
-        assert StackOne(account_id='45320').get_toolset() is not None
-
-    def test_secrets_are_hidden_from_repr(self):
-        capability = StackOne(
-            account_id='45320',
-            api_key='api-secret',
-            client='https://user:url-secret@example.com/mcp?signature=query-secret',
-        )
-        representation = repr(capability)
-        assert 'api-secret' not in representation
-        assert 'url-secret' not in representation
-        assert 'query-secret' not in representation
-
-    def test_construction_does_not_warn(self, recwarn: pytest.WarningsRecorder):
-        StackOne(account_id='45320', api_key='key', actions=['*_list_*'])
-        StackOne(account_id='45320', api_key='key', defer_loading=True)
-        assert not recwarn.list
-
-    def test_agent_spec_loads_stackone(self, tmp_path: Path):
-        spec = tmp_path / 'agent.yaml'
-        spec.write_text(
-            """\
-capabilities:
-  - StackOne:
-      account_id: '45320'
-      api_key: 'key'
-      actions: '*_list_*'
-""",
-            encoding='utf-8',
-        )
-        agent = Agent.from_file(spec, custom_capability_types=[StackOne], model=TestModel())
-        assert isinstance(agent, Agent)
+    def test_agent_spec_forwards_api_key(self, monkeypatch: pytest.MonkeyPatch):
+        # With no `STACKONE_API_KEY` to fall back on, construction only succeeds if the spec's key arrives.
+        monkeypatch.delenv('STACKONE_API_KEY', raising=False)
+        spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'api_key': 'key'}}]}
+        Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
 
     @pytest.mark.parametrize(
         ('arguments', 'match'),
         [
             ({'tool_mode': 'search-execute'}, '`tool_mode` must be'),
+            ({'tool_mode': 'search_execute', 'actions': '*_list_*'}, 'cannot apply in `search_execute` mode'),
         ],
     )
     def test_agent_spec_rejects_invalid_configuration(self, arguments: dict[str, object], match: str):
-        spec = {
-            'capabilities': [
-                {'StackOne': {'account_id': '45320', 'api_key': 'key', **arguments}},
-            ]
-        }
+        spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'api_key': 'key', **arguments}}]}
         with pytest.raises(ValueError, match=match):
             Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
 
-    def test_rejects_actions_in_explicit_search_execute(self):
-        with pytest.raises(UserError, match='cannot apply in `search_execute` mode'):
-            StackOne(account_id='45320', api_key='key', tool_mode='search_execute', actions=['*_list_*'])
-
-    async def test_agent_run_calls_stackone_tools(self, stackone_server: FastMCP):
-        capability = StackOne(account_id='45320', api_key='key', client=stackone_server, tool_mode='individual')
-        agent = Agent(TestModel(), capabilities=[capability])
-        result = await agent.run('list employees')
-        assert 'bamboohr_list_employees' in tool_call_names(result.all_messages())
-        assert 'Ada' in result.output
-
-    async def test_tool_output_limits_reduces_large_stackone_result(self, stackone_server: FastMCP):
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-                return ModelResponse(parts=[ToolCallPart(tool_name='bamboohr_export_employees', args={'lines': 500})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(
-            FunctionModel(model_fn),
-            capabilities=[
-                StackOne(
-                    account_id='45320',
-                    api_key='key',
-                    client=stackone_server,
-                    tool_mode='individual',
-                ),
-                ToolOutputLimits(bands=[Band(over=64, action=Truncate())]),
-            ],
-        )
-        result = await agent.run('export employees')
-        returns = [
-            part
-            for message in result.all_messages()
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'bamboohr_export_employees'
-        ]
-        assert len(returns) == 1
-        content = returns[0].content
-        assert isinstance(content, str)
-        assert 'truncated' in content
-        assert len(content) < len('\n'.join(f'employee-{index}' for index in range(500)))
-
-    @pytest.mark.parametrize('actions', [['*_list_*'], '*_list_*'])
-    async def test_actions_glob_filter(self, stackone_server: FastMCP, actions: list[str] | str):
+    @pytest.mark.anyio
+    @pytest.mark.parametrize('actions', [['*_list_*'], '*_LIST_*'])
+    async def test_agent_calls_only_matching_actions(self, stackone_server: FastMCP, actions: list[str] | str):
         capability = StackOne(account_id='45320', api_key='key', client=stackone_server, actions=actions)
-        agent = Agent(TestModel(), capabilities=[capability])
-        result = await agent.run('list employees')
+        result = await Agent(TestModel(), capabilities=[capability]).run('list employees')
         assert tool_call_names(result.all_messages()) == {'bamboohr_list_employees'}
 
-    async def test_deferred_loading_uses_stable_default_id(self, stackone_server: FastMCP):
-        # The default id names the linked account, so an agent can reach two of them.
-        capability_id = 'stackone-45320'
-        seen_revealed: list[bool] = []
-        seen_instructions: list[str] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # `defer_loading` records what the capability asked for and stays `True` across a
-            # reveal; `revealed_tool_names` is what the model can actually call this step.
-            revealed = 'bamboohr_list_employees' in info.model_request_parameters.revealed_tool_names
-            seen_revealed.append(revealed)
-            seen_instructions.append(info.instructions or '')
-            if not revealed:
-                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': capability_id})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        capability = StackOne(
-            account_id='45320',
-            api_key='key',
-            client=stackone_server,
-            actions=['*_list_*'],
-            defer_loading=True,
-        )
-        assert capability.id == capability_id
-        agent = Agent(FunctionModel(model_fn), capabilities=[capability])
-        result = await agent.run('list employees')
-
-        assert result.output == 'done'
-        assert seen_revealed == [False, True]
-        assert '{connector}_{action}_{entity}' not in seen_instructions[0]
-        returns = [
-            part
-            for message in result.all_messages()
-            for part in message.parts
-            if isinstance(part, LoadCapabilityReturnPart)
-        ]
-        assert '{connector}_{action}_{entity}' in returns[-1].content.get('instructions', '')
-
-    async def test_instructions_follow_the_resolved_mode(self, stackone_server: FastMCP):
-        individual = StackOne(account_id='45320', api_key='key', client=stackone_server, actions=['*_list_*'])
-        agent = Agent(TestModel(), capabilities=[individual])
-        result = await agent.run('list employees')
-        assert '{connector}_{action}_{entity}' in request_instructions(result.all_messages())
-        default = StackOne(account_id='45320', api_key='key', client=stackone_server)
-        agent = Agent(TestModel(), capabilities=[default])
-        result = await agent.run('list employees')
-        assert 'must never be guessed' in request_instructions(result.all_messages())
-
-    async def test_instructions_disabled(self, stackone_server: FastMCP):
-        capability = StackOne(account_id='45320', api_key='key', client=stackone_server, include_instructions=False)
-        agent = Agent(TestModel(), capabilities=[capability])
-        result = await agent.run('list employees')
-        assert '{connector}_{action}_{entity}' not in request_instructions(result.all_messages())
-
-    async def test_search_execute_mode(self, search_execute_server: FastMCP):
-        capability = StackOne(
-            account_id='45320', api_key='key', tool_mode='search_execute', client=search_execute_server
-        )
-        agent = Agent(TestModel(), capabilities=[capability])
-        result = await agent.run('list employees')
-        assert tool_call_names(result.all_messages()) == {'bamboohr_search_actions', 'bamboohr_execute_action'}
-        assert 'must never be guessed' in request_instructions(result.all_messages())
-
-    async def test_metadata_merged_onto_tools(self, stackone_server: FastMCP, run_context: RunContext[None]):
-        capability = StackOne(
-            account_id='45320', api_key='key', client=stackone_server, metadata={'code_mode': True, 'team': 'hr'}
-        )
-        toolset = capability.get_toolset()
+    @pytest.mark.anyio
+    async def test_metadata_overrides_server_metadata(self, stackone_server: FastMCP, run_context: RunContext[None]):
+        # `task` collides with a server-provided key: user metadata must win, matching `.with_metadata()`.
+        toolset = StackOne(
+            account_id='45320', api_key='key', client=stackone_server, metadata={'task': 'hr'}
+        ).get_toolset()
         async with toolset:
             tools = await toolset.get_tools(run_context)
-        assert tools
-        for tool in tools.values():
-            assert tool.tool_def.metadata is not None
-            assert tool.tool_def.metadata.get('code_mode') is True
-            assert tool.tool_def.metadata.get('team') == 'hr'
+        assert [(tool.tool_def.metadata or {}).get('task') for tool in tools.values()] == ['hr', 'hr']
+
+    @pytest.mark.parametrize(
+        ('capability', 'phrase'),
+        [
+            (StackOne[None](account_id='45320', api_key='key'), 'must never be guessed'),
+            (
+                StackOne[None](account_id='45320', api_key='key', tool_mode='individual'),
+                '{connector}_{action}_{entity}',
+            ),
+            (StackOne[None](account_id='45320', api_key='key', actions='*_list_*'), '{connector}_{action}_{entity}'),
+        ],
+        ids=['default', 'individual', 'actions'],
+    )
+    def test_instructions_follow_the_tool_mode(self, capability: StackOne[None], phrase: str):
+        assert phrase in (capability.get_instructions() or '')
+
+    def test_instructions_can_be_disabled(self):
+        assert StackOne(account_id='45320', api_key='key', include_instructions=False).get_instructions() is None

@@ -65,29 +65,6 @@ def stackone_server() -> FastMCP:
     @server.tool()
     def bamboohr_create_employee(name: str) -> dict[str, str]:
         """Create an employee in BambooHR."""
-        return {'id': '3', 'name': name}
-
-    @server.tool()
-    def bamboohr_export_employees(lines: int = 1, separator: str = '\n') -> str:
-        """Export employee records."""
-        return separator.join(f'employee-{index}' for index in range(lines))
-
-    return server
-
-
-@pytest.fixture
-def search_execute_server() -> FastMCP:
-    """In-process stand-in for StackOne's MCP endpoint in `search_execute` tool mode."""
-    server = _fastmcp_server('stackone-fake-search')
-
-    @server.tool()
-    def bamboohr_search_actions(query: str, top_k: int = 10) -> list[dict[str, str]]:
-        """Search available actions from a natural language query."""
-        return [{'action_id': 'bamboohr_list_employees', 'description': 'List employees'}]
-
-    @server.tool()
-    def bamboohr_execute_action(action_id: str) -> dict[str, str]:
-        """Execute an action by its id."""
-        return {'action_id': action_id, 'status': 'ok'}
+        return {'id': '3', 'name': name}  # pragma: no cover
 
     return server

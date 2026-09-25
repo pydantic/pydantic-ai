@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import TypeVar
 
 import httpx
 import pytest
@@ -24,11 +25,21 @@ from pydantic_ai_harness.ordinal import Ordinal
 # combinations. Rebuild it before warnings are escalated by the test suite.
 Settings.model_rebuild()
 
+DepsT = TypeVar('DepsT')
 
-def _http_transport(toolset: MCPToolset[Any]) -> StreamableHttpTransport:
+
+def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
+    assert isinstance(toolset, MCPToolset)
     transport = toolset.client.transport
     assert isinstance(transport, StreamableHttpTransport)
     return transport
+
+
+def bearer(toolset: AbstractToolset[DepsT]) -> str:
+    auth = _http_transport(toolset).auth
+    assert auth is not None
+    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    return request.headers['Authorization']
 
 
 async def connections_for(capability: Ordinal[str | None], deps: str | None) -> list[MCPToolset[str | None]]:
@@ -45,24 +56,12 @@ async def connections_for(capability: Ordinal[str | None], deps: str | None) -> 
     return connections
 
 
-def no_credential(ctx: RunContext[object]) -> None:
-    return None
-
-
-def bearer(connection: MCPToolset[str | None]) -> str:
-    transport = connection.client.transport
-    assert isinstance(transport, StreamableHttpTransport) and transport.auth is not None
-    request = next(transport.auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
-    return request.headers['Authorization']
+def per_user_token(ctx: RunContext[str | None]) -> str | None:
+    """Read the run's token from its deps, as an app serving many users would."""
+    return ctx.deps
 
 
 class TestOrdinal:
-    def test_agent_accepts_capability(self) -> None:
-        capability = Ordinal(auth='ordinal-token')
-        agent = Agent(TestModel(), capabilities=[capability])
-
-        assert capability in agent.root_capability.capabilities
-
     @pytest.mark.anyio
     async def test_agent_runs_with_ordinal_tools(self) -> None:
         server = FastMCP('ordinal-fake')
@@ -76,9 +75,7 @@ class TestOrdinal:
             TestModel(call_tools=['ordinal_get_workspace_context']),
             capabilities=[Ordinal(client=server)],
         )
-
         result = await agent.run('List my workspaces')
-
         assert 'acme' in result.output
 
     @pytest.mark.anyio
@@ -86,33 +83,64 @@ class TestOrdinal:
     async def test_server_instructions(self, include: bool) -> None:
         server = FastMCP('ordinal-fake', instructions='Ordinal instructions.')
         agent = Agent(TestModel(call_tools=[]), capabilities=[Ordinal(client=server, include_instructions=include)])
-        result = await agent.run('Hello')
-        request = result.all_messages()[0]
+        request = (await agent.run('Hello')).all_messages()[0]
         assert isinstance(request, ModelRequest)
         assert ('Ordinal instructions.' in (request.instructions or '')) is include
 
-    @pytest.mark.parametrize('auth', ['ordinal-token', no_credential])
-    def test_client_cannot_be_combined_with_auth(self, auth: Any) -> None:
+    def test_connects_to_ordinal_with_the_token(self) -> None:
+        toolset = Ordinal(auth='ordinal-token').get_toolset()
+        assert _http_transport(toolset).url == 'https://app.tryordinal.com/mcp'
+        assert bearer(toolset) == 'Bearer ordinal-token'
+
+    @pytest.mark.parametrize(
+        ('capability', 'include'),
+        [
+            (Ordinal[str | None](auth='ordinal-token'), True),
+            (Ordinal[str | None](auth='ordinal-token', include_instructions=False), False),
+        ],
+        ids=['default', 'disabled'],
+    )
+    def test_hosted_connection_forwards_include_instructions(
+        self, capability: Ordinal[str | None], include: bool
+    ) -> None:
+        toolset = capability.get_toolset()
+        assert isinstance(toolset, MCPToolset)
+        assert toolset.include_instructions is include
+
+    def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('ORDINAL_ACCESS_TOKEN', 'environment-token')
+        assert bearer(Ordinal().get_toolset()) == 'Bearer environment-token'
+
+    def test_missing_auth_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv('ORDINAL_ACCESS_TOKEN', raising=False)
+        with pytest.raises(UserError, match='Set `ORDINAL_ACCESS_TOKEN`'):
+            Ordinal().get_toolset()
+
+    @pytest.mark.filterwarnings('ignore:Using in-memory token storage')
+    def test_oauth_uses_browser_login(self) -> None:
+        assert isinstance(_http_transport(Ordinal(auth='oauth').get_toolset()).auth, OAuth)
+
+    def test_credential_is_not_in_repr(self) -> None:
+        assert 'secret-token' not in repr(Ordinal(auth='secret-token'))
+
+    @pytest.mark.parametrize('auth', ['ordinal-token', per_user_token])
+    def test_client_cannot_be_combined_with_auth(
+        self, auth: str | Callable[[RunContext[str | None]], str | None]
+    ) -> None:
         with pytest.raises(UserError, match='`client` owns the connection'):
             Ordinal(client='https://example.com/mcp', auth=auth)
 
-    def test_serialization_name(self) -> None:
-        assert Ordinal.get_serialization_name() == 'Ordinal'
-
-    def test_hosted_url_and_forwards_instructions(self) -> None:
-        toolset = Ordinal(auth='ordinal-token').get_toolset()
-        assert isinstance(toolset, MCPToolset)
-        transport = _http_transport(toolset)
-
-        assert transport.url == 'https://app.tryordinal.com/mcp'
-        assert toolset.include_instructions is True
-        assert toolset.id == 'ordinal'
-
-    def test_custom_id_is_forwarded(self) -> None:
-        toolset = Ordinal(auth='ordinal-token', id='tenant-ordinal').get_toolset()
-
-        assert isinstance(toolset, MCPToolset)
-        assert toolset.id == 'tenant-ordinal'
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            Ordinal[str | None](id='tenant-ordinal', auth='ordinal-token'),
+            Ordinal[str | None](id='tenant-ordinal', auth=per_user_token),
+            Ordinal[str | None](id='tenant-ordinal', client='https://example.com/mcp'),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_custom_id_is_forwarded(self, capability: Ordinal[str | None]) -> None:
+        assert capability.get_toolset().id == 'tenant-ordinal'
 
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[Ordinal(auth='ordinal-token', defer_loading=True)])
@@ -123,49 +151,25 @@ class TestOrdinal:
         ):
             Agent(TestModel(), capabilities=[Ordinal(auth='a'), Ordinal(auth='b')])
 
-    def test_missing_auth_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv('ORDINAL_ACCESS_TOKEN', raising=False)
-        with pytest.raises(UserError, match='Set `ORDINAL_ACCESS_TOKEN`'):
-            Ordinal().get_toolset()
-
-    def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv('ORDINAL_ACCESS_TOKEN', 'environment-token')
-        assert isinstance(Ordinal().get_toolset(), MCPToolset)
-
-    def test_fixed_token_is_sent_as_bearer(self) -> None:
-        toolset = Ordinal(auth='ordinal-token').get_toolset()
-        assert isinstance(toolset, MCPToolset)
-        assert bearer(toolset) == 'Bearer ordinal-token'
-
 
 class TestPerRunAuth:
     @pytest.mark.anyio
     async def test_each_run_connects_with_its_own_credential(self) -> None:
-        capability = Ordinal[str | None](auth=lambda ctx: ctx.deps)
+        capability = Ordinal[str | None](auth=per_user_token)
         [alice] = await connections_for(capability, 'alice-token')
         [bob] = await connections_for(capability, 'bob-token')
         assert (bearer(alice), bearer(bob)) == ('Bearer alice-token', 'Bearer bob-token')
 
     @pytest.mark.anyio
     @pytest.mark.parametrize('missing', [None, ''])
-    async def test_provider_returning_none_omits_tools(
-        self, missing: str | None, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_no_credential_means_no_tools(self, missing: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The environment token is set to show a function never falls back to it.
         monkeypatch.setenv('ORDINAL_ACCESS_TOKEN', 'deployment-token')
-        capability = Ordinal[str | None](auth=lambda ctx: ctx.deps)
+        capability = Ordinal[str | None](auth=per_user_token)
         assert await connections_for(capability, missing) == []
-        agent = Agent(TestModel(), capabilities=[Ordinal[object](auth=no_credential)])
-        result = await agent.run('List my workspaces')
-        assert result.output == 'success (no tool calls)'
 
     @pytest.mark.anyio
-    async def test_provider_returning_oauth_raises(self) -> None:
-        capability = Ordinal[str | None](auth=lambda ctx: ctx.deps)
+    async def test_function_returning_oauth_raises(self) -> None:
+        capability = Ordinal[str | None](auth=per_user_token)
         with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
             await connections_for(capability, 'oauth')
-
-    @pytest.mark.filterwarnings('ignore:Using in-memory token storage')
-    def test_fixed_oauth_uses_browser_login(self) -> None:
-        toolset = Ordinal(auth='oauth').get_toolset()
-        assert isinstance(toolset, MCPToolset)
-        assert isinstance(_http_transport(toolset).auth, OAuth)

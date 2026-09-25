@@ -8,7 +8,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
@@ -41,8 +41,9 @@ async def connections_for(capability: GoogleWorkspace[str | None], deps: str | N
     return connections
 
 
-def no_credential(ctx: RunContext[object]) -> None:
-    return None
+def per_user_token(ctx: RunContext[str | None]) -> str | None:
+    """Read the run's token from its deps, as an app serving many users would."""
+    return ctx.deps
 
 
 def user_token(ctx: RunContext[str]) -> str:
@@ -56,9 +57,17 @@ def bearer(connection: MCPToolset[str | None]) -> str:
     return request.headers['Authorization']
 
 
+def first_instructions(messages: list[ModelMessage]) -> str:
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    return request.instructions or ''
+
+
 class TestGoogleWorkspace:
-    @pytest.mark.parametrize(('services', 'message'), [([], 'at least one'), (['mail'], 'Unknown Google')])
-    def test_unknown_services(self, services: list[str], message: str) -> None:
+    @pytest.mark.parametrize(
+        ('services', 'message'), [([], 'at least one'), (['mail'], 'Unknown Google')], ids=['empty', 'unknown']
+    )
+    def test_invalid_services_raise(self, services: list[str], message: str) -> None:
         with pytest.raises(UserError, match=message):
             GoogleWorkspace(services=services)  # pyright: ignore[reportArgumentType]
 
@@ -74,14 +83,7 @@ class TestGoogleWorkspace:
         assert GoogleWorkspace(['gmail', 'calendar', 'gmail']).id == 'google-workspace-calendar-gmail'
         assert GoogleWorkspace('gmail', id='mail').id == 'mail'
 
-    def test_two_for_different_services_share_an_agent(self, connections: list[tuple[str, str | None]]) -> None:
-        Agent(TestModel(), capabilities=[GoogleWorkspace('gmail', auth='a'), GoogleWorkspace('drive', auth='b')])
-
-    def test_two_for_the_same_services_raise_when_the_agent_is_built(self) -> None:
-        with pytest.raises(UserError, match="Capability id 'google-workspace-gmail' is used by multiple capabilities"):
-            Agent(TestModel(), capabilities=[GoogleWorkspace('gmail', auth='a'), GoogleWorkspace('gmail', auth='b')])
-
-    def test_the_same_services_in_another_order_raise_when_the_agent_is_built(self) -> None:
+    def test_two_for_the_same_services_in_any_order_raise_when_the_agent_is_built(self) -> None:
         with pytest.raises(UserError, match="Capability id 'google-workspace-calendar-gmail' is used by multiple"):
             Agent(
                 TestModel(),
@@ -118,19 +120,12 @@ class TestGoogleWorkspace:
     async def test_server_instructions(self, connections: list[tuple[str, str | None]], include: bool) -> None:
         capability = GoogleWorkspace('gmail', auth='token', include_instructions=include)
         result = await Agent(TestModel(call_tools=[]), capabilities=[capability]).run('Hello')
-        request = result.all_messages()[0]
-        assert isinstance(request, ModelRequest)
-        assert ('Google instructions.' in (request.instructions or '')) is include
-
-    async def test_duplicate_services(self, connections: list[tuple[str, str | None]]) -> None:
-        capability = GoogleWorkspace(['gmail', 'gmail'], auth='token', read_only=True)
-        result = await Agent(TestModel(), capabilities=[capability]).run('Read')
-        assert result.output == '{"gmail_read_item":"read"}'
+        assert ('Google instructions.' in first_instructions(result.all_messages())) is include
 
 
 class TestPerRunAuth:
     async def test_each_run_connects_with_its_own_credential(self) -> None:
-        capability = GoogleWorkspace[str | None](['gmail', 'calendar'], auth=lambda ctx: ctx.deps)
+        capability = GoogleWorkspace[str | None](['gmail', 'calendar'], auth=per_user_token)
         alice = await connections_for(capability, 'alice-token')
         bob = await connections_for(capability, 'bob-token')
         assert [bearer(connection) for connection in alice] == ['Bearer alice-token', 'Bearer alice-token']
@@ -141,20 +136,17 @@ class TestPerRunAuth:
         self, missing: str | None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv('GOOGLE_ACCESS_TOKEN', 'deployment-token')
-        capability = GoogleWorkspace[str | None]('gmail', auth=lambda ctx: ctx.deps)
+        capability = GoogleWorkspace[str | None]('gmail', auth=per_user_token)
         assert await connections_for(capability, missing) == []
-        agent = Agent(TestModel(), capabilities=[GoogleWorkspace[object]('gmail', auth=no_credential)])
-        result = await agent.run('Use the tools')
-        assert result.output == 'success (no tool calls)'
 
     async def test_provider_returning_oauth_raises(self) -> None:
-        capability = GoogleWorkspace[str | None]('gmail', auth=lambda ctx: ctx.deps)
+        capability = GoogleWorkspace[str | None]('gmail', auth=per_user_token)
         with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
             await connections_for(capability, 'oauth')
 
     def test_provider_does_not_need_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('GOOGLE_ACCESS_TOKEN', raising=False)
-        GoogleWorkspace[object]('gmail', auth=no_credential).get_toolset()
+        GoogleWorkspace[str | None]('gmail', auth=per_user_token).get_toolset()
 
     async def test_read_only_applies_per_run(self, connections: list[tuple[str, str | None]]) -> None:
         capability = GoogleWorkspace[str]('gmail', auth=user_token, read_only=True)

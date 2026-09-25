@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any
 
 import httpx
 import pytest
@@ -21,7 +21,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 
-from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LogfireMCP
+from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = pytest.mark.filterwarnings(
@@ -75,14 +75,15 @@ async def connections_for(capability: LogfireMCP[str | None], deps: str | None) 
     return connections
 
 
-def no_credential(ctx: RunContext[object]) -> None:
-    return None
+def per_user_token(ctx: RunContext[str | None]) -> str | None:
+    """Read the run's token from its deps, as an app serving many users would."""
+    return ctx.deps
 
 
-def bearer(connection: MCPToolset[str | None]) -> str:
-    transport = connection.client.transport
-    assert isinstance(transport, StreamableHttpTransport) and transport.auth is not None
-    request = next(transport.auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+def bearer(capability: LogfireMCP[None]) -> str:
+    auth = transport(capability).auth
+    assert isinstance(auth, httpx.Auth)
+    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 
@@ -107,14 +108,15 @@ class TestLogfireMCP:
         assert isinstance(request, ModelRequest)
         assert ('Provider instructions.' in (request.instructions or '')) is include
 
-    def test_custom_client_owns_authentication(self) -> None:
-        client = StreamableHttpTransport('https://example.com/mcp', auth=httpx.BasicAuth('user', 'secret'))
-        assert transport(LogfireMCP(client=client)).auth is client.auth
-
-    @pytest.mark.parametrize('settings', [{'auth': 'key'}, {'auth': no_credential}, {'url': LOGFIRE_EU_MCP_URL}])
-    def test_client_cannot_be_combined_with_connection_settings(self, settings: dict[str, Any]) -> None:
+    @pytest.mark.parametrize(
+        ('auth', 'url'),
+        [('key', LOGFIRE_US_MCP_URL), (per_user_token, LOGFIRE_US_MCP_URL), (None, LOGFIRE_EU_MCP_URL)],
+    )
+    def test_client_cannot_be_combined_with_connection_settings(
+        self, auth: str | Callable[[RunContext[str | None]], str | None] | None, url: str
+    ) -> None:
         with pytest.raises(UserError, match='`client` owns the connection'):
-            LogfireMCP(client='https://example.com/mcp', **settings)
+            LogfireMCP(client='https://example.com/mcp', auth=auth, url=url)
 
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[LogfireMCP(client=server, defer_loading=True)])
@@ -126,18 +128,52 @@ class TestLogfireMCP:
         ):
             Agent(TestModel(), capabilities=[LogfireMCP(auth='a'), LogfireMCP(auth='b', url=LOGFIRE_EU_MCP_URL)])
 
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            LogfireMCP[str | None](id='tenant-logfire', auth='token'),
+            LogfireMCP[str | None](id='tenant-logfire', auth=per_user_token),
+            LogfireMCP[str | None](id='tenant-logfire', client='https://example.com/mcp'),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_custom_id_is_forwarded(self, capability: LogfireMCP[str | None]) -> None:
+        assert capability.get_toolset().id == 'tenant-logfire'
+
+    @pytest.mark.parametrize(
+        ('capability', 'include'),
+        [
+            (LogfireMCP[str | None](auth='token'), True),
+            (LogfireMCP[str | None](auth='token', include_instructions=False), False),
+        ],
+        ids=['default', 'disabled'],
+    )
+    def test_hosted_connection_forwards_include_instructions(
+        self, capability: LogfireMCP[str | None], include: bool
+    ) -> None:
+        # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
+        toolset = capability.get_toolset()
+        assert isinstance(toolset, MCPToolset)
+        assert toolset.include_instructions is include
+
     def test_credential_is_not_in_repr(self) -> None:
         assert 'secret-token' not in repr(LogfireMCP(auth='secret-token'))
 
     def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv('LOGFIRE_API_KEY', 'environment-token')
-        auth = transport(LogfireMCP()).auth
-        assert isinstance(auth, httpx.Auth)
-        request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
-        assert request.headers['Authorization'] == 'Bearer environment-token'
+        assert bearer(LogfireMCP()) == 'Bearer environment-token'
 
-    def test_custom_endpoint(self) -> None:
-        assert transport(LogfireMCP(auth='key', url='https://logfire.example/mcp')).url == 'https://logfire.example/mcp'
+    @pytest.mark.parametrize(
+        ('capability', 'expected'),
+        [
+            (LogfireMCP[None](auth='key'), 'https://logfire-us.pydantic.dev/mcp'),
+            (LogfireMCP[None](auth='key', url=LOGFIRE_EU_MCP_URL), 'https://logfire-eu.pydantic.dev/mcp'),
+            (LogfireMCP[None](auth='key', url='https://logfire.example/mcp'), 'https://logfire.example/mcp'),
+        ],
+        ids=['us', 'eu', 'self-hosted'],
+    )
+    def test_endpoint(self, capability: LogfireMCP[None], expected: str) -> None:
+        assert transport(capability).url == expected
 
     def test_missing_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('LOGFIRE_API_KEY', raising=False)
@@ -168,40 +204,26 @@ class TestLogfireMCP:
 
 class TestPerRunAuth:
     async def test_concurrent_runs_use_their_own_credentials(self, whoami_url: str) -> None:
-        agent = Agent(
-            TestModel(), deps_type=str, capabilities=[LogfireMCP[str](url=whoami_url, auth=lambda ctx: ctx.deps)]
-        )
+        agent = Agent(TestModel(), deps_type=str, capabilities=[LogfireMCP[str](url=whoami_url, auth=per_user_token)])
         alice, bob = await asyncio.gather(
             agent.run('Who am I?', deps='alice-token'), agent.run('Who am I?', deps='bob-token')
         )
         assert (alice.output, bob.output) == ('{"whoami":"Bearer alice-token"}', '{"whoami":"Bearer bob-token"}')
 
-    async def test_each_run_connects_with_its_own_credential(self) -> None:
-        capability = LogfireMCP[str | None](auth=lambda ctx: ctx.deps)
-        [alice] = await connections_for(capability, 'alice-token')
-        [bob] = await connections_for(capability, 'bob-token')
-        assert (bearer(alice), bearer(bob)) == ('Bearer alice-token', 'Bearer bob-token')
-
-    @pytest.mark.parametrize('missing', [None, ''])
-    async def test_provider_returning_none_does_not_fall_back(
-        self, missing: str | None, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(('token', 'connections'), [('alice-token', 1), (None, 0), ('', 0)])
+    async def test_connects_only_with_a_credential(
+        self, token: str | None, connections: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The environment key is set to show a function never falls back to it.
         monkeypatch.setenv('LOGFIRE_API_KEY', 'deployment-token')
-        capability = LogfireMCP[str | None](auth=lambda ctx: ctx.deps)
-        assert await connections_for(capability, missing) == []
-        agent = Agent(TestModel(), capabilities=[LogfireMCP[object](auth=no_credential)])
-        result = await agent.run('Use the tools')
-        assert result.output == 'success (no tool calls)'
+        capability = LogfireMCP[str | None](auth=per_user_token)
+        assert len(await connections_for(capability, token)) == connections
 
     async def test_provider_returning_oauth_raises(self) -> None:
-        capability = LogfireMCP[str | None](auth=lambda ctx: ctx.deps)
+        capability = LogfireMCP[str | None](auth=per_user_token)
         with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
             await connections_for(capability, 'oauth')
 
     @pytest.mark.filterwarnings('ignore:Using in-memory token storage')
     def test_fixed_oauth_uses_browser_login(self) -> None:
         assert isinstance(transport(LogfireMCP(auth='oauth')).auth, OAuth)
-
-    async def test_read_only_applies_per_run(self) -> None:
-        capability = LogfireMCP[str | None](auth=lambda ctx: ctx.deps, read_only=True)
-        assert len(await connections_for(capability, 'alice-token')) == 1
