@@ -800,7 +800,8 @@ def _decide_response_attributes(
             continue
         wire = _wire(answer)
         if not include_content and name != route_question:
-            kept = _NUMERIC_ANSWER_FIELDS[answer.type]
+            # A `type` the protocol doesn't have keeps nothing else: telemetry never fails a request the run accepts.
+            kept = _NUMERIC_ANSWER_FIELDS.get(answer.type, ())
             wire = {key: value for key, value in wire.items() if key == 'type' or key in kept}
         answers[name] = wire
     attributes['pydantic_ai.decision.answers'] = safe_to_json(answers).decode()

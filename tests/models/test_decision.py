@@ -214,6 +214,37 @@ async def test_decide_span_leaves_out_what_is_not_an_answer(allow_model_requests
     )
 
 
+class MistypedDecisionModel(InMemoryDecisionModel):
+    """Answers with a `type` the protocol doesn't have, which the run reads by the answer's class regardless."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['ship'] = NoulAnswer(noul=0.8, type=cast(Literal['noul'], 'bogus'))
+        return response
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_without_content_keeps_only_an_unknown_type(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """An answer the run accepts is never failed by its telemetry, even with a `type` the protocol doesn't have."""
+    agent = Agent(
+        MistypedDecisionModel(),
+        output_type=Release,
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    result = await agent.run('And the tests pass.')
+
+    assert result.output == Release(ship=True)
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert span['attributes']['pydantic_ai.decision.answers'] == snapshot({'ship': {'type': 'bogus'}})
+
+
 class LeaningDecisionModel(InMemoryDecisionModel):
     """Picks the tool on the route question, but less surely than a tool call needs."""
 
