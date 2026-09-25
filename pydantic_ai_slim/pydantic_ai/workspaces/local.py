@@ -369,7 +369,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         if overflowed:
             raise WorkspaceError(
                 "local workspace output exceeded 10 MiB safety limit; redirect the command's "
-                'output to a file and read a window of it with `read_file` instead'
+                'output to a file and read part of it instead'
             )
         if exit_code is None:
             raise TimeoutError

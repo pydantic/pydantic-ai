@@ -144,7 +144,7 @@ class WorkspaceResult(Protocol):
 
     Backends return richer native result objects with these fields. Requiring `CommandResult`
     would make them import Pydantic AI or wrap every result; the protocol keeps those objects
-    unwrapped and exposes the minimum read by `Workspace._read_file_via_shell`.
+    unwrapped.
     """
 
     @property

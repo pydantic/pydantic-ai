@@ -33,7 +33,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
-    FileWindow,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     SupportsCommands,
@@ -44,15 +43,12 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
-    WorkspaceTimeoutError,
-    WorkspaceUnavailableError,
     WrapperWorkspace,
 )
 
 from .workspace_fakes import (
     ConnectOnlyWorkspaceCapability,
     DecliningWorkspaceCapability,
-    FakeEntry,
     FakeWorkspace,
     FakeWorkspaceResult,
     FilesystemOnlyWorkspaceBackend,
@@ -63,7 +59,7 @@ from .workspace_fakes import (
 pytestmark = pytest.mark.anyio
 
 
-async def test_wrapper_overrides_apply_to_text_and_window_reads():
+async def test_wrapper_overrides_apply_to_text_reads():
     backend = FakeWorkspace('wrapper')
 
     class ReadingWrapper(WrapperWorkspace):
@@ -72,44 +68,6 @@ async def test_wrapper_overrides_apply_to_text_and_window_reads():
 
     workspace = ReadingWrapper(Workspace(backend))
     assert await workspace.read_text('file.txt') == 'outer\nvalue\n'
-    assert (await workspace.read_file('file.txt', limit=1)).lines == ('outer',)
-
-
-async def test_virtual_wrapper_read_file_does_not_resolve_before_read_bytes():
-    class VirtualWorkspace(WrapperWorkspace):
-        async def read_bytes(self, path: str) -> bytes:
-            return b'one\ntwo\nthree\n'
-
-    workspace = VirtualWorkspace(Workspace(UnavailableWorkspace('no backing workspace')))
-
-    bounded = await workspace.read_file('virtual.txt', offset=2, limit=1)
-    full = await workspace.read_file('virtual.txt')
-
-    assert bounded.lines == ('two',)
-    assert full.lines == ('one', 'two', 'three')
-
-
-async def test_empty_bounded_shell_read_of_directory_raises() -> None:
-    class EmptySed(FakeWorkspace):
-        async def stat(self, path: str) -> FakeEntry:
-            await self.ensure_ready()
-            return FakeEntry(name='directory', path=path, is_dir=True)
-
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            await self.ensure_ready()
-            return FakeWorkspaceResult()
-
-    workspace = Workspace(EmptySed('empty-sed'))
-    with pytest.raises(IsADirectoryError):
-        await workspace.read_file('directory', limit=1)
 
 
 async def test_wrapper_overrides_apply_to_text_writes():
@@ -262,7 +220,6 @@ async def test_filesystem_only_backend_works_without_command_execution() -> None
     assert isinstance(backend, WorkspaceBackend)
     assert isinstance(backend, SupportsFilesystem)
     assert not isinstance(backend, SupportsCommands)
-    assert (await workspace.read_file('data.txt', offset=2, limit=1)).lines == ('two',)
     await workspace.write_text('new.txt', 'content')
     assert await workspace.read_text('new.txt') == 'content'
     assert (await workspace.stat('new.txt')).size == len('content')
@@ -302,114 +259,6 @@ async def test_text_helpers_resolve_relative_paths() -> None:
 
     assert await workspace.read_text('data.txt') == 'updated'
     assert backend.files['/workspace/data.txt'] == b'updated'
-
-
-async def test_run_only_backend_supports_bounded_reads_through_shell() -> None:
-    inner = FakeWorkspace('run-only', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-    commands: list[str | Sequence[str]] = []
-
-    class RunOnlyBackend:
-        @property
-        def ref(self) -> WorkspaceRef | None:
-            return inner.ref
-
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            commands.append(command)
-            return await inner.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-
-        async def working_dir(self) -> str:
-            return await inner.working_dir()
-
-    workspace = Workspace(RunOnlyBackend())
-    assert workspace.ref is None
-    window = await workspace.read_file('data.txt', limit=2)
-
-    assert window.lines == ('one', 'two')
-    assert commands == [
-        ['head', '-c', '8192', '/workspace/data.txt'],
-        "sed -n '1,3p;3q' /workspace/data.txt | head -c 51201",
-    ]
-    assert inner.reads == []
-    with pytest.raises(WorkspaceError, match='invalid base64'):
-        await workspace.read_file('data.txt', limit=None, max_bytes=None)
-
-
-@pytest.mark.parametrize(
-    'result',
-    [
-        pytest.param(FakeWorkspaceResult(exit_code=127, stderr='sed: not found'), id='no-sed'),
-        pytest.param(FakeWorkspaceResult(exit_code=2), id='nonzero'),
-        pytest.param(FakeWorkspaceResult(stderr='warning'), id='stderr'),
-    ],
-)
-async def test_bounded_read_shell_failures_fall_back_to_filesystem(result: FakeWorkspaceResult) -> None:
-    class FailedSed(FakeWorkspace):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and command.startswith('sed -n '):
-                return result
-            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-
-    backend = FailedSed('failed-sed', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-
-    workspace = Workspace(backend)
-    assert workspace.ref == backend.ref
-    # Only the `sed` slice is broken here; ordinary commands still run.
-    assert (await workspace.run(['true'])).stdout == 'connected'
-    window = await workspace.read_file('data.txt', offset=2, limit=1)
-
-    assert window.lines == ('two',)
-    assert window.has_more is True
-    assert window.total_lines == 3
-    assert backend.reads == ['/workspace/data.txt']
-
-
-async def test_bounded_read_falls_back_to_the_shell_filesystem_when_sed_is_missing(tmp_path: Path) -> None:
-    path = tmp_path / 'data.txt'
-    path.write_text('one\ntwo\nthree\n')
-
-    class NoSedBackend(RunOnlyWorkspaceBackend):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and command.startswith('sed -n '):
-                return FakeWorkspaceResult(exit_code=127, stderr='sed: not found')
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
-
-    window = await Workspace(NoSedBackend(LocalWorkspaceBackend(tmp_path))).read_file('data.txt', offset=2, limit=1)
-
-    assert (window.lines, window.has_more, window.total_lines) == (('two',), True, 3)
-
-
-async def test_native_filesystem_fallback_is_used_when_fake_sed_is_unavailable() -> None:
-    backend = FakeWorkspace('no-sed', {'/workspace/data.txt': b'one\ntwo\n'}, sed=False)
-
-    window = await Workspace(backend).read_file('data.txt', limit=1)
-
-    assert window.lines == ('one',)
-    assert backend.reads == ['/workspace/data.txt']
 
 
 async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_path: Path) -> None:
@@ -564,27 +413,6 @@ async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> 
         await workspace.list_dir('.')
 
 
-async def test_empty_shell_window_tolerates_a_backend_without_stat() -> None:
-    class NoStatBackend(FakeWorkspace):
-        async def stat(self, path: str) -> FakeEntry:
-            raise NotImplementedError
-
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            return FakeWorkspaceResult(stdout='')
-
-    window = await Workspace(NoStatBackend('no-stat')).read_file('empty.txt', limit=1)
-
-    assert window == FileWindow(lines=(), start_line=1, has_more=False, total_lines=None)
-
-
 async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None:
     class FailedFindBackend(RunOnlyWorkspaceBackend):
         async def run(
@@ -603,378 +431,6 @@ async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None
 
     with pytest.raises(WorkspaceError):
         await Workspace(FailedFindBackend(LocalWorkspaceBackend(tmp_path))).list_dir('.')
-
-
-async def test_slice_timeout_falls_back_to_filesystem() -> None:
-    class TimedOutSed(FakeWorkspace):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and command.startswith('sed -n '):
-                raise WorkspaceTimeoutError('sed timed out', timeout=timeout)
-            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-
-    backend = TimedOutSed('timed-out-sed', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-
-    window = await Workspace(backend).read_file('data.txt', offset=2, limit=1)
-
-    assert window.lines == ('two',)
-    assert backend.reads == ['/workspace/data.txt']
-
-
-async def test_a_file_without_a_trailing_newline_reads_to_its_last_line() -> None:
-    """The last line still counts, and the window still knows it reached the end."""
-    backend = FakeWorkspace('no-trailing-newline', {'/workspace/data.txt': b'one\ntwo'})
-
-    window = await Workspace(backend).read_file('data.txt', limit=5)
-
-    assert window.lines == ('one', 'two')
-    assert window.has_more is False
-    assert window.total_lines == 2
-
-
-@pytest.mark.parametrize('kwargs', [{'offset': 0}, {'limit': 0}, {'max_bytes': 0}])
-async def test_read_file_rejects_invalid_window_values(kwargs: dict[str, int]) -> None:
-    with pytest.raises(ValueError):
-        await Workspace(FakeWorkspace('invalid-window')).read_file('data.txt', **kwargs)
-
-
-@pytest.mark.parametrize('offset', [1, 4])
-async def test_bounded_read_returns_empty_window_at_or_past_empty_file(offset: int) -> None:
-    backend = FakeWorkspace('empty-file', {'/workspace/data.txt': b''})
-
-    window = await Workspace(backend).read_file('data.txt', offset=offset, limit=2)
-
-    assert (window.lines, window.start_line, window.has_more, window.total_lines) == ((), offset, False, None)
-    assert window.end_line is None
-
-
-async def test_bounded_read_reports_more_lines_only_when_the_window_is_short() -> None:
-    backend = FakeWorkspace('window', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-    workspace = Workspace(backend)
-
-    partial = await workspace.read_file('data.txt', offset=1, limit=2)
-    ending = await workspace.read_file('data.txt', offset=2, limit=2)
-
-    assert (partial.lines, partial.has_more, partial.total_lines) == (('one', 'two'), True, None)
-    assert (partial.truncated, partial.truncated_by) == (True, 'lines')
-    assert '[truncated:' in partial.text
-    assert (ending.lines, ending.has_more, ending.total_lines) == (('two', 'three'), False, 3)
-    assert ending.truncated is False
-    assert '[truncated:' not in ending.text
-
-
-async def test_full_read_uses_filesystem_and_preserves_decoding_contracts() -> None:
-    backend = FakeWorkspace('full-read', {'/workspace/data.txt': b'one\ntwo\nthree'})
-    workspace = Workspace(backend)
-
-    window = await workspace.read_file('data.txt', offset=2, limit=None, max_bytes=None)
-
-    assert (window.lines, window.has_more, window.total_lines) == (('two', 'three'), False, 3)
-    assert window.text == 'two\nthree'
-    assert backend.reads == ['/workspace/data.txt']
-
-    backend.files['/workspace/bad.txt'] = b'one\xfftwo\n'
-    assert (await workspace.read_file('bad.txt')).lines == ('one�two',)
-    with pytest.raises(UnicodeDecodeError):
-        await workspace.read_text('bad.txt')
-
-
-async def test_bounded_read_through_read_only_workspace_uses_filesystem() -> None:
-    backend = FakeWorkspace('read-only', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-    workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
-
-    window = await workspace.read_file('data.txt', offset=2, limit=1)
-
-    assert window.lines == ('two',)
-    assert backend.reads == ['/workspace/data.txt']
-
-
-async def test_binary_file_returns_a_marker_through_the_bounded_shell_path() -> None:
-    data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
-    backend = FakeWorkspace('binary', {'/workspace/logo.png': data})
-    workspace = Workspace(backend)
-
-    window = await workspace.read_file('logo.png')
-
-    assert window.binary is True
-    assert window.lines == ()
-    assert (window.has_more, window.total_lines) == (False, None)
-    assert window.byte_size == len(data)
-    assert window.text == f'[Binary file ({len(data)} bytes). Use a binary-aware tool to inspect it.]'
-    # The NUL is found in the sniff prefix, so the file's bytes never cross through `read_bytes`.
-    assert backend.reads == []
-
-
-async def test_binary_file_is_detected_on_the_full_read_path() -> None:
-    data = b'text\x00more'
-    backend = FakeWorkspace('binary-full', {'/workspace/blob.bin': data})
-
-    window = await Workspace(backend).read_file('blob.bin', limit=None, max_bytes=None)
-
-    assert (window.binary, window.lines, window.byte_size) == (True, (), len(data))
-    assert backend.reads == ['/workspace/blob.bin']
-
-
-async def test_binary_marker_reports_unknown_size_when_stat_is_unavailable() -> None:
-    class NoStatBackend(FakeWorkspace):
-        async def stat(self, path: str) -> FakeEntry:
-            raise NotImplementedError
-
-    backend = NoStatBackend('no-stat', {'/workspace/blob.bin': b'\x00\x01binary'})
-
-    window = await Workspace(backend).read_file('blob.bin')
-
-    assert (window.binary, window.byte_size) == (True, None)
-    assert window.text == '[Binary file (unknown size). Use a binary-aware tool to inspect it.]'
-
-
-async def test_read_file_caps_at_the_default_line_limit() -> None:
-    content = ''.join(f'line{i}\n' for i in range(2500)).encode()
-    backend = FakeWorkspace('many-lines', {'/workspace/big.txt': content})
-
-    window = await Workspace(backend).read_file('big.txt')
-
-    assert len(window.lines) == 2000
-    assert (window.lines[0], window.lines[-1]) == ('line0', 'line1999')
-    assert (window.has_more, window.total_lines, window.truncated, window.truncated_by) == (
-        True,
-        None,
-        True,
-        'lines',
-    )
-    assert window.remaining_lines is None
-    assert '[truncated: showing lines 1-2000' in window.text
-    assert 'Use offset=2001 to continue' in window.text
-
-
-async def test_read_file_keeps_an_overlong_line_within_the_byte_cap() -> None:
-    long_line = 'a' * 2500
-    backend = FakeWorkspace('long-line', {'/workspace/min.js': (long_line + '\n').encode()})
-
-    window = await Workspace(backend).read_file('min.js')
-
-    # Per-line character clipping is a rendering concern for the FileSystem capability.
-    # The facade returns the complete line when it fits in the 50 KiB byte cap.
-    assert window.lines == (long_line,)
-    assert window.truncated is False
-    assert window.text == long_line
-
-
-async def test_read_file_byte_ceiling_bounds_a_window_of_long_lines() -> None:
-    backend = FakeWorkspace('ceiling', {'/workspace/data.txt': b'aaaaa\nbbbbb\nccccc\nddddd\n'})
-
-    window = await Workspace(backend).read_file('data.txt', max_bytes=20)
-
-    # The 20-byte ceiling cuts inside the window: the partial final line is dropped and the
-    # complete lines before it are returned with more signalled. Nothing else crosses the wire.
-    assert (window.lines, window.has_more, window.total_lines) == (('aaaaa', 'bbbbb', 'ccccc'), True, None)
-    assert (window.truncated, window.truncated_by) == (True, 'bytes')
-    assert '[truncated: showing lines 1-3' in window.text
-    assert 'byte limit' in window.text
-    assert backend.reads == []
-
-
-async def test_read_file_byte_ceiling_returns_no_content_for_a_single_overlong_line() -> None:
-    backend = FakeWorkspace('one-line', {'/workspace/data.txt': b'x' * 100})
-
-    window = await Workspace(backend).read_file('data.txt', max_bytes=20)
-
-    # A single line larger than the ceiling is not returned as a partial line.
-    assert window.lines == ()
-    assert (window.truncated, window.truncated_by, window.first_line_exceeds_limit) == (True, 'bytes', True)
-    assert window.text.startswith('[truncated: line 1 exceeds the byte limit')
-
-
-async def test_read_file_applies_whichever_cap_hits_first() -> None:
-    # 10-byte lines; a 25-byte cap stops before the 5-line cap.
-    backend = FakeWorkspace(
-        'both-caps',
-        {'/workspace/data.txt': b'aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc\ndddddddddd\neeeeeeeeee\n'},
-    )
-
-    window = await Workspace(backend).read_file('data.txt', limit=5, max_bytes=25)
-
-    assert window.lines == ('aaaaaaaaaa', 'bbbbbbbbbb')
-    assert (window.truncated, window.truncated_by) == (True, 'bytes')
-    assert '[truncated:' in window.text
-    assert '\n'.join(window.lines) != window.text
-
-
-async def test_read_file_window_of_exactly_max_bytes_is_complete() -> None:
-    backend = FakeWorkspace('exact', {'/workspace/data.txt': b'aaaa\nbbbb\n'})
-
-    window = await Workspace(backend).read_file('data.txt', max_bytes=10)
-
-    assert (window.lines, window.truncated, window.total_lines) == (('aaaa', 'bbbb'), False, 2)
-
-
-async def test_read_file_keeps_a_line_that_ends_exactly_at_the_byte_cap() -> None:
-    backend = FakeWorkspace('boundary', {'/workspace/data.txt': b'aaaa\nbbbb\ncccc\n'})
-
-    window = await Workspace(backend).read_file('data.txt', max_bytes=9)
-
-    assert (window.lines, window.truncated_by) == (('aaaa', 'bbbb'), 'bytes')
-
-
-class _HeadUnavailable(FakeWorkspace):
-    """A backend whose `head` sniff fails, so `read_file` falls back to the filesystem read."""
-
-    async def run(
-        self,
-        command: str | Sequence[str],
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> FakeWorkspaceResult:
-        return FakeWorkspaceResult(exit_code=1, stderr='head: unavailable')
-
-
-async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
-    backend = _HeadUnavailable('sniff-fail', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-
-    window = await Workspace(backend).read_file('data.txt', offset=1, limit=2)
-
-    # The sniff cannot classify the file, so the read falls back to the authoritative filesystem read.
-    assert (window.lines, window.has_more) == (('one', 'two'), True)
-    assert (window.truncated, window.truncated_by, window.total_lines, window.remaining_lines) == (
-        True,
-        'lines',
-        3,
-        1,
-    )
-    assert '1 line remaining' in window.text
-    assert backend.reads == ['/workspace/data.txt']
-
-
-class _SliceRefused(FakeWorkspace):
-    """A backend that refuses the bounded slice's output, the way the local backend does past its output limit."""
-
-    error: WorkspaceError = WorkspaceError('output exceeded the limit')
-
-    async def run(
-        self,
-        command: str | Sequence[str],
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> FakeWorkspaceResult:
-        if isinstance(command, str) and command.startswith('sed -n '):
-            raise self.error
-        return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-
-
-async def test_refused_slice_falls_back_to_the_filesystem_read() -> None:
-    backend = _SliceRefused('refused', {'/workspace/data.txt': b'one\ntwo\n'})
-
-    window = await Workspace(backend).read_file('data.txt', max_bytes=4)
-
-    assert (window.lines, window.truncated_by) == (('one',), 'bytes')
-    assert backend.reads == ['/workspace/data.txt']
-
-
-async def test_slice_on_a_gone_workspace_ends_the_read() -> None:
-    backend = _SliceRefused('gone', {'/workspace/data.txt': b'one\n'})
-    backend.error = WorkspaceUnavailableError('the sandbox is gone')
-
-    with pytest.raises(WorkspaceUnavailableError, match='the sandbox is gone'):
-        await Workspace(backend).read_file('data.txt')
-    assert backend.reads == []
-
-
-async def test_filesystem_fallback_byte_cap_drops_a_partial_line() -> None:
-    backend = _HeadUnavailable('sniff-bytes', {'/workspace/data.txt': b'aaaaa\nbbbbb\nccccc\nddddd\n'})
-
-    window = await Workspace(backend).read_file('data.txt', max_bytes=20)
-
-    assert (window.lines, window.truncated_by, window.first_line_exceeds_limit) == (
-        ('aaaaa', 'bbbbb', 'ccccc'),
-        'bytes',
-        False,
-    )
-    assert '1 line remaining' in window.text
-
-
-async def test_filesystem_fallback_names_the_byte_cap_when_it_stops_first() -> None:
-    backend = _HeadUnavailable('sniff-both', {'/workspace/data.txt': b'aaaa\nbbbb\ncccc\ndddd\neeee\nffff\n'})
-
-    window = await Workspace(backend).read_file('data.txt', limit=5, max_bytes=9)
-
-    assert (window.lines, window.truncated_by) == (('aaaa', 'bbbb'), 'bytes')
-
-
-async def test_filesystem_fallback_returns_no_content_for_a_single_overlong_line() -> None:
-    backend = _HeadUnavailable('sniff-overlong', {'/workspace/data.txt': b'x' * 100})
-
-    window = await Workspace(backend).read_file('data.txt', max_bytes=20)
-
-    assert window.lines == ()
-    assert (window.end_line, window.first_line_exceeds_limit, window.truncated_by) == (None, True, 'bytes')
-
-
-async def test_truncation_notice_names_plural_remaining_lines() -> None:
-    backend = _HeadUnavailable('sniff-plural', {'/workspace/data.txt': b'one\ntwo\nthree\nfour\n'})
-
-    window = await Workspace(backend).read_file('data.txt', limit=2)
-
-    assert window.remaining_lines == 2
-    assert '2 lines remaining' in window.text
-
-
-async def test_truncation_notice_omits_zero_remaining_lines() -> None:
-    window = FileWindow(lines=('only',), start_line=1, has_more=True, total_lines=1, truncated_by='lines')
-
-    assert window.remaining_lines == 0
-    assert 'remaining' not in window.text
-
-
-async def test_read_file_limit_none_still_applies_the_byte_cap() -> None:
-    backend = FakeWorkspace('uncapped-lines', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-
-    window = await Workspace(backend).read_file('data.txt', limit=None)
-
-    assert (window.lines, window.has_more, window.truncated) == (('one', 'two', 'three'), False, False)
-
-
-async def test_read_file_max_bytes_none_still_applies_the_line_cap() -> None:
-    backend = FakeWorkspace('uncapped-bytes', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-
-    window = await Workspace(backend).read_file('data.txt', limit=2, max_bytes=None)
-
-    assert (window.lines, window.has_more, window.truncated_by) == (('one', 'two'), True, 'lines')
-
-
-async def test_binary_sniff_error_falls_back_to_the_filesystem_read() -> None:
-    class SniffRaises(FakeWorkspace):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            # The shell probe raises, so `read_file` falls back to the authoritative filesystem read.
-            # The sniff is the only command it issues first.
-            raise OSError('head crashed')
-
-    backend = SniffRaises('sniff-raise', {'/workspace/data.txt': b'one\ntwo\n'})
-
-    window = await Workspace(backend).read_file('data.txt', limit=1)
-
-    assert window.lines == ('one',)
-    assert backend.reads == ['/workspace/data.txt']
 
 
 async def test_unavailable_workspace_uses_the_configured_reason_for_every_operation() -> None:
@@ -1042,10 +498,6 @@ async def test_missing_paths_raise_the_builtin_error_through_the_workspace() -> 
     ):
         with pytest.raises(FileNotFoundError):
             await operation
-
-    # The `sed` fast path falls through to the filesystem so a missing file is not an empty window.
-    with pytest.raises(FileNotFoundError):
-        await workspace.read_file('gone.txt', limit=1)
 
 
 async def test_for_run_sees_the_workspace_the_run_uses(tmp_path: Path) -> None:

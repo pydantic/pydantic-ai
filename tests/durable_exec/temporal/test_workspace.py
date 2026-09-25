@@ -395,11 +395,9 @@ class BinaryWorkflow:
         result = await binary_agent.run('Nothing to do.')
         workspace = result.workspace
         await workspace.write_bytes('blob.bin', _BINARY)
-        await workspace.write_text('lines.txt', 'one\ntwo\nthree\n')
         await workspace.make_dir('sub')
         await workspace.write_text('sub/gone.txt', 'x')
         await workspace.remove('sub/gone.txt')
-        window = await workspace.read_file('lines.txt', offset=2, limit=1)
         entry = await workspace.stat('blob.bin')
         try:
             await workspace.stat('sub/gone.txt')
@@ -427,7 +425,6 @@ class BinaryWorkflow:
             argument_error = 'none'
         return {
             'round_trip': (await workspace.read_bytes('blob.bin')) == _BINARY,
-            'window': [window.lines, window.start_line, window.has_more, window.total_lines],
             'size': entry.size,
             'exists': [await workspace.exists('blob.bin'), await workspace.exists('nope')],
             'decode_error': decode_error,
@@ -448,7 +445,6 @@ async def test_binary_content_and_expected_errors_cross_the_activity_boundary(cl
     assert output == snapshot(
         {
             'round_trip': True,
-            'window': [['two'], 2, True, 3],
             'size': 11,
             'exists': [True, False],
             'decode_error': 'UnicodeDecodeError:invalid start byte:True',
@@ -514,7 +510,7 @@ async def test_workspace_content_payload_size_error_names_operation_and_remedy(
         f'The `{operation}` workspace operation moved file content through an activity payload '
         'that exceeded the Temporal server blob-size limit.'
     )
-    assert 'Read a bounded window with `read_file`, or move the transfer into a tool' in message
+    assert 'Move the transfer into a tool' in message
 
 
 # --- An uncaught workspace error fails the workflow instead of hanging it ----------------------
@@ -829,7 +825,6 @@ def test_workspace_activities_attempt_mutations_once_by_default() -> None:
             'realpath': 0,
             'read_text': 0,
             'write_text': 1,
-            'read_file': 0,
         }
     )
 

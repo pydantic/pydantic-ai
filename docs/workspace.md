@@ -93,34 +93,6 @@ don't as written.
 [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write whole text files.
 [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] returns exact bytes.
 
-For large command output, redirect the output to a file and read a window with
-[`read_file`][pydantic_ai.workspaces.Workspace.read_file]. This keeps the result passed to the model
-small for every workspace.
-
-`read_file` returns a line window and decodes text leniently.
-
-```python
-from pydantic_ai import RunContext
-
-
-async def read_source(ctx: RunContext, path: str, offset: int = 1) -> str:
-    window = await ctx.workspace.read_file(path, offset=offset, limit=200)
-    return window.text
-```
-
-By default, `read_file` returns at most 2000 lines or 50 KiB, whichever comes first. Pass
-`limit=None` and `max_bytes=None` together to read through the end of the file.
-
-The result is a [`FileWindow`][pydantic_ai.workspaces.FileWindow]. Its `text` field contains the
-selected text and a continuation notice when needed. `truncated` says whether the window is
-incomplete, and `truncated_by` is `'lines'`, `'bytes'`, or `None`. `remaining_lines` reports how many
-lines remain when the total is known. `first_line_exceeds_limit` is true when the first requested
-line alone exceeds `max_bytes`. `binary` is true when the file is binary; in that case `text`
-reports its size instead of decoding it.
-
-Remote workspaces slice the window inside their environment. Use `read_bytes` or `read_text` when
-you need the exact, uncapped contents.
-
 ## Wrapping a workspace
 
 [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] allows reads and directory listings.

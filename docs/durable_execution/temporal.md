@@ -246,7 +246,7 @@ A [workspace](../workspace.md) supplied by a capability works inside a workflow 
 
 Because an activity may run on another worker, the workspace capabilities the worker is constructed with must match the workflow's, and `get_workspace` may read only `deps` and the run-context fields listed above. A `for_run` replacement that changes the workspace's wrapper chain is rejected, since an activity would not reproduce it. Inside a workflow, `workspace=` accepts `None`, `'new'`, a `WorkspaceRef`, a previous result's workspace, or a live instance whose ref an attached capability recognizes; any other live backend or wrapper raises a `UserError`, as it cannot cross the activity boundary. The deprecated `TemporalAgent` wrapper has no durability capability and refuses workspaces inside a workflow altogether.
 
-The [Large Payloads](#large-payloads) limit applies to file content moved through a workspace activity: read a bounded window with `read_file`, or do the transfer inside a tool. A backend must not return text containing lone surrogates, which the activity payload cannot carry.
+The [Large Payloads](#large-payloads) limit applies to file content moved through a workspace activity: do large transfers inside a tool, which already runs in an activity. A backend must not return text containing lone surrogates, which the activity payload cannot carry.
 
 ### Capabilities at Runtime
 

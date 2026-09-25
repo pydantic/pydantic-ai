@@ -220,7 +220,7 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
 async def test_output_over_safety_cap_kills_the_process_group(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
-    with pytest.raises(WorkspaceError, match=r'10 MiB.*redirect.*file.*read_file'):
+    with pytest.raises(WorkspaceError, match=r'10 MiB.*redirect.*file'):
         await workspace.run(
             f"echo $$ > {shlex.quote(str(pid_file))}; exec sh -c 'yes x & yes y >&2 & wait'",
             shell=True,
@@ -453,13 +453,6 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     await _assert_process_gone(int(pid_file.read_text()))
 
 
-async def test_read_file_on_a_directory_raises(tmp_path: Path):
-    (tmp_path / 'adir').mkdir()
-    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
-    with pytest.raises(IsADirectoryError):
-        await workspace.read_file('adir', limit=5)
-
-
 async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
     backend = LocalWorkspaceBackend(tmp_path)
     workspace = Workspace(backend)
@@ -497,41 +490,6 @@ async def test_filesystem_reports_missing_paths(tmp_path: Path, operation: str):
     fs = LocalWorkspaceBackend(tmp_path)
     with pytest.raises(FileNotFoundError):
         await getattr(fs, operation)(str(tmp_path / 'missing'))
-
-
-@pytest.mark.parametrize(
-    ('content', 'offset', 'limit', 'expected'),
-    [
-        ('one\ntwo\nthree\nfour\n', 2, 2, (('two', 'three'), True, None)),
-        ('one\ntwo\nthree\n', 2, 5, (('two', 'three'), False, 3)),
-        ('one\n', 10, 2, ((), False, None)),
-        ('one', 1, 2, (('one',), False, 1)),
-    ],
-    ids=['inside', 'reaches-eof', 'past-eof', 'no-trailing-newline'],
-)
-async def test_windowed_read_runs_sed_inside_the_workspace(
-    tmp_path: Path, content: str, offset: int, limit: int, expected: tuple[tuple[str, ...], bool, int | None]
-):
-    """The real `sed` slice: totals are known only when the window provably reached EOF."""
-    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
-    await workspace.write_text('notes.txt', content)
-
-    window = await workspace.read_file('notes.txt', offset=offset, limit=limit)
-
-    assert (window.lines, window.has_more, window.total_lines) == expected
-    assert window.start_line == offset
-    assert window.truncated is expected[1]
-
-
-async def test_read_file_does_not_return_a_partial_overlong_line(tmp_path: Path):
-    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
-    await workspace.write_text('min.js', 'x' * 100)
-
-    window = await workspace.read_file('min.js', max_bytes=20)
-
-    assert window.lines == ()
-    assert (window.truncated, window.first_line_exceeds_limit) == (True, True)
-    assert '[truncated: line 1 exceeds the byte limit' in window.text
 
 
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):

@@ -137,7 +137,6 @@ WORKSPACE_METHODS: tuple[WorkspaceMethod | Literal['ensure'], ...] = (
     'realpath',
     'read_text',
     'write_text',
-    'read_file',
 )
 """Bound only for an agent with a construction-time workspace supplier; the sets above stay as they are without one."""
 

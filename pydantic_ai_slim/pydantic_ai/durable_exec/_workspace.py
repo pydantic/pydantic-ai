@@ -38,7 +38,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
-    FileWindow,
     Workspace,
     WorkspaceCommand,
     WorkspaceError,
@@ -49,10 +48,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WrapperWorkspace,
-)
-from pydantic_ai.workspaces.workspace import (
-    _DEFAULT_READ_BYTES,  # pyright: ignore[reportPrivateUsage]
-    _DEFAULT_READ_LINES,  # pyright: ignore[reportPrivateUsage]
 )
 
 from ._operation import CacheIdentity, WorkspaceMethod, WorkspaceOperationId
@@ -267,21 +262,6 @@ class WriteTextArguments:
         await workspace.write_text(self.path, self.content, encoding=self.encoding)
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
-class ReadFileArguments:
-    @property
-    def method(self) -> Literal['read_file']:
-        return 'read_file'
-
-    path: str
-    offset: int
-    limit: int | None
-    max_bytes: int | None
-
-    async def call(self, workspace: Workspace) -> FileWindow:
-        return await workspace.read_file(self.path, offset=self.offset, limit=self.limit, max_bytes=self.max_bytes)
-
-
 def _file_entry(entry: WorkspaceFileEntry) -> FileEntry:
     return FileEntry(
         name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size, is_symlink=entry.is_symlink
@@ -450,7 +430,6 @@ WORKSPACE_OPERATIONS: tuple[WorkspaceOperationSpec, ...] = (
     WorkspaceOperationSpec(WorkspaceOperationId('realpath'), RealpathArguments, WorkspaceOperationResult[str]),
     WorkspaceOperationSpec(WorkspaceOperationId('read_text'), ReadTextArguments, WorkspaceOperationResult[str]),
     WorkspaceOperationSpec(WorkspaceOperationId('write_text'), WriteTextArguments, WorkspaceOperationResult[None]),
-    WorkspaceOperationSpec(WorkspaceOperationId('read_file'), ReadFileArguments, WorkspaceOperationResult[FileWindow]),
 )
 """Every workspace unit a durability capability binds, `ensure` first."""
 
@@ -591,21 +570,6 @@ class DurableWorkspace(WrapperWorkspace):
         if not self._in_container():
             return await self.wrapped.write_text(path, content, encoding=encoding)
         await self._dispatch(WriteTextArguments(path=path, content=content, encoding=encoding))
-
-    async def read_file(
-        self,
-        path: str,
-        *,
-        offset: int = 1,
-        limit: int | None = _DEFAULT_READ_LINES,
-        max_bytes: int | None = _DEFAULT_READ_BYTES,
-    ) -> FileWindow:
-        # Overridden rather than inherited: the base implementation windows a file it has read
-        # through `read_bytes`, which would ship the whole file through a unit. The unit windows
-        # it inside the workspace, so only the window crosses.
-        if not self._in_container():
-            return await self.wrapped.read_file(path, offset=offset, limit=limit, max_bytes=max_bytes)
-        return await self._dispatch(ReadFileArguments(path=path, offset=offset, limit=limit, max_bytes=max_bytes))
 
     async def _dispatch(self, arguments: WorkspaceArguments[ValueT]) -> ValueT:
         await self._ensure()

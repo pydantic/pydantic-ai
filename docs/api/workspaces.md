@@ -5,7 +5,6 @@
         members:
             - Workspace
             - FileEntry
-            - FileWindow
             - WorkspaceBackend
             - WorkspaceError
             - WorkspaceReadOnlyError

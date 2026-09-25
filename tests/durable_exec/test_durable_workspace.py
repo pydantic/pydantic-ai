@@ -249,10 +249,8 @@ async def test_expected_errors_cross_as_data_and_re_raise(tmp_path: Path) -> Non
     assert error.value.object == b'caf\xe9'
     with pytest.raises(TypeError):
         await result.workspace.run('echo hi')
-    with pytest.raises(ValueError, match='offset'):
-        await result.workspace.read_file('latin.txt', offset=0)
     # Every failure was a completed unit, not a failed one.
-    assert _workspace_units(durability) == ['ensure', 'read_bytes', 'read_text', 'run', 'read_file']
+    assert _workspace_units(durability) == ['ensure', 'read_bytes', 'read_text', 'run']
 
 
 async def test_backend_is_not_reachable_from_workflow_code() -> None:
@@ -347,7 +345,6 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
     await workspace.make_dir('sub')
     assert await workspace.read_text('after.txt') == 'done'
     assert await workspace.read_bytes('after.bin') == b'\x00'
-    assert (await workspace.read_file('seed.txt')).lines == ('seed',)
     assert (await workspace.stat('after.txt')).size == 4
     assert {entry.name for entry in await workspace.list_dir('.')} >= {'after.txt', 'after.bin', 'seed.txt'}
     assert (await workspace.run(['true'])).stdout == 'connected'
@@ -511,7 +508,6 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
     assert (await workspace.run(['ls'])).stdout == 'ran:ls'
     assert (await workspace.stat('sub/a.txt')).size == 5
     assert [entry.name for entry in await workspace.list_dir('.')] == ['b.bin', 'sub']
-    assert (await workspace.read_file('sub/a.txt')).lines == ('alpha',)
     assert await workspace.exists('b.bin') is True
     assert await workspace.realpath('sub/../b.bin') == '/remote/b.bin'
     await workspace.remove('b.bin')
@@ -533,7 +529,6 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
             'run',
             'stat',
             'list_dir',
-            'read_file',
             'exists',
             'realpath',
             'remove',
@@ -662,18 +657,17 @@ def test_journal_names_with_a_workspace_supplier() -> None:
     assert names == snapshot(
         {
             'compat__workspace__ensure',
-            'compat__workspace__run',
-            'compat__workspace__read_bytes',
-            'compat__workspace__write_bytes',
-            'compat__workspace__stat',
+            'compat__workspace__exists',
             'compat__workspace__list_dir',
             'compat__workspace__make_dir',
-            'compat__workspace__remove',
-            'compat__workspace__exists',
-            'compat__workspace__realpath',
+            'compat__workspace__read_bytes',
             'compat__workspace__read_text',
+            'compat__workspace__realpath',
+            'compat__workspace__remove',
+            'compat__workspace__run',
+            'compat__workspace__stat',
+            'compat__workspace__write_bytes',
             'compat__workspace__write_text',
-            'compat__workspace__read_file',
         }
     )
 

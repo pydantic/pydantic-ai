@@ -56,7 +56,7 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import Workspace
-from pydantic_ai.workspaces.workspace import _policy_chain  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.workspaces._policy import policy_chain
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -535,8 +535,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         assert self._agent is not None
         construction = resolve_run_workspace(self._agent.root_capability, ctx, workspace.ref)
-        run_chain = _policy_chain(workspace)
-        construction_chain = _policy_chain(construction) if construction is not None else None
+        run_chain = policy_chain(workspace)
+        construction_chain = policy_chain(construction) if construction is not None else None
         if construction_chain == run_chain:
             return
         run_layers = ', '.join(cls.__name__ for cls, _ in run_chain)

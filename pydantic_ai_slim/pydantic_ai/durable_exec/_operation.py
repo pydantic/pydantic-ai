@@ -206,7 +206,6 @@ WorkspaceMethod: TypeAlias = Literal[
     'realpath',
     'read_text',
     'write_text',
-    'read_file',
 ]
 """The [`Workspace`][pydantic_ai.workspaces.Workspace] methods that run as durable units.
 

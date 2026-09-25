@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import posixpath
 import re
-import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -41,8 +40,6 @@ class FakeEntry:
     is_symlink: bool | None = None
 
 
-_SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')
-_SED_REST = re.compile(r'^(\d+),\$p$')
 _SHELL_RESULT = re.compile(r'^printf ([0-9a-f]+); printf \1 >&2; exit 7$')
 _ENV_COMMAND = re.compile(r'^printf %s "\$([A-Z0-9_]+)"$')
 
@@ -157,9 +154,7 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     succeeds; `InMemoryProvider` below is the fake for a ref that can be gone.
     """
 
-    def __init__(
-        self, name: str, files: dict[str, bytes] | None = None, *, ref: WorkspaceRef | None = None, sed: bool = True
-    ) -> None:
+    def __init__(self, name: str, files: dict[str, bytes] | None = None, *, ref: WorkspaceRef | None = None) -> None:
         self.name = name
         self._ref = ref
         self._ready = False
@@ -168,7 +163,6 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self.attach_calls = 0
         self.cleanup_calls: list[str] = []
         self.commands: list[str | Sequence[str]] = []
-        self._sed = sed
         self.files = files if files is not None else {}
         self.directories = {'/workspace'}
         for path in self.files:
@@ -213,39 +207,6 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         )
         if conformance_result is not None:
             return conformance_result
-        if not isinstance(command, str) and list(command[:2]) == ['head', '-c']:
-            count, path = int(command[2]), command[3]
-            if path not in self.files:
-                return FakeWorkspaceResult(exit_code=1, stderr=f'head: {path}: No such file or directory')
-            return FakeWorkspaceResult(stdout=self.files[path][:count].decode('utf-8', errors='replace'))
-        if isinstance(command, str) and command.startswith('sed -n '):
-            # The facade sends the bounded window as `sed -n '<expr>' <path>` and, when a byte cap
-            # is set, pipes that through `head -c <bytes>`.
-            if not self._sed:
-                return FakeWorkspaceResult(exit_code=127, stderr='sed: not found')
-            sed_part, _, head_bytes = command.partition(' | head -c ')
-            max_bytes = int(head_bytes) if head_bytes else None
-            _, _, expression, path = shlex.split(sed_part)
-            window = _SED_WINDOW.match(expression)
-            rest = _SED_REST.match(expression)
-            match = window or rest
-            assert match is not None
-            # The window read only runs after the `head` sniff has already found the file, so a path
-            # reaching the `sed` pipeline always exists.
-            text = self.files[path].decode('utf-8', errors='replace')
-            lines = text.split('\n')
-            if lines[-1] == '':
-                lines.pop()
-            start = int(match[1]) - 1
-            end = int(window[2]) if window is not None else len(lines)
-            selected = lines[start:end]
-            stdout = '\n'.join(selected)
-            if selected and (start + len(selected) < len(lines) or text.endswith('\n')):
-                stdout += '\n'
-            encoded = stdout.encode('utf-8')
-            if max_bytes is not None:
-                encoded = encoded[:max_bytes]
-            return FakeWorkspaceResult(stdout=encoded.decode('utf-8', errors='replace'))
         self.commands.append(command)
         return FakeWorkspaceResult(stdout='connected')
 

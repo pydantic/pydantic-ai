@@ -19,12 +19,11 @@ from .protocol import (
 )
 from .readonly import ReadOnlyWorkspace
 from .unavailable import UnavailableWorkspace
-from .workspace import FileWindow, Workspace, WrapperWorkspace
+from .workspace import Workspace, WrapperWorkspace
 
 __all__ = (
     'CommandResult',
     'FileEntry',
-    'FileWindow',
     'LocalWorkspaceBackend',
     'ReadOnlyWorkspace',
     'Workspace',

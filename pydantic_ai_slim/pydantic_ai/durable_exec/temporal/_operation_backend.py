@@ -30,7 +30,7 @@ from ._activity_execution import execute_activity
 from ._operation_names import TemporalOperationNamer
 from ._toolset import heartbeating, model_response_payload_errors, payload_size_errors
 
-_CONTENT_WORKSPACE_METHODS = frozenset({'read_bytes', 'read_text', 'read_file', 'write_bytes', 'write_text'})
+_CONTENT_WORKSPACE_METHODS = frozenset({'read_bytes', 'read_text', 'write_bytes', 'write_text'})
 """Workspace activities whose payload carries file content, and can therefore exceed the blob-size limit."""
 
 ParamsT = TypeVar('ParamsT')
@@ -161,8 +161,8 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
             with payload_size_errors(
                 f'The `{operation_id.method}` workspace operation moved file content through an activity payload '
                 'that exceeded the Temporal server blob-size limit',
-                'Read a bounded window with `read_file`, or move the transfer into a tool: it runs inside an '
-                'activity, so the content never crosses the workflow boundary.',
+                'Move the transfer into a tool: it runs inside an activity, so the content never crosses the '
+                'workflow boundary.',
             ):
                 return await execute_activity(
                     activity=self.registration, args=cast(Sequence[Any], payload), **activity_config

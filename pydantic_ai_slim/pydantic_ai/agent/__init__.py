@@ -132,7 +132,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
-from ..workspaces.workspace import _same_workspace  # pyright: ignore[reportPrivateUsage]
+from ..workspaces._policy import same_workspace
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -1815,7 +1815,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         initial_ctx, selection, explicit=False
                     )
                     initial_ctx.workspace = run_workspace
-            elif selection is None or not _same_workspace(bootstrap_selection, selection):
+            elif selection is None or not same_workspace(bootstrap_selection, selection):
                 raise exceptions.UserError(
                     "A capability's `for_run` changed the workspace this run selected before `for_run`. The "
                     'workspace is selected first so that `for_run` can use it; configure it on the capability the '

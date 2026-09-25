@@ -30,14 +30,10 @@ cannot redirect the agent to another host directory (pass `workspace='new'` to s
 configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`.
 Without an attached workspace, operations raise `UserError`; a capability that needs one checks
-`ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run,
-file, and bounded-read methods for every backend; wrappers can override primitives and
+`ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
+and file methods for every backend; wrappers can override primitives and
 `ReadOnlyWorkspace` blocks commands and changes.
 
-`read_file` is the model-facing read: it returns a `FileWindow` capped at 2000 lines or 50 KiB
-(whichever first). Check `window.truncated` before treating the result as complete; `window.text`
-includes a continuation notice when a cap fired. Pass `limit=None` and `max_bytes=None` together
-for an uncapped read, or use `read_text` / `read_bytes` for exact whole-file access.
 `resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
 components (native through `SupportsRealpath`, `readlink -f` in the shell otherwise).
 
