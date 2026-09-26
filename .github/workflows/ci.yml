@@ -260,8 +260,9 @@ jobs:
           # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
-          # 490 s.
-          PYRIGHT_TIME_BUDGET: "150"
+          # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
+          # 156 s, so 200 keeps the same headroom.
+          PYRIGHT_TIME_BUDGET: "200"
           # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
           # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
