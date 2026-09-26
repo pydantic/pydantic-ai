@@ -340,7 +340,9 @@ Tools use `ctx.workspace` as they would in a plain run.
 - Every run creates or attaches its environment at its start, even if no tool uses it. Retries,
   replays and recovery then reattach to that same environment.
 - Workspace calls retry like tools do, so a command or write may run again if a worker dies mid-call,
-  and a `run(timeout=...)` must fit within the call's own timeout (Temporal's `start_to_close_timeout`).
+  A timed-out or unavailable workspace is not retried automatically. Temporal gives command activities
+  their requested timeout plus time for startup and stopping; `timeout=None` uses a one-hour activity
+  ceiling, not an unlimited Temporal activity.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
   capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
   read-only policy; a capability passed to the run that changes the workspace also raises `UserError`. Put policy on the

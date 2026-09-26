@@ -36,6 +36,7 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspaceReadOnlyError,
     WorkspaceRef,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 
@@ -43,12 +44,16 @@ try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
+    from temporalio.common import RetryPolicy
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
+    from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall
     from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
+    from pydantic_ai.durable_exec.temporal._operation_backend import workspace_run_activity_config
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._toolset import with_non_retryable_errors
     from pydantic_ai.durable_exec.temporal._transports import _WorkspaceCallWire
 
 except ImportError:  # pragma: lax no cover
@@ -94,6 +99,20 @@ with workflow.unsafe.imports_passed_through():
 _REF_ADAPTER: TypeAdapter[WorkspaceRef | None] = TypeAdapter(WorkspaceRef | None)
 
 pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::pydantic.PydanticDeprecatedSince20')]
+
+
+def test_workspace_failures_do_not_retry_temporal_activities() -> None:
+    policy = with_non_retryable_errors(RetryPolicy())
+    assert {WorkspaceTimeoutError.__name__, WorkspaceReadOnlyError.__name__, WorkspaceUnavailableError.__name__} <= set(
+        policy.non_retryable_error_types or []
+    )
+
+
+def test_workspace_run_activity_has_time_for_command_and_cleanup() -> None:
+    config = ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+    assert workspace_run_activity_config(config, 120).get('start_to_close_timeout') == timedelta(seconds=150)
+    assert workspace_run_activity_config(config, None).get('start_to_close_timeout') == timedelta(hours=1)
+    assert config.get('start_to_close_timeout') == timedelta(seconds=60)
 
 
 # --- A fake remote provider ---------------------------------------------------------------------
