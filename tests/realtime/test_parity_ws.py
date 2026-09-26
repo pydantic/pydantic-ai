@@ -1,8 +1,9 @@
 """Canonical cross-provider parity matrix for the realtime abstraction.
 
 Each case is a provider route and concrete model generation. The same public-API scenarios run
-unchanged for every case: a text and a spoken tool round, a history-seeded follow-up, and a spoken
-multi-turn conversation over a microphone that never stops streaming. WebSocket cassettes preserve
+unchanged for every case: a text and a spoken tool round, a history-seeded follow-up, and spoken
+multi-turn conversations (over a microphone that never stops streaming, with push-to-talk, with a
+barge-in, and without input transcription) checked against the same history invariants. WebSocket cassettes preserve
 the real provider conversations while keeping the default suite offline.
 
 Provider-specific wire shapes belong in the provider cassette tests. This matrix deliberately asserts
@@ -11,6 +12,7 @@ only the normalized event, message, part, usage, and profile contracts users can
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -31,7 +33,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModel, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeModel, RealtimeModelSettings, RealtimeSession, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conversation import Utterance, assert_conversation_invariants, load_utterance, speak_continuously
@@ -429,6 +431,31 @@ async def test_audio_tool_round_parity(
     assert isinstance(messages[-2].parts[0], ToolReturnPart)
 
 
+def _conversation_cases(*, include: Callable[[RealtimeParityCase], bool]) -> list[Any]:
+    """The parity cases a spoken-conversation scenario runs on, as picked by `include`.
+
+    Our Azure realtime resource answers 401, so these scenarios could not be recorded for it. Its row is
+    skipped rather than dropped, so the hole stays visible: record it (and delete this mark) once the
+    Azure key works again.
+    """
+    return [
+        pytest.param(
+            (case, case.route),
+            id=case.id,
+            marks=pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded')
+            if case.route == 'azure'
+            else (),
+        )
+        for case in REALTIME_PARITY_CASES
+        if include(case)
+    ]
+
+
+# The push-to-talk, barge-in, and transcription-off scenarios aren't recorded for GPT-Live, which reports
+# no speech boundaries and takes no manual turns.
+_CONVERSATION_CASES = _conversation_cases(include=lambda case: not case.synthesizes_turn_boundary)
+
+
 # GPT-Live ends a turn after a stretch of wall-clock silence. Replay delivers a recording's frames back
 # to back, but its cassette records when each frame arrived, and replay runs Live's turn clock on that
 # recorded time: see `ws_cassettes.ReplayWebSocket.now`.
@@ -483,3 +510,165 @@ async def test_continuous_microphone_conversation_parity(
         part for message in session.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
     ]
     assert [call.tool_name for call in tool_calls] == ['get_weather']
+
+
+async def _wait_for_user_turns(session: RealtimeSession, count: int) -> None:
+    """Wait until `count` user turns are in history: a transcript can land well after the reply it prompted."""
+    with anyio.fail_after(30):
+        while (
+            sum(
+                isinstance(part, SpeechPart) and part.speaker == 'user'
+                for message in session.all_messages()
+                for part in message.parts
+            )
+            < count
+        ):
+            await anyio.sleep(0.05)
+
+
+@pytest.mark.realtime_ws_hold_open
+@pytest.mark.parametrize(
+    'parity_ws_cassette',
+    _conversation_cases(include=lambda case: case.supports_manual_turn_control),
+    indirect=True,
+)
+async def test_push_to_talk_conversation_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+    assets_path: Path,
+) -> None:
+    """Three push-to-talk turns record one user request per utterance, each ahead of its answer.
+
+    With manual turn-taking nothing reports speech boundaries, and a turn's transcript routinely lands
+    after the answer to it: text answers, where the model offers them, come back fastest.
+    """
+    case, provider, cassette = parity_ws_cassette
+    model = _model(case, provider, text_output=True)
+    rate = case.audio_input_sample_rate
+    agent = Agent(
+        instructions='You are a voice assistant. Always call get_weather for a weather question. '
+        'Answer in one short sentence.'
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'It is foggy and 12 degrees in {city}.'
+
+    utterances = [load_utterance(assets_path, utterance, rate) for utterance in _CONVERSATION]
+    settings = RealtimeModelSettings(turn_detection=False)
+    if case.model_kind == 'openai':
+        # `whisper-1` streams no partial transcripts: each turn's arrives whole, and only once it's
+        # transcribed, which makes it the slowest to catch up with the answer.
+        settings['input_transcription_model'] = 'whisper-1'
+    async with agent.realtime(model, model_settings=settings).session() as session:
+        for pcm in utterances:
+            await speak_continuously(
+                session, [pcm], sample_rate=rate, silence_after=0, before_send=cassette.before_audio_send, pace=False
+            )
+            await session.commit_audio()
+            await session.create_response()
+            with anyio.fail_after(30):
+                await session.wait_for_reply()
+        await _wait_for_user_turns(session, len(_CONVERSATION))
+
+    assert_conversation_invariants(session, [utterance.keyword for utterance in _CONVERSATION])
+
+
+_BARGE_IN_CONVERSATION = [
+    Utterance('tell_me_a_long_story', keyword='story'),
+    Utterance('stop_and_say_goodbye', keyword='goodbye'),
+]
+# Long enough for the model to be well into its story, short enough to be still telling it.
+_SILENCE_BEFORE_BARGE_IN = 4.0
+
+
+@pytest.mark.realtime_ws_hold_open
+@pytest.mark.parametrize('parity_ws_cassette', _CONVERSATION_CASES, indirect=True)
+async def test_barge_in_conversation_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """Speaking over the model's answer files the interrupting turn after the answer it cut short."""
+    case, provider, cassette = parity_ws_cassette
+    model = _model(case, provider)
+    rate = case.audio_input_sample_rate
+    agent = Agent(
+        instructions='You are a voice assistant. Asked for a story, tell it at length straight away, without questions.'
+    )
+
+    story, goodbye = (load_utterance(assets_path, utterance, rate) for utterance in _BARGE_IN_CONVERSATION)
+    async with agent.realtime(model).session() as session:
+        await speak_continuously(
+            session,
+            [story],
+            sample_rate=rate,
+            silence_after=_SILENCE_BEFORE_BARGE_IN,
+            before_send=cassette.before_audio_send,
+            pace=realtime_recording,
+        )
+        await speak_continuously(
+            session,
+            [goodbye],
+            sample_rate=rate,
+            silence_after=_SILENCE_BETWEEN_TURNS,
+            before_send=cassette.before_audio_send,
+            pace=realtime_recording,
+        )
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    assert_conversation_invariants(session, [utterance.keyword for utterance in _BARGE_IN_CONVERSATION])
+    story_response = next(message for message in session.all_messages() if isinstance(message, ModelResponse))
+    # Grok Voice generates the whole story long before it has been played, so the provider reports no
+    # response cut short there: whether history marks it interrupted is up to the local barge-in handling.
+    if case.model_kind != 'xai':
+        assert story_response.state == 'interrupted'
+
+
+# Only the OpenAI rows. Gemini Live reports no speech boundaries, so without transcripts nothing tells an
+# utterance from the silence around it. Grok Voice still transcribes the user's audio with transcription
+# off, so a transcript-free history can't be asserted there either.
+@pytest.mark.realtime_ws_hold_open
+@pytest.mark.parametrize(
+    'parity_ws_cassette',
+    _conversation_cases(include=lambda case: case.model_kind in ('openai', 'azure')),
+    indirect=True,
+)
+async def test_untranscribed_continuous_microphone_conversation_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """With input transcription off, an always-on microphone records exactly one user turn per utterance.
+
+    The silence it streams while the model answers, and after the last answer, is no turn of its own.
+    """
+    case, provider, cassette = parity_ws_cassette
+    model = _model(case, provider)
+    rate = case.audio_input_sample_rate
+    agent = Agent(
+        instructions='You are a voice assistant. Always call get_weather for a weather question. '
+        'Answer in one short sentence.'
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'It is foggy and 12 degrees in {city}.'
+
+    utterances = [load_utterance(assets_path, utterance, rate) for utterance in _CONVERSATION]
+    settings = RealtimeModelSettings(input_transcription_model=None)
+    async with agent.realtime(model, model_settings=settings).session() as session:
+        await speak_continuously(
+            session,
+            utterances,
+            sample_rate=rate,
+            silence_after=_SILENCE_BETWEEN_TURNS,
+            before_send=cassette.before_audio_send,
+            pace=realtime_recording,
+        )
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    assert_conversation_invariants(session, [None] * len(_CONVERSATION))
