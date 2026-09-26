@@ -250,8 +250,9 @@ class Workspace(WorkspaceBackend):
 
     @property
     def backend(self) -> WorkspaceBackend:
-        """The wrapped backend, for access to provider-specific functionality."""
-        return self._backend
+        """The provider backend underneath every wrapper, for access to provider-specific functionality."""
+        backend = self._backend
+        return backend.backend if isinstance(backend, Workspace) else backend
 
     @property
     def read_only(self) -> bool:
@@ -264,7 +265,11 @@ class Workspace(WorkspaceBackend):
 
         `False` for an [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace], like a run's placeholder.
         """
-        return not isinstance(self._backend, UnavailableWorkspace)
+        backend = self._backend
+        if isinstance(backend, Workspace):
+            # Through the wrapped workspace, never `backend`, which a durable wrapper refuses in workflow code.
+            return backend.attached
+        return not isinstance(backend, UnavailableWorkspace)
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -388,8 +393,3 @@ class WrapperWorkspace(Workspace):
     @property
     def read_only(self) -> bool:
         return self.wrapped.read_only
-
-    @property
-    def attached(self) -> bool:
-        # Through `wrapped`, never `backend`, which a durable wrapper refuses in workflow code.
-        return self.wrapped.attached

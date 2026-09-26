@@ -334,7 +334,7 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
     bound = FakeDurability.from_agent(agent)
     assert bound is not None
     bound.in_container = False
-    assert workspace.backend is workspace.wrapped
+    assert workspace.backend is supplier.backend
     await workspace.write_text('after.txt', 'done')
     await workspace.write_bytes('after.bin', b'\x00')
     await workspace.make_dir('sub')

@@ -32,6 +32,7 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     Workspace,
+    WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceFileEntry,
@@ -235,7 +236,7 @@ class DurableWorkspace(WrapperWorkspace):
         return self._ref if self._ref is not None else self.wrapped.ref
 
     @property
-    def backend(self) -> Workspace:
+    def backend(self) -> WorkspaceBackend:
         if self._in_container():
             raise UserError(
                 '`workspace.backend` is not available in durable workflow code: calling the provider backend '
@@ -243,7 +244,7 @@ class DurableWorkspace(WrapperWorkspace):
                 'that make workspace operations durable. Use the `Workspace` methods instead, or reach the '
                 f'backend from a tool, which runs inside {self._durability.durable_unit_noun}.'
             )
-        return self.wrapped
+        return super().backend
 
     def _in_container(self) -> bool:
         return self._durability.in_durable_context and not in_durable_unit()

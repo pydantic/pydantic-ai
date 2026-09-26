@@ -93,8 +93,8 @@ async def test_stacked_wrappers_preserve_delegation_identity_and_refs():
     outer = WrapperWorkspace(inner)
 
     assert outer.wrapped is inner
-    assert inner.wrapped.backend is backend
-    assert outer.backend is inner
+    assert outer.backend is backend
+    assert Workspace(outer).backend is backend
     assert outer.ref == ref
 
     events: list[str] = []
@@ -487,6 +487,7 @@ async def test_attached_is_false_only_for_an_unavailable_workspace_even_through_
 
     assert not ctx.workspace.attached
     assert not ReadOnlyWorkspace(Workspace(UnavailableWorkspace('disabled by policy'))).attached
+    assert not Workspace(Workspace(UnavailableWorkspace('disabled by policy'))).attached
     assert ReadOnlyWorkspace(Workspace(FakeWorkspace('attached'))).attached
 
 
