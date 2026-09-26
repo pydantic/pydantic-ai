@@ -56,7 +56,7 @@ async def test_connect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome:
         async def prompt_async(self, label: str, *, is_password: bool = False) -> str:
             if outcome == 'eof':
                 raise EOFError
-            if 'API key' in label:
+            if 'API key' in label:  # pragma: no branch
                 assert is_password
             return next(values)
 

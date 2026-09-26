@@ -158,7 +158,7 @@ async def test_cancel_stops_polling(device_flow: None, monkeypatch: pytest.Monke
             await anyio.sleep_forever()
         finally:
             stopped.set()
-        raise AssertionError('unreachable')
+        raise AssertionError('unreachable')  # pragma: no cover
 
     monkeypatch.setattr(GitHubCopilotOAuthFlow, 'wait_for_authorization', waiting)
     save_codex_credentials(account='github-copilot', value='previous')

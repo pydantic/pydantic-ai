@@ -31,7 +31,7 @@ async def test_history_survives_reopening(tmp_path: Path) -> None:
     original.append_string('/help')
     reopened = input_history(path)
     assert [text async for text in reopened.load()] == ['/help', 'first line\nsecond line']
-    if os.name != 'nt':
+    if os.name != 'nt':  # pragma: no branch
         assert path.stat().st_mode & 0o777 == 0o600
 
 

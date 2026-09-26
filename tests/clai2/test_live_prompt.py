@@ -422,7 +422,7 @@ async def test_completion_iteration_is_bounded_before_materializing() -> None:
         for index in range(100):
             produced.append(index)
             yield f'candidate{index}'
-        raise AssertionError('completion consumed beyond its bound')
+        raise AssertionError('completion consumed beyond its bound')  # pragma: no cover
 
     async with editor(output=Output()) as (live, pipe, _):
         live.commands.register(

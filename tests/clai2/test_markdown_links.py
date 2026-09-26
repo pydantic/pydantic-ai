@@ -65,7 +65,7 @@ async def test_abort_mid_label_does_not_leave_a_hyperlink() -> None:
 
     class Output(io.StringIO):
         def write(self, text: str) -> int:
-            if '\x1b]8;;https://' in text:
+            if '\x1b]8;;https://' in text:  # pragma: no branch
                 started.set()
             return super().write(text)
 

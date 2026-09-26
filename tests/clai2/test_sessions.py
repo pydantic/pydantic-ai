@@ -233,8 +233,8 @@ async def test_interrupted_tool_frontier_accepts_followup(tmp_path: Path, *, can
 
     @agent.tool_plain
     def effect() -> str:
-        calls.append('executed')
-        return 'done'
+        calls.append('executed')  # pragma: no cover
+        return 'done'  # pragma: no cover
 
     async def interrupt(event: AgentStreamEvent) -> None:
         if isinstance(event, FunctionToolCallEvent):

@@ -263,7 +263,7 @@ async def test_callback_clients_during_exchange(monkeypatch: pytest.MonkeyPatch)
 
     async def prompt(message: str) -> str:
         await asyncio.Future[None]()
-        raise AssertionError('unreachable')
+        raise AssertionError('unreachable')  # pragma: no cover
 
     async def exchange(request: httpx.Request) -> httpx.Response:
         exchange_started.set()

@@ -72,7 +72,7 @@ class SurfaceTerminal(io.StringIO):
 
     def advance(self) -> None:
         if self.row == self.bottom:
-            if self.top == 0:
+            if self.top == 0:  # pragma: no branch
                 self.history.append(''.join(self.cells[0]).rstrip())
             del self.cells[self.top]
             self.cells.insert(self.bottom, [' '] * self.width)

@@ -1176,7 +1176,7 @@ class TestBridgeFailureModes:
         stopped.call_soon_threadsafe(stopped.stop)
         deadline = time.monotonic() + 5
         while stopped.is_running() and time.monotonic() < deadline:  # pragma: no branch - stops promptly
-            time.sleep(0.01)
+            time.sleep(0.01)  # pragma: lax no cover
 
         replacement = loops.get()
         replacement_thread = loops._thread  # pyright: ignore[reportPrivateUsage]

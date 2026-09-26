@@ -138,7 +138,7 @@ async def test_cancel_during_drain_stops_writer() -> None:
 
     class ObservedOutput(io.StringIO):
         def write(self, text: str) -> int:
-            if 'x' in text:
+            if 'x' in text:  # pragma: no branch
                 writing.set()
             return super().write(text)
 

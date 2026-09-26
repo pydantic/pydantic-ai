@@ -75,7 +75,7 @@ async def test_chat_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, 
                 if mode == 'double':
                     signal.raise_signal(signal.SIGINT)
                 await asyncio.sleep(0)
-            return request_context
+            return request_context  # pragma: lax no cover
 
     inputs(monkeypatch, values)
     console = Console(file=output, width=20 if mode == 'eof' else 120)

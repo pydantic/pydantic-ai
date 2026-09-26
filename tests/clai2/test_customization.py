@@ -59,7 +59,7 @@ async def test_instruction_order_puts_the_hint_between_guidance_and_repository(t
     (tmp_path / 'AGENTS.md').write_text('# House rules\n')
 
     async def decline(request: AskUserRequest, /) -> AskUserResponse:
-        return AskUserResponse(cancelled=True)
+        return AskUserResponse(cancelled=True)  # pragma: no cover
 
     agent = create_agent()
     model = TestModel(call_tools=[], custom_output_text='hello')

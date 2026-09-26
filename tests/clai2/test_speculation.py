@@ -120,7 +120,7 @@ class TestSandboxCallOrder:
             if isinstance(event, FunctionToolCallEvent):
                 seen.append(event.part.tool_name)
                 return 'drawn by plugin'
-            return None
+            return None  # pragma: lax no cover
 
         output = io.StringIO()
         renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, renderers=[plugin])

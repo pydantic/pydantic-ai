@@ -348,7 +348,7 @@ async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
             message = await run('/mcp restart web')
             if message.startswith('Started'):
                 break
-            await anyio.sleep(0.1)
+            await anyio.sleep(0.1)  # pragma: lax no cover
         assert message.startswith('Started web with 1 tools'), message
         result = await Agent(TestModel(), deps_type=type(None), capabilities=host.capabilities).run('Use tools.')
         assert 'pong' in result.output

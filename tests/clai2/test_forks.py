@@ -508,7 +508,7 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
 
     async def after_command() -> str:
         # Idle again: the held banner prints before the next prompt returns.
-        for _ in range(20):
+        for _ in range(20):  # pragma: no branch
             if 'FORK #1' in output.getvalue():
                 break
             await asyncio.sleep(0.01)

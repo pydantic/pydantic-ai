@@ -213,7 +213,7 @@ def test_staging_race_is_refused(fallback: Path, no_keyring: None, monkeypatch: 
     real_open = os.open
 
     def planting_open(path: str, flags: int, mode: int = 0o777) -> int:
-        if flags & os.O_EXCL:
+        if flags & os.O_EXCL:  # pragma: no branch
             Path(path).write_text('{"access_token":"attacker"}', encoding='utf-8')
         return real_open(path, flags, mode)
 

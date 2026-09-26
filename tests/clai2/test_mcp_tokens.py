@@ -32,7 +32,7 @@ def vault(monkeypatch: pytest.MonkeyPatch) -> Vault:
 
     def delete(service: str, account: str) -> None:
         if (service, account) not in entries:
-            raise PasswordDeleteError('Not found')
+            raise PasswordDeleteError('Not found')  # pragma: no cover
         del entries[service, account]
 
     monkeypatch.setattr(keyring, 'get_password', get)

@@ -109,8 +109,8 @@ async def test_bare_clear_queues_as_a_command_that_steering_skips() -> None:
     attempted: list[str] = []
 
     def steer(text: str) -> bool:
-        attempted.append(text)
-        return True
+        attempted.append(text)  # pragma: no cover
+        return True  # pragma: no cover
 
     async with editor() as (live, _, _):
         live.steer = steer
