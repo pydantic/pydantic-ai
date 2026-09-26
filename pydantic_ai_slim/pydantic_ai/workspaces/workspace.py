@@ -325,7 +325,9 @@ class Workspace(WorkspaceBackend):
         return await self._backend.working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
-        """Join `path` onto `base` (default: the working directory) and normalize it as text, with no I/O.
+        """Join `path` onto `base` (default: the working directory) and normalize it as text.
+
+        The only I/O is asking the backend for its working directory when `base` is omitted.
 
         Symlinks are not followed and `..` can escape `base`, so this confines nothing; use
         [`realpath`][pydantic_ai.workspaces.Workspace.realpath] to learn where a path actually leads.

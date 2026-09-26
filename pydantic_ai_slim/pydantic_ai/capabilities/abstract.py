@@ -593,6 +593,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         attaches on first use. Capabilities passed to the run are asked before the agent's, each list in
         order, before `for_run`; the first answer wins. Return `None` for a `ref` you don't own. A
         workspace is chosen when the run starts, so a capability that supplies one can't be deferred.
+        Return a `Workspace` around the backend, such as `ReadOnlyWorkspace(Workspace(backend))`, to apply a policy.
         """
         return None
 

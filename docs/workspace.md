@@ -381,6 +381,8 @@ the user. This separates where users start; like `LocalWorkspace`, it isolates n
 
 - With `ref=None`, return the backend for a new or default environment.
 - With a `ref` you recognize, return a backend that attaches to it. Return `None` for any other.
+- To apply a policy, return a `Workspace` around the backend, such as
+  `ReadOnlyWorkspace(Workspace(backend))`.
 - Don't do I/O or keep state in `get_workspace`: it can be called more than once per run. Connect on
   the backend's first operation.
 - A capability that supplies a workspace can't use `defer_loading=True`: the workspace is chosen when
@@ -519,5 +521,3 @@ fixtures to enable the reattachment rules.
 - A run has one workspace.
 - Pydantic AI never creates or deletes a sandbox at run boundaries: cleanup is yours.
 - How a timed-out command is stopped depends on the provider.
-- Under durable execution, `workspace=` passes on only a reference: per-run wrappers such as
-  `ReadOnlyWorkspace` don't apply.
