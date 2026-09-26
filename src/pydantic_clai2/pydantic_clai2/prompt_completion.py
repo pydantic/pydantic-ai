@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from queue import Empty, Queue
 from threading import Event, Thread
 
-from termflow.tui.completion import Completion  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import Completion
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -25,7 +25,7 @@ import pytest
 from pydantic_ai_harness.media import S3MediaStore
 
 if TYPE_CHECKING:
-    from vcr.request import Request as VcrRequest  # pyright: ignore[reportMissingTypeStubs]
+    from vcr.request import Request as VcrRequest
 
 # `pymongo` is gated on the `mongodb` extra, so an install without it can't import
 # the Mongo store tests. Ignore them at collection then. A conditional expression

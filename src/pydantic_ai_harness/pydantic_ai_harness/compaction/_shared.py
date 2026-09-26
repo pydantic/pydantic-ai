@@ -130,7 +130,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # reveal was free.
     elif isinstance(part, ToolAvailabilityDeltaPart):
         return []
-    elif isinstance(part, SpeechPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+    elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
         # words the provider bills against the window -- not the binary audio, which has no
         # character-count meaning (as with `FilePart`).

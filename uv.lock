@@ -1369,6 +1369,56 @@ wheels = [
 ]
 
 [[package]]
+name = "cassetter"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/8f/e934ce0b21f7045181b786412b5326d6f89b4f7f58303d4460054bc93872/cassetter-0.11.0.tar.gz", hash = "sha256:7578203459c08623f8f27e6e9179774359ceb101b9f207308274fdaae9e4d589", size = 102607, upload-time = "2026-09-10T12:06:54.626Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/5f/cb2d42df62d26b10c8f9e0ec227c08e992eff64f3a16b709f4823fda8fce/cassetter-0.11.0-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:af6aab0015cce3eadeebec7fbb15612c457aa482664170f6c7f7966fdd03b8ea", size = 1980907, upload-time = "2026-09-10T12:05:48.859Z" },
+    { url = "https://files.pythonhosted.org/packages/31/45/25563caa90b94766a0bcd1473444aeccdddf6ee682e789fd3a24286eb5b2/cassetter-0.11.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:ae0ba29a86fd290c2b0e19f39c598ec9176544d005de53a40a0c7a2eec332a49", size = 1857688, upload-time = "2026-09-10T12:05:50.531Z" },
+    { url = "https://files.pythonhosted.org/packages/45/23/03e1902699ba6c9d6c849a50dacfe6e6a6937ce08589c0ee95b785a58b65/cassetter-0.11.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7ff5729b084a201c0ff789272846b4876f4bd008b47d0929ce233727ac13fbdf", size = 1926524, upload-time = "2026-09-10T12:05:52.058Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/fe/9bc4776fb99ed57878e790c15c76e46532041cecc8d3587ae1537647a0cb/cassetter-0.11.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6d5b9bfdeae7179ae79560180c5938754722d74b12b1c6f5a5845166da0ed2c5", size = 2070007, upload-time = "2026-09-10T12:05:53.701Z" },
+    { url = "https://files.pythonhosted.org/packages/34/f0/405f4eabd04c122074618883a6810bbbe30f3e45dbc8da367b38390aa906/cassetter-0.11.0-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:7c20f1a62a9394a9ddf2b09966a45698aa7d231a5016e6409cdace6d8157a019", size = 2112086, upload-time = "2026-09-10T12:05:55.421Z" },
+    { url = "https://files.pythonhosted.org/packages/98/fc/bbfda42e4756945d9a4796bb37b7852c90248dbc73a7812f34f64239c00a/cassetter-0.11.0-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:8feab7f50cd9ef59860f3d68883a8cc729ca780589d3e1ab6bee5da20e316c9a", size = 2297899, upload-time = "2026-09-10T12:05:57.111Z" },
+    { url = "https://files.pythonhosted.org/packages/29/e7/74aa131e5d63d9b96e2e5d83bad908257e0d808668132bb41428f3b36784/cassetter-0.11.0-cp310-cp310-win_amd64.whl", hash = "sha256:136964f2486aa8dad45e39517c4b43ad7faee30cf104f16736669d72ece73c4d", size = 2019629, upload-time = "2026-09-10T12:05:58.496Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/e3/e2be9ba63fa2720541e931332b31c7af2874caee2d368b4d8ed277ade158/cassetter-0.11.0-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:421178c75b31101c8c0af6b9b36a3ecdb55858dadc7767e498e9f7791a6d9f95", size = 1980953, upload-time = "2026-09-10T12:05:59.97Z" },
+    { url = "https://files.pythonhosted.org/packages/36/de/ebe6dfc0d32c9b033f154a7a336d66eb93f4456d7335340e621b75129244/cassetter-0.11.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:52db9ee46971ffb68c3cf0df384dec15f6026df4352305ebe0bdf603d0532ee3", size = 1857850, upload-time = "2026-09-10T12:06:01.383Z" },
+    { url = "https://files.pythonhosted.org/packages/79/49/b9f8f250c3d5817f165659561a5a007f6e3cf8e3984f3275ab6c8ca69c21/cassetter-0.11.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:37de99fc2e71dd0b6231fb6087b363bf8c244ba5a095a0166768e14c233c7511", size = 1926553, upload-time = "2026-09-10T12:06:02.699Z" },
+    { url = "https://files.pythonhosted.org/packages/87/c3/88f91278457a07a8186d65cf9aae9166ec1eb8a939ca18e23a9d9294b06c/cassetter-0.11.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d5a2a77aaf2adb80a0f5c7860536d423d0e10fb579a3703f64e27eaf71111e75", size = 2070025, upload-time = "2026-09-10T12:06:04.069Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/7f/fc850ebdaad4467f103ae9d5939295be812447e0c6a72de15378e3663615/cassetter-0.11.0-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:e39eab159142285b7b743a5ad64046bc4e3c38dba0383797737e45ecc3323b4f", size = 2111806, upload-time = "2026-09-10T12:06:05.7Z" },
+    { url = "https://files.pythonhosted.org/packages/17/dd/94f3b7f6119878a45e8d193f64aead700776dd98183880f0e8067db38671/cassetter-0.11.0-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:b03bed6a5842a26347d32bcfb0c1f4a87cc81ef2324e8d7677584036fa676706", size = 2297752, upload-time = "2026-09-10T12:06:07.519Z" },
+    { url = "https://files.pythonhosted.org/packages/35/3b/6f7688fc36c40b20d6c2c6e81373117fa79cd4e705bae5ea98d488919180/cassetter-0.11.0-cp311-cp311-win_amd64.whl", hash = "sha256:498eb6718c401746e432e365ba322920351bbb2f82260956b30b29e3b5a82ba4", size = 2019574, upload-time = "2026-09-10T12:06:09.599Z" },
+    { url = "https://files.pythonhosted.org/packages/12/96/efe27ef22c195539e76c079391a39aff0b9791b98881cefc8c2680ff89e9/cassetter-0.11.0-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:0e37ba7df95d7132a109d126889955541176902a830ac386a6061b716efc74f1", size = 1992016, upload-time = "2026-09-10T12:06:11.186Z" },
+    { url = "https://files.pythonhosted.org/packages/46/82/7ca66ce3d58069692ce948437940fc657954c0047d63c57e8d1ebe21bc96/cassetter-0.11.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:e035f81fc4096ba809b33d7dadf56233d8b77b6738f7458e52937fbc796d92aa", size = 1852366, upload-time = "2026-09-10T12:06:12.696Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/cc/8375f65d6f1385194570097c45018a01655023e35fbe457df09cfb61f492/cassetter-0.11.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4c905cbd42dd322ed67bf2127c8b7b23ace222232f935427b79b6b902f470aff", size = 1924201, upload-time = "2026-09-10T12:06:14.283Z" },
+    { url = "https://files.pythonhosted.org/packages/db/6a/d4094c2cd57d2f180e61cab004c6f78d3563f70002722e2aa0fbfc566215/cassetter-0.11.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a4c36109d40ceadb60024a011413efc9ab9f71ffb42fcd2c37bb8bb4dcf82d13", size = 2069606, upload-time = "2026-09-10T12:06:15.681Z" },
+    { url = "https://files.pythonhosted.org/packages/df/04/c5b3e374d92427ed5a124a418a5e31e7bdb52932d9ca65fbe89d90bedc05/cassetter-0.11.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:7b3086a2c180d854562c3ae2d455d114751c90783db81ccf83f63d1bed699722", size = 2110256, upload-time = "2026-09-10T12:06:16.996Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/33/7daa996190ac39686021d6df7d5c734e6762d8e444c77e29b5702fff4353/cassetter-0.11.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:9c605d865c07b2bcb328cbf1d380d543a1703f1384a279fdae853e092d437cab", size = 2297399, upload-time = "2026-09-10T12:06:18.398Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/33/c0245b72c375c7e08ea4528ad53078b7b21053b1f665d7cf20252f131930/cassetter-0.11.0-cp312-cp312-win_amd64.whl", hash = "sha256:c2f2967c91d87af8798c2f4ec88dd2be7b190b34d3ba20732bf612ebc35faf93", size = 2016727, upload-time = "2026-09-10T12:06:19.691Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/60/571036d38c0c98109200459ba2deb7bfe3db2354f481c8b9f559d5a99c71/cassetter-0.11.0-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:074242e9febdfdc8733d8b1ee3635d80af17c0ce68e501249b09c113ce6cdeee", size = 1992011, upload-time = "2026-09-10T12:06:21.247Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/ce/3f7d5d52e183eab67da5dad1403bd7ca3e27b4df179dec07439a6e1479b3/cassetter-0.11.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:7a65cd317af3ebe7eb329e178bccabc56ce06cc6c40e023fc34bcbf5a5ff317e", size = 1852584, upload-time = "2026-09-10T12:06:22.691Z" },
+    { url = "https://files.pythonhosted.org/packages/86/9a/363567977feb6797d394bd5267057f7db5e67e6d9a615150f104b70cd9a6/cassetter-0.11.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0225a7264649a1db81d81e86f779e3d0fcc189006109f446bdfd6bb31f890464", size = 1924781, upload-time = "2026-09-10T12:06:24.08Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/ae/8b910cb80abe925494f4dcb40cd61bf66ba1fb96f98d45bbd21860cc64db/cassetter-0.11.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a0e40aff3a75ed10d309dc4e05d750bfa1873c4a6d8efd57eb1027b1fd415072", size = 2069427, upload-time = "2026-09-10T12:06:26.114Z" },
+    { url = "https://files.pythonhosted.org/packages/76/fa/9dad53bf7b94add575e936d985998c18e4445d6d826426841e1084b2df13/cassetter-0.11.0-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:70803d4a3f3f0b631c648fc0c07cde2947b91f9694345a7a5172d0a60567d51c", size = 2109980, upload-time = "2026-09-10T12:06:27.805Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/ab/b15e1a3ce73a4cbef98a101940c344a681716a9cdf348ed2bdf0b8f0ede6/cassetter-0.11.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:3f6a1ccb97b70a3db83ffddf1fab5d6e2978f2837d800acc08c2079a57dfef2b", size = 2297450, upload-time = "2026-09-10T12:06:29.524Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/cd/0c3b62801c1787c345e23168f8b08383b09fe612a5df3559a14522479ac3/cassetter-0.11.0-cp313-cp313-win_amd64.whl", hash = "sha256:6bef0417a2babf8dd5b39a3187466bf647591d2bbef6a0db57d5717edd23d911", size = 2016955, upload-time = "2026-09-10T12:06:31.146Z" },
+    { url = "https://files.pythonhosted.org/packages/38/11/cc8e13ff2446653a609faed97aca79329c0164033286167dcb1eee740f3c/cassetter-0.11.0-cp314-cp314-macosx_10_12_x86_64.whl", hash = "sha256:ace65b75f1f79a57ebf86037521a8c6050393a1cf933222405f6effe7ca6ff39", size = 1993017, upload-time = "2026-09-10T12:06:32.543Z" },
+    { url = "https://files.pythonhosted.org/packages/35/25/79d95436827031edb0cd5fec82536f0765079cd4f20bb55f7021ea1eb293/cassetter-0.11.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:86196ca7af873231a8339616e11ae0b6159657e22c7b148c152d0998c2461a7b", size = 1854089, upload-time = "2026-09-10T12:06:34.197Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/40/0dac2e31cde85601fb6c757a4398fddb04dc816f5f807bcd829ea0f62ef0/cassetter-0.11.0-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:002b8bb2a9cb3250a9ad9c751278d32500a74548fefa5759f475eee86451d3d3", size = 1925672, upload-time = "2026-09-10T12:06:35.745Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/7f/e78e26fd90df1caef9070ffb74ad92e34390aa5e2a08160b836c22fefdbe/cassetter-0.11.0-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f70b6a46a8d89731a40baa6ca5042d944aeb201d89a56318f2c647b24de09bad", size = 2070668, upload-time = "2026-09-10T12:06:37.46Z" },
+    { url = "https://files.pythonhosted.org/packages/24/01/763366bc70c0394b3b677648e0a217b7b017bc52ba51365eef0e8005d32e/cassetter-0.11.0-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:13214fc29329b21202259848cc85522ff1482e582fddd76683bac884afdf8545", size = 2110732, upload-time = "2026-09-10T12:06:38.903Z" },
+    { url = "https://files.pythonhosted.org/packages/37/5f/ad7745cea2df68936942da76df3c176a0a581378c6171db91c2ed6a88271/cassetter-0.11.0-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:7808afd0a4312b6b23b5befd2a1b50b22e5575bfda0340d13249e38200ef9a35", size = 2298322, upload-time = "2026-09-10T12:06:40.866Z" },
+    { url = "https://files.pythonhosted.org/packages/89/57/383494395c4a4bdc27d9bcfb03e0c7fabd9cf2e8fdbc573d280c0352db38/cassetter-0.11.0-cp314-cp314-win_amd64.whl", hash = "sha256:071c31f1a96de84cd8c6f699c6da19a2b38cf74d27bfa61d051327db1e994e8e", size = 2017296, upload-time = "2026-09-10T12:06:42.284Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/33/d100a48e7fcd065b80aca95eadf28531dcd6c686f818cf99f3e402a5ed85/cassetter-0.11.0-cp314-cp314t-macosx_10_12_x86_64.whl", hash = "sha256:3872fba7fde12ccc860aff7d13cc3e6aefdc4dbe65bf6c9de8b73dcf8330e0a5", size = 1988047, upload-time = "2026-09-10T12:06:43.743Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/de/c2c175b5c09a1143cbd472d3270a464836d7c9b0b209f64cac8f2402f258/cassetter-0.11.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:6c602d42f992d95c9eea42171bc7844aca0531c94e385ae70afc218d7abc8ae1", size = 1848022, upload-time = "2026-09-10T12:06:45.227Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/86/34936390872c5f5f24f09a2d96df878942807905e3b6a2551da136572d8f/cassetter-0.11.0-cp314-cp314t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:467562e1d0b8a19ee0eebb294397ea0973a064d1143bbc987d716ec83ffc2a69", size = 1918666, upload-time = "2026-09-10T12:06:46.77Z" },
+    { url = "https://files.pythonhosted.org/packages/54/bb/cdc849e32bf111e7e5613554f1b6b5b3eb9e8133043d3ec3ac5c1260da0a/cassetter-0.11.0-cp314-cp314t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:57020ab03f7cda137310081628af2336347c0be3f64709455570f5bfebc4f411", size = 2065273, upload-time = "2026-09-10T12:06:48.47Z" },
+    { url = "https://files.pythonhosted.org/packages/79/66/3740f408774d3c9f7d950d62a968530b468aba7320945ebdc931e94f97e1/cassetter-0.11.0-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:aedd8c76cc4ca3302c8ed4953b82737b64479e5d15c80d186e5051f5aaa3fea9", size = 2104326, upload-time = "2026-09-10T12:06:50.001Z" },
+    { url = "https://files.pythonhosted.org/packages/59/a4/9b22abd9365e1e6f1b0208882b19a606347158e7c7e61fd21e25561e5a0a/cassetter-0.11.0-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:72fd743caadef19b0ddeac453fa1acff62c746998e81656706654a5f51cb1048", size = 2294473, upload-time = "2026-09-10T12:06:51.516Z" },
+    { url = "https://files.pythonhosted.org/packages/47/10/634e5d897e03beaf808978c337d2b80dc02905570afce0cfec0d71b99910/cassetter-0.11.0-cp314-cp314t-win_amd64.whl", hash = "sha256:18997a61a6da1598d348506502849d5a3129727715d8eed599b8b451789b432b", size = 2016101, upload-time = "2026-09-10T12:06:53.313Z" },
+]
+
+[[package]]
 name = "cbor2"
 version = "6.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -4416,12 +4466,51 @@ wheels = [
 ]
 
 [[package]]
+name = "mongomock"
+version = "4.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pytz" },
+    { name = "sentinels" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4d/a4/4a560a9f2a0bec43d5f63104f55bc48666d619ca74825c8ae156b08547cf/mongomock-4.3.0.tar.gz", hash = "sha256:32667b79066fabc12d4f17f16a8fd7361b5f4435208b3ba32c226e52212a8c30", size = 135862, upload-time = "2024-11-16T11:23:25.957Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/4d/8bea712978e3aff017a2ab50f262c620e9239cc36f348aae45e48d6a4786/mongomock-4.3.0-py2.py3-none-any.whl", hash = "sha256:5ef86bd12fc8806c6e7af32f21266c61b6c4ba96096f85129852d1c4fec1327e", size = 64891, upload-time = "2024-11-16T11:23:24.748Z" },
+]
+
+[[package]]
+name = "mongomock-motor"
+version = "0.0.36"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mongomock" },
+    { name = "motor" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/18/9f/38e42a34ebad323addaf6296d6b5d83eaf2c423adf206b757c68315e196a/mongomock_motor-0.0.36.tar.gz", hash = "sha256:3cf62352ece5af2f02e04d2f252393f88b5fe0487997da00584020cee4b8efba", size = 5754, upload-time = "2025-05-16T22:52:27.214Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/99/f5fdbbdc96bfd03e5f9c36339547a9076f5dbb5882900b7621526d41a38d/mongomock_motor-0.0.36-py3-none-any.whl", hash = "sha256:3ecb7949662b8986ff9c267fa0b1402b5b75a6afd57f03850cd6e13a067e3691", size = 7334, upload-time = "2025-05-16T22:52:25.417Z" },
+]
+
+[[package]]
 name = "more-itertools"
 version = "10.8.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ea/5d/38b681d3fce7a266dd9ab73c66959406d565b3e85f21d5e66e1181d93721/more_itertools-10.8.0.tar.gz", hash = "sha256:f638ddf8a1a0d134181275fb5d58b086ead7c6a72429ad725c67503f13ba30bd", size = 137431, upload-time = "2025-09-02T15:23:11.018Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/8e/469e5a4a2f5855992e425f3cb33804cc07bf18d48f2db061aec61ce50270/more_itertools-10.8.0-py3-none-any.whl", hash = "sha256:52d4362373dcf7c52546bc4af9a86ee7c4579df9a8dc268be0a2f949d376cc9b", size = 69667, upload-time = "2025-09-02T15:23:09.635Z" },
+]
+
+[[package]]
+name = "motor"
+version = "3.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pymongo" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/ae/96b88362d6a84cb372f7977750ac2a8aed7b2053eed260615df08d5c84f4/motor-3.7.1.tar.gz", hash = "sha256:27b4d46625c87928f331a6ca9d7c51c2f518ba0e270939d395bc1ddc89d64526", size = 280997, upload-time = "2025-05-14T18:56:33.653Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/9a/35e053d4f442addf751ed20e0e922476508ee580786546d699b0567c4c67/motor-3.7.1-py3-none-any.whl", hash = "sha256:8a63b9049e38eeeb56b4fdd57c3312a6d1f25d01db717fe7d82222393c410298", size = 74996, upload-time = "2025-05-14T18:56:31.665Z" },
 ]
 
 [[package]]
@@ -6206,7 +6295,8 @@ memory = [
     { name = "cachetools" },
 ]
 redis = [
-    { name = "redis" },
+    { name = "redis", version = "7.1.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "redis", version = "8.1.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
 ]
 
 [[package]]
@@ -6451,6 +6541,7 @@ dev = [
     { name = "blockbuster" },
     { name = "boto3-stubs", extra = ["bedrock-runtime"], marker = "extra == 'group-11-pydantic-ai-dev' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone')" },
     { name = "brotli" },
+    { name = "cassetter" },
     { name = "coverage", extra = ["toml"], marker = "extra == 'group-11-pydantic-ai-dev' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone')" },
     { name = "devtools" },
     { name = "dirty-equals" },
@@ -6463,6 +6554,7 @@ dev = [
     { name = "markdownify" },
     { name = "mcp-types", version = "2.0.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "mcp-types", version = "2.1.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "mongomock-motor" },
     { name = "nest-asyncio" },
     { name = "opentelemetry-instrumentation-logging" },
     { name = "pip" },
@@ -6475,6 +6567,7 @@ dev = [
     { name = "pytest-recording" },
     { name = "pytest-split" },
     { name = "pytest-xdist" },
+    { name = "redis", version = "8.1.0", source = { registry = "https://pypi.org/simple" } },
     { name = "sqlparse" },
     { name = "tavily-python" },
     { name = "trio" },
@@ -6529,6 +6622,7 @@ dev = [
     { name = "blockbuster", specifier = ">=1.5.26,<1.6" },
     { name = "boto3-stubs", extras = ["bedrock-runtime"], specifier = ">=1.42.63" },
     { name = "brotli", specifier = ">=1.2.0" },
+    { name = "cassetter", specifier = ">=0.11.0" },
     { name = "coverage", extras = ["toml"], specifier = ">=7.10.7" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "dirty-equals", specifier = ">=0.9.0" },
@@ -6540,6 +6634,7 @@ dev = [
     { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
     { name = "mcp-types", specifier = ">=2.0.0" },
+    { name = "mongomock-motor", specifier = ">=0.0.36" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "opentelemetry-instrumentation-logging", specifier = ">=0.63b0" },
     { name = "pip", specifier = ">=26.1" },
@@ -6552,6 +6647,7 @@ dev = [
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-split", specifier = ">=0.11.0" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
+    { name = "redis", specifier = ">=8.1.0" },
     { name = "sqlparse", specifier = ">=0.6.0" },
     { name = "tavily-python", specifier = ">=0.5.0" },
     { name = "trio", specifier = ">=0.34.0" },
@@ -7541,7 +7637,7 @@ dependencies = [
     { name = "prometheus-client", marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "py-key-value-aio", extra = ["memory", "redis"], marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "python-json-logger", marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-    { name = "redis", marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "redis", version = "7.1.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "rich", version = "14.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version >= '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "rich", version = "14.3.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version < '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "taskgroup", marker = "(python_full_version < '3.11' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version >= '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
@@ -7577,7 +7673,7 @@ dependencies = [
     { name = "prometheus-client", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "py-key-value-aio", extra = ["memory", "redis"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "python-json-logger", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "redis", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
+    { name = "redis", version = "8.1.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "rich", version = "14.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11' and extra == 'group-11-pydantic-ai-dev') or (python_full_version < '3.11' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "rich", version = "14.3.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.11' and extra == 'group-11-pydantic-ai-dev') or (python_full_version >= '3.11' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version < '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "taskgroup", marker = "(python_full_version < '3.11' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11' and extra == 'group-11-pydantic-ai-dev') or (python_full_version < '3.11' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
@@ -11027,12 +11123,40 @@ wheels = [
 name = "redis"
 version = "7.1.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15'",
+    "python_full_version == '3.14.*'",
+    "python_full_version == '3.13.*'",
+    "python_full_version == '3.12.*'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
 dependencies = [
-    { name = "async-timeout", marker = "python_full_version < '3.11.3' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "async-timeout", marker = "(python_full_version < '3.11.3' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version >= '3.11.3' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.11.3' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/43/c8/983d5c6579a411d8a99bc5823cc5712768859b5ce2c8afe1a65b37832c81/redis-7.1.0.tar.gz", hash = "sha256:b1cc3cfa5a2cb9c2ab3ba700864fb0ad75617b41f01352ce5779dabf6d5f9c3c", size = 4796669, upload-time = "2025-11-19T15:54:39.961Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/89/f0/8956f8a86b20d7bb9d6ac0187cf4cd54d8065bc9a1a09eb8011d4d326596/redis-7.1.0-py3-none-any.whl", hash = "sha256:23c52b208f92b56103e17c5d06bdc1a6c2c0b3106583985a76a18f83b265de2b", size = 354159, upload-time = "2025-11-19T15:54:38.064Z" },
+]
+
+[[package]]
+name = "redis"
+version = "8.1.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15'",
+    "python_full_version == '3.14.*'",
+    "python_full_version == '3.13.*'",
+    "python_full_version == '3.12.*'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "async-timeout", marker = "(python_full_version < '3.11.3' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11.3' and extra == 'group-11-pydantic-ai-dev') or (python_full_version < '3.11.3' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/9d/c5731f6e3608663d4d3656fd8d3aecee8b509c3082818f5a13eae925baea/redis-8.1.0-py3-none-any.whl", hash = "sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb", size = 560618, upload-time = "2026-07-30T08:50:58.497Z" },
 ]
 
 [[package]]
@@ -11885,6 +12009,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a6/bc/0bc9c0ec1cf83ab2ec6e6f38667d167349b950fff6dd2086b79bd360eeca/sentence_transformers-5.2.2.tar.gz", hash = "sha256:7033ee0a24bc04c664fd490abf2ef194d387b3a58a97adcc528783ff505159fa", size = 381607, upload-time = "2026-01-27T11:11:02.658Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cc/21/7e925890636791386e81b52878134f114d63072e79fffe14cdcc5e7a5e6a/sentence_transformers-5.2.2-py3-none-any.whl", hash = "sha256:280ac54bffb84c110726b4d8848ba7b7c60813b9034547f8aea6e9a345cd1c23", size = 494106, upload-time = "2026-01-27T11:11:00.983Z" },
+]
+
+[[package]]
+name = "sentinels"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/9b/07195878aa25fe6ed209ec74bc55ae3e3d263b60a489c6e73fdca3c8fe05/sentinels-1.1.1.tar.gz", hash = "sha256:3c2f64f754187c19e0a1a029b148b74cf58dd12ec27b4e19c0e5d6e22b5a9a86", size = 4393, upload-time = "2025-08-12T07:57:50.26Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/49/65/dea992c6a97074f6d8ff9eab34741298cac2ce23e2b6c74fb7d08afdf85c/sentinels-1.1.1-py3-none-any.whl", hash = "sha256:835d3b28f3b47f5284afa4bf2db6e00f2dc5f80f9923d4b7e7aeeeccf6146a11", size = 3744, upload-time = "2025-08-12T07:57:48.858Z" },
 ]
 
 [[package]]

@@ -23,10 +23,6 @@ import acp
 import pytest
 from acp import RequestError, schema
 from pydantic import BaseModel
-from tests.experimental.acp._acp_clients import (  # pyright: ignore[reportMissingTypeStubs]
-    RecordingClient,
-    RecordingClientBase,
-)
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks
@@ -69,20 +65,27 @@ from pydantic_ai_harness.experimental.acp import (
     run_acp_stdio_sync,
 )
 from pydantic_ai_harness.experimental.acp._adapter import (
-    _finish_reason_to_stop_reason,
-    _TurnState,
-    _usage_limit_stop_reason,
+    _finish_reason_to_stop_reason,  # pyright: ignore[reportPrivateUsage]
+    _TurnState,  # pyright: ignore[reportPrivateUsage]
+    _usage_limit_stop_reason,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.experimental.acp._content import PromptContentBlock
-from pydantic_ai_harness.experimental.acp._presentation import _HANDLERS, absolutize
+from pydantic_ai_harness.experimental.acp._presentation import (
+    _HANDLERS,  # pyright: ignore[reportPrivateUsage]
+    absolutize,
+)
 from pydantic_ai_harness.experimental.acp._serialize import (
     MAX_RAW_FIELD_CHARS,
     MAX_TEXT_UPDATE_BYTES,
-    _escaped_len,
+    _escaped_len,  # pyright: ignore[reportPrivateUsage]
     chunk_text,
 )
 from pydantic_ai_harness.experimental.acp._session import SessionState
 from pydantic_ai_harness.filesystem import FileSystemToolset, FileWrittenEvent
+from tests.harness.experimental.acp._acp_clients import (
+    RecordingClient,
+    RecordingClientBase,
+)
 
 pytestmark = pytest.mark.anyio
 

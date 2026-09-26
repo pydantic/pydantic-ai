@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from _pytest.mark import ParameterSet
 from pydantic import BaseModel
-from vcr.serializers import yamlserializer  # pyright: ignore[reportMissingTypeStubs]
+from vcr.serializers import yamlserializer
 
 _ROOT = Path(__file__).parent.parent
 

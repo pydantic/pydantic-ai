@@ -118,14 +118,14 @@ class TestProperties:
     def test_readiness_url_uses_host_binding(self, tmp_path: Path) -> None:
         docker, _ = _docker_stub(tmp_path)
         assert (
-            LocalStackContainer(docker_path=docker, host_port=4599)._readiness_url
+            LocalStackContainer(docker_path=docker, host_port=4599)._readiness_url  # pyright: ignore[reportPrivateUsage]
             == 'http://127.0.0.1:4599/_localstack/health'
         )
 
     def test_readiness_url_uses_loopback_for_all_interface_binding(self, tmp_path: Path) -> None:
         docker, _ = _docker_stub(tmp_path)
         assert (
-            LocalStackContainer(docker_path=docker, host_address='0.0.0.0', host_port=4599)._readiness_url
+            LocalStackContainer(docker_path=docker, host_address='0.0.0.0', host_port=4599)._readiness_url  # pyright: ignore[reportPrivateUsage]
             == 'http://127.0.0.1:4599/_localstack/health'
         )
 
@@ -298,14 +298,14 @@ class TestLifecycle:
 
     async def test_stop_timeout_raises_and_keeps_container_id(self, tmp_path: Path) -> None:
         container = LocalStackContainer(docker_path=_hanging_docker_stub(tmp_path), startup_timeout=0.05)
-        container._container_id = 'stuck'
+        container._container_id = 'stuck'  # pyright: ignore[reportPrivateUsage]
         with pytest.raises(LocalStackError, match=r'did not stop the LocalStack container stuck within 0.05s'):
             await container.__aexit__(None, None, None)
         assert container.container_id == 'stuck'
 
     async def test_stop_failure_raises_and_keeps_container_id(self, tmp_path: Path) -> None:
         container = LocalStackContainer(docker_path=_failing_docker_stub(tmp_path))
-        container._container_id = 'stuck'
+        container._container_id = 'stuck'  # pyright: ignore[reportPrivateUsage]
         with pytest.raises(LocalStackError, match='Failed to stop LocalStack container stuck: boom: port in use'):
             await container.__aexit__(None, None, None)
         assert container.container_id == 'stuck'
@@ -317,7 +317,7 @@ class TestLifecycle:
 
     async def test_stop_missing_docker_raises_and_keeps_container_id(self, tmp_path: Path) -> None:
         container = LocalStackContainer(docker_path='/no/such/docker')
-        container._container_id = 'orphan'
+        container._container_id = 'orphan'  # pyright: ignore[reportPrivateUsage]
         with pytest.raises(LocalStackError, match=r'Docker CLI .* not found while stopping'):
             await container.__aexit__(None, None, None)
         assert container.container_id == 'orphan'

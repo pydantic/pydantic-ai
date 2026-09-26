@@ -10,8 +10,8 @@ from typing import Protocol
 
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, SecretStr, TypeAdapter, ValidationError
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu
 
 from pydantic_ai.exceptions import UserError
 

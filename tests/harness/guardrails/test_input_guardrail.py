@@ -188,7 +188,7 @@ class TestInputGuardrail:
         agent = Agent(model, capabilities=[InputGuardrail(guard=guard)])
 
         @agent.tool_plain
-        def ping() -> str:  # pyright: ignore[reportUnusedFunction]
+        def ping() -> str:
             return 'pong'
 
         result = await agent.run('hello')

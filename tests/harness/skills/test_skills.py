@@ -113,8 +113,8 @@ class TestSkills:
         agent = Agent(TestModel(), capabilities=[Skills(first), Skills(second)])
         loadable = {
             leaf.id
-            for leaf in leaf_capabilities(agent._root_capability)
-            if leaf.defer_loading  # pyright: ignore[reportPrivateUsage]
+            for leaf in leaf_capabilities(agent._root_capability)  # pyright: ignore[reportPrivateUsage]
+            if leaf.defer_loading
         }
         assert {'alpha', 'beta'} <= loadable
 

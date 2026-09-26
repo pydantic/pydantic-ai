@@ -72,12 +72,12 @@ from pydantic_ai_harness.compaction import (
     pin,
 )
 from pydantic_ai_harness.compaction._clamp_oversized_messages import (
-    _CLAMP_ARGS_KEY,
-    _CLAMP_MARKER,
+    _CLAMP_ARGS_KEY,  # pyright: ignore[reportPrivateUsage]
+    _CLAMP_MARKER,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.compaction._shared import (
-    _history_changed,
-    _is_safe_cutoff,
+    _history_changed,  # pyright: ignore[reportPrivateUsage]
+    _is_safe_cutoff,  # pyright: ignore[reportPrivateUsage]
     compact_with_span,
     find_first_user_message,
     find_safe_cutoff,
@@ -86,14 +86,14 @@ from pydantic_ai_harness.compaction._shared import (
     prepend_first_user_message,
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import (
-    _DEFAULT_SUMMARY_PROMPT,
-    _SUMMARY_PREFIX,
-    _extract_previous_summary,
-    _extract_system_prompts,
-    _format_messages,
+    _DEFAULT_SUMMARY_PROMPT,  # pyright: ignore[reportPrivateUsage]
+    _SUMMARY_PREFIX,  # pyright: ignore[reportPrivateUsage]
+    _extract_previous_summary,  # pyright: ignore[reportPrivateUsage]
+    _extract_system_prompts,  # pyright: ignore[reportPrivateUsage]
+    _format_messages,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
-from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.conftest import agent_run_names
 
 try:
     from logfire.testing import CaptureLogfire
@@ -1159,7 +1159,7 @@ class TestWarnNearLimitsEdgeCases:
     def test_warn_on_subset(self):
         """Can configure warn_on to only include specific limits."""
         lw = WarnNearLimits(max_iterations=10, max_total_tokens=100, warn_on=['iterations'])
-        assert lw._active_kinds == ('iterations',)
+        assert lw._active_kinds == ('iterations',)  # pyright: ignore[reportPrivateUsage]
 
 
 class TestCompactionEdgeCases:

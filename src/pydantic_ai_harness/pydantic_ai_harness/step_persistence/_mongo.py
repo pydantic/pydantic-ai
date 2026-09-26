@@ -35,7 +35,7 @@ from pymongo.errors import DuplicateKeyError
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
-from pydantic_ai_harness.media._mongo import MongoMediaStore  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness.media._mongo import MongoMediaStore
 from pydantic_ai_harness.step_persistence._store import (
     _DEFAULT_MEDIA_THRESHOLD_BYTES,  # pyright: ignore[reportPrivateUsage]
     _AutoMedia,  # pyright: ignore[reportPrivateUsage]

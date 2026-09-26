@@ -11,8 +11,8 @@ import pytest
 from menu_script import Script, pick, typed
 from pydantic import HttpUrl
 from rich.console import Console
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInputResult
 
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.mcp import (

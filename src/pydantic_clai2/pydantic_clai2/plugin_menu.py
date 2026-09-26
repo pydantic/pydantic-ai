@@ -4,8 +4,8 @@ import asyncio
 from collections.abc import Callable, Coroutine, Sequence
 from typing import Generic, Protocol
 
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu, MenuResult
 
 from ._rendering import markdown_style
 from .menu_worker import menu_key, run_worker

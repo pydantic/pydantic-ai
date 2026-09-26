@@ -279,7 +279,7 @@ class TestOutcomes:
         worker = Agent(FunctionModel(worker_fn), name='worker')
 
         @worker.tool_plain
-        def noop() -> str:  # pyright: ignore[reportUnusedFunction]
+        def noop() -> str:
             return 'x'
 
         listener, _ = await _run(

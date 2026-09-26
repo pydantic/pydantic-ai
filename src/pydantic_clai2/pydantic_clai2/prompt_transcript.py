@@ -13,7 +13,7 @@ from rich.color import ColorSystem
 from rich.console import Console
 from rich.style import Style
 from rich.text import Text
-from termflow.ansi.utils import ANSI_ESCAPE_RE, visible_length  # pyright: ignore[reportMissingTypeStubs]
+from termflow.ansi.utils import ANSI_ESCAPE_RE, visible_length
 
 # Rich does not recognize palette OSC commands and renders their payload as text.
 _OSC = re.compile(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)')

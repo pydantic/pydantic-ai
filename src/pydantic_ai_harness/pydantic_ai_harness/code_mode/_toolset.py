@@ -20,7 +20,7 @@ from typing_extensions import NotRequired, Self, TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (

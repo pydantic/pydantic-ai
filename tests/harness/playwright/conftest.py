@@ -29,7 +29,7 @@ if not collect_ignore:  # pragma: no branch
         care about it can count lookups. The cache is module-level, so it is emptied
         between tests.
         """
-        toolset_module._resolution_cache.clear()
+        toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
 
         async def public_address(host: str) -> tuple[str, ...]:
             return ('93.184.216.34',)

@@ -153,8 +153,8 @@ class TestMalformedStreamArgs:
                 ],
             )
             assert run_capability.speculation_stats.launched == 0
-            assert ctx._event_stream_buffer is not None
-            launches = [e for e in ctx._event_stream_buffer if isinstance(e, SpeculativeCallLaunchedEvent)]
+            assert ctx._event_stream_buffer is not None  # pyright: ignore[reportPrivateUsage]
+            launches = [e for e in ctx._event_stream_buffer if isinstance(e, SpeculativeCallLaunchedEvent)]  # pyright: ignore[reportPrivateUsage]
             assert not launches
 
 

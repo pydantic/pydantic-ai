@@ -7,7 +7,7 @@ from typing import IO
 import pytest
 from rich.console import Console
 from rich.text import Text
-from termflow.stream import SmoothWriter  # pyright: ignore[reportMissingTypeStubs]
+from termflow.stream import SmoothWriter
 
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart

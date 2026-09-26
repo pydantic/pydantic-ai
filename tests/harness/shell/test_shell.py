@@ -208,7 +208,7 @@ def persist_toolset(shell_dir: Path) -> ShellToolset[None]:
 class TestCommandValidation:
     async def test_denied_command_blocked(self, toolset: ShellToolset[None]) -> None:
         with pytest.raises(PermissionError, match="'rm' is denied"):
-            toolset._check_command('rm -rf /')
+            toolset._check_command('rm -rf /')  # pyright: ignore[reportPrivateUsage]
 
     async def test_allowed_command_permitted(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -221,8 +221,8 @@ class TestCommandValidation:
             persist_cwd=False,
             allow_interactive=False,
         )
-        ts._check_command('echo hello')
-        ts._check_command('cat file.txt')
+        ts._check_command('echo hello')  # pyright: ignore[reportPrivateUsage]
+        ts._check_command('cat file.txt')  # pyright: ignore[reportPrivateUsage]
 
     async def test_allowed_blocks_non_matching(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -236,7 +236,7 @@ class TestCommandValidation:
             allow_interactive=False,
         )
         with pytest.raises(PermissionError, match='not in the allowed list'):
-            ts._check_command('cat file.txt')
+            ts._check_command('cat file.txt')  # pyright: ignore[reportPrivateUsage]
 
     async def test_both_allow_and_deny_raises(self, shell_dir: Path) -> None:
         with pytest.raises(ValueError, match='Specify allowed_commands or denied_commands'):
@@ -253,7 +253,7 @@ class TestCommandValidation:
 
     async def test_interactive_blocked_by_default(self, toolset: ShellToolset[None]) -> None:
         with pytest.raises(PermissionError, match='Interactive commands'):
-            toolset._check_command('vim file.txt')
+            toolset._check_command('vim file.txt')  # pyright: ignore[reportPrivateUsage]
 
     async def test_interactive_allowed_when_enabled(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -266,7 +266,7 @@ class TestCommandValidation:
             persist_cwd=False,
             allow_interactive=True,
         )
-        ts._check_command('vim file.txt')
+        ts._check_command('vim file.txt')  # pyright: ignore[reportPrivateUsage]
 
     async def test_denied_operator_blocked(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -280,7 +280,7 @@ class TestCommandValidation:
             allow_interactive=False,
         )
         with pytest.raises(PermissionError, match="'>' is not allowed"):
-            ts._check_command('echo hello > file.txt')
+            ts._check_command('echo hello > file.txt')  # pyright: ignore[reportPrivateUsage]
 
     async def test_denied_operator_passes_when_not_present(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -293,13 +293,13 @@ class TestCommandValidation:
             persist_cwd=False,
             allow_interactive=False,
         )
-        ts._check_command('echo hello')
+        ts._check_command('echo hello')  # pyright: ignore[reportPrivateUsage]
 
     async def test_unparseable_command_allowed(self, toolset: ShellToolset[None]) -> None:
-        toolset._check_command("echo 'unterminated")
+        toolset._check_command("echo 'unterminated")  # pyright: ignore[reportPrivateUsage]
 
     async def test_empty_command_allowed(self, toolset: ShellToolset[None]) -> None:
-        toolset._check_command('')
+        toolset._check_command('')  # pyright: ignore[reportPrivateUsage]
 
     async def test_denied_operator_substring_match(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -313,7 +313,7 @@ class TestCommandValidation:
             allow_interactive=False,
         )
         with pytest.raises(PermissionError, match="'>>' is not allowed"):
-            ts._check_command('echo hello >> file.txt')
+            ts._check_command('echo hello >> file.txt')  # pyright: ignore[reportPrivateUsage]
 
     async def test_shlex_error_returns_early(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -326,7 +326,7 @@ class TestCommandValidation:
             persist_cwd=False,
             allow_interactive=False,
         )
-        ts._check_command("echo 'unterminated")
+        ts._check_command("echo 'unterminated")  # pyright: ignore[reportPrivateUsage]
 
     async def test_empty_tokens(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -339,7 +339,7 @@ class TestCommandValidation:
             persist_cwd=False,
             allow_interactive=False,
         )
-        ts._check_command('')
+        ts._check_command('')  # pyright: ignore[reportPrivateUsage]
 
     def test_first_denied_operator_match(self, toolset: ShellToolset[None]) -> None:
         ts = ShellToolset(
@@ -352,7 +352,7 @@ class TestCommandValidation:
             persist_cwd=False,
             allow_interactive=False,
         )
-        assert ts._first_denied_operator('echo hi | cat') == '|'
+        assert ts._first_denied_operator('echo hi | cat') == '|'  # pyright: ignore[reportPrivateUsage]
 
     def test_first_denied_operator_no_match(self, toolset: ShellToolset[None]) -> None:
         ts = ShellToolset(
@@ -365,10 +365,10 @@ class TestCommandValidation:
             persist_cwd=False,
             allow_interactive=False,
         )
-        assert ts._first_denied_operator('echo hello') is None
+        assert ts._first_denied_operator('echo hello') is None  # pyright: ignore[reportPrivateUsage]
 
     def test_first_denied_operator_empty_list(self, toolset: ShellToolset[None]) -> None:
-        assert toolset._first_denied_operator('echo hi | cat') is None
+        assert toolset._first_denied_operator('echo hi | cat') is None  # pyright: ignore[reportPrivateUsage]
 
 
 class TestCwdCapture:
@@ -376,12 +376,12 @@ class TestCwdCapture:
     file, so command output can never spoof the tracked directory."""
 
     def test_capture_disabled_returns_command_unchanged(self, toolset: ShellToolset[None]) -> None:
-        wrapped, cwd_file = toolset._build_cwd_capture('echo hi')
+        wrapped, cwd_file = toolset._build_cwd_capture('echo hi')  # pyright: ignore[reportPrivateUsage]
         assert wrapped == 'echo hi'
         assert cwd_file is None
 
     def test_capture_records_pwd_out_of_band(self, persist_toolset: ShellToolset[None]) -> None:
-        wrapped, cwd_file = persist_toolset._build_cwd_capture('echo hi')
+        wrapped, cwd_file = persist_toolset._build_cwd_capture('echo hi')  # pyright: ignore[reportPrivateUsage]
         assert cwd_file is not None
         try:
             # pwd is redirected to the private temp file, never echoed to stdout
@@ -395,22 +395,22 @@ class TestCwdCapture:
     ) -> None:
         capture = tmp_path / 'cwd'
         capture.write_text(f'{shell_dir / "subdir"}\n')
-        persist_toolset._apply_captured_cwd(capture)
-        assert persist_toolset._cwd == shell_dir / 'subdir'
+        persist_toolset._apply_captured_cwd(capture)  # pyright: ignore[reportPrivateUsage]
+        assert persist_toolset._cwd == shell_dir / 'subdir'  # pyright: ignore[reportPrivateUsage]
 
     def test_apply_empty_file_keeps_cwd(self, persist_toolset: ShellToolset[None], tmp_path: Path) -> None:
-        original = persist_toolset._cwd
+        original = persist_toolset._cwd  # pyright: ignore[reportPrivateUsage]
         capture = tmp_path / 'cwd'
         capture.write_text('')
-        persist_toolset._apply_captured_cwd(capture)
-        assert persist_toolset._cwd == original
+        persist_toolset._apply_captured_cwd(capture)  # pyright: ignore[reportPrivateUsage]
+        assert persist_toolset._cwd == original  # pyright: ignore[reportPrivateUsage]
 
     def test_apply_non_dir_keeps_cwd(self, persist_toolset: ShellToolset[None], tmp_path: Path) -> None:
-        original = persist_toolset._cwd
+        original = persist_toolset._cwd  # pyright: ignore[reportPrivateUsage]
         capture = tmp_path / 'cwd'
         capture.write_text(str(tmp_path / 'does_not_exist'))
-        persist_toolset._apply_captured_cwd(capture)
-        assert persist_toolset._cwd == original
+        persist_toolset._apply_captured_cwd(capture)  # pyright: ignore[reportPrivateUsage]
+        assert persist_toolset._cwd == original  # pyright: ignore[reportPrivateUsage]
 
     async def test_capture_not_utf8_keeps_cwd(self, persist_toolset: ShellToolset[None], shell_dir: Path) -> None:
         # The wrapper runs `pwd` in the same shell as the model's command, so a
@@ -419,7 +419,7 @@ class TestCwdCapture:
         # not an `OSError`, so the guard has to cover both.
         result = await persist_toolset.run_command(r"""pwd() { printf '\377\376'; }""")
         assert '[exit code' not in result
-        assert persist_toolset._cwd == shell_dir
+        assert persist_toolset._cwd == shell_dir  # pyright: ignore[reportPrivateUsage]
 
     async def test_capture_path_too_long_keeps_cwd(
         self, persist_toolset: ShellToolset[None], shell_dir: Path, tmp_path: Path
@@ -429,8 +429,8 @@ class TestCwdCapture:
         # must survive.
         capture = tmp_path / 'cwd'
         capture.write_text(f'/{"x" * 300}')
-        persist_toolset._apply_captured_cwd(capture)
-        assert persist_toolset._cwd == shell_dir
+        persist_toolset._apply_captured_cwd(capture)  # pyright: ignore[reportPrivateUsage]
+        assert persist_toolset._cwd == shell_dir  # pyright: ignore[reportPrivateUsage]
 
 
 class TestForRunIsolation:
@@ -448,11 +448,11 @@ class TestForRunIsolation:
         run1 = await persist_toolset.for_run(_run_context())
         assert isinstance(run1, ShellToolset)
         await run1.run_command('cd subdir')
-        assert run1._cwd == shell_dir / 'subdir'
+        assert run1._cwd == shell_dir / 'subdir'  # pyright: ignore[reportPrivateUsage]
         # A second run must start back at the configured root, not inherit run1's cd.
         run2 = await persist_toolset.for_run(_run_context())
         assert isinstance(run2, ShellToolset)
-        assert run2._cwd == shell_dir
+        assert run2._cwd == shell_dir  # pyright: ignore[reportPrivateUsage]
 
 
 class TestPersistCwdHardening:
@@ -471,7 +471,7 @@ class TestPersistCwdHardening:
         # sentinel string could redirect the tracked cwd with no real cd.
         spoof = f'true ; echo __HARNESS_PWD__{shell_dir / "subdir"}'
         await persist_toolset.run_command(spoof)
-        assert persist_toolset._cwd == shell_dir
+        assert persist_toolset._cwd == shell_dir  # pyright: ignore[reportPrivateUsage]
 
 
 class TestSpawnFailures:
@@ -651,9 +651,9 @@ class TestRunCommand:
             persist_cwd=True,
             allow_interactive=False,
         )
-        original = ts._cwd
+        original = ts._cwd  # pyright: ignore[reportPrivateUsage]
         await ts.run_command('cd nonexistent_dir_xyz && false')
-        assert ts._cwd == original
+        assert ts._cwd == original  # pyright: ignore[reportPrivateUsage]
 
     async def test_denied_command_in_run(self, toolset: ShellToolset[None]) -> None:
         # B2: a denied command is model-correctable, so it surfaces as ModelRetry
@@ -708,9 +708,9 @@ class TestRunCommand:
             persist_cwd=False,
             allow_interactive=False,
         )
-        original = ts._cwd
+        original = ts._cwd  # pyright: ignore[reportPrivateUsage]
         await ts.run_command('cd subdir')
-        assert ts._cwd == original
+        assert ts._cwd == original  # pyright: ignore[reportPrivateUsage]
 
     async def test_nonzero_exit_shows_code(self, toolset: ShellToolset[None]) -> None:
         result = await toolset.run_command('exit 1')
@@ -810,7 +810,7 @@ class TestRunCommand:
             allow_interactive=False,
         )
         await ts.run_command('cd subdir')
-        assert ts._cwd == (shell_dir / 'subdir')
+        assert ts._cwd == (shell_dir / 'subdir')  # pyright: ignore[reportPrivateUsage]
 
     async def test_persist_cwd_not_updated_on_failure(self, shell_dir: Path) -> None:
         """CWD should not update if command fails (exit code non-zero)."""
@@ -824,9 +824,9 @@ class TestRunCommand:
             persist_cwd=True,
             allow_interactive=False,
         )
-        original = ts._cwd
+        original = ts._cwd  # pyright: ignore[reportPrivateUsage]
         await ts.run_command('false')
-        assert ts._cwd == original
+        assert ts._cwd == original  # pyright: ignore[reportPrivateUsage]
 
 
 class TestProcessGroupKill:
@@ -1157,7 +1157,7 @@ class TestBackgroundCommands:
         with patch('anyio.open_process', side_effect=OSError('spawn failed')):
             with pytest.raises(OSError, match='spawn failed'):
                 await ts.start_command('echo hi')
-        assert not ts._background
+        assert not ts._background  # pyright: ignore[reportPrivateUsage]
 
     async def test_aexit_terminates_background_processes(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -1172,7 +1172,7 @@ class TestBackgroundCommands:
         )
         result = await ts.start_command('sleep 300')
         command_id = _parse_command_id(result)
-        bg = ts._background[command_id]
+        bg = ts._background[command_id]  # pyright: ignore[reportPrivateUsage]
         stdout_path = Path(bg.stdout_path)
         stderr_path = Path(bg.stderr_path)
         assert stdout_path.exists()
@@ -1180,7 +1180,7 @@ class TestBackgroundCommands:
 
         await ts.__aexit__(None, None, None)
 
-        assert not ts._background
+        assert not ts._background  # pyright: ignore[reportPrivateUsage]
         assert not stdout_path.exists()
         assert not stderr_path.exists()
 
@@ -1196,7 +1196,7 @@ class TestBackgroundCommands:
             allow_interactive=False,
         )
         await ts.__aexit__(None, None, None)
-        assert not ts._background
+        assert not ts._background  # pyright: ignore[reportPrivateUsage]
 
     async def test_aexit_cleans_already_finished_process(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -1214,11 +1214,11 @@ class TestBackgroundCommands:
         await anyio.sleep(0.5)
         # Mark as finished via check_command
         await ts.check_command(command_id)
-        bg = ts._background[command_id]
+        bg = ts._background[command_id]  # pyright: ignore[reportPrivateUsage]
         assert bg.finished
 
         await ts.__aexit__(None, None, None)
-        assert not ts._background
+        assert not ts._background  # pyright: ignore[reportPrivateUsage]
 
 
 class TestEdgeCases:
@@ -1256,7 +1256,7 @@ class TestEdgeCases:
         )
         # Successful echo -- sentinel shows same dir, cwd should remain valid
         await ts.run_command('echo hi')
-        assert ts._cwd.is_dir()
+        assert ts._cwd.is_dir()  # pyright: ignore[reportPrivateUsage]
 
 
 class TestShellCapability:
@@ -1386,7 +1386,7 @@ class TestKillProcessGroupEdgeCases:
         proc = MagicMock()
         proc.pid = 99999
         with patch('os.killpg', side_effect=ProcessLookupError):
-            await ts._kill_process_group(proc)
+            await ts._kill_process_group(proc)  # pyright: ignore[reportPrivateUsage]
         # No exception raised, method returned early
 
     async def test_sigkill_escalation(self, tmp_path: Path) -> None:
@@ -1420,7 +1420,7 @@ class TestKillProcessGroupEdgeCases:
             patch('os.getpgid', return_value=12345),
             patch('pydantic_ai_harness.shell._toolset._KILL_GRACE_PERIOD', 0.01),
         ):
-            await ts._kill_process_group(proc)
+            await ts._kill_process_group(proc)  # pyright: ignore[reportPrivateUsage]
 
         assert len(kill_calls) == 2
         assert kill_calls[0][1] == signal.SIGTERM
@@ -1459,7 +1459,7 @@ class TestKillProcessGroupEdgeCases:
             patch('os.getpgid', return_value=12345),
             patch('pydantic_ai_harness.shell._toolset._KILL_GRACE_PERIOD', 0.01),
         ):
-            await ts._kill_process_group(proc)
+            await ts._kill_process_group(proc)  # pyright: ignore[reportPrivateUsage]
 
         assert call_count == 2
 
@@ -1498,7 +1498,7 @@ class TestDrainWithTimeoutEdgeCases:
 
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
-        await ts._drain_with_timeout(stdout_chunks, stderr_chunks, proc)
+        await ts._drain_with_timeout(stdout_chunks, stderr_chunks, proc)  # pyright: ignore[reportPrivateUsage]
         assert stdout_chunks == [b'partial']
 
     async def test_stderr_broken_resource_error(self, tmp_path: Path) -> None:
@@ -1533,7 +1533,7 @@ class TestDrainWithTimeoutEdgeCases:
 
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
-        await ts._drain_with_timeout(stdout_chunks, stderr_chunks, proc)
+        await ts._drain_with_timeout(stdout_chunks, stderr_chunks, proc)  # pyright: ignore[reportPrivateUsage]
         assert stderr_chunks == [b'partial']
 
 
@@ -1554,7 +1554,7 @@ class TestReadBgOutputEdgeCases:
         bg.stdout_path = '/nonexistent/path/stdout'
         bg.stderr_path = '/nonexistent/path/stderr'
 
-        stdout, stderr = ts._read_bg_output(bg)
+        stdout, stderr = ts._read_bg_output(bg)  # pyright: ignore[reportPrivateUsage]
         assert stdout == ''
         assert stderr == ''
 
@@ -1578,7 +1578,7 @@ class TestReadBgOutputEdgeCases:
         bg.stdout_path = str(stdout_file)
         bg.stderr_path = '/nonexistent/path/stderr'
 
-        stdout, stderr = ts._read_bg_output(bg)
+        stdout, stderr = ts._read_bg_output(bg)  # pyright: ignore[reportPrivateUsage]
         assert stdout == 'hello'
         assert stderr == ''
 
@@ -1601,7 +1601,7 @@ class TestCleanupBgFilesEdgeCases:
         bg.stderr_path = '/nonexistent/path/stderr'
 
         # Should not raise
-        ts._cleanup_bg_files(bg)
+        ts._cleanup_bg_files(bg)  # pyright: ignore[reportPrivateUsage]
 
 
 class TestStopCommandAlreadyFinished:
@@ -1626,7 +1626,7 @@ class TestStopCommandAlreadyFinished:
 
         # Manually mark as finished with exit_code = None (simulates edge case
         # where finished is True but exit_code was never captured)
-        bg = ts._background[command_id]
+        bg = ts._background[command_id]  # pyright: ignore[reportPrivateUsage]
         bg.finished = True
         bg.exit_code = None
 
@@ -1641,20 +1641,20 @@ class TestResolveEnv:
 
     def test_inherits_when_unconfigured(self, shell_dir: Path) -> None:
         # Neither env nor patterns set -> None, so the subprocess inherits.
-        assert _env_toolset(shell_dir)._resolve_env() is None
+        assert _env_toolset(shell_dir)._resolve_env() is None  # pyright: ignore[reportPrivateUsage]
 
     def test_explicit_env_replaces(self, shell_dir: Path) -> None:
-        resolved = _env_toolset(shell_dir, env={'FOO': 'bar'})._resolve_env()
+        resolved = _env_toolset(shell_dir, env={'FOO': 'bar'})._resolve_env()  # pyright: ignore[reportPrivateUsage]
         assert resolved == {'FOO': 'bar'}
 
     def test_explicit_empty_env_is_not_inheritance(self, shell_dir: Path) -> None:
         # {} produces no child environment vars, distinct from None (inherit all).
-        assert _env_toolset(shell_dir, env={})._resolve_env() == {}
+        assert _env_toolset(shell_dir, env={})._resolve_env() == {}  # pyright: ignore[reportPrivateUsage]
 
     def test_patterns_strip_from_inherited(self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv('OPENAI_API_KEY', 'secret')
         monkeypatch.setenv('SAFE_VAR', 'keep')
-        resolved = _env_toolset(shell_dir, denied_env_patterns=['OPENAI_*'])._resolve_env()
+        resolved = _env_toolset(shell_dir, denied_env_patterns=['OPENAI_*'])._resolve_env()  # pyright: ignore[reportPrivateUsage]
         assert resolved is not None
         assert 'OPENAI_API_KEY' not in resolved
         assert resolved.get('SAFE_VAR') == 'keep'
@@ -1664,7 +1664,7 @@ class TestResolveEnv:
             shell_dir,
             env={'OPENAI_API_KEY': 'secret', 'PATH': '/usr/bin'},
             denied_env_patterns=['OPENAI_*'],
-        )._resolve_env()
+        )._resolve_env()  # pyright: ignore[reportPrivateUsage]
         assert resolved == {'PATH': '/usr/bin'}
 
     def test_patterns_no_match_keeps_base(self, shell_dir: Path) -> None:
@@ -1672,7 +1672,7 @@ class TestResolveEnv:
             shell_dir,
             env={'FOO': 'bar'},
             denied_env_patterns=['OPENAI_*'],
-        )._resolve_env()
+        )._resolve_env()  # pyright: ignore[reportPrivateUsage]
         assert resolved == {'FOO': 'bar'}
 
     def test_pattern_match_is_case_sensitive(self, shell_dir: Path) -> None:
@@ -1681,7 +1681,7 @@ class TestResolveEnv:
             shell_dir,
             env={'openai_api_key': 'secret'},
             denied_env_patterns=['OPENAI_*'],
-        )._resolve_env()
+        )._resolve_env()  # pyright: ignore[reportPrivateUsage]
         assert resolved == {'openai_api_key': 'secret'}
 
 
@@ -1754,7 +1754,7 @@ class TestEnvControlPropagation:
         ts = _env_toolset(shell_dir, env={'FOO': 'bar'}, denied_env_patterns=['OPENAI_*'])
         run_ts = await ts.for_run(_run_context())
         assert isinstance(run_ts, ShellToolset)
-        assert run_ts._resolve_env() == {'FOO': 'bar'}
+        assert run_ts._resolve_env() == {'FOO': 'bar'}  # pyright: ignore[reportPrivateUsage]
 
     def test_capability_defaults_inherit(self) -> None:
         shell = Shell()
@@ -1769,13 +1769,13 @@ class TestEnvControlPropagation:
         )
         toolset = shell.get_toolset()
         assert isinstance(toolset, ShellToolset)
-        assert toolset._resolve_env() == {'FOO': 'bar'}
+        assert toolset._resolve_env() == {'FOO': 'bar'}  # pyright: ignore[reportPrivateUsage]
 
     def test_llm_pattern_constant_strips_provider_keys(self, tmp_path: Path) -> None:
         shell = Shell(cwd=tmp_path, denied_env_patterns=list(LLM_API_KEY_ENV_PATTERNS))
         toolset = shell.get_toolset()
         assert isinstance(toolset, ShellToolset)
-        resolved = toolset._resolve_env()
+        resolved = toolset._resolve_env()  # pyright: ignore[reportPrivateUsage]
         assert resolved is not None
         # None of the provider-credential prefixes survive.
         leaked = {

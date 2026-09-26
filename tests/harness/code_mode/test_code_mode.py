@@ -61,7 +61,11 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
-from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME, ToolSearchToolset, parse_discovered_tools
+from pydantic_ai.toolsets._tool_search import (
+    _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
+    ToolSearchToolset,
+    parse_discovered_tools,
+)
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -71,10 +75,10 @@ from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolse
 from pydantic_ai_harness.code_mode._capability import (
     _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
-    _SEARCH_TOOLS_MODIFIER,
-    _TOOL_SEARCH_ADDENDUM,
-    _sanitize_tool_name,
+from pydantic_ai_harness.code_mode._toolset import (
+    _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
+    _TOOL_SEARCH_ADDENDUM,  # pyright: ignore[reportPrivateUsage]
+    _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     global_mode_is_sequential,
 )
 
@@ -1561,7 +1565,7 @@ class TestCodeMode:
         agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()])
 
         @agent.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             return a + b
 
         result = await agent.run('use code mode twice')
@@ -2079,7 +2083,7 @@ class TestCodeMode:
         agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()])
 
         @agent.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             """Add two numbers."""
             return a + b
 
@@ -2121,7 +2125,7 @@ class TestCodeMode:
         )
 
         @capability.tool_plain
-        def demo_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+        def demo_tool() -> str:
             return 'ok'  # pragma: no cover - deferred tool stays hidden, body is not invoked
 
         model = TestModel(call_tools=[])
@@ -2165,7 +2169,7 @@ class TestCodeMode:
         )
 
         @capability.tool_plain
-        def demo_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+        def demo_tool() -> str:
             return 'ok'  # pragma: no cover - only the signature reaches the model here
 
         seen_tools: list[set[str]] = []
@@ -2613,7 +2617,7 @@ class TestCodeMode:
         )
 
         @agent.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             """Add two numbers."""
             return a + b
 

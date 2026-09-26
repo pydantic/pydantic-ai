@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import get_args
 
 from pydantic import HttpUrl, JsonValue, TypeAdapter, ValidationError
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInput  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
+from termflow.tui.menu import Menu
+from termflow.tui.textinput import TextInput
 
 from .._rendering import markdown_style
 from ..field_menu import TERMINAL, Runners, first_error

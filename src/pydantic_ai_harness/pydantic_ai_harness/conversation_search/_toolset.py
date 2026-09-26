@@ -218,7 +218,7 @@ def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | Non
     # Tool-list bookkeeping rather than conversation, so there is no line to contribute.
     # Redundant against the union as it stands today, but kept explicit so the fallthrough
     # below stays a real branch at runtime rather than dead code.
-    if isinstance(part, ToolAvailabilityDeltaPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if isinstance(part, ToolAvailabilityDeltaPart):
         return None
     # A part pydantic-ai added after this was written. Indexing it would mean guessing which
     # of its fields read as conversation, and a search index is not worth failing a run over,

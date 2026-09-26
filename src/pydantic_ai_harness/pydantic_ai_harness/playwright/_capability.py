@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness.playwright._toolset import (

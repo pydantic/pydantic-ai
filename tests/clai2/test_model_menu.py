@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from menu_script import Script, make_context, pick, typed
 from pydantic import JsonValue, ValidationError
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks

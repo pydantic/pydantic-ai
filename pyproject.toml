@@ -276,6 +276,12 @@ dev = [
     "sqlparse>=0.6.0",
     "nest-asyncio>=1.6.0",
     "azure-identity>=1.25.3",
+    # Storage backends `pydantic-ai-harness` supports, faked or run against a live server.
+    "mongomock-motor>=0.0.36",
+    "redis>=8.1.0",
+    # `pydantic-clai2` records `httpx2` traffic with cassetter's context manager; its pytest plugin
+    # stays disabled (`-p no:cassetter`) so `pytest-recording` keeps owning the `vcr` fixture.
+    "cassetter>=0.11.0",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -421,6 +427,8 @@ include = [
     "tests",
     "examples",
     "clai",
+    "src/pydantic_ai_harness",
+    "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
 ]
