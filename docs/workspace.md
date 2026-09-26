@@ -437,25 +437,28 @@ class HostWorkspaceBackend(WorkspaceBackend):
         self._base_dir = base_dir
         self._ref = ref
         self._local: LocalWorkspaceBackend | None = None
+        self._lock = anyio.Lock()
 
     @property
     def ref(self) -> WorkspaceRef | None:
         return self._ref
 
     async def _directory(self) -> LocalWorkspaceBackend:
-        if self._local is None:
-            if self._ref is None:
-                # No reference: create the environment, then report its identity.
-                directory = anyio.Path(self._base_dir / uuid.uuid4().hex)
-                await directory.mkdir()
-                self._ref = WorkspaceRef(provider='host', id=directory.name)
-            else:
-                # A reference: attach to the environment it names, or fail. Never create a replacement.
-                directory = anyio.Path(self._base_dir / self._ref.id)
-                if not await directory.is_dir():
-                    raise WorkspaceUnavailableError(f'workspace {self._ref.id!r} no longer exists')
-            self._local = LocalWorkspaceBackend(Path(directory))
-        return self._local
+        # Concurrent first operations must agree on one environment and its ref.
+        async with self._lock:
+            if self._local is None:
+                if self._ref is None:
+                    # No reference: create the environment, then report its identity.
+                    directory = anyio.Path(self._base_dir / uuid.uuid4().hex)
+                    await directory.mkdir()
+                    self._ref = WorkspaceRef(provider='host', id=directory.name)
+                else:
+                    # A reference: attach to the environment it names, or fail. Never create a replacement.
+                    directory = anyio.Path(self._base_dir / self._ref.id)
+                    if not await directory.is_dir():
+                        raise WorkspaceUnavailableError(f'workspace {self._ref.id!r} no longer exists')
+                self._local = LocalWorkspaceBackend(Path(directory))
+            return self._local
 
     async def run(
         self,
@@ -475,7 +478,7 @@ class HostWorkspaceBackend(WorkspaceBackend):
 ```
 
 - The constructor does no I/O. The first operation creates the environment, or attaches to the one
-  `ref` names.
+  `ref` names. Concurrent first operations must create only one environment and share its ref.
 - `ref` is `None` until the environment exists, then names it. Durable execution needs it set once
   any operation has completed.
 - A `ref` whose environment is gone raises `WorkspaceUnavailableError`. The backend never creates a

@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
+import anyio
 import pytest
 
 from .protocol import SupportsCommands, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
@@ -49,6 +50,11 @@ class WorkspaceBackendSuite:
     @pytest.fixture
     def backend(self) -> WorkspaceBackend | AsyncIterator[WorkspaceBackend]:
         raise NotImplementedError('provide a `backend` fixture')
+
+    @pytest.fixture
+    def fresh_backend(self) -> Callable[[], WorkspaceBackend] | None:
+        """Build an uninitialized backend to check concurrent first use, if supported."""
+        return None
 
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend] | None:
@@ -133,6 +139,33 @@ class WorkspaceBackendSuite:
         await backend.working_dir()
         assert isinstance(created, WorkspaceRef) and backend.ref == created
         assert before in (None, created)
+
+    async def test_concurrent_first_use_shares_one_environment(
+        self, fresh_backend: Callable[[], WorkspaceBackend] | None
+    ) -> None:
+        if fresh_backend is None:
+            pytest.skip('backend does not provide a fresh_backend factory')
+        backend = fresh_backend()
+        assert backend.ref is None
+        workspace = Workspace(backend)
+        paths = [f'concurrent-{uuid.uuid4().hex}' for _ in range(5)]
+
+        async def write(path: str) -> None:
+            await workspace.write_bytes(path, path.encode())
+
+        try:
+            async with anyio.create_task_group() as group:
+                for path in paths:
+                    group.start_soon(write, path)
+            ref = backend.ref
+            assert isinstance(ref, WorkspaceRef)
+            for path in paths:
+                assert await workspace.read_bytes(path) == path.encode()
+                assert backend.ref == ref
+        finally:
+            for path in paths:
+                if await workspace.exists(path):
+                    await workspace.remove(path)
 
     async def test_bytes_round_trip_and_write_creates_parents(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
