@@ -133,6 +133,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from ..workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
     AbstractAgent,
@@ -1723,9 +1724,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # it. Selecting does no I/O: a backend creates or attaches on its first operation.
         requested_ref = workspace if isinstance(workspace, WorkspaceRef) else None
         # `'new'` asks for a fresh environment, so the ref in history is not offered.
-        offered_ref = historical_workspace_ref if workspace is None else requested_ref
-        # A backend or `Workspace` passed to the run is used as is.
-        explicit = None if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef) else workspace
+        # The automatic unattached placeholder is not an explicit refusal: a child can
+        # choose its own capability. A caller-built `UnavailableWorkspace` remains explicit.
+        is_unattached = isinstance(workspace, Workspace) and isinstance(workspace.backend, _UnattachedWorkspace)
+        offered_ref = historical_workspace_ref if workspace is None or is_unattached else requested_ref
+        explicit = (
+            None
+            if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef) or is_unattached
+            else workspace
+        )
         # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
         pre_run_layers = _combine_layer_duplicates([base_capability], extra_capabilities)
         pre_run_root = _compose_layers(pre_run_layers)

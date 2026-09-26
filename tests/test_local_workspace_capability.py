@@ -26,6 +26,25 @@ pytestmark = [
 ]
 
 
+async def test_unattached_placeholder_does_not_shadow_child_capability(tmp_path: Path) -> None:
+    child = Agent(TestModel(call_tools=['write']), capabilities=[LocalWorkspace(tmp_path)])
+
+    @child.tool
+    async def write(ctx: RunContext[Any]) -> str:
+        await ctx.workspace.write_text('child.txt', 'ready')
+        return 'ready'
+
+    parent = Agent(TestModel(call_tools=['delegate']))
+
+    @parent.tool
+    async def delegate(ctx: RunContext[Any]) -> str:
+        result = await child.run('go', workspace=ctx.workspace)
+        return result.output
+
+    await parent.run('go')
+    assert (tmp_path / 'child.txt').read_text() == 'ready'
+
+
 async def test_tools_use_the_local_workspace(tmp_path: Path) -> None:
     agent = Agent(TestModel(call_tools=['write_and_run']), capabilities=[LocalWorkspace(tmp_path)])
 
