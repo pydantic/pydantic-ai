@@ -159,7 +159,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             # O_NONBLOCK lets us inspect FIFOs and devices without opening a blocking stream.
             fd = os.open(self._path(path), os.O_RDONLY | os.O_NONBLOCK)
             with os.fdopen(fd, 'rb') as file:
-                if not stat_module.S_ISREG(os.fstat(fd).st_mode):
+                mode = os.fstat(fd).st_mode
+                if stat_module.S_ISDIR(mode):
+                    raise IsADirectoryError(path)
+                if not stat_module.S_ISREG(mode):
                     raise OSError(f'not a regular file: {path!r}')
                 return file.read()
 
