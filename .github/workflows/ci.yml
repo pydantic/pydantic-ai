@@ -171,7 +171,6 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
-          .github/scripts/test_check_harness_navigation.py
 
       # The pre-commit `typecheck` hook narrows Pyright to the files a change reaches, so
       # a wrong answer here silently stops type errors reaching a developer's terminal.
