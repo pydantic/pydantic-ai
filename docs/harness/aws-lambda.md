@@ -171,7 +171,7 @@ to the model it was recorded for. The default model keeps the plain, suffix-less
   re-execution after an interruption *within* an attempt, but the retry policy still starts further
   attempts that do execute the body. For a tool that must not repeat, set both:
 
-    ```python {names="defined"}
+    ```python {names="defined" py="3.11"}
     from aws_durable_execution_sdk_python.config import StepSemantics
     from aws_durable_execution_sdk_python.retries import RetryPresets
 

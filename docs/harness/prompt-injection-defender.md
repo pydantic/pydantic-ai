@@ -33,7 +33,7 @@ content. To classify text under other fields, install the ML extra and enable
 pip/uv-add "pydantic-ai-harness[prompt-injection-defender-ml]"
 ```
 
-```python
+```python {py="3.11"}
 from pydantic_ai_harness import PromptInjectionDefender
 
 capability = PromptInjectionDefender(semantic_detection=True)
@@ -41,7 +41,7 @@ capability = PromptInjectionDefender(semantic_detection=True)
 
 ## Usage
 
-```python
+```python {py="3.11"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import PromptInjectionDefender
 
@@ -86,7 +86,7 @@ conflicting option, or using an invalid `blocked_message` placeholder raises a
 
 ## Observing detections
 
-```python
+```python {py="3.11"}
 from typing import Any
 
 from stackone_defender import DefenseResult
@@ -126,7 +126,7 @@ application and is not sent to the model.
 
 ## Custom defense
 
-```python
+```python {py="3.11"}
 from stackone_defender import create_prompt_defense
 
 from pydantic_ai_harness import PromptInjectionDefender

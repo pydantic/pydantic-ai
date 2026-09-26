@@ -55,7 +55,7 @@ pip/uv-add "pydantic-ai-harness[browser-use]"
 Then pass `BrowserUse` to an `Agent` via the `capabilities` parameter, with a
 model for the sub-agent:
 
-```python
+```python {py="3.11"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import BrowserUse
 
@@ -123,7 +123,7 @@ browser-use can upload those files to a page without an approval or destination
 policy. Use a custom factory to introduce uploads only with controls appropriate
 to your application.
 
-```python
+```python {py="3.11"}
 from pydantic_ai_harness import BrowserUse
 from pydantic_ai_harness.browser_use import BrowserAgentSettings
 
@@ -148,7 +148,7 @@ The tool then returns the validated result as JSON; a final result that does
 not parse surfaces to the host model as a retry prompt instead of malformed
 output:
 
-```python
+```python {py="3.11"}
 from pydantic import BaseModel
 
 from pydantic_ai_harness import BrowserUse
@@ -175,7 +175,7 @@ seeing the values: the model is shown only placeholder keys and writes
 browser. Scope entries to a domain with the nested form, and combine with
 `allowed_domains` so the values cannot be typed anywhere else:
 
-```python
+```python {py="3.11"}
 from pydantic_ai_harness import BrowserUse
 
 BrowserUse(
@@ -269,7 +269,7 @@ origin.
   manager. Closing is final: a `browse_web` after `aclose()` raises rather than
   starting a browser that nothing is left to close.
 
-```python
+```python {py="3.11"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import BrowserUse
 
@@ -306,7 +306,7 @@ below, or to `''` to contribute no instructions at all. (`guidance` steers the
 
 Every field of `BrowserUse` with its default:
 
-```python
+```python {py="3.11"}
 from pydantic_ai_harness import BrowserUse
 
 BrowserUse(
@@ -338,7 +338,7 @@ substitute a fake in tests so nothing launches a browser. It receives a
 `BrowserTask` with everything the tool prepared for the call, including the
 resolved `settings`, and returns the agent to run:
 
-```python
+```python {py="3.11"}
 from browser_use import Agent as BrowserUseAgent
 
 from pydantic_ai_harness import BrowserUse
