@@ -318,10 +318,18 @@ class DurableWorkspace(WrapperWorkspace):
         await self._ensure()
         return await self._dispatch(call, ref=self._ref)
 
+    def _run_context(self) -> RunContext[Any]:
+        """The ambient run context when it is this workspace's run, else the run's own context.
+
+        The ambient context is set around `before_run` and model requests; elsewhere (tool hooks,
+        `after_run`, `result.workspace` after the run) and in another run that uses this run's
+        `result.workspace`, the run's own context serves, so the unit reaches this environment.
+        """
+        ambient = get_current_run_context()
+        return ambient if ambient is not None and ambient.workspace is self else self._ctx
+
     async def _dispatch(self, call: WorkspaceCall, *, ref: WorkspaceRef | None) -> WorkspaceCallResult:
-        # The ambient context is set around `before_run` and model requests; elsewhere (tool hooks,
-        # `after_run`, `result.workspace` after the run) the run's own context serves.
-        ctx = get_current_run_context() or self._ctx
+        ctx = self._run_context()
         result = await self._durability._call_workspace(  # pyright: ignore[reportPrivateUsage]
             WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
         )
@@ -343,7 +351,7 @@ class DurableWorkspace(WrapperWorkspace):
             if self.wrapped.ref != result.ref:
                 # A fresh environment: rebuild the selection on its ref, so this side attaches to what
                 # the unit created instead of creating another on first use.
-                ctx = get_current_run_context() or self._ctx
+                ctx = self._run_context()
                 assert ctx.root_capability is not None
                 rebuilt = select_workspace(ctx.root_capability, ctx, result.ref)
                 if rebuilt is None:

@@ -561,3 +561,19 @@ async def test_run_never_ensures_without_an_attached_workspace() -> None:
     assert result.workspace.ref == WorkspaceRef(provider='fake', id='known')
     # A known ref still gets one `ensure`, which journals the working directory and attaches once.
     assert _workspace_units(durability) == ['ensure']
+
+
+async def test_a_child_result_workspace_used_in_the_parent_reaches_the_childs_environment() -> None:
+    """In the parent's workflow code the ambient run context is the parent's, not the child's."""
+    child_supplier = WorkspaceCapability(FakeWorkspace('child', {'/workspace/who.txt': b'child'}))
+    parent_supplier = WorkspaceCapability(FakeWorkspace('parent', {'/workspace/who.txt': b'parent'}))
+    child = Agent(TestModel(), name='child', capabilities=[child_supplier, FakeDurability()])
+    seen: list[str] = []
+
+    class Delegate(AbstractCapability[Any]):
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            seen.append(await (await child.run('go')).workspace.read_text('who.txt'))
+
+    await Agent(TestModel(), name='parent', capabilities=[Delegate(), parent_supplier, FakeDurability()]).run('go')
+
+    assert seen == ['child']
