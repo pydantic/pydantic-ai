@@ -855,6 +855,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
+        # An instructions-only capability contributes no tool activity to register. If a tool
+        # is added later, it could not gain a durable registration retroactively either.
+        if ts_id is None and isinstance(ts, FunctionToolset) and not ts.tools:
+            return ts
         if ts_id is None and isinstance(ts, DynamicToolset):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "

@@ -23,7 +23,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
@@ -52,6 +52,7 @@ try:
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall
+    from pydantic_ai.durable_exec.prefect import PrefectDurability
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         PydanticAIPlugin,
@@ -106,6 +107,14 @@ with workflow.unsafe.imports_passed_through():
 _REF_ADAPTER: TypeAdapter[WorkspaceRef | None] = TypeAdapter(WorkspaceRef | None)
 
 pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::pydantic.PydanticDeprecatedSince20')]
+
+
+@pytest.mark.parametrize('durability', [TemporalDurability, PrefectDurability])
+def test_instructions_only_capability_needs_no_toolset_id(
+    durability: type[TemporalDurability] | type[PrefectDurability],
+) -> None:
+    agent = Agent(TestModel(), name='instructions_only', capabilities=[Capability(instructions='x'), durability()])
+    assert agent is not None
 
 
 def test_temporal_runner_passes_installed_harness_through(monkeypatch: pytest.MonkeyPatch) -> None:
