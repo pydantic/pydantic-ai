@@ -24,6 +24,7 @@ from typing_extensions import Never, TypeAliasType, assert_never
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._genai_prices import fill_response_cost
+from .._run_context import context_window_fraction
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -207,6 +208,18 @@ class TranscriptUpdate:
     __repr__ = dataclasses_no_defaults_repr
 
 
+class _InFlightResponse:
+    """Where a user turn belongs when it began while the model was still answering: after that answer.
+
+    The answer isn't in history yet, so there is no message to anchor to. The placeholder is swapped for
+    the response once it is recorded (see `_resolve_in_flight_user_turn_anchors`).
+    """
+
+
+_IN_FLIGHT_RESPONSE = _InFlightResponse()
+_UserTurnAnchor = ModelMessage | _InFlightResponse | None
+
+
 @dataclass
 class _UserTurn:
     part: SpeechPart
@@ -247,6 +260,11 @@ _FULL_PROFILE = RealtimeModelProfile(
 # 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
 # the text a user is reading, so they get a deep window for a trivial cost.
 _AUDIO_TAP_SECONDS = 300
+# How long a user turn that barged in waits for the response it interrupted to be recorded, so it can
+# follow that response in history. The provider's terminal for a cut-off response normally arrives within
+# a second of the user starting to speak; past this, the turn is recorded where history stands instead of
+# staying out of `all_messages()` for as long as a provider keeps talking.
+_BARGE_IN_TURN_HOLD_SECONDS = 5.0
 # The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
 # also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
 _AUDIO_TAP_MAX_CHUNKS = 30_000
@@ -666,6 +684,8 @@ class RealtimeSession:
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
         self._responses_are_requests = self._profile.get('responses_are_requests', True)
+        # The latest context-window fraction the provider reported, if it reports one at all.
+        self._reported_context_window_used: float | None = None
         # Whether this session owns the audio transport. `False` for a WebRTC sideband session: the
         # browser exchanges audio with the provider directly, and this connection is only the control
         # plane, so the audio methods are unavailable and no audio bytes flow over it (transcripts still
@@ -829,9 +849,16 @@ class RealtimeSession:
         # `_open_user_turn_anchor`. Provider item IDs keep overlapping turns paired with their own
         # anchors; `_pending_anonymous_user_turn_anchors` is only for providers whose events carry no
         # item ID. It is a queue because a transcript can arrive after the next audio turn starts.
-        self._pending_anonymous_user_turn_anchors: deque[ModelMessage | None] = deque()
-        self._pending_user_turn_anchors: dict[str, tuple[ModelMessage | None]] = {}
-        self._user_turn_anchors: dict[str | None, ModelMessage | None] = {}
+        self._pending_anonymous_user_turn_anchors: deque[_UserTurnAnchor] = deque()
+        self._pending_user_turn_anchors: dict[str, tuple[_UserTurnAnchor]] = {}
+        self._user_turn_anchors: dict[str | None, _UserTurnAnchor] = {}
+        # User turns held in `_pending_sent_requests` until the response they interrupted is recorded, and
+        # the watchdog that records them anyway if it never is (see `_BARGE_IN_TURN_HOLD_SECONDS`).
+        self._held_user_turns: list[ModelRequest] = []
+        self._held_user_turn_watchdog: asyncio.TimerHandle | None = None
+        # Whether audio was sent since the last `commit_audio()` or `clear_audio()`: committing an empty
+        # buffer is no user turn.
+        self._audio_uncommitted = False
         # Retained input audio (`audio_retention='input_audio'`/`'all'`). `_input_audio` is the rolling buffer
         # of audio sent since the last turn boundary; on providers that report a per-item speech-stopped
         # boundary, each segment is cut into `_input_audio_by_id` keyed by its input item id, so overlapping
@@ -1046,6 +1073,7 @@ class RealtimeSession:
             queue_dropped_structural=self._queue_dropped_structural,
         )
         self._loop = None
+        self._stop_held_user_turn_watchdog()
 
         # Do not hide the caller's own exception, but make sure every receive-side failure has one
         # delivery point even when iteration stopped early or was never started. Stored rather than
@@ -1187,6 +1215,28 @@ class RealtimeSession:
         (Gemini Live, for example, listens at 16 kHz and speaks at 24 kHz).
         """
         return self._profile.get('audio_output_sample_rate', DEFAULT_AUDIO_SAMPLE_RATE)
+
+    @property
+    def context_window_used(self) -> float | None:
+        """Fraction of the model's context window occupied, as of the latest report.
+
+        When the provider reports it (OpenAI GPT-Live), this is the latest value it reported. Otherwise
+        it is computed as for a standard run's
+        [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]: the latest
+        response's [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] over the model's
+        [`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window].
+
+        The value can go down as the session continues, when the provider compacts or truncates the
+        conversation server-side. Returns `None` when the ratio cannot be calculated: when the context
+        window or usage is unknown, before the first response, or when the model's response usage
+        doesn't measure what the context holds (see
+        [`response_usage_covers_context`][pydantic_ai.realtime.RealtimeModelProfile.response_usage_covers_context]).
+        """
+        if self._reported_context_window_used is not None:
+            return self._reported_context_window_used
+        if not self._profile.get('response_usage_covers_context', True):
+            return None
+        return context_window_fraction(self.all_messages(), self._profile.get('context_window'))
 
     def stream_audio(self) -> AsyncIterator[bytes]:
         """Stream model audio chunks ready for playback.
@@ -1631,6 +1681,11 @@ class RealtimeSession:
             self._history.append(request)
 
     @property
+    def _response_output_in_flight(self) -> bool:
+        """Whether the model has begun producing a response that isn't recorded yet."""
+        return self._active_assistant is not None or bool(self._response_parts or self._native_tool_parts)
+
+    @property
     def _response_in_flight(self) -> bool:
         return bool(
             self._active_assistant is not None
@@ -1681,7 +1736,12 @@ class RealtimeSession:
                 await self.send_audio(chunk)
             return
         user_turn_was_active = self._user_turn_active
-        if not self._anonymous_user_turn_awaiting_answer:
+        audio_was_uncommitted = self._audio_uncommitted
+        # Without input transcription, a provider that reports speech boundaries opens each turn itself,
+        # at speech start. Audio alone is then no turn: an always-on microphone streams silence between
+        # utterances, and taking it for one would record a phantom turn per response and one at close.
+        audio_opens_turn = self._input_transcription_enabled or not self._provider_segments_input
+        if audio_opens_turn and not self._anonymous_user_turn_awaiting_answer:
             if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
                 for event in self._finalize_user():
                     self._publish_taps(event)
@@ -1705,9 +1765,11 @@ class RealtimeSession:
             # correctly skips the truncation for that case.
             if self._retain_input:
                 self._input_audio.extend(data)
+            self._audio_uncommitted = True
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
         except BaseException:
             self._user_turn_active = user_turn_was_active
+            self._audio_uncommitted = audio_was_uncommitted
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):
                 del self._input_audio[previous_length:]
             raise
@@ -1718,6 +1780,17 @@ class RealtimeSession:
         self._require_media_ownership('commit_audio')
         self._require_capability('supports_manual_turn_control', method='commit_audio', feature='manual turn-taking')
         await self._send_frame(CommitAudio())
+        if not self._audio_uncommitted:
+            # The provider rejects an empty commit, so there is no user turn to record.
+            return
+        self._audio_uncommitted = False
+        if (
+            self._input_transcription_enabled
+            and len(self._pending_anonymous_user_turn_anchors) <= self._anonymous_user_turns_ended
+        ):
+            # The audio was sent while the model was still answering the previous turn, so it reserved no
+            # place in history; the committed turn belongs after that answer.
+            self._open_user_turn_anchor()
         self._user_turn_active = True
         for event in self._finalize_untranscribed_user():
             self._queue_put(event)
@@ -1728,6 +1801,7 @@ class RealtimeSession:
         self._require_media_ownership('clear_audio')
         self._require_capability('supports_manual_turn_control', method='clear_audio', feature='manual turn-taking')
         await self._send_frame(ClearAudio())
+        self._audio_uncommitted = False
         # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
         self._input_audio.clear()
@@ -2227,6 +2301,7 @@ class RealtimeSession:
                 # at this response boundary. A provider-reported cost arrived in those events too.
                 self.usage.incr(RequestUsage(cost=response.usage.cost))  # usage-attribution: the session owns its spans
             self._history.append(response)
+            self._resolve_in_flight_user_turn_anchors(response)
             if not any(isinstance(part, ToolCallPart) for part in parts):
                 # The model has said what it had to say (a tool call means its answer is still to come),
                 # so audio from here on can be the user's next turn again.
@@ -2247,6 +2322,7 @@ class RealtimeSession:
         if self._pending_sent_requests:
             self._history.extend(self._pending_sent_requests)
             self._pending_sent_requests = []
+            self._stop_held_user_turn_watchdog()
         self._session_instrumentation.end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
@@ -2258,6 +2334,34 @@ class RealtimeSession:
         self._response_limit_checked = False
         if response is not None:
             self._check_response_boundary_limits()
+
+    def _release_held_user_turns(self) -> None:
+        """Record the barge-in user turns still waiting on the response they interrupted, which never came."""
+        self._held_user_turn_watchdog = None
+        # Still waiting in `_pending_sent_requests`: the response that would have flushed them also ends the hold.
+        for request in self._held_user_turns:
+            self._remove_sent_request(request)
+            self._history.append(request)
+        self._held_user_turns = []
+
+    def _stop_held_user_turn_watchdog(self) -> None:
+        if self._held_user_turn_watchdog is not None:
+            self._held_user_turn_watchdog.cancel()
+            self._held_user_turn_watchdog = None
+        self._held_user_turns = []
+
+    def _resolve_in_flight_user_turn_anchors(self, response: ModelResponse) -> None:
+        """Anchor the user turns that began while `response` was being produced to it, now that it's recorded."""
+        anchors = self._pending_anonymous_user_turn_anchors
+        for index, anchor in enumerate(anchors):
+            if isinstance(anchor, _InFlightResponse):
+                anchors[index] = response
+        for item_id, (anchor,) in self._pending_user_turn_anchors.items():
+            if isinstance(anchor, _InFlightResponse):
+                self._pending_user_turn_anchors[item_id] = (response,)
+        for key, anchor in self._user_turn_anchors.items():
+            if isinstance(anchor, _InFlightResponse):
+                self._user_turn_anchors[key] = response
 
     def _check_response_boundary_limits(self) -> None:
         """Check the usage limits against a response that has just been finalized.
@@ -2522,9 +2626,15 @@ class RealtimeSession:
         if not self._input_transcription_enabled:
             return []
         events = self._finalize_user()
-        if not events and self._user_turn_active:
+        if (
+            not events
+            and not self._response_output_in_flight
+            and len(self._pending_anonymous_user_turn_anchors) > self._anonymous_user_turns_ended
+        ):
             # The transcript can lag behind the output that marks its boundary. Remember that the
             # anonymous turn is already over so the next audio segment can close it after it arrives.
+            # Only the reply's first output marks that boundary: audio sent while the model answers
+            # opens nothing that output could end.
             self._anonymous_user_turns_ended += 1
             self._user_turn_active = False
             self._anonymous_user_turn_awaiting_answer = True
@@ -2595,13 +2705,16 @@ class RealtimeSession:
         after the tool call and return in between; replaying that history reads as the model calling a tool
         unprompted. So the turn's position is taken when it starts (audio begins flowing, or the provider
         reports speech started), and `_record_user_request` inserts there however late the transcript is.
+
+        A turn that starts while the model is still answering (a barge-in) belongs after that answer, which
+        isn't in history yet: it's anchored to the in-flight response, resolved once that is recorded.
         """
-        anchor = self._history[-1] if self._history else None
+        anchor = self._user_turn_anchor_here()
+        anchors = self._pending_anonymous_user_turn_anchors
         if item_id is None:
             # Audio or a speech-start frame unambiguously opens the next anonymous turn, so later
             # transcript and speech-end frames must no longer be treated as stragglers for the last one.
             self._anonymous_user_turn_finalized = False
-            anchors = self._pending_anonymous_user_turn_anchors
             if len(anchors) > self._anonymous_user_turns_ended:
                 # An anonymous turn is still open — local audio reserved its place already — so a
                 # speech start now is the provider confirming that turn, not a new one: re-anchor it
@@ -2610,24 +2723,49 @@ class RealtimeSession:
             else:
                 anchors.append(anchor)
         else:
+            if len(anchors) > self._anonymous_user_turns_ended:
+                # The provider named the turn local audio opened: its speech start is the fresher position.
+                anchors.pop()
             self._pending_user_turn_anchors[item_id] = (anchor,)
+
+    def _user_turn_anchor_here(self) -> _UserTurnAnchor:
+        """Where a user turn starting now belongs: after the response being produced, or else the last message."""
+        if self._response_output_in_flight:
+            return _IN_FLIGHT_RESPONSE
+        return self._history[-1] if self._history else None
 
     def _claim_user_turn_anchor(self, item_id: str | None) -> None:
         """Attach the starting turn's remembered position to the item the transcript identified it as."""
-        if item_id is None:
-            has_anchor = bool(self._pending_anonymous_user_turn_anchors)
-            anchor = self._pending_anonymous_user_turn_anchors.popleft() if has_anchor else None
+        anchor: _UserTurnAnchor
+        anchors = self._pending_anonymous_user_turn_anchors
+        if item_id is not None and (pending_anchor := self._pending_user_turn_anchors.pop(item_id, None)):
+            (anchor,) = pending_anchor
+        elif anchors:
+            # With no speech start to name it (push-to-talk reports none), an identified turn is the one
+            # the audio sent for it opened.
+            anchor = anchors.popleft()
+            if item_id is not None and self._anonymous_user_turns_ended:
+                self._anonymous_user_turns_ended -= 1
         else:
-            pending_anchor = self._pending_user_turn_anchors.pop(item_id, None)
-            anchor = pending_anchor[0] if pending_anchor is not None else None
-            has_anchor = pending_anchor is not None
-        # No anchor when the first thing we ever hear about the turn is its transcript (text-only sessions
-        # seeded with audio, or a provider that reports nothing before it); the turn starts here instead.
-        self._user_turn_anchors[item_id] = anchor if has_anchor else (self._history[-1] if self._history else None)
+            # No anchor when the first thing we ever hear about the turn is its transcript (text-only
+            # sessions seeded with audio, a provider that reports nothing before it, or audio sent while the
+            # model was answering, which reserves no place); the turn starts here instead.
+            anchor = self._user_turn_anchor_here()
+        self._user_turn_anchors[item_id] = anchor
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
         """Record a finalized user turn at the position it held when it started."""
         anchor = self._user_turn_anchors.pop(item_id)
+        if isinstance(anchor, _InFlightResponse):
+            # The response this turn began during is still being produced: the turn follows it, in the
+            # same place as a request sent meanwhile, for as long as `_BARGE_IN_TURN_HOLD_SECONDS` allows.
+            self._pending_sent_requests.append(request)
+            self._held_user_turns.append(request)
+            if self._held_user_turn_watchdog is None:
+                self._held_user_turn_watchdog = asyncio.get_running_loop().call_later(
+                    _BARGE_IN_TURN_HOLD_SECONDS, self._release_held_user_turns
+                )
+            return
         insert_at = 0
         if anchor is not None:
             for index in range(len(self._history) - 1, -1, -1):
@@ -2812,6 +2950,9 @@ class RealtimeSession:
         self._flush_pending_users()
         events.extend(self._finalize_untranscribed_user())
         self._input_audio.clear()
+        # The audio sent so far was just settled as a turn (and a reconnected provider has no buffer holding
+        # it), so a `commit_audio()` from here on commits nothing until more audio is sent.
+        self._audio_uncommitted = False
 
         if self._response_in_flight:
             events.extend(self._finalize_assistant_part())
@@ -3205,6 +3346,8 @@ class RealtimeSession:
 
     async def _handle_usage_event(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
+        if event.context_window_used is not None:
+            self._reported_context_window_used = event.context_window_used
         if event.response_scoped:
             self._begin_response()
             if not self._responses_are_requests:
