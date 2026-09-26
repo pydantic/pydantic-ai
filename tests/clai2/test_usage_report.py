@@ -27,6 +27,8 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.status import Status
 from pydantic_clai2.usage_report import cost_line, format_cost, session_usage, usage_command
 
+pytestmark = pytest.mark.anyio
+
 PromptT = TypeVar('PromptT')
 
 

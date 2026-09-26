@@ -14,6 +14,8 @@ from pydantic_ai_harness.filesystem import FileEditedEvent
 from pydantic_clai2 import StreamRenderer, theme
 from pydantic_clai2.theme_picker import theme_preview
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.mark.parametrize('name', theme.names())
 @pytest.mark.parametrize('width', [46, 86])

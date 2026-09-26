@@ -1051,7 +1051,7 @@ class TestGuardChain:
             capabilities=[InputGuardrail(guard=[blocked_keywords(['nope']), redact_secrets], parallel=True)],
         )
 
-        with pytest.raises(UserError, match=r'incompatible with GuardrailResult.replace'):
+        with pytest.raises(UserError, match=r'incompatible with GuardrailResult\.replace'):
             await agent.run(f'k {_OPENAI_KEY}')
 
     async def test_a_mid_chain_replacement_must_still_be_prompt_text(self):

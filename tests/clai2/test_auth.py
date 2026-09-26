@@ -16,6 +16,8 @@ from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, lo
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 
+pytestmark = pytest.mark.anyio
+
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
 )

@@ -15,6 +15,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.settings_store import SettingsStore
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

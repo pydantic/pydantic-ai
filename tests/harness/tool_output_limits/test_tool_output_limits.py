@@ -67,6 +67,8 @@ from tests.harness.conftest import agent_run_names
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
+pytestmark = pytest.mark.anyio
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

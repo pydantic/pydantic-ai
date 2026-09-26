@@ -8,7 +8,6 @@ import anyio
 import pytest
 from rich.console import Console
 from rich.text import Text
-from test_live_prompt import editor
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -20,6 +19,9 @@ from pydantic_clai2._session import Session
 from pydantic_clai2.live_prompt import LivePrompt
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.test_live_prompt import editor
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize('supplied_handler', [False, True])

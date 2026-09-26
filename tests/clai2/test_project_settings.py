@@ -19,6 +19,8 @@ from pydantic_clai2.config import PluginSettings, resolve_settings
 from pydantic_clai2.project_settings import PROJECT_FILE, ProjectSettings, find_project_file, load_project_settings
 from pydantic_clai2.settings_store import SettingsStore
 
+pytestmark = pytest.mark.anyio
+
 
 def write(directory: Path, content: dict[str, JsonValue]) -> Path:
     path = directory / PROJECT_FILE
@@ -108,7 +110,7 @@ def test_plugins_are_validated_declarations_that_start_off(tmp_path: Path) -> No
 )
 def test_bad_values_fail_startup(tmp_path: Path, content: dict[str, JsonValue]) -> None:
     write(tmp_path, content)
-    with pytest.raises(ValueError, match=r'settings.json'):
+    with pytest.raises(ValueError, match=r'settings\.json'):
         load_project_settings(tmp_path)
 
 
@@ -127,7 +129,7 @@ def test_not_an_object_fails_startup(tmp_path: Path) -> None:
     path = tmp_path / PROJECT_FILE
     path.parent.mkdir()
     path.write_text('[1, 2]')
-    with pytest.raises(ValueError, match=r'settings.json'):
+    with pytest.raises(ValueError, match=r'settings\.json'):
         load_project_settings(tmp_path)
 
 

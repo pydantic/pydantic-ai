@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-from menu_script import Script, make_context, pick, typed
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
@@ -21,6 +20,9 @@ from pydantic_clai2.model_menu import ModelMenu, ModelSettingsSource, open_add_m
 from pydantic_clai2.model_picker import ModelPickerAction, build_model_picker, model_command, model_completions
 from pydantic_clai2.model_settings import ModelSettingsForm, model_settings_from_json
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.menu_script import Script, make_context, pick, typed
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
@@ -224,7 +226,7 @@ async def test_saved_model_picker_and_completion(tmp_path: Path) -> None:
     assert await model_command(context, [], runners=script.runners) == 'Saved model. Applied.'
     assert context.settings.model == 'test' and applied == ['model']
     assert await model_command(context, [original]) == 'Saved model. Applied.'
-    with pytest.raises(ValueError, match=r'Model not added: unknown. Use /add_model'):
+    with pytest.raises(ValueError, match=r'Model not added: unknown\. Use /add_model'):
         await model_command(context, ['unknown'])
     with pytest.raises(ValueError, match='Usage: /model'):
         await model_command(context, ['test', 'extra'])

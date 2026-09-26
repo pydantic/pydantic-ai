@@ -23,6 +23,8 @@ from pydantic_clai2._session import Session
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.sessions import activate
 
+pytestmark = pytest.mark.anyio
+
 
 def saved_session(tmp_path: Path) -> Session[None, str]:
     return Session(

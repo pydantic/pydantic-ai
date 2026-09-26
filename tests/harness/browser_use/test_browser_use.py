@@ -44,6 +44,8 @@ from pydantic_ai_harness.browser_use import (
     default_browser_agent,
 )
 
+pytestmark = pytest.mark.anyio
+
 T = TypeVar('T', bound=BaseModel)
 
 

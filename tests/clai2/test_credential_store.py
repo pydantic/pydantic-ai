@@ -22,6 +22,8 @@ from pydantic_clai2.credential_store import (
     save_codex_credentials,
 )
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

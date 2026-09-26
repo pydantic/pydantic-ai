@@ -85,7 +85,7 @@ class TestOutputGuardrail:
             TestModel(custom_output_text='leaks SSN 123-45-6789'),
             capabilities=[OutputGuardrail(guard=lambda out: 'SSN' not in str(out))],
         )
-        with pytest.raises(OutputBlocked, match=r'Output blocked by output guardrail.'):
+        with pytest.raises(OutputBlocked, match=r'Output blocked by output guardrail\.'):
             await agent.run('hello')
 
     async def test_blocks_with_custom_message(self):

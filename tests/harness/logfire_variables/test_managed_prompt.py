@@ -219,7 +219,7 @@ async def test_records_variable_resolution_span(capfire: CaptureLogfire) -> None
                     'value': '"You are a helpful assistant."',
                     'label': 'null',
                     'version': 'null',
-                    'reason': 'no_provider',
+                    'reason': 'code_default',
                     'logfire.json_schema': '{"type":"object","properties":{"name":{},"targeting_key":{"type":"null"},"attributes":{"type":"object"},"value":{},"label":{"type":"null"},"version":{"type":"null"},"reason":{}}}',
                 },
             }

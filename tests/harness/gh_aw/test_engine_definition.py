@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
 
-DEFINITION = Path(__file__).parents[2] / 'gh-aw' / 'pydantic.md'
+DEFINITION = Path(__file__).parents[3] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
 
 _CLI_PACKAGES = ('argcomplete', 'prompt_toolkit', 'pyperclip', 'rich')
 

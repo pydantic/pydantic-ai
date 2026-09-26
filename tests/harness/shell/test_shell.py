@@ -29,6 +29,8 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
 
+pytestmark = pytest.mark.anyio
+
 
 def _env_toolset(
     shell_dir: Path,
@@ -766,7 +768,7 @@ class TestRunCommand:
     def test_non_positive_max_output_chars_rejected(self, shell_dir: Path) -> None:
         # Matches LocalStackToolset: a cap of 0 would blank every response,
         # including start_command's ID line, leaving its process unstoppable.
-        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer.'):
+        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer\.'):
             _shell_toolset(shell_dir, max_output_chars=0)
 
     async def test_stdout_chunks_joined_cleanly(self, shell_dir: Path) -> None:

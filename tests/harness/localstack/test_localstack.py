@@ -23,6 +23,8 @@ from pydantic_ai_harness.localstack import LocalStack, LocalStack as Exported, L
 
 from ._http_server import HttpResponse, http_server, unused_tcp_port
 
+pytestmark = pytest.mark.anyio
+
 
 def _toolset(
     *,
@@ -90,11 +92,11 @@ def _docker_stub(tmp_path: Path) -> tuple[str, Path]:
 
 class TestConstruction:
     def test_allow_and_deny_mutually_exclusive(self) -> None:
-        with pytest.raises(ValueError, match=r'Specify allowed_services or denied_services, not both.'):
+        with pytest.raises(ValueError, match=r'Specify allowed_services or denied_services, not both\.'):
             _toolset(allowed_services=['s3'], denied_services=['dynamodb'])
 
     def test_non_positive_max_output_chars_rejected(self) -> None:
-        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer.'):
+        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer\.'):
             _toolset(max_output_chars=0)
 
 
@@ -436,7 +438,7 @@ class TestContainerManagement:
 
     async def test_managed_defaults_to_edge_port_when_endpoint_has_no_port(self, tmp_path: Path) -> None:
         docker, log = _docker_stub(tmp_path)
-        with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
+        with pytest.raises(LocalStackError, match=r'did not become ready within 1\.0s'):
             async with _toolset(
                 endpoint_url='http://localhost',
                 manage_container=True,

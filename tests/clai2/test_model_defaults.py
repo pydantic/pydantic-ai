@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-from menu_script import Script, make_context, pick
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 
@@ -19,6 +18,9 @@ from pydantic_clai2.model_menu import (
 from pydantic_clai2.model_options import model_options
 from pydantic_clai2.model_settings import model_defaults
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.menu_script import Script, make_context, pick
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
