@@ -251,7 +251,7 @@ also lead outside a file root; check `realpath` before a write, for example:
 ```python
 import posixpath
 
-from pydantic_ai.workspaces import WrapperWorkspace, WorkspaceReadOnlyError
+from pydantic_ai.workspaces import WorkspaceReadOnlyError, WrapperWorkspace
 
 
 class RootedWrites(WrapperWorkspace):
