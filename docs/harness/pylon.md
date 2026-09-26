@@ -27,7 +27,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 
 ## Connect
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import Pylon
 

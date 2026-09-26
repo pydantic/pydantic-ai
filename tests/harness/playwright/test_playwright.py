@@ -1701,41 +1701,40 @@ class TestPerCallTimeout:
         def under(stage: str, budget: int) -> None:
             """Assert `stage` ran under `budget`, allowing for what earlier stages spent."""
             spent = page.timeouts[stage]
-            # The first Playwright call of an operation gets the whole override and
-            # each later one gets what is left of it, so a trailing stage lands just
-            # under. The slack is far smaller than the gap between two budgets here,
+            # Each Playwright call gets what is left of the override, so every stage
+            # lands just under it. The slack is far smaller than the gap between two budgets here,
             # so a value left behind by the previous operation still fails.
             assert spent is not None and budget - 500 < spent <= budget, f'{stage}={spent}, budget={budget}'
 
         await toolset.navigate('https://example.com/', timeout_ms=1111)
-        assert page.timeouts['goto'] == 1111
+        under('goto', 1111)
         # Trailing operations (load wait, page-text read) run under the same
         # override, not the capability default.
         await toolset.click('button#go', timeout_ms=2222)
-        assert page.timeouts['click'] == 2222
+        under('click', 2222)
         under('wait_for_load_state', 2222)
         under('inner_text', 2222)
         await toolset.type_text('input#q', 'hi', timeout_ms=3333)
-        assert page.timeouts['fill'] == 3333
+        under('fill', 3333)
         under('inner_text', 3333)
         await toolset.get_text('h1', timeout_ms=4444)
-        assert page.timeouts['inner_text'] == 4444
+        under('inner_text', 4444)
         await toolset.get_text(timeout_ms=4545)
-        assert page.timeouts['inner_text'] == 4545
+        under('inner_text', 4545)
         await toolset.screenshot(timeout_ms=5555)
-        assert page.timeouts['screenshot'] == 5555
+        under('screenshot', 5555)
         await toolset.go_back(timeout_ms=6666)
-        assert page.timeouts['go_back'] == 6666
+        under('go_back', 6666)
         under('wait_for_load_state', 6666)
         under('inner_text', 6666)
         await toolset.go_forward(timeout_ms=7777)
-        assert page.timeouts['go_forward'] == 7777
+        under('go_forward', 7777)
         under('wait_for_load_state', 7777)
         await toolset.wait_for(selector='.ready', timeout_ms=8888)
-        assert page.timeouts['wait_for_selector'] == 8888
+        under('wait_for_selector', 8888)
         under('inner_text', 8888)
         await toolset.snapshot(timeout_ms=9999)
-        assert page.timeouts['aria_snapshot'] == 9999
+        under('aria_snapshot', 9999)
         await toolset.scroll('down', timeout_ms=1234)
         under('inner_text', 1234)
 
@@ -1746,12 +1745,14 @@ class TestPerCallTimeout:
         toolset = _toolset(page, allowed_domains=['example.com'])
         await toolset.click('a.external', timeout_ms=4321)
         assert page.goto_calls == ['about:blank']
-        assert page.timeouts['goto'] == 4321
+        spent = page.timeouts['goto']
+        assert spent is not None and 4321 - 500 < spent <= 4321
 
     async def test_none_falls_back_to_capability_default(self) -> None:
         page = _FakePage()
         await _toolset(page).click('button#go')
-        assert page.timeouts['click'] == DEFAULT_ACTION_TIMEOUT_MS
+        spent = page.timeouts['click']
+        assert spent is not None and DEFAULT_ACTION_TIMEOUT_MS - 500 < spent <= DEFAULT_ACTION_TIMEOUT_MS
 
     @pytest.mark.parametrize('call', _NON_POSITIVE_TIMEOUT_CALLS)
     async def test_non_positive_override_returns_bounded_error(

@@ -457,9 +457,8 @@ class ExaToolset(FunctionToolset):
     capability in the Pydantic AI Harness:
 
     ```python {test="skip"}
-    from pydantic_ai_harness.exa import ExaSearch
-
     from pydantic_ai import Agent
+    from pydantic_ai_harness.exa import ExaSearch
 
     agent = Agent('openai:gpt-5.2', capabilities=[ExaSearch()])
     ```

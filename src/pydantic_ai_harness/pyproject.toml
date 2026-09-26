@@ -53,7 +53,8 @@ codemode = ["pydantic-ai-slim[duckduckgo]=={{ version }}", "pydantic-monty>=1.0.
 researcher = ["pydantic-ai-slim[duckduckgo,web-fetch]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
-logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ version }}"]
+# `logfire.variables` needs `pydantic_handlebars.extract_dependencies` (0.2.1), which logfire does not require.
+logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ version }}", "pydantic-handlebars>=0.2.1"]
 modal = ["modal>=1.5.0"]
 dynamic-workflow = ["pydantic-monty>=1.0.0,<2"]
 # The SDK breaks across minors, so cap per minor.

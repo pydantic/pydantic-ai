@@ -403,8 +403,11 @@ jobs:
           # The extras its suite always ran with; every other extra is covered by `all-extras`.
           - name: pydantic-ai-harness
             command: "--package pydantic-ai-harness --extra code-mode --extra coder --extra logfire"
+            # Its own suite: the rest of `tests/` is covered by the other cells.
+            paths: tests/harness
           - name: pydantic-clai2
             command: "--package pydantic-clai2"
+            paths: tests/clai2
           - name: standard
             command: ""
     env:
@@ -454,7 +457,7 @@ jobs:
             runner=(pytest)
           fi
           uv run ${{ matrix.install.command }} "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec
+            --ignore=tests/durable_exec ${{ matrix.install.paths }}
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 

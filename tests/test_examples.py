@@ -531,6 +531,7 @@ def test_docs_examples(
     env.set('LINEAR_ACCESS_TOKEN', 'testing')
     env.set('ORDINAL_ACCESS_TOKEN', 'testing')
     env.set('PYLON_ACCESS_TOKEN', 'testing')
+    env.set('STACKONE_API_KEY', 'testing')
     env.set('YDC_API_KEY', 'testing')
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
