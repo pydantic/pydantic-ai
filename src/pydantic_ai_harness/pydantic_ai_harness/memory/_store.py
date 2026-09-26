@@ -255,7 +255,7 @@ class InMemoryStore:
         self._receipts = {}
         self._generation = 0
         self._paths = sorted(self._files)
-        self._lock = anyio.Lock()
+        self._lock = anyio.Lock(fast_acquire=True)
 
     @property
     def files(self) -> Mapping[str, str]:

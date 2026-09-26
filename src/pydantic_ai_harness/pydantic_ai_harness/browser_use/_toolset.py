@@ -455,8 +455,8 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         self._active_call_sessions = 0
         self._call_cleanup_in_progress = False
         self._call_condition = asyncio.Condition()
-        self._cleanup_lock = anyio.Lock()
-        self._session_lock = anyio.Lock()
+        self._cleanup_lock = anyio.Lock(fast_acquire=True)
+        self._session_lock = anyio.Lock(fast_acquire=True)
         self.add_function(self.browse_web, name=_TOOL_NAME)
 
     def _build_session(self) -> BrowserSession:

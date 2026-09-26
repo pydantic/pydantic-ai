@@ -208,7 +208,7 @@ class ModalSandboxSession:
         self._cwd: str | None = None
         # Serializes the one-time `pwd` probe so a batch of concurrent tool calls resolving
         # relative paths fires a single probe, not one per call (see `_resolve`).
-        self._cwd_lock = anyio.Lock()
+        self._cwd_lock = anyio.Lock(fast_acquire=True)
 
     @property
     def sandbox_id(self) -> str | None:

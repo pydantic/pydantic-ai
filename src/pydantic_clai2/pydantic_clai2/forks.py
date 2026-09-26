@@ -130,7 +130,7 @@ class Forks(Generic[DepsT, OutputT]):
         self._busy = 0
         self._idle = asyncio.Event()
         self._idle.set()
-        self._terminal = anyio.Lock()
+        self._terminal = anyio.Lock(fast_acquire=True)
         self._held: list[tuple[str, str]] = []
 
     @property

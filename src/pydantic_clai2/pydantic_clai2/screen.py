@@ -22,7 +22,7 @@ class Screen:
     def __init__(self) -> None:
         """Start without a stream or editor to suspend."""
         self._take: FullScreen = bare_screen
-        self._owner = anyio.Lock()
+        self._owner = anyio.Lock(fast_acquire=True)
         self.editor: FullScreen | None = None
 
     @contextmanager

@@ -1069,7 +1069,7 @@ class PlaywrightBrowserSession:
         self._browser: PlaywrightBrowserHandle | None = None
         self._context: PlaywrightBrowserContext | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
-        self._launch_lock = anyio.Lock()
+        self._launch_lock = anyio.Lock(fast_acquire=True)
         self.tracer: Tracer = _FALLBACK_TRACER
         """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
@@ -1605,7 +1605,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         self._max_content_tokens = max_content_tokens
         self._action_timeout_ms = action_timeout_ms
         self._navigation_timeout_ms = navigation_timeout_ms
-        self._operation_lock = anyio.Lock()
+        self._operation_lock = anyio.Lock(fast_acquire=True)
         self.add_function(self.navigate, name='navigate')
         self.add_function(self.click, name='click')
         self.add_function(self.type_text, name='type_text')

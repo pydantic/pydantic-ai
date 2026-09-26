@@ -70,7 +70,7 @@ class PostgresMemoryStore:
         self._version_sequence = f'{table}_versions'
         self._metadata_table = f'{table}_metadata'
         self._schema_ready = False
-        self._schema_lock = anyio.Lock()
+        self._schema_lock = anyio.Lock(fast_acquire=True)
 
     async def _ensure_schema(self) -> None:
         if self._schema_ready:

@@ -161,7 +161,7 @@ class TerminalAnswerer:
         self._full_screen = full_screen
         self._console = console if console is not None else Console()
         self._runner = runner
-        self._terminal = anyio.Lock()
+        self._terminal = anyio.Lock(fast_acquire=True)
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""

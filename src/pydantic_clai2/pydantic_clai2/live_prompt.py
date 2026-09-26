@@ -106,7 +106,7 @@ class LivePrompt:
         self._completion_pending = False
         self._completion_revision = 0
         self._complete = anyio.Event()
-        self._completion_owner = anyio.Lock()
+        self._completion_owner = anyio.Lock(fast_acquire=True)
         self._completion_scope: anyio.CancelScope | None = None
         self._completion_worker = CompletionWorker()
         self._completion_error = ''

@@ -233,7 +233,7 @@ class StepBridge:
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
-        self._order = anyio.Lock()
+        self._order = anyio.Lock(fast_acquire=True)
 
     async def run_step(
         self,

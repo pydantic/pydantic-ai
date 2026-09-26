@@ -86,7 +86,7 @@ class PostgresPlanStore:
         self._table = table
         self._emitter = event_emitter
         self._ready = False
-        self._schema_lock = anyio.Lock()
+        self._schema_lock = anyio.Lock(fast_acquire=True)
 
     _SELECT_COLUMNS = 'id, content, status, active_form, parent_id, depends_on'
 
