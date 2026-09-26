@@ -400,8 +400,9 @@ jobs:
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
+          # The extras its suite always ran with; every other extra is covered by `all-extras`.
           - name: pydantic-ai-harness
-            command: "--package pydantic-ai-harness"
+            command: "--package pydantic-ai-harness --extra code-mode --extra coder --extra logfire"
           - name: pydantic-clai2
             command: "--package pydantic-clai2"
           - name: standard
