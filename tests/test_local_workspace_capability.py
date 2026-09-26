@@ -26,6 +26,20 @@ pytestmark = [
 ]
 
 
+async def test_override_workspace_precedence(tmp_path: Path) -> None:
+    original, replacement, explicit = (tmp_path / part for part in ('original', 'replacement', 'explicit'))
+    for path in (original, replacement, explicit):
+        path.mkdir()
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(original)])
+    replacement_backend = LocalWorkspaceBackend(replacement)
+    with agent.override(workspace=replacement_backend):
+        assert (await agent.run('go')).workspace.ref == replacement_backend.ref
+        assert (await agent.run('go', workspace=LocalWorkspaceBackend(explicit))).workspace.ref == WorkspaceRef(
+            provider='local', id=str(explicit)
+        )
+    assert (await agent.run('go')).workspace.ref == WorkspaceRef(provider='local', id=str(original))
+
+
 @pytest.mark.parametrize('invalid', [{'provider': 'local', 'id': '/tmp'}, '/tmp', Path('/tmp'), 'old', 42])
 async def test_invalid_workspace_argument_fails_before_model_call(invalid: object) -> None:
     agent = Agent(TestModel())

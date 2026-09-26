@@ -806,6 +806,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             '_override_output_retries', default=None
         )
         self._override_tool_retries: ContextVar[_utils.Option[int]] = ContextVar('_override_tool_retries', default=None)
+        self._override_workspace: ContextVar[
+            _utils.Option[WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | None]
+        ] = ContextVar('_override_workspace', default=None)
         self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
             '_override_root_capability', default=None
         )
@@ -1720,6 +1723,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             workspace=unattached_workspace(),
         )
 
+        if workspace is None and (override_workspace := self._override_workspace.get()) is not None:
+            workspace = override_workspace.value
         # The workspace is selected before `for_run`, like the bootstrap model above, so `for_run` can use
         # it. Selecting does no I/O: a backend creates or attaches on its first operation.
         if (
@@ -2119,6 +2124,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
+        workspace: WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | None | _utils.Unset = _utils.UNSET,
     ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -2143,6 +2149,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
                 dict to override just one (e.g. `retries={'tools': 3}`).
                 When set, any per-run `retries` argument is ignored.
+            workspace: Workspace for runs without an explicit `workspace=` argument; overrides history and capabilities.
             spec: Optional agent spec providing defaults for override. Explicit params take precedence
                 over spec values. When the spec includes `capabilities`, they replace (not merge with)
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
@@ -2191,6 +2198,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 override_output_retries = resolved.output_retries
             if not _utils.is_set(override_tool_retries) and resolved.tool_retries is not None:
                 override_tool_retries = resolved.tool_retries
+
+        workspace_token = (
+            self._override_workspace.set(
+                _utils.Some(cast(WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | None, workspace))
+            )
+            if _utils.is_set(workspace)
+            else None
+        )
 
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -2263,6 +2278,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         try:
             yield
         finally:
+            if workspace_token is not None:
+                self._override_workspace.reset(workspace_token)
             if name_token is not None:
                 self._override_name.reset(name_token)
             if deps_token is not None:

@@ -405,6 +405,10 @@ class ProjectNotes(AbstractCapability):
 Realtime sessions do not currently select workspaces, even when the agent has a workspace capability.
 Workspace tools in a realtime session report this limit instead of suggesting a second capability.
 
+For tests, `with agent.override(workspace=LocalWorkspaceBackend(path)):` temporarily uses a local
+workspace instead of the agent's capability or the ref in history. An explicit per-run `workspace=`
+still wins over the override.
+
 ## Writing a backend
 
 A backend is the object that talks to one environment; `Workspace` wraps it to give tools the
