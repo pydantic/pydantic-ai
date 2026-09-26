@@ -48,13 +48,14 @@ problem as a finding (blocking / warning / nit) with a concrete fix.
    option names, defaults, and safety caveats. They need not be identical prose,
    but they must not contradict each other or the code.
 4. **Links.** Unified doc: harness-internal links are relative `.md`
-   (`[Shell](shell.md)`); Pydantic AI links use
-   root-relative internal paths `/ai/<section>/<page>/` (not legacy
-   `ai.pydantic.dev` links); no leftover `../../README.md`, `../capabilities/`,
-   `../experimental/`, or badge markup.
+   (`[Shell](shell.md)`); other Pydantic AI pages are relative `.md` links from
+   `docs/harness/` (`[Toolsets](../toolsets.md)`), and API elements use
+   reference-style links (`[RunContext][pydantic_ai.tools.RunContext]`). No
+   root-relative `/ai/...` paths or legacy `ai.pydantic.dev` links, no leftover
+   `../../README.md`, and no badge markup.
    README: absolute links are fine.
 5. **Source link + API block.** Every page links its source module
-   (`https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/<module>/`)
+   (`https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/<module>/`)
    so a reading agent can verify behavior -- a missing source link is a finding.
    Where the capability exposes a public class, the page may also end with a
    `## API reference` section of `::: pydantic_ai_harness...` autodoc blocks

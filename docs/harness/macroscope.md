@@ -11,7 +11,7 @@ CLI, parses the streamed findings, and returns them as structured data. The
 agent validates each finding and fixes the real ones with the tools it already
 has -- this capability surfaces findings only.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/macroscope/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/macroscope/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -90,7 +90,7 @@ worktree if you want fixes kept off your working tree.
 
 ## Agent spec
 
-`Macroscope` works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/),
+`Macroscope` works with Pydantic AI's [agent spec](../agent-spec.md),
 so you can declare it in a config file instead of Python:
 
 ```yaml
@@ -115,8 +115,8 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 ## Further reading
 
 - [Macroscope CLI documentation](https://docs.macroscope.com/cli)
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 
 ## API reference
 

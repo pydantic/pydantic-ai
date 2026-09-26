@@ -3,7 +3,7 @@
 Give an agent the ability to run shell commands, with allow/deny controls and
 managed background processes.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/shell/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/shell/)
 
 ## The problem
 

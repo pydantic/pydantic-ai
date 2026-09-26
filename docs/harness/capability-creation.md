@@ -7,9 +7,9 @@ description: "Let a Pydantic AI agent write its own capabilities (tools, hooks, 
 
 Runtime capability creation lets an agent write, validate, and persist Pydantic AI capabilities during one run for activation on the next. `CapabilityCreation` exposes tools that let the model write an `AbstractCapability` subclass to disk as Python source and validate it immediately; the orchestrator loads active authored capabilities into the next `agent.run(...)`.
 
-`CapabilityCreation` is for capabilities authored by the agent as Python source. For capabilities written or selected by application code, see [Building Custom Capabilities](/ai/capabilities/custom/).
+`CapabilityCreation` is for capabilities authored by the agent as Python source. For capabilities written or selected by application code, see [Building Custom Capabilities](../capabilities/custom.md).
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/capability_creation/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/capability_creation/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -85,7 +85,7 @@ Capability names must be lowercase letters, digits, and underscores, starting wi
 
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under, which is the deliberate choice here. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 
-Because authored capabilities hold live code, they are not spec-serializable (`get_serialization_name()` returns `None`) and are persisted as source rather than as an [agent spec](/ai/core-concepts/agent-spec/).
+Because authored capabilities hold live code, they are not spec-serializable (`get_serialization_name()` returns `None`) and are persisted as source rather than as an [agent spec](../agent-spec.md).
 
 ## Typing
 

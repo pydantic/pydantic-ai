@@ -251,7 +251,7 @@ Memory records do not carry source citations or verified provenance. If an appli
 
 ## API reference
 
-- [`pydantic_ai_harness.memory` source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/memory/)
+- [`pydantic_ai_harness.memory` source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/memory/)
 - [Pydantic AI capabilities](https://pydantic.dev/docs/ai/capabilities/overview/)
 - [Pydantic AI hooks](https://pydantic.dev/docs/ai/core-concepts/hooks/)
 

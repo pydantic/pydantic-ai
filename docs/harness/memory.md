@@ -248,9 +248,9 @@ Memory records do not carry source citations or verified provenance. If an appli
 
 ## API reference
 
-- [`pydantic_ai_harness.memory` source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/memory/)
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
-- [Pydantic AI hooks](/ai/core-concepts/hooks/)
+- [`pydantic_ai_harness.memory` source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/memory/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Pydantic AI hooks](../hooks.md)
 
 The public module exports `Memory`, `MemoryToolset`, the bundled stores, the store protocols, mutation and search result models, and conflict exceptions. Import them from `pydantic_ai_harness.memory`.
 

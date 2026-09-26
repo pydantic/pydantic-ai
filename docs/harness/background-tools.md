@@ -8,7 +8,7 @@ description: "Run slow Pydantic AI tools in the background so the agent keeps wo
 `BackgroundTools` lets selected tools run in the background while the agent continues without
 waiting. Use it when the model can work on something else until the result is ready.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/background_tools/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/background_tools/)
 
 Install the OpenAI provider before running this example:
 
@@ -37,7 +37,7 @@ By default, any tool with `metadata={'background': True}` runs in the background
 
 ## Selecting which tools run in the background
 
-`BackgroundTools(tools=...)` accepts the standard [`ToolSelector`](/ai/api/pydantic-ai/tools/#pydantic_ai.tools.ToolSelector):
+`BackgroundTools(tools=...)` accepts the standard [`ToolSelector`][pydantic_ai.tools.ToolSelector]:
 
 ```python
 from pydantic_ai_harness import BackgroundTools
@@ -76,7 +76,7 @@ async def slow_research(query: str) -> str:
 
 ### Marking tools in bulk
 
-Combine with [`SetToolMetadata`](/ai/capabilities/set-tool-metadata/) or `FunctionToolset.with_metadata(...)` to mark several tools as background without touching individual definitions:
+Combine with [`SetToolMetadata`](../capabilities/set-tool-metadata.md) or `FunctionToolset.with_metadata(...)` to mark several tools as background without touching individual definitions:
 
 ```python
 from pydantic_ai import Agent, FunctionToolset
@@ -173,5 +173,5 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[BackgroundTools])
 
 ## Further reading
 
-- [Injecting messages during a run](/ai/core-concepts/message-history/#injecting-messages-mid-run)
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Injecting messages during a run](../message-history.md#injecting-messages-mid-run)
+- [Pydantic AI capabilities](../capabilities/overview.md)

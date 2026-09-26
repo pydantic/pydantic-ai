@@ -9,7 +9,7 @@ Use `StackOne` when an agent needs to work with one of a user's linked business 
 Salesforce, or Zendesk. Each instance is scoped to one linked account, which is one authenticated connection between
 [StackOne](https://www.stackone.com) and a provider.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/stackone/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/stackone/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -160,7 +160,7 @@ agent = Agent(
 ### Require approval
 
 Approval is not enabled automatically. For operations that need human confirmation, use the public
-`StackOneToolset` with Pydantic AI's [tool approval](/ai/tools-toolsets/toolsets/#requiring-tool-approval):
+`StackOneToolset` with Pydantic AI's [tool approval](../toolsets.md#requiring-tool-approval):
 
 ```python
 import os
@@ -180,7 +180,7 @@ Handle the resulting deferred approval requests as described in the linked guide
 
 ## Define the agent in YAML or JSON
 
-The capability also works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/) format for YAML or JSON.
+The capability also works with Pydantic AI's [agent spec](../agent-spec.md) format for YAML or JSON.
 Keep the API key in `STACKONE_API_KEY` rather than storing it in the file:
 
 ```yaml
@@ -202,7 +202,7 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[StackOne])
 Pass `custom_capability_types` so the spec loader knows how to instantiate `StackOne`.
 
 Use the lower-level `StackOneToolset` directly when you need
-[`Agent(toolsets=[...])`](/ai/tools-toolsets/toolsets/) or other toolset wrappers.
+[`Agent(toolsets=[...])`](../toolsets.md) or other toolset wrappers.
 
 Custom `base_url` and URL-valued `client` values must use HTTPS. The toolset adds auth headers and appends the
 `tool-mode` query parameter for URL values when it is absent. It raises an error when the URL's `tool-mode` conflicts

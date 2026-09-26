@@ -7,7 +7,7 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 `PydanticAIDocs` gives an agent a single tool, `read_pyai_docs(topic)`, that locates a Pydantic AI documentation page and returns it verbatim. Nothing is bundled into context up front. Each call resolves the topic from a configured local checkout first, then falls back to fetching the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the remote fallback needs network access).
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/pydantic_ai_docs/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pydantic_ai_docs/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -65,7 +65,7 @@ Caching lives on the capability instance and is shared across the toolsets it bu
 
 ## Agent spec (YAML/JSON)
 
-`PydanticAIDocs` works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/) feature for defining agents in YAML or JSON. Its serialization name is `PydanticAIDocs`:
+`PydanticAIDocs` works with Pydantic AI's [agent spec](../agent-spec.md) feature for defining agents in YAML or JSON. Its serialization name is `PydanticAIDocs`:
 
 ```yaml
 # agent.yaml

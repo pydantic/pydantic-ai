@@ -10,7 +10,7 @@ This is the overflow-to-file follow-up the `compaction` README names as out of s
 moves large tool outputs *out* of the window at production time, rather than compressing or
 dropping context already inside it.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/tool_output_limits/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_output_limits/)
 
 ## The three modes
 

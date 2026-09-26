@@ -161,4 +161,4 @@ capabilities emit.
 See the [Terminal-Bench 2.1 playbook](TERMINAL_BENCH.md) for running Coder
 inside Harbor, pinning the adapter and harness, and inspecting trial results.
 
-See the [source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/coder/).
+See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/coder/).

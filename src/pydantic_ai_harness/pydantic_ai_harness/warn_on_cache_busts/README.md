@@ -3,7 +3,7 @@
 Warn when a conversation's prompt cache hit collapses between model requests,
 within a run or across the runs that continue it.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/warn_on_cache_busts/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/warn_on_cache_busts/)
 
 Prompt caching pays off only while the cacheable prefix (tools, then system
 instructions, then message history) stays byte-stable across a run's consecutive

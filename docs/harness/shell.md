@@ -10,7 +10,7 @@ controls, environment scrubbing, and managed background processes. It exposes
 command-execution tools rooted at a working directory and cleans up any
 background processes automatically when the agent run ends.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/shell/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/shell/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -21,7 +21,7 @@ Agents frequently need to run a build, a test suite, a linter, or a quick
 killing runaway processes, and cleaning up background jobs at the end of a run --
 is fiddly boilerplate that every agent reinvents.
 
-`Shell` bundles that plumbing into a single [capability](/ai/capabilities/overview/):
+`Shell` bundles that plumbing into a single [capability](../capabilities/overview.md):
 configurable allow/deny lists, output truncation tuned to keep the useful tail,
 optional sticky working directory, environment control that can keep host
 secrets out of spawned commands, and automatic cleanup of background processes
@@ -94,7 +94,7 @@ configured `denied_commands` remain active; when omitted, this is the built-in
 denylist. Pass `denied_commands=[]` to disable command-name filtering.
 
 A denied command surfaces to the model as a
-[`ModelRetry`](/ai/tools-toolsets/tools-advanced/#tool-retries), not a hard error:
+[`ModelRetry`](../tools-advanced.md#tool-retries), not a hard error:
 the run continues and the model can pick an allowed command instead. So does
 every other failure the model can act on: a working directory an earlier command
 deleted or replaced with a file, and a command the operating system refuses to
@@ -334,7 +334,7 @@ greater than zero and at most 270 seconds; that is checked at construction.
 ## Agent spec (YAML/JSON)
 
 `Shell` works with Pydantic AI's
-[agent spec](/ai/core-concepts/agent-spec/), so you can declare it in a
+[agent spec](../agent-spec.md), so you can declare it in a
 config file instead of Python:
 
 ```yaml
@@ -358,8 +358,8 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 
 ## API reference
 
