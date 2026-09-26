@@ -140,6 +140,20 @@ async def test_own_ref_is_claimed_whatever_the_spelling_of_home(
     assert isinstance(result.workspace.backend, LocalWorkspaceBackend)
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_local_ref_with_symlink_spelling_attaches_to_same_directory(
+    tmp_path: Path, blockbuster_enabled: bool
+) -> None:
+    root = tmp_path / 'root'
+    root.mkdir()
+    (tmp_path / 'alias').symlink_to(root)
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(root)])
+    for spelling in (tmp_path / 'alias', tmp_path / 'root' / '..' / 'root'):
+        result = await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(spelling)))
+        assert await result.workspace.working_dir() == str(root.resolve())
+        assert result.workspace.ref == WorkspaceRef(provider='local', id=str(root))
+
+
 async def test_local_ref_for_another_directory_is_never_followed(tmp_path: Path) -> None:
     """A ref in message history must not be able to point the agent at an arbitrary host directory."""
     elsewhere = WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere'))
