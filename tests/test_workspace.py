@@ -183,6 +183,13 @@ async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
         await workspace.realpath('x')
 
 
+async def test_shell_filesystem_reads_file_larger_than_command_output_cap(tmp_path: Path) -> None:
+    data = b'x' * (8 * 1024 * 1024)
+    (tmp_path / 'large').write_bytes(data)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    assert await workspace.read_bytes('large') == data
+
+
 async def test_shell_filesystem_uses_builtin_path_errors(tmp_path: Path) -> None:
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     (tmp_path / 'file').write_bytes(b'x')
@@ -419,11 +426,11 @@ async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
 
 def _lose_the_head(stdout: str) -> str:
     """Only the tail of the output arrives, the way a backend that attached late loses it."""
-    return stdout[stdout.index('\n') + 1 :]
+    return stdout[4:]
 
 
 def _garble(stdout: str) -> str:
-    return '3\nAAA'
+    return 'AAA'
 
 
 @pytest.mark.parametrize(('corrupt', 'error'), [(_lose_the_head, 'incomplete output'), (_garble, 'invalid base64')])
@@ -443,7 +450,7 @@ async def test_shell_read_rejects_output_damaged_in_transit(
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            stdout = corrupt(result.stdout) if isinstance(command, str) and 'base64 <' in command else result.stdout
+            stdout = corrupt(result.stdout) if isinstance(command, str) and '| base64' in command else result.stdout
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=stdout, stderr=result.stderr)
 
     (tmp_path / 'data.bin').write_bytes(bytes(range(256)) * 100)
