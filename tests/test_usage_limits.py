@@ -17,6 +17,8 @@ from pydantic_ai import (
     Agent,
     CostCalculationFailedWarning,
     CostNotFoundWarning,
+    DeferredToolRequests,
+    DeferredToolResults,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -24,11 +26,13 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     ToolCallPart,
+    ToolDenied,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
 )
 from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1159,6 +1163,117 @@ async def test_parallel_tool_calls_limit_enforced():
 
     # Only the first batch of 5 tools should have executed
     assert len(executed_tools) == 5
+
+
+class _Answer(BaseModel):
+    value: int
+
+
+@pytest.mark.parametrize('output_valid', [True, False])
+async def test_tool_calls_limit_early_end_strategy(output_valid: bool) -> None:
+    """Under `end_strategy='early'`, function calls skipped because an output won don't count against the limit."""
+    executed: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        output_args = {'value': 1} if output_valid else {'value': 'not a number'}
+        return ModelResponse(
+            parts=[
+                ToolCallPart(info.output_tools[0].name, output_args, 'output_call'),
+                ToolCallPart('side_effect', {}, 'call_1'),
+                ToolCallPart('side_effect', {}, 'call_2'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function), output_type=_Answer, end_strategy='early')
+
+    @agent.tool_plain
+    def side_effect() -> str:
+        executed.append('side_effect')
+        return 'done'
+
+    if output_valid:
+        result = await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
+        assert result.output == _Answer(value=1)
+        assert result.usage.tool_calls == 0
+    else:
+        # The output failed, so the function calls would execute: the limit applies to them.
+        with pytest.raises(
+            UsageLimitExceeded,
+            match=re.escape('The next tool call(s) would exceed the tool_calls_limit of 0 (tool_calls=2).'),
+        ):
+            await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
+    assert executed == []
+
+
+async def test_tool_calls_limit_ignores_unknown_tools() -> None:
+    """A call to an unknown tool can only produce a retry prompt, so it doesn't count against the limit."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('nonexistent_tool', {}, 'call_1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    result = await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
+    assert result.output == 'done'
+    assert result.usage.tool_calls == 0
+    request = result.all_messages()[2]
+    assert isinstance(request, ModelRequest)
+    assert isinstance(request.parts[0], RetryPromptPart)
+
+
+async def test_tool_calls_limit_counts_inline_approved_deferred_calls() -> None:
+    """Calls approved inline by `HandleDeferredToolCalls` execute, so they count against the limit."""
+    executed: list[int] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('guarded', {'i': i}, f'call_{i}') for i in range(3)])
+        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+    def approve_all(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approve_all=True)
+
+    agent = Agent(FunctionModel(model_function), capabilities=[HandleDeferredToolCalls(handler=approve_all)])
+
+    @agent.tool_plain(requires_approval=True)
+    def guarded(i: int) -> str:
+        executed.append(i)  # pragma: no cover
+        return 'ok'  # pragma: no cover
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=3).'),
+    ):
+        await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=1))
+    assert executed == []
+
+
+async def test_tool_calls_limit_ignores_denied_deferred_results() -> None:
+    """A deferred call resumed with `ToolDenied` doesn't execute, so it doesn't count against the limit."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('guarded', {}, 'call_1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def guarded() -> str:
+        return 'ok'  # pragma: no cover
+
+    first = await agent.run('Hello')
+    assert isinstance(first.output, DeferredToolRequests)
+
+    result = await agent.run(
+        message_history=first.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={'call_1': ToolDenied()}),
+        usage_limits=UsageLimits(tool_calls_limit=0),
+    )
+    assert result.output == 'done'
+    assert result.usage.tool_calls == 0
 
 
 def test_usage_unknown_provider():
