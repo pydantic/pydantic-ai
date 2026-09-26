@@ -84,7 +84,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
-    from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+    from openai.types.completion_usage import CompletionTokensDetails, CompletionUsage, PromptTokensDetails
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import (
@@ -586,6 +586,46 @@ async def test_stream_text(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+async def test_stream_text_usage_with_reasoning_tokens(allow_model_requests: None):
+    # A completion_tokens_details.reasoning_tokens in the response usage must not zero the
+    # extracted counts; genai-prices >=0.1 does exactly that, so the slim dependency is
+    # capped below 0.1 (https://github.com/pydantic/pydantic-ai/issues/8841).
+    stream = [
+        chat.ChatCompletionChunk(
+            id='123',
+            choices=[
+                ChunkChoice(
+                    index=0,
+                    delta=ChoiceDelta(content='done'),
+                    finish_reason='stop',
+                )
+            ],
+            created=1704067200,  # 2024-01-01
+            model='gpt-4o-123',
+            object='chat.completion.chunk',
+            usage=CompletionUsage(
+                completion_tokens=41,
+                prompt_tokens=2083,
+                total_tokens=2124,
+                prompt_tokens_details=PromptTokensDetails(cached_tokens=2027),
+                completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
+            ),
+        )
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['done'])
+        assert result.usage == snapshot(
+            RunUsage(
+                requests=1, input_tokens=2083, cache_read_tokens=2027, output_tokens=41, details={'reasoning_tokens': 0}
+            )
+        )
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
