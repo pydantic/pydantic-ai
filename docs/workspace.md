@@ -556,7 +556,8 @@ fixtures to enable the reattachment rules.
 
 ## Timeouts and clocks
 
-`run(timeout=...)` starts its clock after the sandbox is ready and covers the command only;
+`run(timeout=...)` starts its clock after the sandbox is ready (and, locally, after resolving the
+working directory). Local process startup counts as command time. The deadline covers the command only;
 `timeout=None` has no command deadline. A provider's sandbox lifetime and idle limits are
 separate. Commands receive stdin at EOF, so use non-interactive flags (such as `-y`). On its
 own deadline the foreground command is stopped and `WorkspaceTimeoutError` carries any partial
