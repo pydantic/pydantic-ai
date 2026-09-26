@@ -2564,6 +2564,12 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
+
+    # Avoid a shallow copy when validation_context is unset. The freshly constructed RunContext
+    # already contains validation_context=None.
+    if validation_context is None:
+        return run_context
+
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
     # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
