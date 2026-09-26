@@ -24,6 +24,7 @@ from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     Workspace,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -199,6 +200,15 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     assert isinstance(exc_info.value, TimeoutError)
 
     await _assert_process_gone(int(pid_file.read_text()))
+
+
+async def test_output_limit_preserves_the_start_of_both_streams(tmp_path: Path):
+    workspace = LocalWorkspaceBackend(tmp_path)
+    with pytest.raises(WorkspaceOutputLimitError, match='10 MiB') as exc_info:
+        await workspace.run("printf 'out-first\\n'; printf 'err-first\\n' >&2; yes x", shell=True)
+    assert exc_info.value.limit == 10 * 1024 * 1024
+    assert exc_info.value.stdout.startswith('out-first\n')
+    assert exc_info.value.stderr.startswith('err-first\n')
 
 
 async def test_output_over_safety_cap_kills_the_process_group(tmp_path: Path):

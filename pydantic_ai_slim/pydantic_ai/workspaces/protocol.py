@@ -35,6 +35,7 @@ __all__ = (
     'WorkspaceBackend',
     'WorkspaceCommand',
     'WorkspaceError',
+    'WorkspaceOutputLimitError',
     'WorkspaceFileEntry',
     'WorkspaceRef',
     'WorkspaceResult',
@@ -58,6 +59,16 @@ WorkspaceCommand: TypeAlias = str | Sequence[str]
 
 class WorkspaceError(RuntimeError):
     """The workspace layer deliberately failed an operation."""
+
+
+class WorkspaceOutputLimitError(WorkspaceError):
+    """A command exceeded its output cap; `stdout` and `stderr` hold their captured beginnings."""
+
+    def __init__(self, message: str, *, limit: int, stdout: str = '', stderr: str = '') -> None:
+        super().__init__(message)
+        self.limit = limit
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class WorkspaceUnavailableError(WorkspaceError):

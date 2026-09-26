@@ -529,6 +529,8 @@ without a suitable payload codec.
 
 ## Platforms
 
+Local commands that exceed the 10 MiB combined output limit raise `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large output to a file instead.
+
 The local backend and command-backed shell fallback require POSIX. A filesystem-only backend
 works without shell support, but cannot run commands.
 

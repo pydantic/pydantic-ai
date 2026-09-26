@@ -30,7 +30,7 @@ from .protocol import (
     SupportsRealpath,
     WorkspaceBackend,
     WorkspaceCommand,
-    WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -375,9 +375,13 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 # child still holds a pipe open. The deadline above still bounds the grace period.
                 tg.cancel_scope.deadline = anyio.current_time() + _OUTPUT_DRAIN_GRACE
         if overflowed:
-            raise WorkspaceError(
+            # Keep a small preview from each stream without retaining the entire oversized capture.
+            raise WorkspaceOutputLimitError(
                 "local workspace output exceeded 10 MiB safety limit; redirect the command's "
-                'output to a file and read part of it instead'
+                'output to a file and read part of it instead',
+                limit=_MAX_CAPTURE_BYTES,
+                stdout=stdout_buffer[: 64 * 1024].decode('utf-8', errors='replace'),
+                stderr=stderr_buffer[: 64 * 1024].decode('utf-8', errors='replace'),
             )
         if exit_code is None:
             raise TimeoutError
