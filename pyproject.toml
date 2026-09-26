@@ -243,6 +243,9 @@ dev = [
     "sqlparse>=0.6.0",
     "nest-asyncio>=1.6.0",
     "azure-identity>=1.25.3",
+    # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
+    # interleavings of client operations and provider events, shrunk to a minimal failing trace.
+    "hypothesis>=6.100",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
