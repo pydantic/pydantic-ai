@@ -990,6 +990,51 @@ def test_merge_json_schema_defs_additional_properties_allof_not():
     )
 
 
+def test_merge_json_schema_defs_pattern_properties_property_names():
+    """$refs under patternProperties and propertyNames must be rewritten during merge."""
+    schema_a = {
+        '$defs': {
+            'Key': {'enum': ['a', 'b'], 'type': 'string'},
+            'Value': {'type': 'object', 'properties': {'v': {'type': 'string'}}},
+        },
+        'properties': {
+            'by_key': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/Key'}},
+            'by_pattern': {'type': 'object', 'patternProperties': {'^x_': {'$ref': '#/$defs/Value'}}},
+        },
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Key': {'enum': ['c', 'd'], 'type': 'string'},
+            'Value': {'type': 'object', 'properties': {'v': {'type': 'integer'}}},
+        },
+        'properties': {
+            'by_key': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/Key'}},
+            'by_pattern': {'type': 'object', 'patternProperties': {'^x_': {'$ref': '#/$defs/Value'}, '^y_': True}},
+        },
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, _ = merge_json_schema_defs([schema_a, schema_b])
+
+    # SchemaB's refs should all be rewritten to the renamed defs
+    assert rewritten_schemas[1] == snapshot(
+        {
+            'properties': {
+                'by_key': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/SchemaB_Key_1'}},
+                'by_pattern': {
+                    'type': 'object',
+                    'patternProperties': {'^x_': {'$ref': '#/$defs/SchemaB_Value_1'}, '^y_': True},
+                },
+            },
+            'type': 'object',
+            'title': 'SchemaB',
+        }
+    )
+
+
 def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
     """Defs that are structurally equal but whose $refs resolve to different types need separate copies."""
     schema_a = {
