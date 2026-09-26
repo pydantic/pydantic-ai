@@ -240,6 +240,18 @@ A tool's [`prepare`](../tools-advanced.md#tool-prepare) function is not affected
 
 A `native=` factory on [`XSearch`][pydantic_ai.capabilities.XSearch] or [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] is resolved twice, on either side of the boundary: once in workflow code to configure the native tool, and again inside the fallback subagent's tool-call activity, where it sees the limited `RunContext`. Read `ctx.deps` there, not `ctx.messages`.
 
+### Workspaces
+
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run: in a tool it is rebuilt inside the activity and calls the provider directly, and in workflow code (capability hooks, output functions, `result.workspace`) each call runs as an activity. Because an activity can run on any worker:
+
+- Construct every worker's agent with the same workspace capabilities as the workflow's.
+- In a custom [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace], read only `deps` and the [run context fields listed above](#agent-run-context-and-dependencies).
+- Move large files inside a tool: a workflow-side call carries the file in the activity payload, which counts against the [payload size limit](#large-payloads). Workspace writes above the default 2MB encoded limit raise `UserError` before scheduling the activity; servers with a smaller custom limit may still reject writes.
+
+Temporal stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
+Keep secrets in the workspace capability's `env=` or use them inside a tool rather than passing
+secrets as workflow-side arguments; use a [payload codec](#large-payloads) to protect history.
+
 ### Capabilities at Runtime
 
 Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.

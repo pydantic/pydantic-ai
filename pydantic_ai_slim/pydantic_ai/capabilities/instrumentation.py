@@ -216,6 +216,10 @@ class Instrumentation(AbstractCapability[Any]):
             'logfire.msg': f'{agent_name} run',
         }
 
+        if (workspace_ref := ctx.workspace.ref) is not None:
+            span_attributes['pydantic_ai.workspace.provider'] = workspace_ref.provider
+            span_attributes['pydantic_ai.workspace.id'] = workspace_ref.id
+
         if ctx.agent is not None:  # pragma: no branch
             rendered = ctx.agent.render_description(ctx.deps)
             if rendered is not None:
@@ -255,6 +259,10 @@ class Instrumentation(AbstractCapability[Any]):
             finally:
                 _otel_detach(token)
                 if span.is_recording():
+                    # A lazy sandbox may acquire its ref only after the span starts.
+                    if (workspace_ref := ctx.workspace.ref) is not None:
+                        span.set_attribute('pydantic_ai.workspace.provider', workspace_ref.provider)
+                        span.set_attribute('pydantic_ai.workspace.id', workspace_ref.id)
                     # Get current messages and metadata from the result (which holds the up-to-date state).
                     # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
                     if result is not None:

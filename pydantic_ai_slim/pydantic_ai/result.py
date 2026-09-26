@@ -24,7 +24,7 @@ from ._output import (
     run_image_process_hooks,
     run_output_with_hooks,
 )
-from ._run_context import AgentDepsT, RunContext, dispatch_event_stream
+from ._run_context import AgentDepsT, RunContext, dispatch_event_stream, recorded_workspace_ref
 from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
@@ -34,6 +34,7 @@ from .output import (
 from .tool_manager import ToolManager
 from .tools import DeferredToolRequests
 from .usage import RunUsage, UsageLimits
+from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
@@ -55,6 +56,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _model_request_parameters: models.ModelRequestParameters
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
+    _carried_workspace_ref: WorkspaceRef | None = field(default=None, repr=False)
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
@@ -198,7 +200,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     @property
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
-        return self._raw_stream_response.get()
+        response = self._raw_stream_response.get()
+        response.workspace_ref = recorded_workspace_ref(self._run_ctx.workspace, self._carried_workspace_ref)
+        return response
 
     @property
     def usage(self) -> RunUsage:
@@ -778,6 +782,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return None
 
     @property
+    def workspace(self) -> Workspace:
+        """The workspace used by this run."""
+        if self._run_result is not None:
+            return self._run_result.workspace
+        elif self._stream_response is not None:
+            return self._stream_response._run_ctx.workspace  # pyright: ignore[reportPrivateUsage]
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    @property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -1080,6 +1094,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
         return self._streamed_run_result.metadata
+
+    @property
+    def workspace(self) -> Workspace:
+        """The workspace used by this run."""
+        return self._streamed_run_result.workspace
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""

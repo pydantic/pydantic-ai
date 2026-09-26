@@ -11,6 +11,7 @@ except ImportError as _import_error:
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
+from importlib.util import find_spec
 from typing import Any
 
 from pydantic.errors import PydanticUserError
@@ -26,6 +27,7 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
+from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._event_stream import (
@@ -113,9 +115,15 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     # Temporal without running a sandboxed worker, then leaves the registry alone.
     set_replay_isolation_guard(workflow.unsafe.in_sandbox)
 
+    # Harness file-tool orchestration runs workflow-side for pre-write vetoes; importing it
+    # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
+    # Harness CodeMode imports `opentelemetry.context` via `_monty_exec` on first use; passing
+    # harness through alone leaves that dependency sandbox-local and triggers a late-import error.
+    harness_modules = ('pydantic_ai_harness', 'opentelemetry') if find_spec('pydantic_ai_harness') is not None else ()
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
+            *harness_modules,
             'pydantic_ai',
             'pydantic_graph',
             'pydantic',
@@ -190,11 +198,21 @@ class PydanticAIPlugin(SimplePlugin):
             # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
             # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
             # would otherwise turn it into a `UserError`; without it those would hang the same way.
+            # `WorkspaceError` and the builtin file errors a workspace raises are re-raised in
+            # workflow code by `DurableWorkspace` after crossing an activity boundary as data; a
+            # hook that lets one escape must fail the workflow the same way, not hang it.
             workflow_failure_exception_types=[
                 UserError,
                 PydanticUserError,
                 AgentRunError,
                 UnsupportedEventLoopError,
+                WorkspaceError,
+                FileNotFoundError,
+                NotADirectoryError,
+                IsADirectoryError,
+                PermissionError,
+                FileExistsError,
+                UnicodeDecodeError,
             ],
         )
 

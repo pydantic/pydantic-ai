@@ -6,17 +6,40 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
+from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
+from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import Workspace, WorkspaceRef
+from pydantic_ai.workspaces.unavailable import (
+    UnavailableWorkspace,
+    _UnattachedWorkspace,  # pyright: ignore[reportPrivateUsage]
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+
+
+class _UnrestoredWorkspace(_UnattachedWorkspace):
+    """The placeholder `TemporalRunContext.__init__` installs until the activity's workspace is restored.
+
+    A distinct type, so `deserialize_run_context` can tell it from a workspace a custom subclass
+    already set (which wins) and from an `UnavailableWorkspace` an application passed on purpose.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            'No workspace is attached to this run. Attach one to the agent through a capability such as '
+            "`LocalWorkspace('.')`; inside a Temporal activity, `RunContext.workspace` is rebuilt "
+            "from the run's serialized `WorkspaceRef` through the agent's capabilities."
+        )
+
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
 # `TemporalRunContext` subclasses can add their own fields), which means a value whose type isn't
@@ -37,6 +60,8 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('active_capability_ids', list, _str_set_ta),
     ('_deferred_capability_ids', list, _str_set_ta),
     ('_anchored_evidence', dict, TypeAdapter(AnchoredEvidence)),
+    # Not a `RunContext` field: the ref rides alongside so the activity can rebuild `workspace`.
+    ('workspace_ref', dict, TypeAdapter(WorkspaceRef)),
 )
 
 # Fields that `serialize_run_context` doesn't carry but that are still readable inside an activity,
@@ -86,11 +111,12 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_active` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
 
-    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `active_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract.
+    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `active_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract. A live `workspace` cannot cross the activity boundary either: only its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is serialized, and the activity rebuilds `workspace` from it through the agent's capabilities (their `get_workspace`, which may read only `deps` and the fields listed here), policy wrappers included. A subclass whose `deserialize_run_context` sets `workspace` itself keeps that value.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
     """
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
+        kwargs.setdefault('workspace', Workspace(_UnrestoredWorkspace()))
         self.__dict__ = {**kwargs, 'deps': deps}
         for old_name, new_name in _RENAMED_FIELDS:
             # Keyed on presence, not truthiness: `capability_active` is `None` for every activity
@@ -198,7 +224,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Serialize the run context to a `dict[str, Any]`."""
-        return {
+        serialized: dict[str, Any] = {
             'run_id': ctx.run_id,
             'conversation_id': ctx.conversation_id,
             'metadata': ctx.metadata,
@@ -235,6 +261,19 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             '_deferred_capability_ids': ctx._deferred_capability_ids,
             'capability_active': ctx.capability_active,
         }
+        # Only the reference crosses into the activity; the live handle stays in the workflow, and
+        # `TemporalRunContext.__init__` supplies the inert default when no reference was serialized.
+        if (workspace_ref := ctx.workspace.ref) is not None:
+            serialized['workspace_ref'] = workspace_ref
+        else:
+            # The durable wrapper forbids `.backend` in workflow code; inspect its original
+            # workspace only to preserve an explicit unavailable reason without a ref.
+            workspace = ctx.workspace.wrapped if isinstance(ctx.workspace, DurableWorkspace) else ctx.workspace
+            if isinstance(workspace.backend, UnavailableWorkspace) and not isinstance(
+                workspace.backend, _UnrestoredWorkspace
+            ):
+                serialized['workspace_unavailable_reason'] = workspace.backend.reason
+        return serialized
 
     @classmethod
     def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
@@ -263,9 +302,40 @@ def deserialize_run_context(
     if agent is not None:
         ctx.__dict__['agent'] = agent
         ctx.__dict__['root_capability'] = agent.root_capability
+        _restore_workspace(ctx, agent)
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside
     # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install
     # the same guard the in-process engines use so `ctx.enqueue()` raises the shared explanation.
     ctx.__dict__['pending_messages'] = EnqueueGuard(enqueue_not_supported_message('activity', 'workflow'))
     return ctx
+
+
+def _restore_workspace(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
+    """Rebuild `ctx.workspace` from the serialized `WorkspaceRef` through the worker's capabilities.
+
+    The same selection the workflow made, minus the durable wrapper: an activity is the durable
+    unit, so its calls reach the backend directly. Policy the capabilities apply (a
+    `ReadOnlyWorkspace`, a user wrapper) comes back with it, which is why the ref alone crosses. A
+    workspace the subclass already restored is left alone, and a payload without a ref keeps the
+    placeholder: the run has no workspace, or a fresh one whose `ensure` activity is the one
+    building it.
+    """
+    workspace = ctx.__dict__.get('workspace')
+    ref = ctx.__dict__.get('workspace_ref')
+    if not isinstance(workspace, Workspace) or not isinstance(workspace.backend, _UnrestoredWorkspace):
+        return
+    if not isinstance(ref, WorkspaceRef):
+        if (reason := ctx.__dict__.get('workspace_unavailable_reason')) is not None:
+            ctx.__dict__['workspace'] = Workspace(UnavailableWorkspace(reason))
+        return
+    restored = select_workspace(agent.root_capability, ctx, ref=ref)
+    if restored is None:
+        restored = Workspace(
+            _UnattachedWorkspace(
+                f'No capability on agent {agent.name!r} can supply workspace {ref.id!r} from provider '
+                f'{ref.provider!r} inside this Temporal activity: every `get_workspace` returned `None`. The '
+                'worker must be constructed with the same workspace capabilities as the workflow.'
+            )
+        )
+    ctx.__dict__['workspace'] = restored

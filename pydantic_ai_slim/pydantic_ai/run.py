@@ -23,7 +23,10 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
-from ._run_context import CustomEventT
+from ._run_context import (
+    CustomEventT,
+    unattached_workspace,
+)
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .output import OutputDataT
 from .tools import AgentDepsT
@@ -31,6 +34,7 @@ from .tools import AgentDepsT
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .result import FinalResult
+    from .workspaces import Workspace
 
 
 class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
@@ -226,18 +230,21 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Once the run returns an [`End`][pydantic_graph.basenode.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
-        if self._result_override is not None:
-            return self._result_override
-        graph_run_output = self._graph_run.output
-        if graph_run_output is None:
-            return None
-        return AgentRunResult(
-            graph_run_output.output,
-            graph_run_output.tool_name,
-            self._graph_run.state,
-            self._graph_run.deps.new_message_index,
-            self._traceparent(required=False),
-        )
+        result = self._result_override
+        if result is None:
+            graph_run_output = self._graph_run.output
+            if graph_run_output is None:
+                return None
+            result = AgentRunResult(
+                graph_run_output.output,
+                graph_run_output.tool_name,
+                self._graph_run.state,
+                self._graph_run.deps.new_message_index,
+                self._traceparent(required=False),
+            )
+        # Not a dataclass field: Temporal serializes a result's dataclass fields, and a live workspace can't be.
+        result.__dict__.setdefault('_workspace', self._graph_run.deps.workspace)
+        return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
         """Return all messages for the run so far.
@@ -723,6 +730,16 @@ class AgentRunResult(Generic[OutputDataT]):
     )
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
+
+    @property
+    def workspace(self) -> Workspace:
+        """The [`Workspace`][pydantic_ai.workspaces.Workspace] the run used, still usable after it.
+
+        Pass it as `workspace=` to continue in it. A result not produced by a run has a placeholder.
+        """
+        # Set by `AgentRun.result`; see there.
+        workspace = self.__dict__.get('_workspace')
+        return workspace if workspace is not None else unattached_workspace()
 
     @model_validator(mode='before')
     @classmethod

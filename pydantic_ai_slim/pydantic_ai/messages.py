@@ -2795,6 +2795,20 @@ ModelResponsePart = Annotated[
 """A message part returned by a model."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceRef:
+    """Serializable identity of a [workspace](../workspace.md) environment, without credentials.
+
+    Pass it to a later run as `workspace=` to continue in that environment.
+    """
+
+    provider: str
+    """Provider that owns the environment."""
+
+    id: str
+    """Provider-specific identifier for the environment."""
+
+
 @dataclass(repr=False)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""
@@ -2861,6 +2875,14 @@ class ModelResponse:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    workspace_ref: WorkspaceRef | None = None
+    """The [workspace](../workspace.md) environment the run worked in, so a run continuing this history reuses it.
+
+    Each response records the ref when it is produced; the last response is refreshed when the run
+    ends. A run with no attached workspace carries the conversation's ref forward, unless it was
+    started with `workspace='new'`. Not sent to the model.
+    """
 
     state: ModelResponseState = 'complete'
     """The state of this response, indicating whether it is final or requires further action.
@@ -3218,6 +3240,7 @@ def sanitize_messages(
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
     allow_uploaded_files: bool = False,
+    strip_workspace_refs: bool = True,
     resolved_tool_call_ids: Collection[str] = (),
 ) -> list[ModelMessage]:
     """Strip message parts that aren't safe to honor from untrusted input.
@@ -3244,6 +3267,11 @@ def sanitize_messages(
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
       tool return parts.
+    - [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref], resetting it
+      to `None` (disable with `strip_workspace_refs=False`). The most recent reference in history is
+      otherwise offered to a capability's `get_workspace`, so a client that can set it could point a
+      reconnecting capability at an environment it attaches to using server-side provider
+      credentials. Reconnect explicitly by passing an authorized `workspace=` instead.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -3280,6 +3308,10 @@ def sanitize_messages(
         allow_uploaded_files: Whether to honor [`UploadedFile`][pydantic_ai.messages.UploadedFile] items
             from the untrusted input. Off by default, since an uploaded file references an object the model
             provider fetches using the server-side IAM role.
+        strip_workspace_refs: Whether to reset
+            [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref] to `None`.
+            On by default; pass `False` only when the history comes from storage the application
+            trusts, so that a run continues in the environment those responses were produced in.
         resolved_tool_call_ids: Tool call IDs to preserve when the final response ends with tool calls.
             Use this for human-in-the-loop resumption when matching tool results are being submitted
             with the same request.
@@ -3326,7 +3358,10 @@ def sanitize_messages(
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
             )
             if new_response_parts:
-                sanitized.append(replace(message, parts=new_response_parts))
+                # Drop `workspace_ref`: a client that can set it could point a reconnecting
+                # capability at an environment it attaches to with server-side credentials.
+                workspace_ref = None if strip_workspace_refs else message.workspace_ref
+                sanitized.append(replace(message, parts=new_response_parts, workspace_ref=workspace_ref))
             # Otherwise drop the response entirely so we don't leave an empty
             # `ModelResponse(parts=[])` in history.
         else:

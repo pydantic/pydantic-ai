@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import timedelta
 from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
@@ -24,6 +25,8 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
+from pydantic_ai.durable_exec._workspace import WorkspaceCallParams
+from pydantic_ai.exceptions import UserError
 
 from ._activity_execution import execute_activity
 from ._operation_names import TemporalOperationNamer
@@ -85,6 +88,17 @@ class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
+def workspace_run_activity_config(config: ActivityConfig, timeout: float | None) -> ActivityConfig:
+    """Leave enough time for acquisition, command execution, and stopping the process."""
+    # Without a command deadline, use a finite activity ceiling instead of the 60s default.
+    required = timedelta(seconds=timeout + 30) if timeout is not None else timedelta(hours=1)
+    configured = config.get('start_to_close_timeout')
+    if configured is None or configured < required:
+        config = config.copy()
+        config['start_to_close_timeout'] = required
+    return config
+
+
 class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
     def __init__(
         self,
@@ -105,6 +119,17 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         payload = self._operation.parameter_transport.dump(params)
         activity_config = cast(ActivityConfig, config or self._config).copy()
         operation_id = self._operation.operation_id
+        if isinstance(params, WorkspaceCallParams) and params.call.method == 'write_bytes' and workflow.in_workflow():
+            # An oversized input fails the workflow task (which retries forever), not the activity.
+            # The server limit is not exposed in workflows; use its default 2 MB as a safe ceiling.
+            encoded = workflow.payload_converter().to_payloads(cast(Sequence[Any], payload))
+            if sum(len(part.SerializeToString()) for part in encoded) > 2_000_000:
+                raise UserError(
+                    'Workspace write is too large for Temporal (default 2MB activity payload limit). '
+                    'Move the file transfer into a tool, or configure external payload storage.'
+                )
+        if isinstance(params, WorkspaceCallParams) and params.call.method == 'run':
+            activity_config = workspace_run_activity_config(activity_config, params.call.timeout)
         model_name = ''
         if isinstance(operation_id, ModelRequestId):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
@@ -119,6 +144,9 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         elif isinstance(operation_id, ToolsetCallToolId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'call tool: {operation_id.toolset_id}:{tool_name}'
+            if tool_name in ('shell', 'run_command'):
+                # Shell can wait 270s before its own stop/cleanup; the default 60s kills the activity first.
+                activity_config = workspace_run_activity_config(activity_config, 270)
         elif isinstance(operation_id, ToolsetValidateToolArgumentsId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'validate tool args: {operation_id.toolset_id}:{tool_name}'

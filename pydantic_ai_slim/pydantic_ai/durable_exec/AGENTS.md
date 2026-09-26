@@ -60,6 +60,17 @@ with `per_run_step=False` is held the same way, except that the run resolves it 
 runs in container code, so it carries the same determinism requirement as every other factory that
 runs there.
 
+Workspaces are routed by the base, not by engines: when a construction-time capability overrides
+`get_workspace`, `_bind_workspace_operation` binds one operation, `CapabilityOperationId('workspace',
+operation='call')`, configured and retried like any capability operation (bind nothing otherwise, so
+agents without a supplier keep their pinned names). `_prepare_workspace` installs a `DurableWorkspace`
+around the selected workspace inside the container; each of its calls, `ensure` included, is one
+`WorkspaceCall`. The `WorkspaceEnsurer` companion runs `ensure` before the run body, with a locked lazy
+fallback on first call, so parallel units share one environment. Inside a unit, `_unit_workspace`
+gives the call the plain workspace: the live one in-process, or on Temporal the one rebuilt from the
+serialized ref. Expected workspace errors cross as data and are re-raised with their original type;
+Temporal also lists them as workflow-failure types so an uncaught one fails the workflow.
+
 Assume a durable unit may execute more than once if the process fails after the side effect but
 before its checkpoint commits. Document the engine's guarantees and require idempotency or expose
 an engine-native at-most-once option where available. Keep workflow-side code deterministic. Enter

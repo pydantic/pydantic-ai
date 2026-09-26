@@ -138,6 +138,7 @@ def _replace_run_context(
                 # entry. `_strip_cache_excluded_fields` recurses into the `UsageLimits` dataclass to
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
+                'workspace': value.workspace.ref,
             }
 
     return inputs

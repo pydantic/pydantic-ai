@@ -62,7 +62,13 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._genai_prices import best_effort_price, fill_response_cost
-from ._run_context import AnchoredEvidence, EventStreamBuffer, dispatch_event_stream, set_current_run_context
+from ._run_context import (
+    AnchoredEvidence,
+    EventStreamBuffer,
+    dispatch_event_stream,
+    recorded_workspace_ref,
+    set_current_run_context,
+)
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -91,6 +97,7 @@ from .toolsets._instruction_collection import collect_toolset_instructions
 if TYPE_CHECKING:
     from .agent import Agent
     from .models.instrumented import InstrumentationSettings
+    from .workspaces import Workspace, WorkspaceRef
 
 __all__ = (
     'GraphAgentState',
@@ -443,6 +450,16 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
+    # Resolved once before the graph starts; never changes during the run.
+    workspace: Workspace
+    carried_workspace_ref: WorkspaceRef | None = None
+    """The ref from history this run's responses record when it has no attached workspace; `None` after `'new'`."""
+
+    @property
+    def workspace_ref(self) -> WorkspaceRef | None:
+        """The `workspace_ref` this run records on its responses."""
+        return recorded_workspace_ref(self.workspace, self.carried_workspace_ref)
+
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
@@ -635,6 +652,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
                     )
                 if self.user_prompt is None:
+                    last_message = replace(last_message)
+                    messages[-1] = last_message
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
                     run_context = replace(
                         build_run_context(ctx),
@@ -699,11 +718,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         last_model_request: _messages.ModelRequest | None = None
         last_model_response: _messages.ModelResponse | None = None
-        for message in reversed(messages):
+        response_index: int | None = None
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
             if isinstance(message, _messages.ModelRequest):
                 last_model_request = message
             elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
                 last_model_response = message
+                response_index = index
                 break
 
         if not last_model_response:
@@ -714,6 +736,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError(
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
+
+        assert response_index is not None
+        last_model_response = replace(last_model_response)
+        messages[response_index] = last_model_response
 
         tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
         tool_call_results.update(deferred_tool_results.to_tool_call_results())
@@ -1483,6 +1509,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             conversation_id=ctx.state.conversation_id,
                         )
                         fill_response_cost(partial_response)
+                        partial_response.workspace_ref = ctx.deps.workspace_ref
                         _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
                         ctx.state.message_history.append(partial_response)
                 else:
@@ -1526,6 +1553,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _model_request_parameters=model_request_parameters,
             _output_validators=ctx.deps.output_validators,
             _run_ctx=build_run_context(ctx),
+            _carried_workspace_ref=ctx.deps.carried_workspace_ref,
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
@@ -2019,6 +2047,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         fill_response_cost(response)
+        response.workspace_ref = ctx.deps.workspace_ref
         _usage_attribution.record_usage(ctx.state.usage, response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
@@ -2104,8 +2133,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # The root capability's wrapper is always a generator, so the guard never falls through
             # today; it's here because `wrap_run_event_stream` may return any `AsyncIterable`.
             aclose: Callable[[], Awaitable[None]] | None = getattr(stream, 'aclose', None)
-            if aclose is not None:  # pragma: no branch
-                await aclose()
+            try:
+                if aclose is not None:  # pragma: no branch
+                    await aclose()
+            finally:
+                self.model_response.workspace_ref = ctx.deps.workspace_ref
 
     def _wrapped_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -2301,6 +2333,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         try:
             async for event in _run_stream():
+                self.model_response.workspace_ref = ctx.deps.workspace_ref
                 yield event
         except GeneratorExit:
             # Being closed is teardown, not a stream failure. `run()` re-raises `_stream_error` when
@@ -2617,6 +2650,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        workspace=ctx.deps.workspace,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared

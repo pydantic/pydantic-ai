@@ -35,7 +35,9 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
     leaf_capabilities,
+    select_workspace,
 )
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
@@ -54,6 +56,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -97,7 +101,12 @@ from ._operation import (
     ToolsetValidateToolArgumentsId,
     TypedResultCodec,
 )
-from ._operation_backend import BoundDurableOperation, DurableOperationBackend, RegisteredOperationBackend
+from ._operation_backend import (
+    BoundDurableOperation,
+    DurableOperationBackend,
+    RegisteredOperationBackend,
+    in_durable_unit,
+)
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
     reject_unsupported_runtime_toolsets,
@@ -123,6 +132,15 @@ from ._toolset import (
     wrap_tool_call_result,
 )
 from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
+from ._workspace import (
+    WORKSPACE_OPERATION_ID,
+    DurableWorkspace,
+    WorkspaceCallCacheIdentity,
+    WorkspaceCallParams,
+    WorkspaceCallResult,
+    WorkspaceEnsurer,
+    execute_call,
+)
 
 _T = TypeVar('_T')
 
@@ -301,16 +319,24 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_event_operation: BoundDurableOperation[EventStreamHandlerParams, Any, None] | None = None
         self._bound_capability_operations: dict[tuple[str, str], CapabilityBoundOperation] = {}
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
+        self._bound_workspace_operation: BoundDurableOperation[WorkspaceCallParams, Any, WorkspaceCallResult] | None = (
+            None
+        )
         self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
-        """Return the capability to use with the agent.
+        """Return the capability to use with the agent: the bound copy, with any `_companion_capabilities` outside it."""
+        bound = self._bind_for_agent(agent)
+        companions = bound._companion_capabilities()
+        if not companions:
+            return bound
+        return CombinedCapability([*companions, bound])
 
-        An engine that needs a companion capability alongside itself (Temporal pairs one in the
-        `outermost` tier to publish its Workflow Stream terminal event) overrides this and composes
-        around `_bind_for_agent`, which stays typed as the engine's own bound copy.
-        """
-        return self._bind_for_agent(agent)
+    def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """Capabilities to compose around the bound copy, outermost first."""
+        if self._bound_workspace_operation is None:
+            return []
+        return [WorkspaceEnsurer()]
 
     def _bind_for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
@@ -335,7 +361,147 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if isinstance(backend, RegisteredOperationBackend) and bound._bound_model_operations is None:
             bound._bound_model_operations = bound._bind_model_operations(backend, model_id=None, model_name='default')
         bound._bind_capability_operations(agent)
+        bound._bind_workspace_operation(agent)
         return bound
+
+    def _bind_workspace_operation(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Bind the workspace operation when a construction-time capability supplies workspaces.
+
+        Only then, so an agent without a workspace keeps its exact persisted operation names.
+        """
+        self._bound_workspace_operation = None
+        if not agent.root_capability.has_get_workspace:
+            return
+
+        async def handler(params: WorkspaceCallParams) -> WorkspaceCallResult:
+            return await execute_call(self._unit_workspace(params), params.call)
+
+        self._bound_workspace_operation = self.get_durable_operation_backend().bind(
+            DurableOperation(
+                operation_id=WORKSPACE_OPERATION_ID,
+                handler=handler,
+                parameter_transport=self._workspace_call_transport(),
+                cache_identity=WorkspaceCallCacheIdentity(),
+                result_codec=self._typed_result_codec(WorkspaceCallResult),
+                config_role='capability',
+            )
+        )
+
+    def _workspace_call_transport(self) -> ParameterTransport[WorkspaceCallParams, Any]:
+        return IdentityParameterTransport[WorkspaceCallParams]()
+
+    async def _call_workspace(self, params: WorkspaceCallParams) -> WorkspaceCallResult:
+        assert self._bound_workspace_operation is not None
+        return await self._bound_workspace_operation(params)
+
+    def _unit_workspace(self, params: WorkspaceCallParams) -> Workspace:
+        """The workspace a unit calls, without the durable wrapper.
+
+        In-process engines pass the run's own context, whose `DurableWorkspace` wraps it; Temporal
+        rebuilds it from the serialized ref, and only a fresh environment's `ensure` builds it here.
+        """
+        ctx = params.run_context
+        workspace = ctx.workspace
+        if isinstance(workspace, DurableWorkspace):
+            return workspace.wrapped
+        if workspace.attached:
+            return workspace
+        assert ctx.root_capability is not None
+        resolved = select_workspace(ctx.root_capability, ctx, ref=params.ref)
+        if resolved is None:
+            ref = params.ref
+            named = f' {ref.id!r} from provider {ref.provider!r}' if ref is not None else ''
+            raise UserError(
+                f'No capability can supply the workspace{named} inside this {self.engine_name} '
+                f'{self.durable_unit_noun}: every `get_workspace` returned `None`. Under {self.engine_name}, '
+                '`get_workspace` may only read `deps` and the serialized run-context fields, and it must give '
+                'the same answer on the worker as in the workflow.'
+            )
+        return resolved
+
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        """Install the `DurableWorkspace` around the run's selected workspace inside the container.
+
+        Outside the container, and inside a durable unit (a sub-agent run from a tool), the
+        workspace is returned untouched, so a durable-capable agent used as a plain agent keeps the
+        very object it selected.
+        """
+        if not self.in_durable_context or in_durable_unit() or not workspace.attached:
+            return workspace
+        if self._bound_workspace_operation is None:
+            raise UserError(
+                f'A workspace is attached to this run inside a {self.engine_name} {self.durable_container_noun}, '
+                f'but no capability supplied workspaces when the agent was constructed, so no durable '
+                f'{self.durable_unit_plural} were registered for its operations. Attach the workspace capability '
+                f'at agent construction time so `{type(self).__name__}.for_agent()` can register them.'
+            )
+        run_capability = ctx.root_capability
+        assert run_capability is not None
+        if explicit:
+            workspace = self._claim_explicit_workspace(run_capability, ctx, workspace)
+        else:
+            self._check_construction_workspace(ctx, workspace)
+        return DurableWorkspace(workspace, durability=self, ctx=ctx)
+
+    def _check_construction_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace) -> None:
+        """Reject a run-level workspace a unit on another worker would not rebuild.
+
+        Units rebuild the workspace from the agent's construction-time capabilities, so a policy that
+        only a run-level capability adds (say `read_only=True`) would be silently lost inside them.
+        """
+        assert self._agent is not None
+        construction = select_workspace(self._agent.root_capability, ctx, ref=workspace.ref)
+        if construction is None or workspace_layers(construction) != workspace_layers(workspace):
+            raise UserError(
+                f'Under {self.engine_name}, the workspace comes from the capabilities the agent is built with, '
+                'because each durable unit rebuilds it from them. This run selected a different workspace; '
+                'configure it on the agent instead of passing it to the run.'
+            )
+
+    def _claim_explicit_workspace(
+        self, run_capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], workspace: Workspace
+    ) -> Workspace:
+        """Turn a live `workspace=` argument into the capability-built workspace for its environment.
+
+        A live backend or wrapper cannot cross a durable boundary, so inside the container only its
+        identity is kept: a `DurableWorkspace` from a previous result or a parent run unwraps to its
+        journaled ref, and any other instance must carry a ref some attached capability recognizes.
+        A caller-side wrapper such as `ReadOnlyWorkspace(...)` is not preserved either way; policy
+        belongs on the capability, which re-applies it on every side of the boundary.
+        """
+        ref = workspace.ref
+        # A `DurableWorkspace` without a ref never dispatched a unit; asking the capabilities for a
+        # fresh environment is the same as passing `workspace=None`.
+        rebuilt = (
+            select_workspace(run_capability, ctx, ref=ref)
+            if ref is not None or isinstance(workspace, DurableWorkspace)
+            else None
+        )
+        if rebuilt is None:
+            if ref is None:
+                reason = (
+                    'no capability on this agent supplies a workspace without a ref'
+                    if isinstance(workspace, DurableWorkspace)
+                    else 'it has no `WorkspaceRef` yet, so no capability could reattach to its environment'
+                )
+            else:
+                reason = f'no capability on this agent recognizes workspace {ref.id!r} from provider {ref.provider!r}'
+            raise UserError(
+                f'A live workspace cannot be passed to `workspace=` inside a {self.engine_name} '
+                f'{self.durable_container_noun}: a backend or wrapper cannot cross the durable boundary, and '
+                f'{reason}. Pass a `WorkspaceRef` (or `result.workspace` from a run on this agent) and attach a '
+                'capability whose `get_workspace` supplies it; a policy wrapper such as `ReadOnlyWorkspace` '
+                'belongs on that capability (for example `LocalWorkspace(..., read_only=True)`), not around the '
+                'argument.'
+            )
+        # A caller-side read-only wrapper cannot travel to activities; refusing it prevents
+        # a read-only run silently becoming writable on another worker.
+        if not isinstance(workspace, DurableWorkspace) and workspace.read_only and not rebuilt.read_only:
+            raise UserError(
+                f'Under {self.engine_name}, a read-only `workspace=` argument would lose its policy across '
+                'durable units; put read_only on the capability (for example `LocalWorkspace(..., read_only=True)`).'
+            )
+        return rebuilt
 
     def _bind_capability_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         self._bound_capability_operations = {}
@@ -689,6 +855,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
+        # An instructions-only capability contributes no tool activity to register. If a tool
+        # is added later, it could not gain a durable registration retroactively either.
+        if ts_id is None and isinstance(ts, FunctionToolset) and not ts.tools:
+            return ts
         if ts_id is None and isinstance(ts, DynamicToolset):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "

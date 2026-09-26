@@ -1484,6 +1484,34 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
         await durable.get_tools(ctx)
 
 
+async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself() -> None:
+    class ReplacingToolset(FunctionToolset[None]):
+        async def for_run(self, ctx: RunContext[None]) -> FunctionToolset[None]:
+            return FunctionToolset(id=self.id)
+
+        async def for_run_step(self, ctx: RunContext[None]) -> FunctionToolset[None]:
+            return FunctionToolset(id=self.id)
+
+    async def unused_operation(
+        name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any], config: Mapping[str, Any]
+    ) -> Any: ...
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    leaf = ReplacingToolset(id='replacing')
+    durable = DurableFunctionToolset(
+        leaf,
+        in_durable_context=lambda: False,
+        call_tool_operation=unused_operation,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-outside-durable',
+    )
+    for method in ('for_run', 'for_run_step'):
+        replacement = await getattr(durable, method)(ctx)
+        assert isinstance(replacement, DurableFunctionToolset)
+        assert replacement is not durable and replacement.id == leaf.id
+        assert replacement.id == 'replacing'
+
+
 async def test_legacy_validation_fallbacks_remain_inline() -> None:
     calls: list[str] = []
 

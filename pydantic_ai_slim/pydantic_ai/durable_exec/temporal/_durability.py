@@ -16,7 +16,6 @@ from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
-from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
@@ -77,6 +76,7 @@ from ._transports import (
     _ModelRequestTransport,
     _RequestParams as _RequestParams,
     _StreamedActivityPayload,
+    _WorkspaceCallTransport,
 )
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
@@ -329,6 +329,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         self._register_activities(agent)
 
+    def _workspace_call_transport(self) -> _WorkspaceCallTransport:
+        return _WorkspaceCallTransport(self)
+
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""
         backend = self._operation_backend
@@ -487,6 +490,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
+    def _default_run_id(self) -> str | None:
+        if not self.in_durable_context:
+            return None
+        info = workflow.info()
+        # Use both IDs: a new execution of the same workflow must not inherit its predecessor's cwd.
+        return f'{info.workflow_id}:{info.run_id}'
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -500,12 +510,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
             return await handler()
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
-        """Bind to the agent, pairing with the terminal-event publisher when a topic is set."""
-        bound = self._bind_for_agent(agent)
-        if bound._event_stream_topic is None:
-            return bound
-        return CombinedCapability([_TerminalEventPublisher(bound), bound])
+    def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""
+        companions = super()._companion_capabilities()
+        if self._event_stream_topic is None:
+            return companions
+        return [_TerminalEventPublisher(self), *companions]
 
     def _publish_terminal_event(self, result: AgentRunResult[Any]) -> None:
         """Publish the run's terminal event. Called by `_TerminalEventPublisher.after_run`."""

@@ -65,9 +65,11 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
+from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 pytest.importorskip('starlette')
 
@@ -1427,9 +1429,21 @@ async def test_run_stream_native_metadata_forwarded():
     assert run_result_event.result.metadata == {'ui': 'native'}
 
 
-async def test_adapter_dispatch_request():
-    agent = Agent(model=TestModel())
+async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
+    # The agent carries a capability that recognizes the ref: a `WorkspaceRef` no capability can
+    # supply is a `UserError`, and this test is about the forwarding, not that failure.
+    agent = Agent(model=TestModel(), capabilities=[ConnectOnlyWorkspaceCapability()])
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    workspace = WorkspaceRef(provider='fake', id='test')
+    captured_workspace: list[object] = []
+
+    run_stream_events = agent.run_stream_events
+
+    def capture_run_stream_events(**kwargs: Any) -> Any:
+        captured_workspace.append(kwargs['workspace'])
+        return run_stream_events(**kwargs)
+
+    monkeypatch.setattr(agent, 'run_stream_events', capture_run_stream_events)
 
     async def receive() -> dict[str, Any]:
         return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
@@ -1451,7 +1465,11 @@ async def test_adapter_dispatch_request():
         captured_metadata.append(run_result.metadata)
 
     response = await DummyUIAdapter.dispatch_request(
-        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+        starlette_request,
+        agent=agent,
+        metadata={'ui': 'dispatch'},
+        on_complete=on_complete,
+        workspace=workspace,
     )
 
     assert isinstance(response, StreamingResponse)
@@ -1490,6 +1508,7 @@ async def test_adapter_dispatch_request():
         ]
     )
     assert captured_metadata == [{'ui': 'dispatch'}]
+    assert captured_workspace == [workspace]
 
 
 def test_manage_system_prompt_visible_in_base_adapter_signatures():
@@ -1780,6 +1799,7 @@ def _make_dummy_adapter(
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
     allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
     allow_uploaded_files: bool = False,
+    strip_workspace_refs: bool = True,
 ) -> DummyUIAdapter[None, str]:
     agent = Agent(model=TestModel())
     return DummyUIAdapter(
@@ -1788,6 +1808,7 @@ def _make_dummy_adapter(
         allowed_file_url_schemes=allowed_file_url_schemes,
         allowed_file_url_force_download=allowed_file_url_force_download,
         allow_uploaded_files=allow_uploaded_files,
+        strip_workspace_refs=strip_workspace_refs,
     )
 
 
@@ -2134,6 +2155,27 @@ def test_sanitize_messages_keeps_uploaded_files_when_allow_uploaded_files():
 
     user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(['Look at this:', uploaded_file])
+
+
+@pytest.mark.parametrize('strip_workspace_refs', [True, False])
+def test_adapter_strip_workspace_refs(strip_workspace_refs: bool):
+    """The adapter resets client-submitted `workspace_ref`s unless `strip_workspace_refs=False`."""
+    ref = WorkspaceRef(provider='modal', id='env')
+    adapter = _make_dummy_adapter(
+        [ModelResponse(parts=[TextPart(content='done')], workspace_ref=ref)],
+        strip_workspace_refs=strip_workspace_refs,
+    )
+
+    response = message(adapter.sanitize_messages(adapter.messages), ModelResponse)
+    assert response.workspace_ref == (None if strip_workspace_refs else ref)
+
+
+def test_strip_workspace_refs_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert from_request_parameters['strip_workspace_refs'].default is True
+    assert dispatch_request_parameters['strip_workspace_refs'].default is True
 
 
 def test_resolve_allow_uploaded_files_maps_deprecated_preserve_file_data():

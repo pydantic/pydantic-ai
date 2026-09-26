@@ -256,6 +256,7 @@ def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
 
     assert 'manage_system_prompt' in from_request_parameters
     assert from_request_parameters['manage_system_prompt'].default == 'server'
+    assert from_request_parameters['strip_workspace_refs'].default is True
 
 
 def _constructed_ag_ui_event_names() -> set[str]:
