@@ -23,6 +23,7 @@ from .protocol import (
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceFileEntry,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceResult,
     validate_timeout,
@@ -99,10 +100,13 @@ class _ShellFilesystem(SupportsFilesystem):
         data = bytearray()
         # Bound each command's output; a single base64 stream can exceed remote run() limits.
         for index in range((size + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
-            result = await self._backend.run(
-                f'dd if={quoted_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
-                shell=True,
-            )
+            try:
+                result = await self._backend.run(
+                    f'dd if={quoted_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
+                    shell=True,
+                )
+            except WorkspaceOutputLimitError as error:
+                raise WorkspaceError(f'shell filesystem read exceeded command output limit for {path!r}') from error
             await self._raise_for_error(result, path)
             try:
                 chunk = base64.b64decode(result.stdout)
@@ -239,10 +243,13 @@ class _ShellFilesystem(SupportsFilesystem):
             listing = bytearray()
             # Each remote command is below the command-output cap, even for a huge directory.
             for index in range((length + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
-                chunk_result = await self._backend.run(
-                    f'dd if={temporary_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
-                    shell=True,
-                )
+                try:
+                    chunk_result = await self._backend.run(
+                        f'dd if={temporary_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
+                        shell=True,
+                    )
+                except WorkspaceOutputLimitError as error:
+                    raise WorkspaceError('shell filesystem listing exceeded command output limit') from error
                 await self._raise_for_error(chunk_result, quoted_path)
                 try:
                     chunk = base64.b64decode(chunk_result.stdout)
