@@ -170,10 +170,13 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
 def _map_user_prompt(part: messages.UserPromptPart) -> Iterator[mcp_types.TextContent | mcp_types.ImageContent]:
     chunks = [part.content] if isinstance(part.content, str) else part.content
     for chunk in chunks:
-        if isinstance(chunk, str):
-            yield mcp_types.TextContent(type='text', text=chunk)
+        if isinstance(chunk, str | messages.TextContent):
+            yield mcp_types.TextContent(type='text', text=chunk if isinstance(chunk, str) else chunk.content)
         elif isinstance(chunk, messages.BinaryContent) and chunk.is_image:
             yield mcp_types.ImageContent(type='image', data=chunk.base64, mimeType=chunk.media_type)
+        elif isinstance(chunk, messages.CachePoint):
+            # MCP sampling has no prompt caching control.
+            continue
         # TODO(Marcelo): Add support for audio content.
         else:
             raise NotImplementedError(f'Unsupported content type: {type(chunk)}')
