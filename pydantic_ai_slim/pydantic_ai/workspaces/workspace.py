@@ -46,6 +46,7 @@ _SHELL_CLEANUP_TIMEOUT = 10
 # the matching Linux errno, outside the small codes `sh`, `base64` and `find` return themselves
 # (dash exits 2 on a failed redirection), so a utility failure is never mistaken for a missing path.
 _SHELL_EXIT_NOT_FOUND = 102
+_SHELL_EXIT_EXISTS = 117
 _SHELL_EXIT_NOT_DIRECTORY = 120
 _SHELL_EXIT_IS_DIRECTORY = 121
 
@@ -113,14 +114,16 @@ class _ShellFilesystem(SupportsFilesystem):
             quoted_path = shlex.quote(path)
             # Decode beside the destination and rename into place so cancellation or a failed
             # decode never leaves a partially written file. Copying an existing regular file
-            # first preserves its mode bits; a directory destination is deliberately rejected.
-            # A symlink is written through, as a native write does, instead of being replaced.
+            # first preserves its mode bits; a directory destination is rejected, as a native
+            # write rejects it. A symlink is written through, as a native write does, instead of
+            # being replaced.
             result = await self._backend.run(
+                f'if test -d {quoted_path}; then status={_SHELL_EXIT_IS_DIRECTORY}; else '
                 f'{{ test -f {quoted_path} && cp {quoted_path} {quoted_decoded}; }}; '
-                f'base64 -d < {quoted_temporary} > {quoted_decoded} && test ! -d {quoted_path} '
+                f'base64 -d < {quoted_temporary} > {quoted_decoded} '
                 f'&& if test -L {quoted_path}; then cat {quoted_decoded} > {quoted_path}; '
                 f'else mv -f {quoted_decoded} {quoted_path}; fi; '
-                f'status=$?; rm -f {quoted_temporary} {quoted_decoded}; exit $status',
+                f'status=$?; fi; rm -f {quoted_temporary} {quoted_decoded}; exit $status',
                 shell=True,
             )
             await self._raise_for_error(result, path)
@@ -184,7 +187,13 @@ class _ShellFilesystem(SupportsFilesystem):
         )
 
     async def make_dir(self, path: str) -> None:
-        result = await self._backend.run(f'mkdir -p {shlex.quote(path)}', shell=True)
+        quoted_path = shlex.quote(path)
+        # `mkdir -p` fails generically over an existing file; classify it like a native `mkdir`.
+        result = await self._backend.run(
+            f'if test -e {quoted_path} && ! test -d {quoted_path}; then exit {_SHELL_EXIT_EXISTS}; fi; '
+            f'mkdir -p {quoted_path}',
+            shell=True,
+        )
         await self._raise_for_error(result, path)
 
     async def remove(self, path: str) -> None:
@@ -233,6 +242,8 @@ class _ShellFilesystem(SupportsFilesystem):
             raise NotADirectoryError(path)
         if result.exit_code == _SHELL_EXIT_IS_DIRECTORY:
             raise IsADirectoryError(path)
+        if result.exit_code == _SHELL_EXIT_EXISTS:
+            raise FileExistsError(path)
         if missing and not await self.exists(path):
             raise FileNotFoundError(path)
         message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'

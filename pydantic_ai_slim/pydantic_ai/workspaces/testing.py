@@ -179,6 +179,20 @@ class WorkspaceBackendSuite:
             with pytest.raises(IsADirectoryError):
                 await workspace.read_bytes(root)
 
+    async def test_writing_to_a_directory_raises_is_a_directory(self, backend: WorkspaceBackend) -> None:
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            with pytest.raises(IsADirectoryError):
+                await workspace.write_bytes(root, b'data')
+
+    async def test_making_a_directory_over_a_file_raises_file_exists(self, backend: WorkspaceBackend) -> None:
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            path = posixpath.join(root, 'file')
+            await workspace.write_bytes(path, b'data')
+            with pytest.raises(FileExistsError):
+                await workspace.make_dir(path)
+
     async def test_remove_deletes_a_file_or_a_tree(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
