@@ -550,6 +550,7 @@ works without shell support, but cannot run commands.
 
 - `LocalWorkspace` isolates nothing and runs only on POSIX systems. Create its directory before using
   relative paths; an absolute root that does not exist may be created by an absolute-path write.
+  `defer_loading=True` is rejected: the workspace must be selected before deferred capabilities load.
   (macOS and Linux). Its ref normalizes `.` and `..` without resolving symlinks, so differently
   spelled symlink roots have distinct refs even if they point to the same directory.
 - A run has one workspace.
