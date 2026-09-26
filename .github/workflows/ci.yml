@@ -413,7 +413,11 @@ jobs:
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
       # every applicable test without duplicate coverage.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
-      BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
+      # Not yet for the harness and clai2 suites: https://github.com/pydantic/pydantic-ai/issues/8821
+      BLOCKBUSTER_ENABLED: >-
+        ${{ matrix.python-version == '3.13'
+            && matrix.install.name != 'pydantic-ai-harness'
+            && matrix.install.name != 'pydantic-clai2' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
