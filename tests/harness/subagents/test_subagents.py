@@ -263,7 +263,7 @@ class TestDelegation:
         worker = Agent(TestModel(custom_output_text='W'), name='worker', deps_type=str)
 
         @worker.instructions
-        def _capture(ctx: RunContext[str]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _capture(ctx: RunContext[str]) -> str:
             captured['deps'] = ctx.deps
             captured['usage_is_parent'] = ctx.usage is parent_usage.get('usage')
             return ''
@@ -275,7 +275,7 @@ class TestDelegation:
         )
 
         @parent.instructions
-        def _remember_usage(ctx: RunContext[str]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _remember_usage(ctx: RunContext[str]) -> str:
             parent_usage['usage'] = ctx.usage
             return ''
 
@@ -301,7 +301,7 @@ class TestDelegation:
         )
 
         @parent.tool_plain
-        def parent_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+        def parent_tool() -> str:
             return 'PT'
 
         result = await parent.run('go')
@@ -337,7 +337,7 @@ class TestDelegation:
         parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), toolsets=[toolset])
 
         @parent.tool_plain
-        def parent_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+        def parent_tool() -> str:
             return 'PT'  # pragma: no cover - listed but not called in this test
 
         result = await parent.run('go')
@@ -373,7 +373,7 @@ class TestDelegation:
         )
 
         @parent.tool_plain
-        def parent_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+        def parent_tool() -> str:
             return 'PT'  # pragma: no cover - listed but not called in this test
 
         result = await parent.run('go')
@@ -463,7 +463,7 @@ class TestDelegation:
         worker = Agent(TestModel(custom_output_text='W'), name='worker', deps_type=str)
 
         @worker.instructions
-        def _capture(ctx: RunContext[str]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _capture(ctx: RunContext[str]) -> str:
             captured['deps'] = ctx.deps
             captured['usage_is_parent'] = ctx.usage is parent_usage.get('usage')
             return ''
@@ -475,7 +475,7 @@ class TestDelegation:
         )
 
         @parent.instructions
-        def _remember_usage(ctx: RunContext[str]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _remember_usage(ctx: RunContext[str]) -> str:
             parent_usage['usage'] = ctx.usage
             return ''
 
@@ -493,7 +493,7 @@ class TestRunControls:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
 
         @worker.instructions
-        def _capture(ctx: RunContext[object]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _capture(ctx: RunContext[object]) -> str:
             captured['usage_is_parent'] = ctx.usage is parent_usage.get('usage')
             return ''
 
@@ -503,7 +503,7 @@ class TestRunControls:
         )
 
         @parent.instructions
-        def _remember_usage(ctx: RunContext[object]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _remember_usage(ctx: RunContext[object]) -> str:
             parent_usage['usage'] = ctx.usage
             return ''
 
@@ -524,7 +524,7 @@ class TestRunControls:
         worker = Agent(FunctionModel(worker_fn), name='worker')
 
         @worker.tool_plain
-        def noop() -> str:  # pyright: ignore[reportUnusedFunction]
+        def noop() -> str:
             return 'x'
 
         parent: Agent[object, str] = Agent(
@@ -596,7 +596,7 @@ class TestRunControls:
         assert _delegate_returns(first) == ['W']
         assert _delegate_returns(second) == ['W']
         # wrap_run clears each run's counts, so the store does not accumulate.
-        assert capability._call_counts == {}
+        assert capability._call_counts == {}  # pyright: ignore[reportPrivateUsage]
 
     async def test_on_failure_makes_child_failure_soft(self) -> None:
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -814,7 +814,7 @@ class TestNameValidation:
     def test_name_override_satisfies_missing_agent_name(self) -> None:
         nameless = Agent(TestModel())
         capability = SubAgents(agents=[SubAgent(nameless, name='worker')])
-        assert 'worker' in capability._by_name
+        assert 'worker' in capability._by_name  # pyright: ignore[reportPrivateUsage]
 
 
 def _prompt(messages: list[ModelMessage]) -> str:
@@ -852,7 +852,7 @@ class TestIncludeSelf:
         agent = Agent(capabilities=[SubAgents(include_self=True, agent_folders=None, inherit_tools=True)])
 
         @agent.tool_plain
-        def parent_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+        def parent_tool() -> str:
             return 'PT'
 
         result = await agent.run('go', model=FunctionModel(model_fn))

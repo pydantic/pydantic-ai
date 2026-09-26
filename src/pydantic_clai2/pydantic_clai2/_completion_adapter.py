@@ -6,8 +6,8 @@ from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.styles import DynamicStyle, Style
 from termflow.tui.completion import (
-    CompleteEvent as TermflowEvent,  # pyright: ignore[reportMissingTypeStubs]
-    Document as TermflowDocument,  # pyright: ignore[reportMissingTypeStubs]
+    CompleteEvent as TermflowEvent,
+    Document as TermflowDocument,
 )
 
 from . import theme

@@ -8,7 +8,6 @@ from pathlib import Path
 import anyio
 import pytest
 from acp import Client, schema, text_block
-from tests.experimental.acp._acp_clients import RecordingClient  # pyright: ignore[reportMissingTypeStubs]
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Toolset
@@ -27,6 +26,7 @@ from pydantic_ai_harness.experimental.acp import (
     acp_filesystem,
     acp_terminal,
 )
+from tests.harness.experimental.acp._acp_clients import RecordingClient
 
 pytestmark = pytest.mark.anyio
 

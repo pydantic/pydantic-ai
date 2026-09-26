@@ -64,7 +64,7 @@ def activate(host: PluginHost[None], *, store: MCPStore | None = None) -> None:
     command = MCPCommand(servers=servers)
 
     @host.on('session_end')
-    async def release(_: SessionEnd) -> None:  # pyright: ignore[reportUnusedFunction]
+    async def release(_: SessionEnd) -> None:
         await servers.close()
 
     host.commands.register(

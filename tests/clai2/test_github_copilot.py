@@ -13,8 +13,8 @@ from cassetter import use_cassette
 from keyring.errors import NoKeyringError
 from menu_script import Script, make_context, pick, typed
 from rich.console import Console
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
 from test_app_edges import inputs
 
 from pydantic_ai import Agent

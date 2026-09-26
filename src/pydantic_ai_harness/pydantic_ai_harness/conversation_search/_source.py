@@ -161,7 +161,7 @@ class SnapshotHistorySource:
         # third-party store can satisfy `StepStore` without it; without this
         # check the missing seam surfaces as an obscure `AttributeError` deep
         # inside a tool call.
-        if not isinstance(store, SnapshotStore):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if not isinstance(store, SnapshotStore):
             raise TypeError(
                 f'{type(store).__name__} is not a supported search substrate: SnapshotHistorySource '
                 'needs a store providing both `list_runs` and `list_snapshots`. The shipped '

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic_ai._utils import replace_no_init  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError

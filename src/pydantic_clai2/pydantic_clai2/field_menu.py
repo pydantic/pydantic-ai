@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from pydantic import JsonValue, ValidationError
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInput, TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
+from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.textinput import TextInput, TextInputResult
 
 from . import theme
 from ._rendering import markdown_style

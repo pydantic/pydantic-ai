@@ -111,9 +111,9 @@ async def store(request: pytest.FixtureRequest) -> AsyncGenerator[RedisSpendStor
     `str` or as `bytes`, and the store has to read a total out of either. That is a
     property of redis-py's parser rather than of the fake, so it belongs here.
     """
-    client = Redis.from_url(_redis_url(), decode_responses=request.param)
+    client = Redis.from_url(_redis_url(), decode_responses=request.param)  # pyright: ignore[reportUnknownMemberType]
     try:
-        await client.ping()
+        await client.ping()  # pyright: ignore[reportUnknownMemberType]
     except (RedisError, OSError) as error:
         await client.aclose()
         _unavailable(f'no reachable Redis at {_redis_target()}: {error}')
@@ -125,16 +125,16 @@ async def store(request: pytest.FixtureRequest) -> AsyncGenerator[RedisSpendStor
         # Closing sits in its own `finally` so a server that went away mid-test takes the
         # key cleanup down without also leaking the connection into the rest of the suite.
         try:
-            keys = [key async for key in client.scan_iter(match=f'*{prefix}*')]
+            keys = [key async for key in client.scan_iter(match=f'*{prefix}*')]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             if keys:
-                await client.delete(*keys)
+                await client.delete(*keys)  # pyright: ignore[reportUnknownArgumentType]
         finally:
             await client.aclose()
 
 
 async def _ttl(store: RedisSpendStore, key: str) -> int:
     """Seconds left on a budget key. -1 means no expiry, -2 means the key is gone."""
-    return await store.client.ttl(f'{{{store.prefix}}}:{key}')  # pyright: ignore[reportAttributeAccessIssue]
+    return await store.client.ttl(f'{{{store.prefix}}}:{key}')  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
 
 
 class TestLiveScript:
@@ -262,7 +262,7 @@ class TestLiveScript:
         The second write models a worker still running the old version during a rolling
         deploy, which is why the old name is read every time rather than moved once.
         """
-        await store.client.hset(  # pyright: ignore[reportAttributeAccessIssue]
+        await store.client.hset(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             f'{store.prefix}:k', mapping={'usd_nanos': 3_000_000_000, 'tokens': 8, 'requests': 2}
         )
         assert (await store.get_many(['k']))['k'] == Spent(usd=Decimal('3'), tokens=8, requests=2)
@@ -270,6 +270,6 @@ class TestLiveScript:
         totals = await store.add_many([SpendEntry(key='k', usd=Decimal('1'), tokens=1, requests=1)])
         assert totals == {'k': Spent(usd=Decimal('4'), tokens=9, requests=3)}
 
-        await store.client.hincrby(f'{store.prefix}:k', 'requests', 1)  # pyright: ignore[reportAttributeAccessIssue]
+        await store.client.hincrby(f'{store.prefix}:k', 'requests', 1)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
         assert (await store.get_many(['k']))['k'] == Spent(usd=Decimal('4'), tokens=9, requests=4)

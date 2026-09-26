@@ -132,12 +132,12 @@ def test_no_variable_provider_is_configured() -> None:
 
 def test_slug_becomes_prompt_variable_name() -> None:
     capability = ManagedPrompt('support_agent', default=DEFAULT)
-    assert capability._variable.name == 'prompt__support_agent'
+    assert capability._variable.name == 'prompt__support_agent'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_hyphenated_slug_is_normalized() -> None:
     capability = ManagedPrompt('welcome-email', default=DEFAULT)
-    assert capability._variable.name == 'prompt__welcome_email'
+    assert capability._variable.name == 'prompt__welcome_email'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_slug_requires_default() -> None:
@@ -147,7 +147,7 @@ def test_slug_requires_default() -> None:
 
 def test_explicit_logfire_instance_is_used() -> None:
     capability = ManagedPrompt('with_instance', default=DEFAULT, logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
-    assert capability._variable.name == 'prompt__with_instance'
+    assert capability._variable.name == 'prompt__with_instance'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_duplicate_slug_is_allowed() -> None:
@@ -156,13 +156,13 @@ def test_duplicate_slug_is_allowed() -> None:
     # `logfire.var` would raise.
     first = ManagedPrompt('shared_slug', default=DEFAULT)
     second = ManagedPrompt('shared_slug', default=DEFAULT)
-    assert first._variable.name == second._variable.name == 'prompt__shared_slug'
+    assert first._variable.name == second._variable.name == 'prompt__shared_slug'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_prompt_prefix_in_slug_warns_and_is_stripped() -> None:
     with pytest.warns(UserWarning, match='added automatically'):
         capability = ManagedPrompt('prompt__already_prefixed', default=DEFAULT)
-    assert capability._variable.name == 'prompt__already_prefixed'
+    assert capability._variable.name == 'prompt__already_prefixed'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_invalid_slug_raises() -> None:
@@ -191,7 +191,7 @@ async def test_override_is_reflected() -> None:
     capability = ManagedPrompt('override_slug', default=DEFAULT)
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with capability._variable.override('Be terse.'):
+    with capability._variable.override('Be terse.'):  # pyright: ignore[reportPrivateUsage]
         result = await agent.run('hello')
 
     assert instructions_seen(result.all_messages()) == ['Be terse.']
@@ -342,7 +342,7 @@ async def test_resolved_once_per_run_across_multiple_model_requests() -> None:
     def noop() -> str:
         return 'ok'
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         result = await agent.run('hello')
 
     # TestModel issues one request to call the tool and another for the final output,
@@ -361,7 +361,7 @@ async def test_label_and_callable_targeting_and_attributes() -> None:
     )
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         await agent.run('hello')
 
     spy.assert_called_once_with(
@@ -380,7 +380,7 @@ async def test_static_targeting_and_attributes() -> None:
     )
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         await agent.run('hello')
 
     spy.assert_called_once_with(

@@ -290,4 +290,4 @@ class TestMediaLazyExport:
     def test_unknown_attribute_raises(self) -> None:
 
         with pytest.raises(AttributeError, match='has no attribute'):
-            _ = media.NoSuchStore  # type: ignore[attr-defined]
+            _ = media.NoSuchStore

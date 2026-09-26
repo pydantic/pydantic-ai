@@ -506,4 +506,4 @@ class TestStepPersistenceLazyExport:
     def test_unknown_attribute_raises(self) -> None:
 
         with pytest.raises(AttributeError, match='has no attribute'):
-            _ = sp.NoSuchStore  # type: ignore[attr-defined]
+            _ = sp.NoSuchStore

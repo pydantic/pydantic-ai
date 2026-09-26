@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.browser_use import PydanticAIChatModel, resolve_chat_model
-from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire

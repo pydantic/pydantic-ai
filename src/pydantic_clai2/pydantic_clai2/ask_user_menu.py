@@ -8,8 +8,8 @@ from functools import partial
 import anyio
 from rich.console import Console, RenderableType
 from rich.text import Text
-from termflow.tui.layout import truncate  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.terminal import raw_mode  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.layout import truncate
+from termflow.tui.terminal import raw_mode
 
 from pydantic_ai_harness.ask_user import (
     AskUser,

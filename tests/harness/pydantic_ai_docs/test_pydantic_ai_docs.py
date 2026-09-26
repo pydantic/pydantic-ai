@@ -123,26 +123,26 @@ class TestPydanticAIDocsToolset:
 class TestPydanticAIDocsCapability:
     def test_resolved_path_prefers_constructor_arg(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('PYDANTIC_AI_HARNESS_DOCS_PATH', '/env/ignored')
-        assert PydanticAIDocs[object](local_docs_path=tmp_path)._resolved_local_path() == tmp_path
+        assert PydanticAIDocs[object](local_docs_path=tmp_path)._resolved_local_path() == tmp_path  # pyright: ignore[reportPrivateUsage]
 
     def test_resolved_path_falls_back_to_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('PYDANTIC_AI_HARNESS_DOCS_PATH', str(tmp_path))
-        assert PydanticAIDocs[object]()._resolved_local_path() == tmp_path
+        assert PydanticAIDocs[object]()._resolved_local_path() == tmp_path  # pyright: ignore[reportPrivateUsage]
 
     def test_resolved_path_none_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('PYDANTIC_AI_HARNESS_DOCS_PATH', raising=False)
-        assert PydanticAIDocs[object]()._resolved_local_path() is None
+        assert PydanticAIDocs[object]()._resolved_local_path() is None  # pyright: ignore[reportPrivateUsage]
 
     def test_get_toolset_shares_cache_when_enabled(self) -> None:
         capability = PydanticAIDocs[object]()
         toolset = capability.get_toolset()
         assert isinstance(toolset, PydanticAIDocsToolset)
-        assert toolset._cache is capability._cache
+        assert toolset._cache is capability._cache  # pyright: ignore[reportPrivateUsage]
 
     def test_get_toolset_disables_cache(self) -> None:
         toolset = PydanticAIDocs[object](cache=False).get_toolset()
         assert isinstance(toolset, PydanticAIDocsToolset)
-        assert toolset._cache is None
+        assert toolset._cache is None  # pyright: ignore[reportPrivateUsage]
 
     def test_instructions_mention_the_tool(self) -> None:
         instructions = PydanticAIDocs[object]().get_instructions()

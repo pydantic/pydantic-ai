@@ -2,8 +2,8 @@
 
 from enum import Enum
 
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu
 
 from ._rendering import markdown_style
 from .command_context import CommandContext

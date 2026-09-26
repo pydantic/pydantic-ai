@@ -6,8 +6,8 @@ from typing import Literal, get_args, get_origin
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu, MenuResult
 
 from . import github_copilot, openrouter, vllm
 from ._rendering import markdown_style

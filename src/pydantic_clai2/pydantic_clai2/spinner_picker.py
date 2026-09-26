@@ -5,8 +5,8 @@ import time
 from collections.abc import Callable, Iterable
 
 from pydantic import ValidationError
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu
 
 from . import theme
 from ._rendering import markdown_style

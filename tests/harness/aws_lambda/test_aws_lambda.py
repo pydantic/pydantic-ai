@@ -19,7 +19,7 @@ from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._run_context import get_current_run_context  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -36,12 +36,12 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import ExternalToolset
 from pydantic_ai_harness.aws_lambda import (
     AWSLambdaDurability,
     _bridge,  # pyright: ignore[reportPrivateUsage]
-    _operation_backend,  # pyright: ignore[reportPrivateUsage]
+    _operation_backend,
     durable_agent_handler,
     run_durable,
 )
@@ -444,7 +444,9 @@ class TestStepConfig:
             return StepConfig(**config)
 
         monkeypatch.setattr(
-            _operation_backend, '_STEP_CONFIG_FIELDS', _operation_backend._STEP_CONFIG_FIELDS | {'timeout'}
+            _operation_backend,
+            '_STEP_CONFIG_FIELDS',
+            _operation_backend._STEP_CONFIG_FIELDS | {'timeout'},  # pyright: ignore[reportPrivateUsage]
         )
         monkeypatch.setattr(_operation_backend, 'StepConfig', future_step_config)
 
@@ -1275,7 +1277,7 @@ class TestEnqueueGuard:
 
         class EnqueueingModel(FunctionModel):
             @asynccontextmanager
-            async def request_stream(  # type: ignore[override]
+            async def request_stream(
                 self,
                 messages: list[ModelMessage],
                 model_settings: Any,

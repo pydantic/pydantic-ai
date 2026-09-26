@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
 from rich.console import Console
 from rich.text import Text
-from termflow.diff import DiffRenderer, DiffTheme  # pyright: ignore[reportMissingTypeStubs]
+from termflow.diff import DiffRenderer, DiffTheme
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent

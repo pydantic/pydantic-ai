@@ -7,7 +7,7 @@ from rich.color import ColorSystem
 from rich.console import Console
 from rich.style import Style
 from rich.text import Text
-from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
+from termflow.ansi.utils import visible_length
 
 from pydantic_clai2 import theme
 from pydantic_clai2.prompt_transcript import TranscriptBuffer, render_ansi, style_prefix

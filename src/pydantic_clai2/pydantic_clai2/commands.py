@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
-from termflow.tui.completion import (  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import (
     CompleteEvent,
     Completer,
     Completion,

@@ -59,11 +59,11 @@ async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path:
     )
 
     @agent.tool_plain
-    async def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+    async def add(a: int, b: int) -> int:
         return a + b
 
     @agent.tool_plain(sequential=True)
-    def barrier() -> str:  # pyright: ignore[reportUnusedFunction]
+    def barrier() -> str:
         return 'barrier'
 
     result = await agent.run('exercise the remote sandbox')
@@ -149,7 +149,7 @@ async def test_disconnect_mid_snippet_reports_started_calls(websocket_relay_url:
         )
 
         @agent.tool_plain
-        async def drop_connection() -> None:  # pyright: ignore[reportUnusedFunction]
+        async def drop_connection() -> None:
             # One statement: the harness cancels this while the close is in flight, so a separate
             # wait line would only sometimes run. The wait never ends on its own.
             await asyncio.gather(*(connection.close() for connection in connections), asyncio.Event().wait())

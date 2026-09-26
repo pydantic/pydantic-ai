@@ -35,11 +35,11 @@ from pydantic_ai_harness.system_reminders import (
     Reminder,
     SystemReminders,
 )
-from tests._recording_durability import (  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness._recording_durability import (
     RecordingDurability,
     RestrictedRunContext,
 )
-from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -343,7 +343,7 @@ class TestMaxFires:
         )
         with pytest.raises(RuntimeError, match='dynamic down'):
             await _run_wrap(cap, _fresh_request())
-        assert cap._fire_counts == {}
+        assert cap._fire_counts == {}  # pyright: ignore[reportPrivateUsage]
         assert fired == []
 
 
@@ -424,15 +424,15 @@ class TestInjectionMechanics:
         seen = await _run_wrap(cap, [prior])
         assert seen[-1] is prior
         # No ModelRequest tail: no cadence slot spent, and the fire budget and on_fire untouched.
-        assert cap._request_count == 0
-        assert cap._fire_counts == {}
+        assert cap._request_count == 0  # pyright: ignore[reportPrivateUsage]
+        assert cap._fire_counts == {}  # pyright: ignore[reportPrivateUsage]
         assert fired == []
 
     async def test_empty_message_list_is_a_noop(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
         seen = await _run_wrap(cap, [])
         assert seen == []
-        assert cap._request_count == 0
+        assert cap._request_count == 0  # pyright: ignore[reportPrivateUsage]
 
 
 # --- CachePoint guard (leading CachePoint is illegal without preceding user content) ---
@@ -524,13 +524,13 @@ class TestForRun:
     async def test_resets_counters_preserves_config(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', max_fires=5, tag=None)], cache_ttl='1h')
         await _run_wrap(cap, _fresh_request())
-        assert cap._request_count == 1
-        assert cap._fire_counts == {id(cap.reminders[0]): 1}
+        assert cap._request_count == 1  # pyright: ignore[reportPrivateUsage]
+        assert cap._fire_counts == {id(cap.reminders[0]): 1}  # pyright: ignore[reportPrivateUsage]
 
         fresh = await cap.for_run(_ctx())
         assert fresh is not cap
-        assert fresh._request_count == 0
-        assert fresh._fire_counts == {}
+        assert fresh._request_count == 0  # pyright: ignore[reportPrivateUsage]
+        assert fresh._fire_counts == {}  # pyright: ignore[reportPrivateUsage]
         assert fresh.reminders is cap.reminders
         assert fresh.cache_ttl == '1h'
 
@@ -539,8 +539,8 @@ class TestForRun:
         run1 = await cap.for_run(_ctx())
         run2 = await cap.for_run(_ctx())
         await _run_wrap(run1, _fresh_request())
-        assert run1._request_count == 1
-        assert run2._request_count == 0
+        assert run1._request_count == 1  # pyright: ignore[reportPrivateUsage]
+        assert run2._request_count == 0  # pyright: ignore[reportPrivateUsage]
 
 
 # --- GoalReanchor ---
@@ -788,10 +788,10 @@ class TestLLMReminder:
         reminder = LLMReminder(model=_capture_model(store))
         ctx = _ctx(messages=[ModelRequest(parts=[UserPromptPart('g')])])
         first = await reminder(ctx)
-        agent_after_first = reminder._agent
+        agent_after_first = reminder._agent  # pyright: ignore[reportPrivateUsage]
         second = await reminder(ctx)
         assert first == second == 'generated'
-        assert reminder._agent is agent_after_first
+        assert reminder._agent is agent_after_first  # pyright: ignore[reportPrivateUsage]
 
     async def test_blank_output_returns_none(self) -> None:
         store: dict[str, str] = {}

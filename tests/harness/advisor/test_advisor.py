@@ -25,7 +25,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.advisor import Advisor
-from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire

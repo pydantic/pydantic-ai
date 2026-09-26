@@ -26,11 +26,11 @@ _STEP_CONFIG_MAPPING_ADAPTER = TypeAdapter(dict[str, object])
 _RETRY_STRATEGY_ADAPTER: TypeAdapter[Callable[[Exception, int], RetryDecision] | None] = TypeAdapter(
     Callable[[Exception, int], RetryDecision] | None,
     config=ConfigDict(arbitrary_types_allowed=True),
-)  # pyright: ignore[reportUnknownArgumentType]
+)
 _STEP_SEMANTICS_ADAPTER = TypeAdapter(StepSemantics)
 _SERDES_ADAPTER: TypeAdapter[SerDes[object] | None] = TypeAdapter(
     SerDes | None, config=ConfigDict(arbitrary_types_allowed=True)
-)  # pyright: ignore[reportUnknownArgumentType]
+)
 _STEP_CONFIG_VALUE_ADAPTERS = {
     'retry_strategy': (_RETRY_STRATEGY_ADAPTER, 'a callable or None'),
     'step_semantics': (_STEP_SEMANTICS_ADAPTER, 'StepSemantics'),

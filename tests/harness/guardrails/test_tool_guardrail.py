@@ -574,12 +574,12 @@ class TestConfigurationShape:
     def test_a_bare_string_for_hidden_is_refused(self):
         """`set('danger')` holds six letters, so the tool it names would stay on the wire."""
         with pytest.raises(UserError, match=r'ToolGuardrail.hidden takes a collection'):
-            ToolGuardrail[object](hidden='danger')  # pyright: ignore[reportArgumentType]
+            ToolGuardrail[object](hidden='danger')
 
     def test_a_bare_string_for_tools_is_refused(self):
         """Substring membership would make it match any tool whose name it contains."""
         with pytest.raises(UserError, match=r'ToolGuardrail.tools takes a collection'):
-            ToolGuardrail[object](tools='delete_all')  # pyright: ignore[reportArgumentType]
+            ToolGuardrail[object](tools='delete_all')
 
 
 class TestHiddenTools:

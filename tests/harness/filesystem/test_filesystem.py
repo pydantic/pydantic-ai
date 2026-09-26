@@ -24,13 +24,13 @@ from pydantic_ai_harness.filesystem import (
     FileSystem,
 )
 from pydantic_ai_harness.filesystem._toolset import (
-    _NOT_A_PATH,
-    _OUTSIDE_WORKSPACE,
+    _NOT_A_PATH,  # pyright: ignore[reportPrivateUsage]
+    _OUTSIDE_WORKSPACE,  # pyright: ignore[reportPrivateUsage]
     FileSystemToolset,
-    _content_hash,
-    _format_lines,
-    _is_binary,
-    _sanitize_recoverable_error,
+    _content_hash,  # pyright: ignore[reportPrivateUsage]
+    _format_lines,  # pyright: ignore[reportPrivateUsage]
+    _is_binary,  # pyright: ignore[reportPrivateUsage]
+    _sanitize_recoverable_error,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -135,15 +135,15 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
 class TestPathSecurity:
     async def test_traversal_with_dotdot(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(PermissionError, match='resolves outside'):
-            toolset._resolve_path('../../../etc/passwd')
+            toolset._resolve_path('../../../etc/passwd')  # pyright: ignore[reportPrivateUsage]
 
     async def test_traversal_absolute_path(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(PermissionError, match='resolves outside'):
-            toolset._resolve_path('/etc/passwd')
+            toolset._resolve_path('/etc/passwd')  # pyright: ignore[reportPrivateUsage]
 
     async def test_traversal_encoded(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(PermissionError, match='resolves outside'):
-            toolset._resolve_path('subdir/../../..')
+            toolset._resolve_path('subdir/../../..')  # pyright: ignore[reportPrivateUsage]
 
     async def test_symlink_escape(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         """Symlink pointing outside root is rejected."""
@@ -153,28 +153,28 @@ class TestPathSecurity:
             link = fs_root / 'escape_link'
             link.symlink_to(target)
             with pytest.raises(PermissionError, match='resolves outside'):
-                toolset._resolve_path('escape_link')
+                toolset._resolve_path('escape_link')  # pyright: ignore[reportPrivateUsage]
         finally:
             target.unlink(missing_ok=True)
 
     async def test_valid_path_resolves(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
-        result = toolset._resolve_path('hello.txt')
+        result = toolset._resolve_path('hello.txt')  # pyright: ignore[reportPrivateUsage]
         assert result == (fs_root / 'hello.txt').resolve()
 
     def test_first_matching_pattern_match(self, toolset: FileSystemToolset[None]) -> None:
-        result = toolset._first_matching_pattern('secret.key', ['*.txt', '*.key'])
+        result = toolset._first_matching_pattern('secret.key', ['*.txt', '*.key'])  # pyright: ignore[reportPrivateUsage]
         assert result == '*.key'
 
     def test_first_matching_pattern_no_match(self, toolset: FileSystemToolset[None]) -> None:
-        result = toolset._first_matching_pattern('readme.md', ['*.txt', '*.key'])
+        result = toolset._first_matching_pattern('readme.md', ['*.txt', '*.key'])  # pyright: ignore[reportPrivateUsage]
         assert result is None
 
     def test_first_matching_pattern_empty(self, toolset: FileSystemToolset[None]) -> None:
-        result = toolset._first_matching_pattern('anything.py', [])
+        result = toolset._first_matching_pattern('anything.py', [])  # pyright: ignore[reportPrivateUsage]
         assert result is None
 
     async def test_nested_path_resolves(self, toolset: FileSystemToolset[None]) -> None:
-        result = toolset._resolve_path('subdir/nested.py')
+        result = toolset._resolve_path('subdir/nested.py')  # pyright: ignore[reportPrivateUsage]
         assert result.name == 'nested.py'
 
 
@@ -191,7 +191,7 @@ class TestAccessPatterns:
             max_find_results=1000,
         )
         with pytest.raises(PermissionError, match='denied by pattern'):
-            ts._check_access('data.secret')
+            ts._check_access('data.secret')  # pyright: ignore[reportPrivateUsage]
 
     async def test_denied_pattern_passes_non_matching(self, fs_root: Path) -> None:
         ts = FileSystemToolset(
@@ -205,7 +205,7 @@ class TestAccessPatterns:
             max_find_results=1000,
         )
         # Path that doesn't match any denied pattern should pass
-        ts._check_access('data.txt')
+        ts._check_access('data.txt')  # pyright: ignore[reportPrivateUsage]
 
     async def test_allowed_pattern_permits(self, fs_root: Path) -> None:
         ts = FileSystemToolset(
@@ -219,7 +219,7 @@ class TestAccessPatterns:
             max_find_results=1000,
         )
         # Should not raise for .py files
-        ts._check_access('test.py')
+        ts._check_access('test.py')  # pyright: ignore[reportPrivateUsage]
 
     async def test_allowed_pattern_blocks_non_matching(self, fs_root: Path) -> None:
         ts = FileSystemToolset(
@@ -233,23 +233,23 @@ class TestAccessPatterns:
             max_find_results=1000,
         )
         with pytest.raises(PermissionError, match='does not match any allowed'):
-            ts._check_access('data.txt')
+            ts._check_access('data.txt')  # pyright: ignore[reportPrivateUsage]
 
     async def test_protected_pattern_blocks_write(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(PermissionError, match='protected'):
-            toolset._check_access('.git/config', write=True)
+            toolset._check_access('.git/config', write=True)  # pyright: ignore[reportPrivateUsage]
 
     async def test_protected_pattern_allows_read(self, toolset: FileSystemToolset[None]) -> None:
         # Should not raise for read
-        toolset._check_access('.git/config', write=False)
+        toolset._check_access('.git/config', write=False)  # pyright: ignore[reportPrivateUsage]
 
     async def test_env_file_protected(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(PermissionError, match='protected'):
-            toolset._check_access('.env', write=True)
+            toolset._check_access('.env', write=True)  # pyright: ignore[reportPrivateUsage]
 
     async def test_write_non_protected_with_patterns_configured(self, toolset: FileSystemToolset[None]) -> None:
         # write=True on a path that doesn't match any protected pattern should pass
-        toolset._check_access('hello.txt', write=True)
+        toolset._check_access('hello.txt', write=True)  # pyright: ignore[reportPrivateUsage]
 
     async def test_access_with_no_denied_patterns(self, fs_root: Path) -> None:
         ts = FileSystemToolset(
@@ -263,7 +263,7 @@ class TestAccessPatterns:
             max_find_results=1000,
         )
         # No denied, no protected, no allowed → should pass for any path
-        ts._check_access('anything.txt', write=True)
+        ts._check_access('anything.txt', write=True)  # pyright: ignore[reportPrivateUsage]
 
     async def test_no_patterns_allows_reads_and_writes(self, fs_root: Path) -> None:
         ts = FileSystemToolset(
@@ -1614,13 +1614,13 @@ class TestMutationKillers:
         """Protected files should be readable via _safe_resolve's default (write=False)."""
         (fs_root / '.env.local').write_text('SECRET=x\n')
         # _safe_resolve without write= uses default write=False → read is allowed
-        resolved = toolset._safe_resolve('.env.local')
+        resolved = toolset._safe_resolve('.env.local')  # pyright: ignore[reportPrivateUsage]
         assert resolved.name == '.env.local'
         # But with write=True, it should raise. `_safe_resolve` is an internal
         # helper, so it raises the native PermissionError; the `ModelRetry`
         # conversion happens in the public tool methods that wrap it.
         with pytest.raises(PermissionError, match='protected'):
-            toolset._safe_resolve('.env.local', write=True)
+            toolset._safe_resolve('.env.local', write=True)  # pyright: ignore[reportPrivateUsage]
 
     async def test_list_directory_exact_size(self, toolset: FileSystemToolset[None]) -> None:
         result = await toolset.list_directory('.')

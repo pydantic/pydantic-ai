@@ -6,7 +6,7 @@ import pytest
 from rich.color import Color
 from rich.console import Console
 from rich.text import Text
-from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
+from termflow.themes import PALETTES
 
 from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
 from pydantic_clai2 import StreamRenderer, theme

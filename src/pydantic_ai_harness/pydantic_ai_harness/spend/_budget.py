@@ -247,7 +247,7 @@ def scope_key(budget: Budget[Any], ctx: RunContext[Any] | None, explicit: str | 
     resolved = budget.scope(ctx) if ctx is not None else explicit
     if resolved is None:  # pragma: no cover - callers filter these budgets out first
         raise UserError(f'Budget {budget.name!r} declares a scope, which cannot be resolved without a run.')
-    if not isinstance(resolved, str):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if not isinstance(resolved, str):
         # `scope` is annotated `-> str`, but it is supplied by the caller and a tenant id
         # is often an int or a UUID. Checked rather than coerced: `str()` on an object
         # with no `__str__` produces a repr carrying a memory address, which mints a new
