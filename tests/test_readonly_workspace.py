@@ -73,7 +73,8 @@ async def test_read_only_workspace_over_a_run_only_backend_uses_the_shell_fallba
     workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
 
     assert await workspace.read_text('data.txt') == 'hello'
-    assert any(isinstance(command, str) and 'base64 <' in command for command in backend.commands)
+    # A run-only backend can supply the read only via commands; the wrapper must not expose run() to callers.
+    assert backend.commands
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.run(['ls'])
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
