@@ -2744,12 +2744,36 @@ def test_callable_profile_changing_the_deprecated_flag_is_translated(
         assert model.profile.get('async_tool_call_mode') == mode
 
 
-def test_callable_profile_replacing_the_profile_with_the_deprecated_flag() -> None:
+@pytest.mark.parametrize(
+    ('model_name', 'flag', 'mode'),
+    [
+        (_NEVER_MODEL, True, 'optional'),
+        # The flag a replacement profile carries means what it says, even when it matches the one handed in.
+        (_OPTIONAL_MODEL, True, 'optional'),
+        (_OPTIONAL_MODEL, False, 'never'),
+    ],
+)
+def test_callable_profile_replacing_the_profile_with_the_deprecated_flag(
+    model_name: str, flag: bool, mode: str
+) -> None:
     """A callable that builds a profile from scratch with only the flag gets the mode it implies."""
     provider = GoogleProvider(client=_fake_client(_RecordingSession()))
     model = GoogleRealtimeModel(
-        _NEVER_MODEL, provider=provider, profile=lambda _: RealtimeModelProfile(supports_async_tool_calls=True)
+        model_name, provider=provider, profile=lambda _: RealtimeModelProfile(supports_async_tool_calls=flag)
     )
+    with pytest.warns(PydanticAIDeprecationWarning, match='`supports_async_tool_calls` is deprecated'):
+        assert model.profile.get('async_tool_call_mode') == mode
+
+
+def test_callable_profile_mutating_the_deprecated_flag_is_translated() -> None:
+    """A callable that sets the flag on the profile it's handed, and returns that, is still seen to change it."""
+
+    def mutate(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+        resolved['supports_async_tool_calls'] = True
+        return resolved
+
+    provider = GoogleProvider(client=_fake_client(_RecordingSession()))
+    model = GoogleRealtimeModel(_NEVER_MODEL, provider=provider, profile=mutate)
     with pytest.warns(PydanticAIDeprecationWarning, match='`supports_async_tool_calls` is deprecated'):
         assert model.profile.get('async_tool_call_mode') == 'optional'
 

@@ -84,27 +84,30 @@ def _with_legacy_async_tool_call_flag(profile: RealtimeModelProfile) -> Realtime
 def _resolve_profile_callable(
     user: Callable[[RealtimeModelProfile], RealtimeModelProfile], resolved: RealtimeModelProfile
 ) -> RealtimeModelProfile:
-    """Apply a callable `profile=`, translating the deprecated `supports_async_tool_calls` if it changed it.
+    """Apply a callable `profile=`, translating the deprecated `supports_async_tool_calls` if it sets it.
 
     The callable is handed the flag derived, as a resolved profile carries it, so one that reads it keeps
-    working. Passing it back unchanged is no use of the deprecated flag; changing it is, and is translated
-    against the mode the callable was given, unless it changed that too.
+    working. Passing the profile back with the flag and the mode both as given is no use of the deprecated
+    flag. Anything else that carries the flag is: it's translated against the mode the callable was given
+    when it kept that mode, and on its own when it replaced the profile without one.
     """
     given = _with_legacy_async_tool_call_flag(resolved)
+    # Read before the call: a callable may mutate what it's handed and return it.
+    given_flag = given.get('supports_async_tool_calls')
+    given_mode = given.get('async_tool_call_mode', 'never')
     returned = user(given)
     if 'supports_async_tool_calls' not in returned:
         return returned
     layer = returned.copy()
-    if layer['supports_async_tool_calls'] == given.get('supports_async_tool_calls'):
-        del layer['supports_async_tool_calls']
-        return layer
-    base_mode = given.get('async_tool_call_mode', 'never')
-    kept_mode = layer.get('async_tool_call_mode') == base_mode
+    kept_mode = layer.get('async_tool_call_mode') == given_mode
     if kept_mode:
+        if layer['supports_async_tool_calls'] == given_flag:
+            del layer['supports_async_tool_calls']
+            return layer
         del layer['async_tool_call_mode']
-    translated = _translate_legacy_async_tool_call_flag(layer, base_mode=base_mode)
+    translated = _translate_legacy_async_tool_call_flag(layer, base_mode=given_mode if kept_mode else 'never')
     if kept_mode:
-        translated.setdefault('async_tool_call_mode', base_mode)
+        translated.setdefault('async_tool_call_mode', given_mode)
     return translated
 
 
