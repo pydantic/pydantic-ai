@@ -76,8 +76,12 @@ with try_import() as xai_imports:
 with try_import() as openai_imports:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.vercel import VercelProvider
 
 with try_import() as openrouter_google_imports:
     # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
@@ -111,6 +115,9 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'json_schema_transformer': None,
     'supports_thinking': False,
     'thinking_always_enabled': False,
+    'thinking_enabled_by_default': False,
+    'supports_forced_tool_choice': True,
+    'supports_forced_tool_choice_with_thinking': True,
     'thinking_tags': ('<think>', '</think>'),
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
@@ -119,7 +126,6 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_chat_send_back_thinking_parts': 'auto',
     'openai_supports_strict_tool_definition': True,
     'openai_unsupported_model_settings': (),
-    'openai_supports_tool_choice_required': True,
     'openai_system_prompt_role': None,
     'openai_chat_supports_multiple_system_messages': True,
     'openai_chat_supports_web_search': False,
@@ -127,7 +133,6 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_chat_supports_file_urls': False,
     'openai_supports_encrypted_reasoning_content': False,
     'openai_supports_reasoning': False,
-    'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
     'openai_supports_minimal_reasoning_effort': True,
     'openai_responses_supports_reasoning_mode': False,
@@ -156,7 +161,6 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
-    'grok_supports_tool_choice_required': True,
     'grok_reasoning_efforts': frozenset(),
     # GroqModelProfile subclass defaults
     'groq_always_has_web_search_builtin_tool': False,
@@ -204,7 +208,6 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'tool_deferral_mode': 'standalone',
@@ -234,7 +237,6 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_disallows_sampling_settings': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_supports_task_budgets': True,
             'tool_deferral_mode': 'standalone',
@@ -252,7 +254,6 @@ def test_anthropic_claude_haiku_4_5():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
@@ -272,7 +273,6 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
@@ -310,7 +310,7 @@ def test_openai_gpt_5_4():
 def test_openai_gpt_5_6():
     """Not a VCR test: this pins the resolved GPT-5.6 profile against drift.
 
-    GPT-5.6 reasons on by default at 'medium' (`openai_reasoning_enabled_by_default`) yet can be
+    GPT-5.6 reasons on by default at 'medium' (`thinking_enabled_by_default`) yet can be
     turned off via `effort='none'` (`openai_supports_reasoning_effort_none`), so it is NOT
     `thinking_always_enabled` (that flag is derived to False). `phase` is on (GPT-5.6 responses
     label messages with it) and native `tool_search` is on (verified live). Reasoning behavior
@@ -332,7 +332,7 @@ def test_openai_gpt_5_6():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
-            'openai_reasoning_enabled_by_default': True,
+            'thinking_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
@@ -369,7 +369,7 @@ def test_openai_gpt_6_astra():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
-            'openai_reasoning_enabled_by_default': True,
+            'thinking_enabled_by_default': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
@@ -510,7 +510,7 @@ def test_openai_o3_mini():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
-            'openai_reasoning_enabled_by_default': True,
+            'thinking_enabled_by_default': True,
             'openai_supports_reasoning': True,
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
@@ -534,7 +534,7 @@ def test_openai_codex_gpt_5_6():
             'supports_thinking': True,
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
-            'openai_reasoning_enabled_by_default': True,
+            'thinking_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
             'openai_responses_supports_reasoning_context': True,
@@ -698,14 +698,13 @@ def test_deepseek_provider_deepseek_chat():
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_responses_supports_interleaved_function_calls': False,
-            'openai_supports_forced_tool_choice_with_thinking': True,
             'openai_responses_supports_json_schema_output': True,
         }
     )
 
 
 def test_deepseek_provider_deepseek_reasoner():
-    """`deepseek-reasoner` overrides `openai_supports_tool_choice_required=False`."""
+    """`deepseek-reasoner` overrides `supports_forced_tool_choice=False`."""
     from pydantic_ai.providers.deepseek import DeepSeekProvider
 
     profile = DeepSeekProvider.model_profile('deepseek-reasoner')
@@ -719,9 +718,8 @@ def test_deepseek_provider_deepseek_reasoner():
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_responses_supports_interleaved_function_calls': False,
-            'openai_supports_tool_choice_required': False,
-            'openai_supports_forced_tool_choice_with_thinking': True,
-            'openai_reasoning_enabled_by_default': True,
+            'supports_forced_tool_choice': False,
+            'thinking_enabled_by_default': True,
             'openai_responses_supports_json_schema_output': True,
         }
     )
@@ -756,7 +754,6 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
@@ -782,7 +779,7 @@ def test_bedrock_anthropic_adaptive_thinking_tool_choice_support(model_name: str
     profile = BedrockProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('bedrock_supports_tool_choice', False) is True
-    assert profile.get('anthropic_supports_forced_tool_choice', False) is expected
+    assert profile.get('supports_forced_tool_choice', False) is expected
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
@@ -799,7 +796,7 @@ def test_bedrock_anthropic_fable_5_1_binds_through_the_id_split(model_id: str):
     profile = BedrockProvider.model_profile(model_id)
     assert profile is not None
     assert profile.get('anthropic_binds_thinking_blocks') is True
-    assert profile.get('anthropic_supports_forced_tool_choice') is False
+    assert profile.get('supports_forced_tool_choice') is False
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
@@ -822,7 +819,6 @@ def test_bedrock_anthropic_with_geo_prefix():
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
@@ -852,7 +848,6 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -1055,7 +1050,6 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
@@ -1068,7 +1062,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'openrouter_supports_tool_cache': True,
             'openrouter_supports_dynamic_instruction_cache': True,
             'openrouter_max_cache_points': 4,
-            'openrouter_supports_forced_tool_choice_with_thinking': False,
+            'supports_forced_tool_choice_with_thinking': False,
         }
     )
 
@@ -1099,7 +1093,6 @@ def test_openrouter_openai_gpt_5_4():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1137,7 +1130,6 @@ def test_openrouter_google_gemini_3_pro():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1174,7 +1166,6 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openrouter_supports_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_dynamic_instruction_cache': False,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
             'openrouter_supports_tool_cache': False,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
@@ -1202,7 +1193,6 @@ def test_openrouter_mistral_large():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1228,7 +1218,6 @@ def test_openrouter_xai_grok_4():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1250,7 +1239,6 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
@@ -1393,7 +1381,6 @@ def test_openrouter_qwen():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1416,7 +1403,6 @@ def test_openrouter_deepseek():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1439,7 +1425,6 @@ def test_openrouter_meta_llama():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1463,7 +1448,6 @@ def test_openrouter_moonshotai():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1487,7 +1471,6 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
-            'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
 
@@ -1735,7 +1718,7 @@ def test_ollama_gpt_oss():
             ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_supports_strict_tool_definition': False,
-            'openai_supports_tool_choice_required': False,
+            'supports_forced_tool_choice': False,
         }
     )
 
@@ -1773,7 +1756,7 @@ def test_vllm_gpt_oss_hf_namespace():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'openai_supports_tool_choice_required': False,
+            'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
@@ -1981,7 +1964,6 @@ def test_anthropic_unknown_model_returns_some_profile():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
@@ -2001,7 +1983,7 @@ def test_moonshotai_kimi():
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
-            'openai_supports_tool_choice_required': False,
+            'supports_forced_tool_choice': False,
         }
     )
 
@@ -2100,7 +2082,6 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
@@ -2218,7 +2199,6 @@ def test_heroku_returns_openai_transformer():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
-            'anthropic_supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
@@ -2352,7 +2332,7 @@ def test_crusoe_harmony():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'openai_supports_tool_choice_required': False,
+            'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
         }
     )
@@ -2480,3 +2460,35 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
 
     profile = openai_model_profile('gpt-5.6')
     assert profile.get('tool_addition_mode') is None
+
+
+@pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')
+@pytest.mark.parametrize(
+    ('provider_name', 'model_name'),
+    [
+        ('anthropic', 'claude-opus-5-5'),
+        ('bedrock', 'us.anthropic.claude-opus-5-5'),
+        ('openrouter', 'anthropic/claude-opus-5.5'),
+        ('vercel', 'anthropic/claude-opus-5-5'),
+        ('github-copilot', 'claude-opus-5.5'),
+        ('heroku', 'claude-opus-5-5'),
+        ('litellm', 'anthropic/claude-opus-5-5'),
+        ('snowflake', 'claude-opus-5-5'),
+    ],
+)
+def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: str, model_name: str):
+    """Claude Opus 5.5 rejects a forced `tool_choice` whichever provider serves it, so every provider that merges the
+    Anthropic profile carries `supports_forced_tool_choice=False` over."""
+    provider_classes = {
+        'anthropic': AnthropicProvider,
+        'bedrock': BedrockProvider,
+        'openrouter': OpenRouterProvider,
+        'vercel': VercelProvider,
+        'github-copilot': GitHubCopilotProvider,
+        'heroku': HerokuProvider,
+        'litellm': LiteLLMProvider,
+        'snowflake': SnowflakeProvider,
+    }
+    profile = provider_classes[provider_name].model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_forced_tool_choice') is False

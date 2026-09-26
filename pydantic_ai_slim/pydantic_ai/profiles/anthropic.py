@@ -122,12 +122,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_supports_forced_tool_choice: bool
-    """Whether the model accepts a forced `tool_choice` (`{'type': 'any'}` or `{'type': 'tool'}`).
+    """Deprecated: use [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] instead.
 
-    Most Anthropic models only reject forcing alongside extended thinking; Claude Fable 5.1, Claude
-    Mythos 5.1, and Claude Opus 5.5 reject it unconditionally with a 400. When False, a resolved `required` tool choice
-    falls back to `auto` (filtering tools to the requested set), and an explicit `tool_choice='required'`
-    (or an explicit list of tools) raises a `UserError`.
+    Translated (with a deprecation warning) whenever profiles are merged.
     """
 
     anthropic_binds_thinking_blocks: bool
@@ -344,7 +341,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
-        anthropic_supports_forced_tool_choice=supports_forced_tool_choice,
+        supports_forced_tool_choice=supports_forced_tool_choice,
         anthropic_binds_thinking_blocks=binds_thinking_blocks,
         supported_native_tools=supported_native_tools,
     )

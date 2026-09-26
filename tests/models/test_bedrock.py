@@ -3268,7 +3268,7 @@ async def test_bedrock_unified_thinking_with_tool_forcing_raises(
 
     settings: BedrockModelSettings = {'thinking': True, 'tool_choice': 'required'}
 
-    with pytest.raises(UserError, match="tool_choice='required' with extended thinking"):
+    with pytest.raises(UserError, match="Extended thinking doesn't support forcing tool use"):
         await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
 
 
@@ -3287,7 +3287,7 @@ async def test_bedrock_extended_thinking_with_tool_forcing_suggests_adaptive(
 
     with pytest.raises(
         UserError,
-        match=r"forcing specific tools with extended thinking\. Disable thinking or use `tool_choice='auto'`\. "
+        match=r"Extended thinking doesn't support forcing tool use\. Disable thinking or use `tool_choice='auto'`\. "
         r"Alternatively, `bedrock_additional_model_requests_fields=\{'thinking': \{'type': 'adaptive'\}\}` supports forcing\.$",
     ):
         await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)

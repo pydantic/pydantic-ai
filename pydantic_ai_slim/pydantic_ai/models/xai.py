@@ -70,7 +70,7 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._tool_choice import resolve_tool_choice
+from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
     import grpc
@@ -695,6 +695,15 @@ class XaiModel(Model[AsyncClient]):
 
         return None
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        # `xai_reasoning_effort` takes precedence over unified thinking, as in `_create_chat`.
+        reasoning_effort = cast(XaiModelSettings, model_settings or {}).get('xai_reasoning_effort')
+        if reasoning_effort is not None:
+            return reasoning_effort != 'none'
+        return super()._request_thinks(model_settings, model_request_parameters)
+
     def _get_tool_choice(
         self,
         model_settings: XaiModelSettings,
@@ -708,17 +717,28 @@ class XaiModel(Model[AsyncClient]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
 
-        profile = self.profile
+        forcing = resolved_tool_choice == 'required' or (
+            isinstance(resolved_tool_choice, tuple) and resolved_tool_choice[0] == 'required'
+        )
+        supports_forcing = forcing and support_tool_forcing(
+            self.model_name,
+            model_settings,
+            tool_forcing_unavailable_reason(
+                self.profile,
+                thinking=self._request_thinks(model_settings, model_request_parameters),
+                thinking_remedy="Disable thinking with `thinking=False` or `xai_reasoning_effort='none'`",
+            ),
+        )
 
         tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            tool_choice = 'required' if profile.get('grok_supports_tool_choice_required', True) else 'auto'
+            tool_choice = 'required' if supports_forcing else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if profile.get('grok_supports_tool_choice_required', True):
+                if supports_forcing:
                     tool_choice = required_tool(next(iter(tool_names)))
                 else:
                     # Forcing not supported: filter so the model can only see the requested tool.
@@ -727,7 +747,7 @@ class XaiModel(Model[AsyncClient]):
                     tool_choice = 'auto'
             else:
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                if tool_choice_mode == 'required' and profile.get('grok_supports_tool_choice_required', True):
+                if tool_choice_mode == 'required' and supports_forcing:
                     tool_choice = 'required'
                 else:
                     tool_choice = 'auto'

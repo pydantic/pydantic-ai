@@ -163,11 +163,11 @@ def test_vllm_provider_family_tool_flags() -> None:
 
     harmony_profile = provider.model_profile('gpt-oss-20b')
     assert harmony_profile is not None
-    assert harmony_profile.get('openai_supports_tool_choice_required', True) is False
+    assert harmony_profile.get('supports_forced_tool_choice', True) is False
 
     qwen_coder_profile = provider.model_profile('Qwen/Qwen3-Coder-480B-A35B-Instruct')
     assert qwen_coder_profile is not None
-    assert qwen_coder_profile.get('openai_supports_tool_choice_required', False) is True
+    assert qwen_coder_profile.get('supports_forced_tool_choice', False) is True
     assert qwen_coder_profile.get('openai_supports_strict_tool_definition', False) is True
     assert qwen_coder_profile.get('supports_thinking', False) is False
 

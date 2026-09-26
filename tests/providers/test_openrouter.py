@@ -301,7 +301,7 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     provider = OpenRouterProvider(api_key='api-key')
     profile = provider.model_profile(model_name)
     assert profile is not None
-    assert profile.get('openrouter_supports_forced_tool_choice_with_thinking') is expected
+    assert profile.get('supports_forced_tool_choice_with_thinking') is expected
 
 
 def test_openrouter_model_profile_requires_provider_prefix() -> None:

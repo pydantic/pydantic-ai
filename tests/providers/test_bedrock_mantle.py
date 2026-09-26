@@ -295,7 +295,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_chat_supports_web_search': False,
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
-            'openai_reasoning_enabled_by_default': True,
+            'thinking_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
             'openai_responses_supports_reasoning_context': True,

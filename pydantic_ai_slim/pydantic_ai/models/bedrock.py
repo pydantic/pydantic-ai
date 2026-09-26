@@ -81,7 +81,12 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
-from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from pydantic_ai.models._tool_choice import (
+    FORCING_UNSUPPORTED_REASON,
+    resolve_tool_choice,
+    support_tool_forcing,
+    tool_forcing_unavailable_reason,
+)
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import (
@@ -1160,9 +1165,7 @@ class BedrockConverseModel(Model[BaseClient]):
         tool_defs = model_request_parameters.declared_tool_defs
 
         profile = cast(BedrockModelProfile, self.profile)
-        supports = _support_tool_forcing(
-            self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
-        )
+        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
 
         tool_choice: ToolChoiceTypeDef
         if resolved_tool_choice == 'auto':
@@ -2027,11 +2030,8 @@ def _thinking_blocks_tool_forcing(
 
 
 def _supports_tool_forcing(profile: BedrockModelProfile) -> bool:
-    """Keep Anthropic's forcing capability distinct from Bedrock's general tool-choice support."""
-    supports_tool_choice = profile.get('bedrock_supports_tool_choice', False)
-    if profile.get('bedrock_thinking_variant') == 'anthropic' and 'anthropic_supports_forced_tool_choice' in profile:
-        return supports_tool_choice and bool(profile['anthropic_supports_forced_tool_choice'])
-    return supports_tool_choice
+    """Whether Converse sends a `toolChoice` for this model, and the model accepts a forced one."""
+    return profile.get('bedrock_supports_tool_choice', False) and profile.get('supports_forced_tool_choice', True)
 
 
 def _support_tool_forcing(
@@ -2039,42 +2039,29 @@ def _support_tool_forcing(
     profile: BedrockModelProfile,
     model_settings: BedrockModelSettings | None,
     model_request_parameters: ModelRequestParameters,
-    effective_tool_choice: ResolvedToolChoice,
 ) -> bool:
-    """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported.
+    """Whether to send a forced `toolChoice`, raising `UserError` if explicitly requested but unavailable.
 
-    Also checks thinking compatibility: extended thinking blocks forced tool choice, while
-    adaptive thinking allows it on profiles that advertise support.
+    On top of the profile's forcing flags, extended thinking blocks forced tool choice, while adaptive
+    thinking allows it.
     """
-    if not _supports_tool_forcing(profile):
-        explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
-                f'This model does not support forcing tool use.'
-            )
-        return False
-
     thinking_type = _effective_thinking_type(model_settings, model_request_parameters, profile)
-    if _thinking_blocks_tool_forcing(thinking_type, profile):
-        explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            context = "tool_choice='required'" if explicit_choice == 'required' else 'forcing specific tools'
-            if profile.get('bedrock_thinking_variant') != 'anthropic':
-                raise UserError(
-                    f'Bedrock does not support {context} with thinking enabled. '
-                    f"Disable thinking or use `tool_choice='auto'`."
-                )
-            adaptive_hint = (
-                f' Alternatively, `{_ADAPTIVE_THINKING_SETTING}` supports forcing.'
-                if profile.get('bedrock_supports_adaptive_thinking', False)
-                else ''
+    if profile.get('bedrock_supports_tool_choice', False):
+        unavailable_reason = tool_forcing_unavailable_reason(
+            profile, thinking=thinking_type is not None, thinking_remedy='Disable thinking with `thinking=False`'
+        )
+    else:
+        unavailable_reason = FORCING_UNSUPPORTED_REASON
+    if unavailable_reason is None and thinking_type == 'enabled':
+        if profile.get('bedrock_thinking_variant') != 'anthropic':
+            unavailable_reason = (
+                "Bedrock doesn't support forcing tool use with thinking enabled for this model. "
+                "Disable thinking or use `tool_choice='auto'`."
             )
-            raise UserError(
-                f'Bedrock does not support {context} with extended thinking. '
-                f"Disable thinking or use `tool_choice='auto'`.{adaptive_hint}"
+        else:
+            unavailable_reason = (
+                "Extended thinking doesn't support forcing tool use. Disable thinking or use `tool_choice='auto'`."
             )
-        if effective_tool_choice == 'required' or isinstance(effective_tool_choice, tuple):
-            return False
-
-    return True
+            if profile.get('bedrock_supports_adaptive_thinking', False):
+                unavailable_reason += f' Alternatively, `{_ADAPTIVE_THINKING_SETTING}` supports forcing.'
+    return support_tool_forcing(model_name, model_settings, unavailable_reason)
