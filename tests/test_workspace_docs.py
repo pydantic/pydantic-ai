@@ -14,6 +14,14 @@ def test_post_run_unused_workspace_access_warning() -> None:
     assert 'accessing `result.workspace` after a run with `ref=None`' in page
 
 
+def test_durable_workspace_call_arguments_are_journaled() -> None:
+    docs = Path(__file__).resolve().parents[1] / 'docs' / 'durable_execution'
+    for engine in ('temporal', 'dbos'):
+        page = (docs / f'{engine}.md').read_text()
+        assert 'workflow-side workspace call arguments' in page
+        assert 'env=' in page
+
+
 def test_sandbox_paths_are_portable() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert 'Prefer relative paths' in page
