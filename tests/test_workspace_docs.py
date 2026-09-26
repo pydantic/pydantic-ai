@@ -121,9 +121,19 @@ def test_timeout_security_and_platform_guidance() -> None:
 
 
 def test_temporal_command_retry_requires_explicit_policy() -> None:
+    from temporalio.common import RetryPolicy
+
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
-    assert 'workspace_activity_config' in page
+    assert 'workspace_activity_config' not in page
+    assert '`activity_config`' in page
     assert 'command retries' in page
+    policy = RetryPolicy(maximum_attempts=3)
+    durability = TemporalDurability(activity_config={'retry_policy': policy})
+    configured_policy = durability.activity_config.get('retry_policy')
+    assert configured_policy is not None
+    assert configured_policy.maximum_attempts == 3
 
 
 def test_deleted_sandbox_history_restarts_with_new_workspace() -> None:

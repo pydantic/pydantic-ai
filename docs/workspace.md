@@ -369,8 +369,10 @@ This keeps a run's workspace state addressable after a worker restart or flow re
 - Workspace calls retry like tools do, so a command or write may run again if a worker dies mid-call.
   A timed-out or unavailable workspace and deterministic file errors (including OS path errors) are not
   retried automatically. A provider control-plane stall before a command starts is a transient failure;
-  it benefits from retries only when command retries are allowed by Temporal's `workspace_activity_config`
-  (or per-step config). Temporal gives command activities
+  configure command retries through `TemporalDurability(activity_config={'retry_policy': RetryPolicy(maximum_attempts=3)})`,
+  importing `RetryPolicy` from `temporalio.common`. `activity_config` applies to all activities,
+  including workspace commands; `toolset_activity_config` only overrides activities for a named toolset.
+  Temporal gives command activities
   their requested timeout plus time for startup and stopping; `timeout=None` uses a one-hour activity
   ceiling, not an unlimited Temporal activity.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
