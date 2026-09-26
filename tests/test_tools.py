@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -1086,6 +1087,48 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     # Without suppressing griffe logging, we get:
     # assert caplog.messages == snapshot(['<module>:4: No type or annotation for returned value 1'])
     assert caplog.messages == snapshot([])
+
+
+def broken_returns_docstring_tool(x: int) -> str:  # pragma: no cover
+    """Do a thing.
+
+    Args:
+        x: an arg
+
+    Returns:
+    bad indentation no type no nothing
+            really broken: [unterminated
+    """
+    return ''
+
+
+def test_griffe_parse_failure_restores_root_log_level():
+    level_before = logging.root.getEffectiveLevel()
+    try:
+        agent = Agent(FunctionModel(get_json_schema))
+
+        with pytest.raises(IndexError):
+            agent.tool_plain(broken_returns_docstring_tool, docstring_format='google')
+
+        assert logging.root.level == level_before
+    finally:
+        logging.root.setLevel(level_before)
+
+
+def test_griffe_parse_failure_does_not_silence_app_logging(caplog: LogCaptureFixture):
+    level_before = logging.root.getEffectiveLevel()
+    caplog.set_level(logging.INFO)
+    try:
+        agent = Agent(FunctionModel(get_json_schema))
+
+        with pytest.raises(IndexError):
+            agent.tool_plain(broken_returns_docstring_tool, docstring_format='google')
+
+        logging.getLogger('myapp').warning('visible')
+        records = [record.message for record in caplog.records if record.name == 'myapp']
+        assert records == ['visible']
+    finally:
+        logging.root.setLevel(level_before)
 
 
 async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: no cover
