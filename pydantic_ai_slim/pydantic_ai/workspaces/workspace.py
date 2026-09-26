@@ -160,9 +160,10 @@ class _ShellFilesystem(SupportsFilesystem):
         quoted_path = shlex.quote(path)
         result = await self._list_paths(quoted_path)
         await self._raise_for_error(result, path, missing=True)
+        listing = self._decode_sized_output(result.stdout, path, 'directory listing')
         try:
-            entries = base64.b64decode(result.stdout).decode().split('\0')
-        except (UnicodeDecodeError, ValueError) as error:
+            entries = listing.decode().split('\0')
+        except UnicodeDecodeError as error:
             raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}') from error
         # Each entry is `<d|-><path>`: whether it is a directory, following a symlink to its target.
         return tuple(
@@ -182,7 +183,8 @@ class _ShellFilesystem(SupportsFilesystem):
             f'file={quoted_temporary}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
             f'if ! test -d {quoted_path}; then '
             f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
-            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" && base64 < "$file"',
+            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" '
+            '&& wc -c < "$file" && base64 < "$file"',
             shell=True,
         )
 
@@ -224,14 +226,25 @@ class _ShellFilesystem(SupportsFilesystem):
             'target=$(readlink -n -- "$resolved/$part"; printf x); target="${target%x}"; '
             'case "$target" in /*) resolved=;; esac; rest="$target/$rest"; '
             'else resolved="$resolved/$part"; fi;; esac; done; '
-            'printf %s "${resolved:-/}" | base64',
+            'value="${resolved:-/}"; printf %s "$value" | wc -c; printf %s "$value" | base64',
             shell=True,
         )
         await self._raise_for_error(result, path)
+        return self._decode_sized_output(result.stdout, path, 'real path').decode()
+
+    @staticmethod
+    def _decode_sized_output(output: str, path: str, kind: str) -> bytes:
+        # A truncated base64 stream may still decode to a plausible path or listing.
+        size, separator, encoded = output.partition('\n')
+        if not separator or not size.strip().isdigit():
+            raise WorkspaceError(f'shell filesystem returned an invalid {kind} for {path!r}')
         try:
-            return base64.b64decode(result.stdout).decode()
+            data = base64.b64decode(encoded)
         except ValueError as error:
-            raise WorkspaceError(f'shell filesystem returned an invalid real path for {path!r}') from error
+            raise WorkspaceError(f'shell filesystem returned an invalid {kind} for {path!r}') from error
+        if int(size) != len(data):
+            raise WorkspaceError(f'shell filesystem returned incomplete output for {path!r}')
+        return data
 
     async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:

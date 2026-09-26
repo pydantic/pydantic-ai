@@ -407,6 +407,35 @@ async def test_shell_read_rejects_output_damaged_in_transit(
         await Workspace(DamagingBackend(LocalWorkspaceBackend(tmp_path))).read_bytes('data.bin')
 
 
+@pytest.mark.parametrize('operation', ['list_dir', 'realpath'])
+async def test_shell_metadata_rejects_truncated_valid_base64(tmp_path: Path, operation: str) -> None:
+    class TruncatedBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            if isinstance(command, str) and ('find ' in command or 'readlink -n' in command):
+                return FakeWorkspaceResult(
+                    exit_code=result.exit_code, stdout=result.stdout.strip()[:-4], stderr=result.stderr
+                )
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    (tmp_path / 'directory').mkdir()
+    (tmp_path / 'directory' / 'long-name.txt').write_text('x')
+    workspace = Workspace(TruncatedBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(WorkspaceError, match='incomplete output'):
+        if operation == 'list_dir':
+            await workspace.list_dir('directory')
+        else:
+            await workspace.realpath('directory/long-name.txt')
+
+
 async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> None:
     class InvalidListingBackend(RunOnlyWorkspaceBackend):
         async def run(
@@ -419,7 +448,7 @@ async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> 
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
             if isinstance(command, str) and 'find ' in command:
-                return FakeWorkspaceResult(stdout='/w==')
+                return FakeWorkspaceResult(stdout='1\n/w==')
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
