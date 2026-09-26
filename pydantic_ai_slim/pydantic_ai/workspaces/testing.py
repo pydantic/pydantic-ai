@@ -107,6 +107,7 @@ class WorkspaceBackendSuite:
     ) -> None:
         if not has_real_posix_shell:
             pytest.skip('fake has no background processes')
+        await backend.working_dir()  # Provisioning is not part of the command's drain deadline.
         # The direct command exits; a short grace may drain its inherited output pipes.
         with anyio.fail_after(5):
             result = await _commands(backend).run('sleep 4 & printf done', shell=True)

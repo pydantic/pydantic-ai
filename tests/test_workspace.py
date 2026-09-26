@@ -314,6 +314,10 @@ async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> Non
         await workspace.read_bytes('unreadable')
     with pytest.raises(PermissionError):
         await workspace.write_bytes('unreadable', b'x')
+    (tmp_path / 'unwritable').mkdir()
+    (tmp_path / 'unwritable').chmod(0o500)
+    with pytest.raises(PermissionError):
+        await workspace.make_dir('unwritable/child')
 
 
 async def test_shell_filesystem_refuses_to_remove_workspace_root(tmp_path: Path) -> None:

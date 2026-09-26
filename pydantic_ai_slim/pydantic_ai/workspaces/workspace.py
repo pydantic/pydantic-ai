@@ -60,6 +60,7 @@ _SHELL_EXIT_PERMISSION = 113
 _SHELL_CHECK_PARENTS = (
     'while [ "$parent" != / ]; do '
     f'if test -e "$parent" && ! test -d "$parent"; then exit {_SHELL_EXIT_NOT_DIRECTORY}; fi; '
+    f'if test -d "$parent"; then test -w "$parent" || exit {_SHELL_EXIT_PERMISSION}; break; fi; '
     'parent=${parent%/*}; [ -n "$parent" ] || parent=/; done; '
 )
 
