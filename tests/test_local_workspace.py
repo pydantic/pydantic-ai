@@ -479,6 +479,12 @@ async def test_reading_fifo_fails_without_waiting_for_writer(tmp_path: Path):
             await workspace.read_bytes('fifo')
 
 
+async def test_list_dir_keeps_self_loop_symlink(tmp_path: Path):
+    (tmp_path / 'loop').symlink_to('loop')
+    entries = await LocalWorkspaceBackend(tmp_path).list_dir(str(tmp_path))
+    assert [(entry.name, entry.is_dir, entry.size) for entry in entries] == [('loop', False, None)]
+
+
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
     """A symlinked file reports its target's size (as `stat` does); a broken symlink
     doesn't fail the listing, it just has no size."""

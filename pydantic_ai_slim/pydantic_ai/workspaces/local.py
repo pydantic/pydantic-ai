@@ -195,7 +195,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             with os.scandir(self._path(path)) as scan:
                 children = sorted(scan, key=lambda child: child.path)
             for child in children:
-                is_dir = child.is_dir()
+                try:
+                    is_dir = child.is_dir()
+                except OSError:
+                    # A symlink loop has no resolvable target; keep the entry, not the failure.
+                    is_dir = False
                 try:
                     # stat, not lstat: a symlinked file reports its target's size, matching `stat()`.
                     size = None if is_dir else child.stat().st_size
