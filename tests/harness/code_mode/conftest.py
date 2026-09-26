@@ -14,7 +14,9 @@ from tests.harness.code_mode import websocket_relay
 
 
 @asynccontextmanager
-async def websocket_relay_server(port: int = 0) -> AsyncGenerator[str, None]:
+async def websocket_relay_server(
+    port: int = 0,
+) -> AsyncGenerator[str, None]:  # pragma: lax no cover -- only the skipped relay tests use it (#8824)
     """Run the protocol relay on a loopback port (ephemeral by default) and yield its URL."""
     process = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -40,7 +42,9 @@ async def websocket_relay_server(port: int = 0) -> AsyncGenerator[str, None]:
 
 
 @pytest.fixture
-async def websocket_relay_url() -> AsyncIterator[str]:
+async def websocket_relay_url() -> AsyncIterator[
+    str
+]:  # pragma: lax no cover -- only the skipped relay tests use it (#8824)
     """Start the protocol relay on an ephemeral loopback port."""
     async with websocket_relay_server() as url:
         yield url

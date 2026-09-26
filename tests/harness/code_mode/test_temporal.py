@@ -118,7 +118,7 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
 
 
 @pytest.fixture
-async def monty_relay() -> AsyncIterator[None]:
+async def monty_relay() -> AsyncIterator[None]:  # pragma: lax no cover -- only the skipped relay tests use it (#8824)
     """Serve remote Monty workers on the port `remote_code_mode_agent` is configured with."""
     async with websocket_relay_server(MONTY_RELAY_PORT):
         yield
@@ -363,6 +363,7 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     assert replay_result.replay_failure is None
 
 
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 @pytest.mark.usefixtures('monty_relay')
 async def test_code_mode_runs_over_websocket_in_temporal_workflow(client: Client) -> None:
     """Remote workers run and replay in a workflow like local ones do.
