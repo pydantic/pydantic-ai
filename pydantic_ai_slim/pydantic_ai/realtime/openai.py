@@ -588,11 +588,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         failed. Only the caller's own request is taken back: one the receive loop sends for a deferred
         request has no caller to tell, so the reconnect re-asks for it as before.
         """
+        ws = self._ws
         try:
             await self._request_response(input_indexes)
         except self.transport_errors:
-            # Only a request that went straight out can fail here; a deferred one sends nothing yet.
-            self._response_active = False
+            # Only a request that went straight out can fail here; a deferred one sends nothing yet. If
+            # the link was replaced meanwhile, the active response is the new socket's, not this one.
+            if self._ws is ws:
+                self._response_active = False
             raise
 
     async def _request_response(self, input_indexes: Sequence[int]) -> None:

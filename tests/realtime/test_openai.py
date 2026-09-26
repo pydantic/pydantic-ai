@@ -4419,3 +4419,47 @@ async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_rep
             break
 
     assert [frame['type'] for frame in second.sent] == ['session.update', 'response.create']
+
+
+@pytest.mark.anyio
+async def test_a_stale_response_request_failing_after_the_redial_keeps_the_replayed_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller's `response.create` that fails on the old socket after the re-dial doesn't clear the new socket's response.
+
+    The re-dial already re-asked for that response on the new socket; the caller's late failure is about
+    the old one, so marking no response active would let the next request start a second response.
+    """
+
+    class _SlowCreate(_DroppableWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = asyncio.Event()
+
+        async def send(self, data: str) -> None:
+            if json.loads(data)['type'] == 'response.create':
+                await self.gate.wait()
+            await super().send(data)
+
+    first, second = _SlowCreate(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    connect.release.set()
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        sender = asyncio.ensure_future(conn.send('hi'))  # its `response.create` is stuck on the old socket
+        await _settle()
+        first.drop()
+        async for event in conn:  # pragma: no branch
+            assert isinstance(event, RealtimeSessionReconnectEvent)
+            break
+        first.gate.set()
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await sender
+        await conn.send(CreateResponse())  # the replayed response is still active, so this one waits
+
+    assert [frame['type'] for frame in second.sent].count('response.create') == 1

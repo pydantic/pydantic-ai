@@ -109,7 +109,7 @@ resumed session too: the turn stays in history, `state_restored` is `False`, and
 When its reply hadn't started and no spoken reply was in progress,
 [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] also stops waiting for it.
 A turn typed while the model was answering speech can't be told apart from that spoken reply, so
-`wait_for_reply()` may keep waiting for it.
+`wait_for_reply()` may keep waiting for it, and the reconnect may report `state_restored=True`.
 
 Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply

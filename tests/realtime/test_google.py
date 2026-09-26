@@ -3443,3 +3443,60 @@ async def test_typed_turns_are_not_tracked_without_a_reconnect_policy() -> None:
     conn = _conn(_RecordingSession())
     await conn.send('hello')
     assert conn._uncovered_typed_turns == []  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_answer_for_a_lost_call_that_completes_on_the_old_session_still_leaves_the_new_one_owed() -> None:
+    # An answer for a lost call still on the wire when the resumed session drops too completes on that
+    # old session; the session resumed after it is still stuck on the call, so it is answered as well.
+    gate = asyncio.Event()
+
+    class _AnswersLate(_DroppableSession):
+        calls = 0
+
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            _AnswersLate.calls += 1
+            if _AnswersLate.calls == 1:
+                raise ConnectionClosed(None, None)  # the receive loop's own answer fails
+            await gate.wait()
+            self.sent.append(('tool_response', function_responses))  # written before the close
+
+    s1, s2, s3 = _DroppableSession(), _AnswersLate(), _DroppableSession()
+    sessions = iter([s2, s3])
+
+    async def dial(handle: str | None) -> AsyncSession:
+        return cast('AsyncSession', next(sessions))
+
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    s1.push(_handle_update('h1'))
+    s1.push(
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+    s1.drop()
+    reconnects = 0
+    second_reconnect = asyncio.Event()
+
+    async def consume() -> None:
+        nonlocal reconnects
+        async for event in conn:  # pragma: no branch
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                reconnects += 1
+                if reconnects == 2:
+                    second_reconnect.set()
+                    return
+
+    consumer = asyncio.create_task(consume())
+    await _settle()
+    sender = asyncio.create_task(conn.send('hello'))  # its answer for c1 is stuck on s2
+    await _settle()
+    s2.drop()
+    await asyncio.wait_for(second_reconnect.wait(), 5)
+    gate.set()
+    await sender  # its answer landed on s2, so s3 is answered before the input goes out there
+    await consumer
+    assert s3.kinds() == ['tool_response', 'client_content']

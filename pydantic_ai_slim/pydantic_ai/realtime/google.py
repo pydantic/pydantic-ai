@@ -1338,10 +1338,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         """
         input_index = self._inputs_received
         self._inputs_received += 1
-        if self._unanswered_lost_tool_calls and not self._lost_tool_calls_answered:
+        while self._unanswered_lost_tool_calls and not self._lost_tool_calls_answered:
             # Whatever reaches a resumed session first is consumed by an exchange stuck on calls it lost,
             # so those are answered ahead of any input (see `_answer_lost_tool_calls`). The lock orders
-            # this with the receive loop's own answer, so the input can't overtake it.
+            # this with the receive loop's own answer, so the input can't overtake it; the loop answers
+            # again if a re-dial replaced the session while an answer was on the wire.
             async with self._send_lock:
                 await self._answer_lost_tool_calls()
         # Tracked from before the send, so a handle or answer arriving while it is on the wire counts.
@@ -1546,7 +1547,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         """
         if not self._unanswered_lost_tool_calls or self._lost_tool_calls_answered:
             return
-        await self._session.send_tool_response(
+        session = self._session
+        await session.send_tool_response(
             function_responses=[
                 genai_types.FunctionResponse(
                     id=gemini_id, name=name, response={'error': INTERRUPTED_TOOL_RETURN_CONTENT}
@@ -1554,7 +1556,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 for name, gemini_id in self._unanswered_lost_tool_calls
             ]
         )
-        self._lost_tool_calls_answered = True
+        # An answer that completes after a re-dial went to the old session; the new one is still owed.
+        if self._session is session:
+            self._lost_tool_calls_answered = True
 
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff, resuming from the latest handle; return whether it worked."""
