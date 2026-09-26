@@ -1327,9 +1327,28 @@ async def test_tool_calls_limit_ignores_inline_approved_calls_with_invalid_args(
     result = await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
     assert result.output == 'done'
     assert result.usage.tool_calls == 0
-    request = result.all_messages()[2]
-    assert isinstance(request, ModelRequest)
-    assert [type(part) for part in request.parts] == [RetryPromptPart]
+    assert result.all_messages()[2] == snapshot(
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content=[
+                        {
+                            'type': 'int_parsing',
+                            'loc': ('i',),
+                            'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                            'input': 'not a number',
+                        }
+                    ],
+                    tool_name='guarded',
+                    tool_call_id='call_1',
+                    timestamp=IsDatetime(),
+                )
+            ],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 async def test_tool_calls_limit_ignores_denied_deferred_results() -> None:
