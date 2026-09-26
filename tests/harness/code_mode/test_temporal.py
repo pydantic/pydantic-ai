@@ -118,7 +118,7 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
 
 
 @pytest.fixture
-async def monty_relay() -> AsyncIterator[None]:  # pragma: lax no cover -- only the skipped relay tests use it (#8824)
+async def monty_relay() -> AsyncIterator[None]:  # pragma: lax no cover -- only the skipped test uses it
     """Serve remote Monty workers on the port `remote_code_mode_agent` is configured with."""
     async with websocket_relay_server(MONTY_RELAY_PORT):
         yield
