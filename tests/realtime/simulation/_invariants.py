@@ -380,7 +380,7 @@ class Checker:
             for operation in sim.operations
             if operation.key in waiter.snapshot and operation.name in ('send_text', 'send_image_respond')
         ]
-        inputs = [(key, truth.input(key)) for key in soliciting if key is not None]
+        inputs = [(key, truth.input(key)) for key in soliciting]
         violations: list[Violation] = [
             (f'wait_for_reply() #{waiter.index} returned before the reply to {key!r} ended', {**context, 'input': key})
             for key, input_ in inputs
@@ -540,7 +540,7 @@ class Checker:
                     f'{response.key} ({" ".join(response.words)!r}) completed but is not in history',
                     {'response': response.key},
                 )
-                for response, text in completed
+                for response, _ in completed
                 if response.number not in recorded
             ],
         )

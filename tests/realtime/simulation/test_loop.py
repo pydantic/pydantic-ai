@@ -56,7 +56,7 @@ def test_the_loop_waits_on_a_worker_thread(loop: SimulatedLoop) -> None:
 def test_a_loop_nothing_can_wake_is_stuck(loop: SimulatedLoop, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_loop, '_MAX_THREAD_WAITS', 1)
     with pytest.raises(SimulationStuck, match='nothing that could wake it'):
-        loop.run(loop.create_future())
+        loop.run_until_complete(loop.create_future())
 
 
 def test_a_loop_that_never_idles_is_stuck(loop: SimulatedLoop) -> None:

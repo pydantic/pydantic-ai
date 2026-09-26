@@ -21,7 +21,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -404,7 +404,7 @@ class LiveSimulation(Simulation):
         return settings
 
     @contextmanager
-    def transport(self) -> Iterator[None]:
+    def transport(self) -> Generator[None]:
         with self.server.network.patch(), mock.patch.object(live_module, '_now', self.loop.time):
             yield
 

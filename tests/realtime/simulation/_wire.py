@@ -18,7 +18,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
@@ -230,7 +230,7 @@ class Network:
         return socket
 
     @contextmanager
-    def patch(self) -> Iterator[None]:
+    def patch(self) -> Generator[None]:
         """Route every `websockets.connect` to this network."""
         network = self
 

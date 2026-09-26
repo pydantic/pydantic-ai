@@ -196,7 +196,8 @@ class OpenAIServer:
     def on_client_read(self, socket: FakeWebSocket, frame: dict[str, Any]) -> None:
         now = self.truth.tick()
         frame_type = frame.get('type', '')
-        response_id = frame.get('response_id') or (frame.get('response') or {}).get('id')
+        response_object: dict[str, Any] = frame.get('response') or {}
+        response_id = frame.get('response_id') or response_object.get('id')
         response = self.truth.responses.get(response_id) if isinstance(response_id, str) else None
         if response is not None and response.started_read is None:
             response.started_read = now
@@ -213,7 +214,7 @@ class OpenAIServer:
                 self.truth.repeated_terminals_read += 1
             self.truth.usage_reports_read += 1
             # xAI reports usage on the frame itself, leaving `response.usage` empty.
-            usage = frame['response'].get('usage') or frame.get('usage') or {}
+            usage: dict[str, int] = response_object.get('usage') or frame.get('usage') or {}
             self.truth.usage_read.setdefault(
                 response.key, (usage.get('input_tokens', 0), usage.get('output_tokens', 0))
             )
@@ -332,13 +333,14 @@ class OpenAIServer:
         if item.get('type') != 'message' or item.get('role') != 'user' or event_id is None:
             # Replayed history on a re-dial, or seeded history: already part of the conversation.
             return
-        content = item.get('content') or [{}]
+        content: list[dict[str, str]] = item['content']
         part = content[0]
-        if part.get('type') == 'input_image':
-            key = part.get('image_url', '').rsplit(',', 1)[-1][-12:]
+        kind: Literal['image', 'text']
+        if part['type'] == 'input_image':
+            key = part['image_url'].rsplit(',', 1)[-1][-12:]
             kind = 'image'
         else:
-            key = part.get('text', '')
+            key = part['text']
             kind = 'text'
         if self._armed_rejections and self._armed_rejections[0] == 'content':
             self._armed_rejections.pop(0)

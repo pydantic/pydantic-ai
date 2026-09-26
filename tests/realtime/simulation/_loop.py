@@ -15,6 +15,7 @@ underneath but in-memory fake transports. Two things make a run reproducible fro
 from __future__ import annotations as _annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
@@ -68,7 +69,19 @@ class SimulatedLoop(asyncio.SelectorEventLoop):
     def __init__(self) -> None:
         super().__init__()
         self._virtual_time = 0.0
-        self._selector = _NonBlockingSelector(self._selector, self)  # pyright: ignore[reportAttributeAccessIssue]
+        self._selector = _NonBlockingSelector(self._selector, self)
+        self._resolution: float = getattr(self, '_clock_resolution')
+
+    # Asyncio keeps no public view of its pending timers or its ready queue (and replaces the timer heap
+    # when it prunes cancelled timers, so it's looked up each time).
+
+    @property
+    def _timers(self) -> list[asyncio.TimerHandle]:
+        return getattr(self, '_scheduled')
+
+    @property
+    def _ready_callbacks(self) -> deque[asyncio.Handle]:
+        return getattr(self, '_ready')
 
     def time(self) -> float:
         return self._virtual_time
@@ -78,12 +91,11 @@ class SimulatedLoop(asyncio.SelectorEventLoop):
         # has moved on by the time the callback reads it; on this one it hasn't, and code that re-arms a timer
         # for the sliver of time still left (GPT-Live's turn clock does) would spin forever. So a timer that
         # runs early moves the clock to its deadline, which is where a real clock would be.
-        scheduled = self._scheduled  # pyright: ignore[reportAttributeAccessIssue]
-        if scheduled and not (head := scheduled[0]).cancelled():
+        if self._timers and not (head := self._timers[0]).cancelled():
             when = head.when()
-            if self._virtual_time < when <= self._virtual_time + self._clock_resolution:  # pyright: ignore[reportAttributeAccessIssue]
+            if self._virtual_time < when <= self._virtual_time + self._resolution:
                 self._virtual_time = when
-        super()._run_once()  # pyright: ignore[reportAttributeAccessIssue]
+        super()._run_once()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
 
     def advance_clock(self, seconds: float) -> None:
         """Move the virtual clock forward; timers that fall due run on the next iterations."""
@@ -92,21 +104,14 @@ class SimulatedLoop(asyncio.SelectorEventLoop):
 
     def has_runnable_work(self) -> bool:
         """Whether any callback is ready, or any timer is due at the current virtual time."""
-        if self._ready:  # pyright: ignore[reportAttributeAccessIssue]
+        if self._ready_callbacks:
             return True
-        due = self.time() + self._clock_resolution  # pyright: ignore[reportAttributeAccessIssue]
-        return any(
-            not handle.cancelled() and handle.when() <= due
-            for handle in self._scheduled  # pyright: ignore[reportAttributeAccessIssue]
-        )
+        due = self.time() + self._resolution
+        return any(not handle.cancelled() and handle.when() <= due for handle in self._timers)
 
     def next_timer(self) -> float | None:
         """When the next pending timer is due, if any."""
-        whens = [
-            handle.when()
-            for handle in self._scheduled  # pyright: ignore[reportAttributeAccessIssue]
-            if not handle.cancelled()
-        ]
+        whens = [handle.when() for handle in self._timers if not handle.cancelled()]
         return min(whens) if whens else None
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:

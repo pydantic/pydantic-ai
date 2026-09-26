@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -99,7 +99,7 @@ class OpenAISimulation(Simulation):
         return settings
 
     @contextmanager
-    def transport(self) -> Iterator[None]:
+    def transport(self) -> Generator[None]:
         with self.server.network.patch():
             yield
 

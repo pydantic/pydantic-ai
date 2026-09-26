@@ -30,7 +30,7 @@ import functools
 import random
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, ParamSpec, TypeVar
@@ -47,6 +47,7 @@ from . import _invariants
 from ._invariants import SimulatedToolError
 from ._loop import SimulatedLoop, SimulationStuck
 from ._truth import GroundTruth
+from ._wire import SendFault
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -218,7 +219,7 @@ class Simulation(ABC):
 
     @abstractmethod
     @contextmanager
-    def transport(self) -> Iterator[None]:
+    def transport(self) -> Generator[None]:
         """Patch the provider's transport so the model dials the simulated server."""
         ...
 
@@ -242,7 +243,7 @@ class Simulation(ABC):
 
     @property
     @abstractmethod
-    def failed_sends(self) -> list[tuple[str | None, str | None, str]]:
+    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
         """`(frame, last frame read, fault)` for every send a fault failed."""
         ...
 
@@ -290,7 +291,7 @@ class Simulation(ABC):
         return self
 
     def _build_agent(self) -> Agent[None, str]:
-        agent = Agent(instructions='You are a simulated voice assistant.')
+        agent: Agent[None, str] = Agent(instructions='You are a simulated voice assistant.')
         gates = self.tools
 
         @agent.tool
@@ -613,7 +614,7 @@ class Simulation(ABC):
         try:
             self.loop.run_until_complete(handoff())
         except Exception as e:  # pragma: no cover (only when a standard run rejects the history)
-            self.checker.fail('history.handoff', f'a standard run rejected the history: {e!r}')
+            self.checker.report('history.handoff', [(f'a standard run rejected the history: {e!r}', {})])
 
     # --- views for the invariants -------------------------------------------------------------------
 

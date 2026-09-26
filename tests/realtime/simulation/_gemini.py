@@ -29,7 +29,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from collections import deque
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -79,7 +79,7 @@ class FakeGeminiSession:
 
     # --- the SDK surface the connection uses -------------------------------------------------------
 
-    async def _outbound(self, kind: str, payload: Any) -> None:
+    async def _outbound(self, kind: str, receive: Callable[[_ServerSession], None]) -> None:
         for _ in range(self.server.latency()):
             await asyncio.sleep(0)
         if not self.alive:
@@ -90,19 +90,23 @@ class FakeGeminiSession:
         if fault == 'lost':
             self.break_connection()
             raise ConnectionClosed(None, Close(1006, 'simulated send failure'))
-        self.server.on_client_message(self, kind, payload)
+        receive(self.server.session_for(self))
         if fault == 'ambiguous':
             self.break_connection()
             raise ConnectionClosed(None, Close(1006, 'simulated send failure'))
 
-    async def send_realtime_input(self, **kwargs: Any) -> None:
-        await self._outbound('realtime', kwargs)
+    async def send_realtime_input(self, *, audio: gt.Blob | None = None, video: gt.Blob | None = None) -> None:
+        await self._outbound('realtime', lambda session: self.server.on_realtime_input(session, audio, video))
 
-    async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
-        await self._outbound('client_content', (turns, turn_complete))
+    async def send_client_content(self, *, turns: gt.Content | list[gt.Content], turn_complete: bool = True) -> None:
+        contents = turns if isinstance(turns, list) else [turns]
+        await self._outbound(
+            'client_content', lambda session: self.server.on_client_content(session, contents, turn_complete)
+        )
 
-    async def send_tool_response(self, *, function_responses: Any) -> None:
-        await self._outbound('tool_response', function_responses)
+    async def send_tool_response(self, *, function_responses: gt.FunctionResponse | list[gt.FunctionResponse]) -> None:
+        responses = function_responses if isinstance(function_responses, list) else [function_responses]
+        await self._outbound('tool_response', lambda session: self.server.on_tool_response(session, responses))
 
     async def receive(self) -> AsyncIterator[gt.LiveServerMessage]:
         while True:
@@ -231,7 +235,7 @@ class GeminiServer:
         resumption = config.session_resumption
         handle = resumption.handle if resumption is not None else None
         socket = FakeGeminiSession(self, len(self.sessions), handle)
-        known = set(self.handles.get(handle, set())) if handle is not None else set()
+        known = set(self.handles.get(handle, set[str]())) if handle is not None else set[str]()
         self.truth.connections += 1
         self.sessions.append(_ServerSession(socket=socket, known_calls=known))
         return socket
@@ -242,7 +246,7 @@ class GeminiServer:
         @asynccontextmanager
         async def connect(
             *, model: str, config: gt.LiveConnectConfig | None = None
-        ) -> AsyncIterator[FakeGeminiSession]:
+        ) -> AsyncGenerator[FakeGeminiSession]:
             del model
             socket = server.dial(config or gt.LiveConnectConfig())
             try:
@@ -257,31 +261,28 @@ class GeminiServer:
         for response in self.truth.responses.values():
             if response.connection == socket.index + 1 and response.terminal_read is None:
                 self.truth.lose(response)
-        session = self._session_for(socket)
+        session = self.session_for(socket)
         session.turn = None
         session.triggers.clear()
 
-    def _session_for(self, socket: FakeGeminiSession) -> _ServerSession:
+    def session_for(self, socket: FakeGeminiSession) -> _ServerSession:
         return next(session for session in self.sessions if session.socket is socket)
 
-    def on_client_message(self, socket: FakeGeminiSession, kind: str, payload: Any) -> None:
-        session = self._session_for(socket)
-        if kind == 'realtime':
-            if (audio := payload.get('audio')) is not None:
-                session.audio_ms += len(audio.data) // 32
-            else:  # The session streams nothing else as realtime input.
-                self.truth.add_input(payload['video'].data[-8:].decode(errors='replace'), 'image')
-            return
-        if kind == 'client_content':
-            turns, turn_complete = payload
-            text = ''.join(part.text or '' for part in (turns.parts or []))
-            self.truth.add_input(text, 'text' if turn_complete else 'context', solicits=bool(turn_complete))
-            if turn_complete:
-                self._barge_in(session)
-                session.triggers.append(text)
-            return
-        assert kind == 'tool_response'
-        responses: Sequence[gt.FunctionResponse] = payload if isinstance(payload, list) else [payload]
+    def on_realtime_input(self, session: _ServerSession, audio: gt.Blob | None, video: gt.Blob | None) -> None:
+        if audio is not None:
+            session.audio_ms += len(audio.data or b'') // 32
+        else:  # The session streams nothing else as realtime input.
+            assert video is not None
+            self.truth.add_input((video.data or b'')[-8:].decode(errors='replace'), 'image')
+
+    def on_client_content(self, session: _ServerSession, turns: list[gt.Content], turn_complete: bool) -> None:
+        text = ''.join(part.text or '' for turn in turns for part in turn.parts or [])
+        self.truth.add_input(text, 'text' if turn_complete else 'context', solicits=turn_complete)
+        if turn_complete:
+            self._barge_in(session)
+            session.triggers.append(text)
+
+    def on_tool_response(self, session: _ServerSession, responses: list[gt.FunctionResponse]) -> None:
         for response in responses:
             call_id = response.id or ''
             call = self.truth.tool_calls[call_id]
@@ -504,9 +505,10 @@ class GeminiServer:
     def finish(self, *, in_progress: bool = False) -> None:
         """End the model's turn (`turn_complete`, with the turn's usage); `in_progress` for a stalled filler turn."""
         session = self.session
-        assert session is not None and session.turn is not None and session.turn.response is not None
+        assert session is not None and session.turn is not None
         turn = session.turn
         response = turn.response
+        assert response is not None
         stall = in_progress and self.behavior.stalls_in_progress
         self._emit(
             session,
@@ -598,7 +600,7 @@ class GeminiSimulation(Simulation):
         return settings
 
     @contextmanager
-    def transport(self) -> Iterator[None]:
+    def transport(self) -> Generator[None]:
         with self.server.patch(self._provider):
             yield
 
@@ -730,7 +732,7 @@ class GeminiMachine(SessionMachine):  # pragma: lax no cover (driven only by ran
     def finish(self, in_progress: bool, deliver: bool, ticks: int | None) -> None:
         self.run(lambda: self.gemini.finish(in_progress=in_progress, deliver=deliver, ticks=ticks))
 
-    @precondition(lambda self: self.alive() and self.gemini.server.session.audio_ms > 0)  # pyright: ignore[reportOptionalMemberAccess]
+    @precondition(lambda self: self.alive() and self.gemini.server.session.audio_ms > 0)
     @rule(finished=st.booleans(), deliver=st.booleans(), ticks=TICKS)
     def user_speaks(self, finished: bool, deliver: bool, ticks: int | None) -> None:
         self.run(lambda: self.gemini.user_speaks(finished=finished, deliver=deliver, ticks=ticks))
@@ -740,7 +742,7 @@ class GeminiMachine(SessionMachine):  # pragma: lax no cover (driven only by ran
     def issue_handle(self, deliver: bool, ticks: int | None) -> None:
         self.run(lambda: self.gemini.issue_handle(deliver=deliver, ticks=ticks))
 
-    @precondition(lambda self: self.alive() and bool(self.gemini.server.socket.in_flight))  # pyright: ignore[reportOptionalMemberAccess]
+    @precondition(lambda self: self.alive() and bool(self.gemini.server.socket.in_flight))
     @rule(count=st.one_of(st.none(), st.integers(min_value=1, max_value=3)), ticks=TICKS)
     def deliver(self, count: int | None, ticks: int | None) -> None:
         self.run(lambda: self.gemini.deliver(count=count, ticks=ticks))

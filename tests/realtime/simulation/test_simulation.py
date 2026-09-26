@@ -25,7 +25,10 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from hypothesis import HealthCheck, settings
-    from hypothesis.stateful import RuleBasedStateMachine, run_state_machine_as_test
+    from hypothesis.stateful import (
+        RuleBasedStateMachine,
+        run_state_machine_as_test,  # pyright: ignore[reportUnknownVariableType]
+    )
 
     from ._findings import FINDINGS_BY_ID
     from ._gemini import GeminiBehavior, GeminiMachine, GeminiSimulation
@@ -46,7 +49,7 @@ def exploration_settings() -> settings:
         database=None,
         deadline=None,
         print_blob=True,
-        suppress_health_check=list(HealthCheck),
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much, HealthCheck.data_too_large],
     )
 
 
@@ -71,8 +74,9 @@ def test_exploration(machine: type[RuleBasedStateMachine]) -> None:
 
 def known(finding_id: str) -> pytest.MarkDecorator:
     """Mark a scenario as reproducing a known finding: it must raise `FindingReproduced` until the fix lands."""
-    finding = FINDINGS_BY_ID[finding_id] if imports_successful() else finding_id
-    return pytest.mark.xfail(raises=FindingReproduced, strict=True, reason=str(finding))
+    if not imports_successful():  # pragma: lax no cover (the module is skipped)
+        return pytest.mark.xfail(reason=finding_id)
+    return pytest.mark.xfail(raises=FindingReproduced, strict=True, reason=str(FINDINGS_BY_ID[finding_id]))
 
 
 def reproduce(finding_id: str, sim: Simulation, scenario: Callable[[Any], object]) -> None:
