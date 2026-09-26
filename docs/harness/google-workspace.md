@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-harness[google-workspace]" "pydantic-ai-slim[openai]"
 
 Set `GOOGLE_ACCESS_TOKEN` to a Google OAuth access token, or pass `auth=` a token. See the [provider setup](https://developers.google.com/workspace/guides/configure-mcp-servers).
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.google_workspace import GoogleWorkspace
 
@@ -80,7 +80,7 @@ Register a Google OAuth client yourself and request the scopes the selected prod
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import DeferredToolRequests
 from pydantic_ai_harness.google_workspace import GoogleWorkspace

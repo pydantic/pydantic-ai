@@ -120,7 +120,12 @@ does not see metadata: your application reads it from the `ToolReturnPart` in
 the message history, so you can show citations without parsing any text:
 
 ```python
+from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai_harness import YouSearch
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[YouSearch()])
+result = agent.run_sync('What changed in the latest stable Python release?')
 
 for message in result.all_messages():
     if isinstance(message, ModelRequest):
@@ -198,7 +203,6 @@ the open web and one limited to a few domains -- wrap the extra ones in core's
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import PrefixTools
-
 from pydantic_ai_harness import YouSearch
 
 agent = Agent(
@@ -270,7 +274,7 @@ capabilities:
       research_effort: deep
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import YouResearch, YouSearch
 

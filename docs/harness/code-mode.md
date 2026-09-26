@@ -577,8 +577,9 @@ Both parameters are fixed when the capability is built, so construct `CodeMode` 
 Reach for `mount` when the agent works with real files: analyzing a dataset you've dropped in a folder and writing a report back, editing a checkout, or processing a batch of documents. Sandboxed `pathlib` code reads and writes under the mounted path. (For environment variables or the clock, use `os_access` instead.)
 
 ```python
-from pydantic_ai import Agent
 from pydantic_monty import MountDir
+
+from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 # The agent can read /work/data.csv and write /work/summary.md back to the host:
@@ -595,8 +596,9 @@ A `MountDir` defaults to copy-on-write `mode='overlay'`: the sandbox reads host 
 Reach for `os_access` when the agent needs environment variables, the current date and time, or filesystem behavior you control. Hand it a ready-made OS implementation (`AbstractOS`), or a callback that decides each call -- so you can inject just the secrets it needs, pin "now" for reproducible runs, or route file access to your own store.
 
 ```python
-from pydantic_ai import Agent
 from pydantic_monty import OSAccess
+
+from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 # Give the agent a fixed set of environment values:
@@ -609,8 +611,9 @@ agent = Agent(
 A callback receives each OS call and decides its fate:
 
 ```python
-from pydantic_ai import Agent
 from pydantic_monty import NOT_HANDLED
+
+from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 allowed_env = {'API_KEY': 'sk-...'}

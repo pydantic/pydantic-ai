@@ -27,7 +27,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 
 ## Connect
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import PostHog
 
@@ -91,7 +91,7 @@ The key's scopes, and the organizations and projects it can reach, still decide 
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import DeferredToolRequests
 from pydantic_ai_harness import PostHog
@@ -133,7 +133,7 @@ capabilities:
       read_only: true
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import PostHog
 

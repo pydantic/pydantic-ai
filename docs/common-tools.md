@@ -238,9 +238,8 @@ Here are some recent papers about transformer architectures from arxiv.org:
     ```
 
     ```py {title="exa_search.py" test="skip"}
-    from pydantic_ai_harness.exa import ExaSearch
-
     from pydantic_ai import Agent
+    from pydantic_ai_harness.exa import ExaSearch
 
     agent = Agent('openai:gpt-5.2', capabilities=[ExaSearch()])
 

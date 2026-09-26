@@ -27,7 +27,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 
 ## Connect
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import DayAI
 
@@ -84,7 +84,7 @@ Day AI's server does not mark any tool as read-only, so there is no `read_only` 
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call, which suits tools that create or update CRM records and send notifications:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import DeferredToolRequests
 from pydantic_ai_harness import DayAI
@@ -124,7 +124,7 @@ capabilities:
   - DayAI: {}
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import DayAI
 

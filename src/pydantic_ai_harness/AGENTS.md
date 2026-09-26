@@ -134,62 +134,54 @@ Applies to docs, READMEs, docstrings, comments, commit messages, and PR text.
 ## Package management
 
 - Change dependencies only when required. Use `uv` and link an issue.
-- PRs touching `pyproject.toml` or `uv.lock` require the
-  `dependencies:approved` label; pushes clear approval.
+- Harness and `pydantic-clai2` are members of the pydantic-ai uv workspace and
+  share the root `uv.lock`. `pydantic-ai-slim` is pinned to the same release
+  through `{{ version }}` in `src/pydantic_ai_harness/pyproject.toml`.
+- Releases follow pydantic-ai's tags: pydantic-ai `2.X.Y` ships
+  `pydantic-ai-harness` and `pydantic-clai2` `0.X.Y`. There is no separate
+  harness release.
 
 ## Local verification
 
-Run Ruff across the repository. Run Pyright and pytest for the paths that you modify.
+Paths below are from the repository root. Run Ruff across the repository. Run
+Pyright and pytest for the paths that you modify.
 
 ```bash
+make install
 uv run --no-sync ruff format --check .
 uv run --no-sync ruff check .
-PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright pydantic_ai_harness/<module>.py tests/<module>.py
-uv run --no-sync pytest -p no:cacheprovider tests/<capability>
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src/pydantic_ai_harness/pydantic_ai_harness/<module> tests/harness/<module>
+uv run --no-sync pytest -p no:cacheprovider tests/harness/<capability>
 ```
 
-CI runs the repository-wide typecheck, test, and combined coverage gates.
-Do not run repository-wide Pyright, pytest, or coverage locally.
-If CI reports a coverage gap, run coverage only for the flagged file or focused test.
-
-### Workspace And Python 3.10
-
-```bash
-uv sync --locked --all-packages --all-extras --group lint
-```
-
-Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright
-configuration. Workspace commands require Python 3.11+ because CLAI depends on
-Termflow. Harness's package metadata and Pyright target remain Python 3.10+.
-Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
-
-```bash
-uv venv /tmp/harness-py310 --python 3.10
-uv pip install --python /tmp/harness-py310/bin/python --resolution lowest-direct --group dev \
-  --editable . --requirements pyproject.toml --all-extras
-/tmp/harness-py310/bin/python -m pytest -p no:cacheprovider tests/code_mode
-```
-
-Use `uv pip` for Python 3.10 to resolve Harness without CLAI's Python requirement.
-CI retains Python 3.10 slim, all-extras, and lowest-versions jobs. The slim and
-all-extras installs use the shared lock's versions as ceilings, allowing older
-releases when a locked dependency requires Python 3.11+. Run the environment's
-Python directly so `uv run` does not select the workspace interpreter.
+CI runs the repository-wide typecheck, test, and combined coverage gates. The
+`test` job's `pydantic-ai-harness` and `pydantic-clai2` cells install each
+package on its own, and the all-extras and lowest-versions cells install every
+workspace member with all extras. Do not run repository-wide Pyright, pytest,
+or coverage locally. If CI reports a coverage gap, run coverage only for the
+flagged file or focused test.
 
 ## File structure
 
 The tree is discoverable by listing it; only the conventions that are not are
-recorded here.
+recorded here. Paths are from the repository root.
 
 Each released capability is a self-contained package under
-`pydantic_ai_harness/<capability>/` (naming and exports are covered in the
-preflight above), with tests under `tests/<capability>/`. It ships **two**
-hand-maintained docs that must stay in sync: the `README.md` next to the code
-(GitHub/PyPI) and the `docs/<capability>.md` page (the docs site at
-pydantic.dev/docs/ai/harness). The `docs/` folder is flat -- there are no
-`capabilities/` or `experimental/` subdirectories. A user-facing change updates
-both; `agent_docs/review-checklist.md` "Docs" and the `docs-parity-reviewer`
-subagent enforce the parity before merge.
+`src/pydantic_ai_harness/pydantic_ai_harness/<capability>/` (naming and exports
+are covered in the preflight above), with tests under
+`tests/harness/<capability>/`. It ships **two** hand-maintained docs that must
+stay in sync: the `README.md` next to the code (GitHub/PyPI) and the
+`docs/harness/<capability>.md` page (the docs site at
+pydantic.dev/docs/ai/harness). The `docs/harness/` folder is flat -- there are
+no `capabilities/` or `experimental/` subdirectories. A user-facing change
+updates both; `agent_docs/review-checklist.md` "Docs" and the
+`docs-parity-reviewer` subagent enforce the parity before merge. Snippets in
+`docs/harness/` run through the repository's `tests/test_examples.py` like every
+other docs page.
+
+Live-service tests are in `src/pydantic_ai_harness/integration_tests/`; see the
+`harness-*-integration` jobs in `.github/workflows/ci.yml` and the
+`make integration-*` targets.
 
 Do not add placeholder template files for new capabilities. Start from the
 existing `CodeMode` package shape, then delete what the new capability does not

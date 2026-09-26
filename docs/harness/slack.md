@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-harness[slack]" "pydantic-ai-slim[openai]"
 
 Set `SLACK_USER_TOKEN` to a Slack user token, or pass `auth=` a token. See the [provider setup](https://docs.slack.dev/ai/slack-mcp-server/).
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.slack import Slack
 
@@ -101,7 +101,7 @@ The tools act as the token's user, so messages the agent posts and canvases it e
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import DeferredToolRequests
 from pydantic_ai_harness.slack import Slack

@@ -54,8 +54,8 @@ your code always runs even before you create the prompt in Logfire.
 
 ```python
 import logfire
-from pydantic_ai import Agent
 
+from pydantic_ai import Agent
 from pydantic_ai_harness import ManagedPrompt
 
 logfire.configure()
@@ -90,7 +90,6 @@ key lives in your agent's `deps`:
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
-
 from pydantic_ai_harness import ManagedPrompt
 
 
@@ -134,7 +133,6 @@ from `deps`:
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
-
 from pydantic_ai_harness import ManagedPrompt
 
 
@@ -184,8 +182,8 @@ example a template variable, or one registered for `variables_push`:
 
 ```python
 import logfire
-from pydantic_ai import Agent
 
+from pydantic_ai import Agent
 from pydantic_ai_harness import ManagedPrompt
 
 logfire.configure()

@@ -327,7 +327,7 @@ reject them.
 
 ## Configuration
 
-```python
+```python {lint="skip" test="skip"}
 from pydantic_ai_harness import FileSystem
 
 FileSystem(
@@ -365,7 +365,7 @@ capabilities:
       allowed_patterns: ['*.py', '*.toml']
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import FileSystem
 

@@ -672,7 +672,7 @@ replaces it, which is how to set a service name, scrubbing rules or extra span p
 It replaces the whole configuration, not the arguments you restate, so carry over the ones
 above that are load-bearing:
 
-```python
+```python {noqa="E402"}
 import atexit
 import tempfile
 

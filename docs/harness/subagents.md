@@ -84,8 +84,8 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import SubAgent, SubAgents
 
-reproducer = Agent('anthropic:claude-sonnet-4-6', instructions='Reproduce the reported bug from a minimal script.')
-librarian = Agent('anthropic:claude-sonnet-4-6', instructions='Find relevant docs, issues, and prior art.')
+reproducer = Agent('anthropic:claude-sonnet-4-6', name='reproducer', instructions='Reproduce the reported bug from a minimal script.')
+librarian = Agent('anthropic:claude-sonnet-4-6', name='librarian', instructions='Find relevant docs, issues, and prior art.')
 
 orchestrator = Agent(
     'anthropic:claude-opus-4-7',
@@ -266,10 +266,24 @@ Every agent the capability builds runs at a minimum thinking-effort floor. `MINI
 A disk agent gets no tools by default (`inherit_tools` is `False`); set `inherit_tools=True` to expose the parent's tools to it through the `inherit_tools` mechanism, in which case its `tools` frontmatter is ignored. To map the frontmatter tool names to specific toolsets instead, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
 
 ```python
+from collections.abc import Sequence
+
+from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai_harness import SubAgents
 
-def resolve(tool_name: str):
-    return TOOLSETS.get(tool_name)  # -> Sequence[AgentToolset[object]] | None
+
+def run_bash(command: str) -> str:
+    return f'ran {command}'
+
+
+TOOLSETS: dict[str, Sequence[AgentToolset[object]]] = {
+    'Bash': [FunctionToolset([run_bash])],
+}
+
+
+def resolve(tool_name: str) -> Sequence[AgentToolset[object]] | None:
+    return TOOLSETS.get(tool_name)
+
 
 SubAgents(agent_folders='agents', tool_resolver=resolve)
 ```
@@ -280,7 +294,7 @@ When the same name appears in more than one source, the higher-precedence one wi
 
 ## Configuration
 
-```python
+```python {lint="skip" test="skip"}
 SubAgents(
     agents=(),             # Sequence[SubAgent[AgentDepsT]] -- each pairs an agent with its run controls
     models={},             # Mapping[str, Model | str | ModelOption] -- per-delegation model menu (off when empty)
@@ -299,7 +313,7 @@ SubAgents(
 )
 ```
 
-```python
+```python {lint="skip" test="skip"}
 SubAgent(
     agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
     name=None,             # delegate name; defaults to the agent's own `name`

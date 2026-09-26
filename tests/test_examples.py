@@ -523,6 +523,13 @@ def test_docs_examples(
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
+    # docs/harness/: capabilities that read their credential when constructed
+    env.set('EXA_API_KEY', 'testing')
+    env.set('GITHUB_TOKEN', 'testing')
+    env.set('GRAIN_ACCESS_TOKEN', 'testing')
+    env.set('LINEAR_ACCESS_TOKEN', 'testing')
+    env.set('PYLON_ACCESS_TOKEN', 'testing')
+    env.set('YDC_API_KEY', 'testing')
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
     env.set('SNOWFLAKE_TOKEN', 'testing')
@@ -987,6 +994,35 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
+    # docs/harness/
+    'What changed in the latest stable Python release?': (
+        'Python 3.14 added template string literals, deferred evaluation of annotations, and an officially '
+        'supported free-threaded build.'
+    ),
+    'Read config.toml and tell me the package name.': 'The package name in config.toml is `my-package`.',
+    'What changed in the last three major releases of Django?': (
+        'Django 5.0 added field groups and database-computed defaults, 5.1 added LoginRequiredMiddleware, and 5.2 '
+        'added composite primary keys.'
+    ),
+    'Investigate the failing parser test, fix the cause, and run focused checks.': (
+        'The parser test failed because trailing whitespace was not stripped before tokenizing. I fixed the '
+        'tokenizer and the focused parser tests now pass.'
+    ),
+    'deploy the new build': 'Deployment to prod is waiting on approval.',
+    'Open https://example.com and tell me the page title.': 'The page title is "Example Domain".',
+    'Summarize my open Pylon issues': 'You have 3 open issues: two billing questions and one login bug report.',
+    'Run a Macroscope review and fix any real findings.': (
+        'Macroscope reported 2 findings; I fixed the real one, an unchecked `None` in `parse()`, and left the '
+        'false positive.'
+    ),
+    'Read the toolsets docs, then explain how to build a FunctionToolset.': (
+        'Create `FunctionToolset(tools=[...])` with your functions, or decorate them with `@toolset.tool`, then '
+        'pass it to `Agent(toolsets=[...])`.'
+    ),
+    'My order never arrived.': "I'm sorry to hear that. Could you share your order number so I can check its status?",
+    'Find out why tests/test_parser.py fails and fix the bug it caught.': (
+        'Found it: `parse()` returned None on empty input instead of raising. Fixed in src/parser.py; tests pass now.'
+    ),
 }
 
 model_routes: dict[str, str] = {

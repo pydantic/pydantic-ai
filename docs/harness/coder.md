@@ -41,6 +41,10 @@ agent = Agent(
 ```
 
 ```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.coder import Coder
+
+agent = Agent('anthropic:claude-fable-5', name='coder', capabilities=[Coder('.')])
 result = agent.run_sync('Investigate the failing parser test, fix the cause, and run focused checks.')
 print(result.output)
 ```

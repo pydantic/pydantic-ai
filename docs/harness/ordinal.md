@@ -29,7 +29,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 
 ## Connect
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import Ordinal
 
@@ -84,7 +84,7 @@ With durable execution such as Temporal, read the token from the run's deps rath
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call, which suits tools that publish or schedule posts:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import DeferredToolRequests
 from pydantic_ai_harness import Ordinal
@@ -120,7 +120,7 @@ capabilities:
   - Ordinal: {}
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import Ordinal
 

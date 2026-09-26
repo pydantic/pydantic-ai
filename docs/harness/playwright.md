@@ -54,7 +54,11 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
 agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[PlaywrightBrowser()])
-result = await agent.run('Open https://example.com and tell me the page title.')
+
+
+async def main():
+    result = await agent.run('Open https://example.com and tell me the page title.')
+    print(result.output)
 ```
 
 `PlaywrightBrowser` is a [capability](../capabilities/overview.md): it registers the
@@ -170,10 +174,10 @@ navigation is already authenticated.
 Capture it once, in your own code, by logging in with a visible browser:
 
 ```python
-from playwright.async_api import async_playwright
+from playwright.async_api import StorageState, async_playwright
 
 
-async def capture_state() -> object:
+async def capture_state() -> StorageState:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False)
         context = await browser.new_context()
@@ -193,10 +197,12 @@ structure to a file, which you load with `json.loads(Path('auth.json').read_text
 Either way, hand the object to the capability:
 
 ```python
+from playwright.async_api import StorageState
+
 from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
-state = ...  # captured above
+state: StorageState = {'cookies': [], 'origins': []}  # what `capture_state()` returned
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -265,12 +271,14 @@ per run. It is exported for the case where you want the same guarded browser
 without an agent around it -- the allowlist, the private-address block, the
 service-worker block, the tab tracking, and the dialog handling all come with it:
 
-```python
+```python {test="skip"}
 from pydantic_ai_harness.playwright import PlaywrightBrowserSession
 
-async with PlaywrightBrowserSession() as session:
-    page = await session.ensure_page()  # Chromium starts here, not on entry
-    await page.goto('https://example.com')
+
+async def main():
+    async with PlaywrightBrowserSession() as session:
+        page = await session.ensure_page()  # Chromium starts here, not on entry
+        await page.goto('https://example.com')
 ```
 
 `PlaywrightBrowserToolset` is exported on the same basis: pass it a session to

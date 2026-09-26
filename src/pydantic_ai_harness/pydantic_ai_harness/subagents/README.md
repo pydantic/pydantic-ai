@@ -77,8 +77,8 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import SubAgent, SubAgents
 
-reproducer = Agent('anthropic:claude-sonnet-4-6', instructions='Reproduce the reported bug from a minimal script.')
-librarian = Agent('anthropic:claude-sonnet-4-6', instructions='Find relevant docs, issues, and prior art.')
+reproducer = Agent('anthropic:claude-sonnet-4-6', name='reproducer', instructions='Reproduce the reported bug from a minimal script.')
+librarian = Agent('anthropic:claude-sonnet-4-6', name='librarian', instructions='Find relevant docs, issues, and prior art.')
 
 orchestrator = Agent(
     'anthropic:claude-opus-4-7',

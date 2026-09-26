@@ -57,7 +57,6 @@ model for the sub-agent:
 
 ```python
 from pydantic_ai import Agent
-
 from pydantic_ai_harness import BrowserUse
 
 agent = Agent(
@@ -72,6 +71,7 @@ agent = Agent(
 
 result = agent.run_sync('Check example.com and tell me the price of the Pro plan.')
 print(result.output)
+#> The Pro plan costs $20 per month.
 ```
 
 Each `browse_web` call runs the sub-agent's loop to completion in a browser
@@ -271,7 +271,6 @@ origin.
 
 ```python
 from pydantic_ai import Agent
-
 from pydantic_ai_harness import BrowserUse
 
 
@@ -401,9 +400,8 @@ capabilities:
       session_scope: call
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
-
 from pydantic_ai_harness import BrowserUse
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[BrowserUse])

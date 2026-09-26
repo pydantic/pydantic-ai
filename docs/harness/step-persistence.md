@@ -23,8 +23,6 @@ It is not a full graph-state checkpoint. Capability-state restore, workspace sna
 ## Quick start
 
 ```python
-import asyncio
-
 from pydantic_ai import Agent
 from pydantic_ai_harness import StepPersistence
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -38,9 +36,6 @@ librarian = Agent(
 
 async def main():
     await librarian.run('Find ThinkingPartDelta and confirm the callable allowance')
-
-
-asyncio.run(main())
 ```
 
 That is the whole setup. `run_id` is always per-`Agent.run` call, matching pydantic_ai's `RunContext.run_id`. For multi-turn logical grouping use `conversation_id=` -- that is the pydantic_ai-native primitive for it (see [Three-level identity](#three-level-identity)).
@@ -62,8 +57,6 @@ Events and snapshots written by the capability carry deterministic per-run idemp
 The orchestrator pattern -- one logical agent serving many turns -- uses `conversation_id`, not a shared `run_id`:
 
 ```python
-import asyncio
-
 from pydantic_ai import Agent
 from pydantic_ai_harness import StepPersistence
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -75,15 +68,17 @@ orchestrator = Agent(
 )
 
 
+turns = ['Where is ThinkingPartDelta defined?', 'Which models emit it?']
+
+
 async def main():
     for turn in turns:
         await orchestrator.run(turn, conversation_id='orch-conv')
 
     # All turns of this orchestrator, chronological:
     records = await store.list_runs(conversation_id='orch-conv')
-
-
-asyncio.run(main())
+    print(len(records))
+    #> 2
 ```
 
 ## Three-level identity
@@ -99,14 +94,25 @@ The capability mirrors pydantic_ai's identity stack:
 `StepEvent.conversation_id` and `RunRecord.conversation_id` are populated from `ctx.conversation_id`. So three `.run()` calls sharing one `conversation_id` produce three distinct `run_id`s, all queryable as a group:
 
 ```python
-import asyncio
+from pydantic_ai import Agent
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
+
+store = InMemoryStepStore()
+agent = Agent('openai:gpt-5', capabilities=[StepPersistence(store=store)])
 
 
 async def main():
+    for prompt in [
+        'What is the capital of France?',
+        'What is the capital of Italy?',
+        'What is the capital of the UK?',
+    ]:
+        await agent.run(prompt, conversation_id='conv-abc')
+
     runs = await store.list_runs(conversation_id='conv-abc')  # 3 records, chronological
-
-
-asyncio.run(main())
+    print(len(runs))
+    #> 3
 ```
 
 ## Continuing a delegate's investigation
@@ -114,8 +120,6 @@ asyncio.run(main())
 pydantic_ai already has `message_history=` for "carry on with this prior context". `StepPersistence` does not introduce a parallel mechanism. It exposes one helper that loads the most recent settled snapshot:
 
 ```python
-import asyncio
-
 from pydantic_ai import Agent
 from pydantic_ai_harness import StepPersistence
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, continue_run
@@ -142,9 +146,6 @@ async def main():
         message_history=history,
         conversation_id='libr-conv',   # keep the conversation grouping
     )
-
-
-asyncio.run(main())
 ```
 
 `fork_run(store, run_id=...)` returns the same shape but is intended when the caller wants a branched logical run from that snapshot point (the new run gets a fresh `run_id` and probably a fresh `conversation_id`).
@@ -169,8 +170,6 @@ An `interrupted` snapshot is sendable on resume -- pydantic-ai (>= 2.10) repairs
 It is auto-inferred for in-process delegation: when an orchestrator's tool synchronously calls a delegate's `Agent.run(...)`, the delegate's `StepPersistence` picks up the orchestrator's `run_id` via a `ContextVar` that the orchestrator's `wrap_run` set. No threading required:
 
 ```python
-import asyncio
-
 from pydantic_ai import Agent
 from pydantic_ai_harness import StepPersistence
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -202,9 +201,8 @@ async def main():
     # All librarian runs now point at the orchestrator's run_id:
     orch_run_id = (await store.list_runs(conversation_id='orch-conv'))[-1].run_id
     delegates = await store.list_runs(parent_run_id=orch_run_id)
-
-
-asyncio.run(main())
+    for delegate in delegates:
+        print(delegate.agent_name)
 ```
 
 Set `parent_run_id=` explicitly to override (for example, cross-process delegation where `ContextVar`s do not propagate).
@@ -216,15 +214,30 @@ Set `parent_run_id=` explicitly to override (for example, cross-process delegati
 `list_runs` returns matches sorted by `started_at` ascending across all backends -- pick the most recent with `[-1]`.
 
 ```python
-import asyncio
+from pydantic_ai import Agent
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
+
+store = InMemoryStepStore()
+librarian = Agent(
+    'openai:gpt-5',
+    capabilities=[
+        StepPersistence(store=store, agent_name='code_librarian', parent_run_id='orch-3f2a')
+    ],
+)
 
 
 async def main():
+    await librarian.run(
+        'Find ThinkingPartDelta and confirm the callable allowance',
+        conversation_id='libr-conv',
+    )
+
     # Every delegate of one orchestrator run (chronological)
     delegates = await store.list_runs(parent_run_id='orch-3f2a')
 
     # Every run in one dialogue (multi-turn conversation across many .run() calls)
-    turns = await store.list_runs(conversation_id='conv-abc')
+    turns = await store.list_runs(conversation_id='libr-conv')
     latest_turn = turns[-1]
 
     # Filters combine (AND):
@@ -232,25 +245,35 @@ async def main():
         parent_run_id='orch-3f2a',
         conversation_id='libr-conv',
     )
+    print(latest_turn.agent_name, len(focused))
+    #> code_librarian 1
 
     # Detail per run:
     events = await store.list_events(run_id=delegates[0].run_id)
     snapshot = await store.latest_snapshot(run_id=delegates[0].run_id)
     unresolved = await store.list_unresolved_tool_effects(run_id=delegates[0].run_id)
-
-
-asyncio.run(main())
+    print(len(events) > 0, snapshot is not None, unresolved)
+    #> True True []
 ```
 
 ## Failure recovery
 
-```python
-import asyncio
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import FileStepStore, continue_run, fork_run
+
+store = FileStepStore('runs')
+librarian = Agent(
+    'openai:gpt-5',
+    capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
+)
 
 
 async def main():
     # An earlier delegate run died mid-investigation.
     events = await store.list_events(run_id='libr-3f2a')
+    print(f'{len(events)} events recorded before the crash')
     unresolved = await store.list_unresolved_tool_effects(run_id='libr-3f2a')
     for record in unresolved:
         # status == 'started' with no terminal update -- unknown_after_crash.
@@ -270,16 +293,34 @@ async def main():
     # To resume from the interrupted frontier itself (the crashed cycle included),
     # after checking the unresolved effects above:
     history = await continue_run(store, run_id='libr-3f2a', include_interrupted=True)
-
-
-asyncio.run(main())
 ```
 
 Side-effect deduplication is the orchestrator's responsibility. Tools that write external state should annotate their in-flight `ToolEffectRecord` via `annotate_tool_effect`:
 
 ```python
-from pydantic_ai import RunContext
-from pydantic_ai_harness.step_persistence import annotate_tool_effect
+from dataclasses import dataclass
+from typing import Protocol
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import InMemoryStepStore, annotate_tool_effect
+
+
+class GitHubClient(Protocol):
+    async def set_label(self, issue: int, label: str) -> None: ...
+
+
+@dataclass
+class Deps:
+    github: GitHubClient
+
+
+store = InMemoryStepStore()
+orchestrator = Agent(
+    'openai:gpt-5',
+    deps_type=Deps,
+    capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
+)
 
 
 @orchestrator.tool
@@ -290,7 +331,7 @@ async def set_label(ctx: RunContext[Deps], issue: int, label: str) -> str:
         idempotency_key=f'issue-{issue}::label::{label}',
         effect_summary=f'set label {label!r} on issue #{issue}',
     )
-    await github.set_label(issue, label)   # the actual side effect
+    await ctx.deps.github.set_label(issue, label)   # the actual side effect
     return 'ok'
 ```
 
@@ -372,6 +413,8 @@ Reserved-key escaping is a second marker-format generation with the same rule fo
 Override the destination by passing your own `MediaStore`:
 
 ```python
+import os
+
 from pydantic_ai_harness.media import S3MediaStore
 from pydantic_ai_harness.step_persistence import FileStepStore
 
@@ -381,8 +424,8 @@ store = FileStepStore(
         bucket='my-bucket',
         endpoint='https://<account>.r2.cloudflarestorage.com',
         region='auto',
-        access_key_id=...,
-        secret_access_key=...,
+        access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
     ),
     media_threshold_bytes=64 * 1024,  # raise or lower if you want
 )
@@ -411,13 +454,16 @@ Each store accepts a `public_url=` callable that turns the canonical `media+sha2
 Static base URL (public R2 bucket, CDN):
 
 ```python
+import os
+
 from pydantic_ai_harness.media import S3MediaStore, make_static_public_url
 
 store = S3MediaStore(
     bucket='my-bucket',
     endpoint='https://<acc>.r2.cloudflarestorage.com',
     region='auto',
-    access_key_id=..., secret_access_key=...,
+    access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+    secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
     key_prefix='media/',
     public_url=make_static_public_url('https://pub-abc.r2.dev', key_prefix='media/'),
 )
@@ -426,15 +472,32 @@ store = S3MediaStore(
 Presigned or rotating-signature URL -- pass any async callable that takes `(uri, MediaContext)`:
 
 ```python
+import hashlib
+import hmac
+import os
+import time
+
 from pydantic_ai_harness.media import MediaContext, S3MediaStore
+
+CDN_SIGNING_KEY = b'cdn-signing-secret'
 
 
 async def presign(uri: str, ctx: MediaContext) -> str:
     key = 'media/' + uri.removeprefix('media+sha256://') + '.bin'
-    return await my_signer.generate(key, ttl=3600, content_type=ctx.media_type)
+    expires = int(time.time()) + 3600
+    signature = hmac.new(CDN_SIGNING_KEY, f'{key}:{expires}'.encode(), hashlib.sha256).hexdigest()
+    return f'https://cdn.example.com/{key}?expires={expires}&signature={signature}'
 
 
-store = S3MediaStore(..., public_url=presign)
+store = S3MediaStore(
+    bucket='my-bucket',
+    endpoint='https://<acc>.r2.cloudflarestorage.com',
+    region='auto',
+    access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+    secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    key_prefix='media/',
+    public_url=presign,
+)
 ```
 
 ### `MediaContext`, an extensible per-operation bag

@@ -99,6 +99,8 @@ conflicting option, or using an invalid `blocked_message` placeholder raises a
 ## Observing detections
 
 ```python
+from typing import Any
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext
@@ -107,7 +109,7 @@ from stackone_defender import DefenseResult
 from pydantic_ai_harness import PromptInjectionDefender
 
 
-def log_detection(ctx: RunContext[None], call: ToolCallPart, verdict: DefenseResult) -> None:
+def log_detection(ctx: RunContext[Any], call: ToolCallPart, verdict: DefenseResult) -> None:
     print(call.tool_name, verdict.risk_level, verdict.detections)
 
 

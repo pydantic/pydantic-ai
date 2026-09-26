@@ -400,6 +400,10 @@ jobs:
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
+          - name: pydantic-ai-harness
+            command: "--package pydantic-ai-harness"
+          - name: pydantic-clai2
+            command: "--package pydantic-clai2"
           - name: standard
             command: ""
     env:

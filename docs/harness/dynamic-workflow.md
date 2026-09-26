@@ -57,7 +57,7 @@ orchestrator = Agent(
 
 When the orchestrator decides to use the tool, it does not call your sub-agents one at a time. It writes a script:
 
-```python
+```python {lint="skip" test="skip"}
 import asyncio
 
 reports = await asyncio.gather(
@@ -83,6 +83,9 @@ A sub-agent returns whatever its `output_type` produces. The default is a string
 ```python
 from pydantic import BaseModel
 
+from pydantic_ai import Agent
+
+
 class Score(BaseModel):
     value: int
     reason: str
@@ -92,7 +95,7 @@ critic = Agent('openai:gpt-5', name='critic', description='Scores an answer 0-10
 
 Inside the script the model reads the fields by subscript, the way it would read a JSON object:
 
-```python
+```python {lint="skip" test="skip"}
 result = await critic(task="Score this answer: ...")
 result["value"]   # not result.value
 ```
@@ -122,7 +125,12 @@ A sub-agent is non-deterministic, costs tokens, and can fan out into more sub-ag
 ### `max_agent_calls` -- an exact count
 
 ```python
-DynamicWorkflow(agents=[...], max_agent_calls=50)  # 50 is the default
+from pydantic_ai import Agent
+from pydantic_ai_harness import DynamicWorkflow
+
+reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
+
+DynamicWorkflow(agents=[reviewer], max_agent_calls=50)  # 50 is the default
 ```
 
 A hard, host-enforced ceiling on the number of sub-agent runs in one parent run. It is one budget shared across every `run_workflow` call in that run, and it holds exactly even when the script fans out with `asyncio.gather`. When the budget runs out, the workflow stops calling sub-agents and returns a terminal result with bounded previews of up to the 20 most recent completed results. This is the only knob that bounds the number of runs exactly.
@@ -144,7 +152,12 @@ A hard, host-enforced ceiling on the number of sub-agent runs in one parent run.
 These limits guard the orchestration script's own memory, not the sub-agents it calls. The default backstop is 256 MB with no time limit. Printed output is collected separately with Monty's 10 MiB default cap.
 
 ```python
-DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
+from pydantic_ai import Agent
+from pydantic_ai_harness import DynamicWorkflow
+
+reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
+
+DynamicWorkflow(agents=[reviewer], resource_limits={'max_duration_secs': 30})
 ```
 
 `max_duration_secs` measures the time your script spends running sandbox code, not wall-clock time. While the script waits on a sub-agent it is suspended and that time does not count, so the cap will not fire on a normal workflow no matter how long the sub-agents take. Its one job is catching a pure-CPU runaway -- a `while True:` loop that never awaits, which none of the sub-agent budgets can stop because it never calls a sub-agent. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains. A partial dict merges onto the backstop so you override only the caps you name.
@@ -158,7 +171,10 @@ A sub-agent cannot start its own workflow; a nested `run_workflow` call returns 
 By default a sub-agent shows up under its own `name` and `description`. To give it a different name or description for one workflow without editing the agent itself, wrap it in a `WorkflowAgent`:
 
 ```python
-from pydantic_ai_harness.dynamic_workflow import WorkflowAgent
+from pydantic_ai import Agent
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow, WorkflowAgent
+
+reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
 
 DynamicWorkflow(
     agents=[
@@ -178,6 +194,20 @@ Now the model calls `check(task=...)`. Passing a bare agent is shorthand for wra
 The catalog is fixed when a run starts, which keeps it in the prompt-cache prefix across turns. To make a new sub-agent available during a run (say once a fixer agent has been provisioned), keep a reference to the `DynamicWorkflow` instance and call `reveal()`:
 
 ```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import DynamicWorkflow
+
+
+@dataclass
+class MyDeps:
+    repo: str
+
+
+reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
+fixer = Agent('openai:gpt-5', name='fixer', description='Fixes reported bugs.')
+
 workflow = DynamicWorkflow(agents=[reviewer])
 orchestrator = Agent('openai:gpt-5', deps_type=MyDeps, capabilities=[workflow])
 
@@ -192,6 +222,12 @@ The revealed sub-agent becomes callable on the next step; the model learns about
 `DynamicWorkflow` carries a fair amount of instruction text, and most turns do not need it. Keep it collapsed to a one-line entry until the model actually loads it:
 
 ```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import DynamicWorkflow
+
+reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
+summarizer = Agent('openai:gpt-5', name='summarizer', description='Summarizes findings.')
+
 DynamicWorkflow(
     agents=[reviewer, summarizer],
     id='workflow',
@@ -233,7 +269,7 @@ The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a 
 
 ## API
 
-```python
+```python {lint="skip" test="skip"}
 DynamicWorkflow(                  # all parameters are keyword-only
     agents=[...],                 # Sequence[AbstractAgent | WorkflowAgent], required
     tool_name='run_workflow',

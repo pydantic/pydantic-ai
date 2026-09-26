@@ -66,6 +66,14 @@ with suppress(ImportError):
 
 T = TypeVar('T')
 
+# Like `try_import` for a whole directory: these suites need their workspace member installed, which
+# the `--package` matrix cells for other members do not do.
+collect_ignore = [
+    directory
+    for directory, package in (('harness', 'pydantic_ai_harness'), ('clai2', 'pydantic_clai2'))
+    if importlib.util.find_spec(package) is None
+]
+
 __all__ = (
     'IsDatetime',
     'IsDecimal',

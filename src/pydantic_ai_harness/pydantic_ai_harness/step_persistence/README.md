@@ -312,7 +312,7 @@ async def set_label(ctx: RunContext[Deps], issue: int, label: str) -> str:
         idempotency_key=f'issue-{issue}::label::{label}',
         effect_summary=f'set label {label!r} on issue #{issue}',
     )
-    await github.set_label(issue, label)   # the actual side effect
+    await ctx.deps.github.set_label(issue, label)   # the actual side effect
     return 'ok'
 ```
 
@@ -584,11 +584,19 @@ Presigned / rotating-signature URL -- pass any async callable that takes
 `(uri, MediaContext)`:
 
 ```python
+import hashlib
+import hmac
+import time
+
 from pydantic_ai_harness.media import MediaContext, S3MediaStore
+
+CDN_SIGNING_KEY = b'cdn-signing-secret'
 
 async def presign(uri: str, ctx: MediaContext) -> str:
     key = 'media/' + uri.removeprefix('media+sha256://') + '.bin'
-    return await my_signer.generate(key, ttl=3600, content_type=ctx.media_type)
+    expires = int(time.time()) + 3600
+    signature = hmac.new(CDN_SIGNING_KEY, f'{key}:{expires}'.encode(), hashlib.sha256).hexdigest()
+    return f'https://cdn.example.com/{key}?expires={expires}&signature={signature}'
 
 store = S3MediaStore(..., public_url=presign)
 ```

@@ -1,6 +1,6 @@
 # CLAI 2 guide for AI code assistants
 
-Read this before touching `pydantic-clai2/`. The repository-level `AGENTS.md`
+Read this before touching `src/pydantic_clai2/`. The repository-level `AGENTS.md`
 still applies (no em-dashes, no `Any`, pyright strict, keyword-only arguments,
 100% branch coverage). This file adds what is specific to the terminal shell.
 
@@ -267,15 +267,15 @@ switches. Different versions can share the same settings database.
 
 ## Local verification
 
-Run from the repository root. CLAI shares the root `uv.lock`, `.venv`, and
-Pyright configuration with Harness.
+Run from the repository root. CLAI is a member of the pydantic-ai workspace and
+shares the root `uv.lock`, `.venv`, and Ruff, Pyright, and pytest configuration.
 
 ```bash
-uv sync --locked --all-packages --group lint
+make install
 uv run --no-sync ruff format --check .
 uv run --no-sync ruff check .
-PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright pydantic-clai2/src pydantic-clai2/tests
-uv run --no-sync pytest -p no:cacheprovider -c pydantic-clai2/pyproject.toml pydantic-clai2/tests
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src/pydantic_clai2 tests/clai2
+uv run --no-sync pytest -p no:cacheprovider tests/clai2
 ```
 
 ## Docs parity

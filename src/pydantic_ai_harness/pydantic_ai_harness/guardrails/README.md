@@ -236,9 +236,11 @@ The block/retry message is produced at the moment the guard decides, so it can c
 Return `GuardrailResult.replace(value)` to sanitize rather than refuse. `InputGuardrail` rewrites the prompt sent to the model; `OutputGuardrail` substitutes the output returned to the caller.
 
 ```python
-def scrub_emails(text: str) -> GuardrailResult:
-    cleaned = EMAIL_RE.sub('[email]', text)
-    return GuardrailResult.replace(cleaned) if cleaned != text else GuardrailResult.allow()
+def scrub_emails(value: object) -> GuardrailResult:
+    if not isinstance(value, str):
+        return GuardrailResult.allow()
+    cleaned = EMAIL_RE.sub('[email]', value)
+    return GuardrailResult.replace(cleaned) if cleaned != value else GuardrailResult.allow()
 
 
 agent = Agent(

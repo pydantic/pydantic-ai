@@ -276,8 +276,6 @@ dev = [
     "sqlparse>=0.6.0",
     "nest-asyncio>=1.6.0",
     "azure-identity>=1.25.3",
-    "pydantic-ai-harness",
-    "pydantic-clai2",
     # Storage backends `pydantic-ai-harness` supports, faked or run against a live server.
     "mongomock-motor>=0.0.36",
     "redis>=8.1.0",

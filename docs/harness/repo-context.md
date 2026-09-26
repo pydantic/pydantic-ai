@@ -101,7 +101,7 @@ Injecting file contents into the system prompt costs prompt-cache stability: a c
 
 ## Configuration
 
-```python
+```python {lint="skip" test="skip"}
 RepoContext(
     workspace_dir,                  # Path -- the deepest dir the agent works in (required)
     home_dir=None,                  # Path | None -- shallowest dir to stop walk-up at, inclusive

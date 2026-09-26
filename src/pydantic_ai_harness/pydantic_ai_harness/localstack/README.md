@@ -169,7 +169,7 @@ from pydantic_ai_harness.localstack import LocalStackContainer
 
 async def main() -> None:
     async with LocalStackContainer(environment={'DEBUG': '1'}) as localstack:
-        ...  # talk to localstack.endpoint_url
+        print(localstack.endpoint_url)
 
 
 asyncio.run(main())

@@ -166,7 +166,6 @@ capability before composing it with another capability that uses the same names:
 
 ```python
 from pydantic_ai.capabilities import PrefixTools
-
 from pydantic_ai_harness import ModalSandbox
 
 sandbox = PrefixTools(

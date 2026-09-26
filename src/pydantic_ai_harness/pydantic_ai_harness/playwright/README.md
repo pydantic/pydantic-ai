@@ -167,10 +167,10 @@ navigation is already authenticated.
 Capture it once, in your own code, by logging in with a visible browser:
 
 ```python
-from playwright.async_api import async_playwright
+from playwright.async_api import StorageState, async_playwright
 
 
-async def capture_state() -> object:
+async def capture_state() -> StorageState:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False)
         context = await browser.new_context()
@@ -190,10 +190,11 @@ structure to a file, which you load with `json.loads(Path('auth.json').read_text
 Either way, hand the object to the capability:
 
 ```python
+from playwright.async_api import StorageState
 from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
-state = ...  # captured above
+state: StorageState = {'cookies': [], 'origins': []}  # what `capture_state()` returned
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
