@@ -8,6 +8,9 @@ description: "Use the OpenAI Realtime API and gpt-realtime models with Pydantic 
 OpenAI's native speech-to-speech models. Start with the [realtime quickstart](overview.md#quickstart) or
 the [text-to-audio example](../examples/realtime-text-to-audio.md).
 
+GPT-Live is a separate OpenAI protocol with its own model class,
+[`OpenAILiveModel`][pydantic_ai.realtime.openai_live.OpenAILiveModel]: see [OpenAI GPT-Live](openai-live.md) for how the two differ.
+
 ## Setup
 
 To use OpenAI realtime models, install `pydantic-ai-slim` with the `openai-realtime` optional
