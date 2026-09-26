@@ -266,10 +266,6 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
     ('DBOSAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
     ('PrefectAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
-    # Forwarded only when set, through a `**` splat this walk deliberately does not read. The
-    # conditional is residue of the removed `output_retries` deprecation shim (`24c8cdca7`) rather
-    # than a compatibility mechanism; the other nine keywords forward unconditionally.
-    ('WrapperAgent', 'override'): frozenset({'retries'}),
 }
 
 
