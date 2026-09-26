@@ -13,7 +13,6 @@ from datetime import timedelta
 import pytest
 
 try:
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
     from temporalio import workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
@@ -21,16 +20,18 @@ try:
     from temporalio.worker import Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
     from temporalio.workflow import ActivityConfig
+
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from mcp.server.fastmcp import FastMCP
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 
 pytestmark = pytest.mark.anyio

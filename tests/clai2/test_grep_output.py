@@ -3,10 +3,10 @@
 import io
 
 import pytest
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
-from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from rich.console import Console
 
+from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_clai2 import StreamRenderer
 
 

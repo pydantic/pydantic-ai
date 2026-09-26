@@ -12,8 +12,8 @@ pytest.importorskip('fastmcp')
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import AnyUrl
-from pydantic_ai.exceptions import UserError
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.stackone import StackOneToolset, ToolMode
 
 
@@ -127,7 +127,7 @@ class TestStackOneToolset:
     def test_custom_url_conflicting_tool_mode_is_rejected(self, tool_mode: ToolMode, client: str):
         with pytest.raises(
             UserError,
-            match='conflicts with the configured `tool_mode`.*rewriting would invalidate signed URLs',
+            match=r'conflicts with the configured `tool_mode`.*rewriting would invalidate signed URLs',
         ):
             StackOneToolset(account_id='1', api_key='key', tool_mode=tool_mode, client=client)
 

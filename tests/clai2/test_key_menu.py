@@ -4,10 +4,10 @@ import keyring
 import pytest
 from keyring.errors import KeyringError, NoKeyringError
 from menu_script import Script, pick, typed
-from pydantic_ai.exceptions import UserError
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import api_keys, key_menu
 from pydantic_clai2.credential_store import save_codex_credentials
 from pydantic_clai2.field_menu import FieldMenu

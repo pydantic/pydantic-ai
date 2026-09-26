@@ -5,7 +5,6 @@ from collections.abc import Sequence
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, WebFetch, WebSearch
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 

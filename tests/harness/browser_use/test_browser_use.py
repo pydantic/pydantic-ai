@@ -16,8 +16,10 @@ import pytest
 # `browser_use.Agent` is imported from its defining module: the test package
 # `tests/browser_use` shadows the top-level `browser_use` name in pyright's
 # tests execution environment, while submodule imports resolve correctly.
-from browser_use.agent.service import Agent as BrowserUseAgent
-from browser_use.agent.service import Tools  # pyright: ignore[reportPrivateImportUsage]
+from browser_use.agent.service import (
+    Agent as BrowserUseAgent,
+    Tools,  # pyright: ignore[reportPrivateImportUsage]
+)
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.browser.events import NavigateToUrlEvent
 from browser_use.browser.session import ResilientEventBus
@@ -25,12 +27,12 @@ from browser_use.browser.watchdogs.security_watchdog import SecurityWatchdog
 from browser_use.llm.messages import BaseMessage
 from browser_use.llm.views import ChatInvokeCompletion
 from pydantic import BaseModel, ValidationError
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.browser_use import (
     BrowserAgent,
     BrowserAgentHistory,

@@ -58,7 +58,7 @@ def _tail(path: Path, limit: int) -> tuple[int, list[str]]:
     if not path.exists():
         return 0, []
     total, lines = 0, deque[str](maxlen=limit)
-    with path.open(errors='replace') as file:
+    with path.open(encoding='utf-8', errors='replace') as file:
         for line in file:
             total += 1
             lines.append(line.rstrip('\n'))

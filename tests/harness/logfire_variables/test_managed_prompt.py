@@ -28,12 +28,12 @@ from logfire.testing import CaptureLogfire
 from logfire.variables import LabeledValue, Rollout, VariableConfig, VariablesConfig
 from logfire.variables.abstract import NoOpVariableProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import ManagedPrompt
 from pydantic_ai_harness.logfire import ManagedPrompt as ManagedPromptFromPackage
 

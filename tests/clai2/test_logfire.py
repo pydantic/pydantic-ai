@@ -15,12 +15,12 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import JsonValue, ValidationError
+from rich.console import Console
+
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.logfire import activate

@@ -7,12 +7,12 @@ from collections.abc import Mapping
 from typing import Annotated
 
 from pydantic import Field
+from typing_extensions import Self
+
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from typing_extensions import Self
-
 from pydantic_ai_harness.modal_sandbox._session import (
     ModalSandboxError,
     ModalSandboxSession,

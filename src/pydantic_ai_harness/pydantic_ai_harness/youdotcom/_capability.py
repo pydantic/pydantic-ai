@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.youdotcom._toolset import (
     DEFAULT_SEARCH_TIMEOUT_MS,
     YOU_MAX_NUM_RESULTS,

@@ -14,6 +14,7 @@ from exa_py.agent.types import (
     AgentRunStatus,
 )
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import PrefixTools
@@ -32,7 +33,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.exa import (
     RUN_ID_METADATA_KEY,
     ExaAgent,
@@ -187,7 +187,7 @@ class TestExaAgentToolset:
 
     async def test_non_2xx_becomes_model_retry(self) -> None:
         runs = _FakeRuns(error=ValueError('Request failed with status code 429: rate limited'))
-        with pytest.raises(ModelRetry, match='Exa request failed: .*429'):
+        with pytest.raises(ModelRetry, match=r'Exa request failed: .*429'):
             await ExaAgent[None](runs=runs).get_toolset().exa_agent('q')
 
     async def test_auth_failure_propagates(self) -> None:

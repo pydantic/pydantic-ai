@@ -22,9 +22,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
 from playwright._impl._errors import TargetClosedError
-from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import StorageState
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Error as PlaywrightError, StorageState, TimeoutError as PlaywrightTimeoutError
+
+import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
@@ -34,8 +34,6 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
-
-import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai_harness.playwright import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_ALLOWLIST_REACH,
@@ -1852,15 +1850,15 @@ class TestSnapshot:
 class TestPlaywrightBrowserSession:
     def test_toolset_validates_max_content_tokens(self) -> None:
         session = PlaywrightBrowserSession()
-        with pytest.raises(ValueError, match='^max_content_tokens must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^max_content_tokens must be greater than or equal to 0$'):
             PlaywrightBrowserToolset[None](session=session, max_content_tokens=-1)
         PlaywrightBrowserToolset[None](session=session, max_content_tokens=0)
 
     def test_toolset_validates_timeouts(self) -> None:
         session = PlaywrightBrowserSession()
-        with pytest.raises(ValueError, match='^action_timeout_ms must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^action_timeout_ms must be greater than or equal to 0$'):
             PlaywrightBrowserToolset[None](session=session, action_timeout_ms=-1)
-        with pytest.raises(ValueError, match='^navigation_timeout_ms must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^navigation_timeout_ms must be greater than or equal to 0$'):
             PlaywrightBrowserToolset[None](session=session, navigation_timeout_ms=-1)
         # 0 = no deadline, accepted as a developer-set default
         PlaywrightBrowserToolset[None](session=session, action_timeout_ms=0, navigation_timeout_ms=0)
@@ -1919,14 +1917,14 @@ class TestPlaywrightBrowserSession:
 
 class TestPlaywrightBrowserHooks:
     def test_capability_validates_max_content_tokens(self) -> None:
-        with pytest.raises(ValueError, match='^max_content_tokens must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^max_content_tokens must be greater than or equal to 0$'):
             PlaywrightBrowser[None](max_content_tokens=-1)
         PlaywrightBrowser[None](max_content_tokens=0)
 
     def test_capability_validates_timeouts(self) -> None:
-        with pytest.raises(ValueError, match='^action_timeout_ms must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^action_timeout_ms must be greater than or equal to 0$'):
             PlaywrightBrowser[None](action_timeout_ms=-1)
-        with pytest.raises(ValueError, match='^navigation_timeout_ms must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^navigation_timeout_ms must be greater than or equal to 0$'):
             PlaywrightBrowser[None](navigation_timeout_ms=-1)
         PlaywrightBrowser[None](action_timeout_ms=0, navigation_timeout_ms=0)
 
@@ -2073,7 +2071,7 @@ class TestDurabilityRejection:
 
     def test_rejects_temporal_durability_at_construction(self) -> None:
         pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # needs the temporal extra
 
         with pytest.raises(UserError, match='does not support durable execution'):
             Agent(TestModel(), capabilities=[PlaywrightBrowser(), TemporalDurability()])

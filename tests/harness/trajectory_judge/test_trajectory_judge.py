@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
@@ -34,7 +35,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
-
 from pydantic_ai_harness.trajectory_judge import AllGood, Steer, TrajectoryJudge, TrajectoryVerdict
 
 pytestmark = pytest.mark.anyio

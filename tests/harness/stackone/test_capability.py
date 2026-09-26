@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 from fastmcp.client.transports import StreamableHttpTransport
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.messages import ModelMessage, ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.stackone import StackOne
 
 if TYPE_CHECKING:

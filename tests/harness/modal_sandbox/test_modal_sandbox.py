@@ -9,6 +9,9 @@ from typing import Protocol, TypeGuard, runtime_checkable
 
 import pytest
 import sniffio
+
+import pydantic_ai_harness
+import pydantic_ai_harness.modal_sandbox as modal_sandbox
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
@@ -17,18 +20,15 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
-
-import pydantic_ai_harness
-import pydantic_ai_harness.modal_sandbox as modal_sandbox
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.modal_sandbox import (
     ModalSandbox,
+    ModalSandbox as Exported,
     ModalSandboxError,
     ModalSandboxSession,
     ModalSandboxTerminalError,
     ModalSandboxUnavailableError,
 )
-from pydantic_ai_harness.modal_sandbox import ModalSandbox as Exported
 
 from .fake_modal import FakeModal, FileInfo
 
@@ -358,7 +358,7 @@ class TestReadFile:
     async def test_read_limit_formats_megabytes(self, fake_modal: FakeModal) -> None:
         async with _toolset(max_read_bytes=1000) as ts:
             fake_modal.sandboxes[0].stat_sizes['/big.log'] = 3 * 1024 * 1024
-            with pytest.raises(ModelRetry, match='File is 3.0MB'):
+            with pytest.raises(ModelRetry, match=r'File is 3.0MB'):
                 await ts.read_file('/big.log')
 
     async def test_line_cap_is_configurable(self, fake_modal: FakeModal) -> None:

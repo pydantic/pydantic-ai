@@ -6,6 +6,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     CachePoint,
@@ -21,7 +22,6 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanEvent,

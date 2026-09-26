@@ -8,6 +8,8 @@ from pathlib import Path
 import anyio
 import pytest
 from acp import Client, schema, text_block
+from tests.experimental.acp._acp_clients import RecordingClient  # pyright: ignore[reportMissingTypeStubs]
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Toolset
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -15,7 +17,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 from pydantic_ai_harness.experimental.acp import (
     AcpFileSystemToolset,
@@ -26,7 +27,6 @@ from pydantic_ai_harness.experimental.acp import (
     acp_filesystem,
     acp_terminal,
 )
-from tests.experimental.acp._acp_clients import RecordingClient  # pyright: ignore[reportMissingTypeStubs]
 
 pytestmark = pytest.mark.anyio
 

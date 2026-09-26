@@ -14,6 +14,7 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
@@ -31,7 +32,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
-
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.guardrails import GuardrailResult, InputGuardrail
 from pydantic_ai_harness.spend import (
@@ -814,7 +814,7 @@ class TestCompositionWarning:
         through outside a durable container, so the run completes and accrues normally.
         """
         pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # needs the temporal extra
 
         guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
         agent = Agent(

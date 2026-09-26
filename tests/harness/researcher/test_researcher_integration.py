@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+
 from pydantic_ai import (
     ModelRequest,
     ModelResponse,
@@ -21,9 +22,9 @@ pytest.importorskip('ddgs')
 pytest.importorskip('markdownify')
 
 from inline_snapshot import snapshot
+
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
-
 from pydantic_ai_harness.researcher import Researcher
 
 if TYPE_CHECKING:

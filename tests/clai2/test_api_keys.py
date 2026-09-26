@@ -6,9 +6,9 @@ import keyring
 import pytest
 from keyring.errors import NoKeyringError
 from menu_script import make_context
-from pydantic_ai.exceptions import UserError
 from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import api_keys, openrouter, set_menu, vllm
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.credential_store import credentials_path, save_codex_credentials

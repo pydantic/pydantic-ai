@@ -12,12 +12,12 @@ from urllib.parse import urlsplit
 
 import anyio
 import httpx
+from typing_extensions import Self
+
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
-from typing_extensions import Self
-
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.localstack._container import LocalStackContainer
 

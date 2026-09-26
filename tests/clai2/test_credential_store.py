@@ -10,10 +10,10 @@ from uuid import UUID
 import keyring
 import pytest
 from keyring.errors import InitError, KeyringLocked, NoKeyringError, PasswordDeleteError
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
 from rich.console import Console
 
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
 from pydantic_clai2.auth import CodexAuth, CodexCredentials
 from pydantic_clai2.credential_store import (
     credentials_path,
@@ -203,7 +203,7 @@ def test_planted_staging_symlink_is_not_followed(
     save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert target.read_text() == 'untouched'
     assert not staging.is_symlink()
-    assert fallback.read_text() == '{"access_token":"secret"}'
+    assert fallback.read_text(encoding='utf-8') == '{"access_token":"secret"}'
 
 
 def test_staging_race_is_refused(fallback: Path, no_keyring: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,7 +212,7 @@ def test_staging_race_is_refused(fallback: Path, no_keyring: None, monkeypatch: 
 
     def planting_open(path: str, flags: int, mode: int = 0o777) -> int:
         if flags & os.O_EXCL:
-            Path(path).write_text('{"access_token":"attacker"}')
+            Path(path).write_text('{"access_token":"attacker"}', encoding='utf-8')
         return real_open(path, flags, mode)
 
     monkeypatch.setattr('pydantic_clai2.credential_store.os.open', planting_open)
@@ -246,7 +246,7 @@ def test_locked_keyring_is_not_a_fallback(fallback: Path, monkeypatch: pytest.Mo
 
 def test_keyring_save_removes_plaintext_copy(vault: dict[str, str], fallback: Path) -> None:
     fallback.parent.mkdir()
-    fallback.write_text('{"access_token":"from-file"}')
+    fallback.write_text('{"access_token":"from-file"}', encoding='utf-8')
     assert load_codex_credentials(fallback=fallback) == '{"access_token":"from-file"}'
     save_codex_credentials(fallback=fallback, value='{"access_token":"in-keyring"}')
     assert not fallback.exists()
@@ -287,7 +287,7 @@ def test_fallback_paths_are_per_account(tmp_path: Path, no_keyring: None, monkey
 def test_delete_removes_entry_and_chunks(vault: dict[str, str], fallback: Path, value: str) -> None:
     save_codex_credentials(fallback=fallback, value=value)
     fallback.parent.mkdir(parents=True, exist_ok=True)
-    fallback.write_text('stale')
+    fallback.write_text('stale', encoding='utf-8')
     delete_credentials(fallback=fallback)
     assert vault == {} and not fallback.exists()
     delete_credentials(fallback=fallback)

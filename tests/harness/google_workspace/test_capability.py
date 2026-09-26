@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 from fastmcp.client.transports import StreamableHttpTransport
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
@@ -13,7 +14,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.google_workspace import GoogleWorkspace
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.

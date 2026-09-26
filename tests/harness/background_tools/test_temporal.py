@@ -9,7 +9,6 @@ from datetime import timedelta
 import pytest
 
 try:
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
     from temporalio import workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
@@ -17,6 +16,8 @@ try:
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
     from temporalio.workflow import ActivityConfig
+
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
@@ -24,7 +25,6 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
-
 from pydantic_ai_harness import BackgroundTools
 
 pytestmark = pytest.mark.anyio

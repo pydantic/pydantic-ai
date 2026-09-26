@@ -23,6 +23,11 @@ import acp
 import pytest
 from acp import RequestError, schema
 from pydantic import BaseModel
+from tests.experimental.acp._acp_clients import (  # pyright: ignore[reportMissingTypeStubs]
+    RecordingClient,
+    RecordingClientBase,
+)
+
 from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks
 from pydantic_ai.exceptions import ApprovalRequired
@@ -49,7 +54,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
 from pydantic_ai.usage import UsageLimits
-
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 from pydantic_ai_harness.experimental.acp import (
@@ -79,10 +83,6 @@ from pydantic_ai_harness.experimental.acp._serialize import (
 )
 from pydantic_ai_harness.experimental.acp._session import SessionState
 from pydantic_ai_harness.filesystem import FileSystemToolset, FileWrittenEvent
-from tests.experimental.acp._acp_clients import (  # pyright: ignore[reportMissingTypeStubs]
-    RecordingClient,
-    RecordingClientBase,
-)
 
 pytestmark = pytest.mark.anyio
 

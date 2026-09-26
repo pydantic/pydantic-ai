@@ -21,12 +21,12 @@ from exa_py.api import (
     SearchType,
     TextContentsOptions,
 )
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
 
 
@@ -278,7 +278,7 @@ class TestGetPage:
 class TestRecoverableErrors:
     async def test_non_2xx_becomes_model_retry(self) -> None:
         client = _FakeExaClient(error=ValueError('Request failed with status code 429: rate limited'))
-        with pytest.raises(ModelRetry, match='Exa request failed: .*429'):
+        with pytest.raises(ModelRetry, match=r'Exa request failed: .*429'):
             await _toolset(client).web_search('q')
 
     async def test_auth_failure_propagates(self) -> None:

@@ -6,16 +6,16 @@ import httpx2 as httpx
 import pytest
 from menu_script import Script, make_context, pick, typed
 from pydantic import JsonValue, TypeAdapter
+from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+
 from pydantic_ai import Agent
 from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
-
 from pydantic_clai2.custom_params import CustomParamsMenu, DeleteParam, expand_params, parse_pair
 from pydantic_clai2.field_menu import FieldMenu
 from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command, run_model_settings

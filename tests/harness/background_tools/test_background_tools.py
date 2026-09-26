@@ -11,6 +11,7 @@ from typing import Any
 
 import anyio
 import pytest
+
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -49,7 +50,6 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import BackgroundTools
 
 pytestmark = pytest.mark.anyio

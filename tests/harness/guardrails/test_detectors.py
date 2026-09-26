@@ -7,6 +7,7 @@ import time
 
 import pytest
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -24,7 +25,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness import GuardrailResult, InputGuardrail, OutputBlocked, OutputGuardrail
 from pydantic_ai_harness.guardrails import ToolGuardrail, ToolResultInfo
 from pydantic_ai_harness.guardrails.detectors import (
@@ -1051,7 +1051,7 @@ class TestGuardChain:
             capabilities=[InputGuardrail(guard=[blocked_keywords(['nope']), redact_secrets], parallel=True)],
         )
 
-        with pytest.raises(UserError, match='incompatible with GuardrailResult.replace'):
+        with pytest.raises(UserError, match=r'incompatible with GuardrailResult.replace'):
             await agent.run(f'k {_OPENAI_KEY}')
 
     async def test_a_mid_chain_replacement_must_still_be_prompt_text(self):

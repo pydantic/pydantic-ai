@@ -3,11 +3,11 @@ import sys
 from pathlib import Path
 
 import pytest
+
+import pydantic_ai_harness.coder
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.models.test import TestModel
-
-import pydantic_ai_harness.coder
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext

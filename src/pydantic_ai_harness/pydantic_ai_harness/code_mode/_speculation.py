@@ -33,6 +33,8 @@ from typing import Annotated, Any, Generic, Literal
 
 import anyio
 from pydantic import Strict, TypeAdapter, ValidationError
+from typing_extensions import TypedDict
+
 from pydantic_ai.messages import (
     AgentStreamEvent,
     PartDeltaEvent,
@@ -44,8 +46,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from typing_extensions import TypedDict
-
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,

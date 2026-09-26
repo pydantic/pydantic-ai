@@ -13,13 +13,13 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent
 from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import Agent
 from pydantic_clai2 import chat, theme
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions

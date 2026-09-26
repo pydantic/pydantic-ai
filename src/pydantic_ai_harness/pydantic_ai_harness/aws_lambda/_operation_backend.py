@@ -8,6 +8,7 @@ from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.retries import RetryDecision
 from aws_durable_execution_sdk_python.serdes import SerDes
 from pydantic import ConfigDict, TypeAdapter, ValidationError
+
 from pydantic_ai.durable_exec import (
     DurableOperationId,
     JournalCallableOperationBackend,

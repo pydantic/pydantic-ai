@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness.localstack._toolset import LocalStackToolset
 
 _INSTRUCTIONS = (

@@ -4,6 +4,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -12,7 +13,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.repo_context import RepoContext
-
 from pydantic_clai2 import Session
 from pydantic_clai2._app import create_agent
 from pydantic_clai2.customization import customization_guide, read_clai_customization_guide

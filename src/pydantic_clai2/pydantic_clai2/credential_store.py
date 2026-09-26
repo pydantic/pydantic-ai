@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import keyring
 from keyring.errors import InitError, NoKeyringError, PasswordDeleteError
+
 from pydantic_ai.exceptions import UserError
 
 _SERVICE = 'pydantic-clai2'

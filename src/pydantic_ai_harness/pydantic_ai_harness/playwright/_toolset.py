@@ -115,13 +115,15 @@ from time import monotonic
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, get_args
 from urllib.parse import urlparse
 
+import anyio
 import idna
 from opentelemetry import trace
+from typing_extensions import Self
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from typing_extensions import Self
 
 try:
     # Import-time gate (mirrors `pydantic_ai_harness.exa._toolset`): importing the
@@ -131,9 +133,11 @@ try:
     # API, and a driver-raised instance only carries `.name` (so isinstance is the
     # reliable discriminator, not the name attribute).
     from playwright._impl._errors import TargetClosedError as TargetClosedError
-    from playwright.async_api import Error as _PlaywrightError
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-    from playwright.async_api import async_playwright as async_playwright
+    from playwright.async_api import (
+        Error as _PlaywrightError,
+        TimeoutError as PlaywrightTimeoutError,
+        async_playwright as async_playwright,
+    )
 
     PlaywrightError = _PlaywrightError
 except ImportError as _import_error:  # pragma: no cover
@@ -147,14 +151,16 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine, Sequence
 
     from opentelemetry.trace import Span, Tracer
-    from playwright.async_api import Browser as PlaywrightBrowserHandle
-    from playwright.async_api import BrowserContext as PlaywrightBrowserContext
-    from playwright.async_api import Page as PlaywrightPage
-    from playwright.async_api import Playwright as PlaywrightDriver
-    from playwright.async_api import Request as PlaywrightRequest
-    from playwright.async_api import Route as PlaywrightRoute
-    from playwright.async_api import StorageState
-    from playwright.async_api import WebSocketRoute as PlaywrightWebSocketRoute
+    from playwright.async_api import (
+        Browser as PlaywrightBrowserHandle,
+        BrowserContext as PlaywrightBrowserContext,
+        Page as PlaywrightPage,
+        Playwright as PlaywrightDriver,
+        Request as PlaywrightRequest,
+        Route as PlaywrightRoute,
+        StorageState,
+        WebSocketRoute as PlaywrightWebSocketRoute,
+    )
 
 _T = TypeVar('_T')
 
@@ -1063,7 +1069,7 @@ class PlaywrightBrowserSession:
         self._browser: PlaywrightBrowserHandle | None = None
         self._context: PlaywrightBrowserContext | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
-        self._launch_lock = asyncio.Lock()
+        self._launch_lock = anyio.Lock(fast_acquire=True)
         self.tracer: Tracer = _FALLBACK_TRACER
         """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
@@ -1599,7 +1605,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         self._max_content_tokens = max_content_tokens
         self._action_timeout_ms = action_timeout_ms
         self._navigation_timeout_ms = navigation_timeout_ms
-        self._operation_lock = asyncio.Lock()
+        self._operation_lock = anyio.Lock(fast_acquire=True)
         self.add_function(self.navigate, name='navigate')
         self.add_function(self.click, name='click')
         self.add_function(self.type_text, name='type_text')

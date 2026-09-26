@@ -11,6 +11,8 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import anyio
+from rich.console import Console
+
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
 from pydantic_ai.capabilities import DynamicCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -25,8 +27,6 @@ from pydantic_ai_harness.code_mode import (
 )
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
-from rich.console import Console
-
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.customization import customization_guide

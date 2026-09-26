@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-
 from pydantic_ai_harness.planning._events import (
     PlanCompletedEvent,
     PlanCreatedEvent,

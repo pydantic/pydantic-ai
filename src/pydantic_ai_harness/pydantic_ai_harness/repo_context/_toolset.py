@@ -7,7 +7,6 @@ from pathlib import Path
 
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-
 from pydantic_ai_harness.repo_context._inventory import AgentContextInventory, scan_assets
 
 

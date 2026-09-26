@@ -10,14 +10,14 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic import ValidationError
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from rich.text import Text
 from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat, theme
 from pydantic_clai2.commands import config_command, config_completions, set_completions
 from pydantic_clai2.config import Settings

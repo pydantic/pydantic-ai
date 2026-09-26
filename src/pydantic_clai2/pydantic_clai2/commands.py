@@ -7,13 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
-from pydantic_ai.models import known_model_names
 from termflow.tui.completion import (  # pyright: ignore[reportMissingTypeStubs]
     CompleteEvent,
     Completer,
     Completion,
     Document,
 )
+
+from pydantic_ai.models import known_model_names
 
 from .config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
 from .settings_store import SettingsStore
@@ -188,7 +189,7 @@ def set_completions(args: list[str]) -> Iterable[str]:
     if len(args) == 2 and args[0] == 'display.spinner':
         return tuple(BUILTIN_SPINNERS)
     if len(args) == 2 and args[0] == 'model':
-        from .model_catalog import CODEX_MODELS  # noqa: PLC0415
+        from .model_catalog import CODEX_MODELS
 
         names = known_model_names()
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})

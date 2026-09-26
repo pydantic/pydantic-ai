@@ -6,8 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import pydantic_ai.models
 import pytest
+
+import pydantic_ai.models
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 

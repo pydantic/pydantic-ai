@@ -30,6 +30,7 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import MCP, WebSearch
 from pydantic_ai.messages import (
@@ -44,7 +45,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage
-
 from pydantic_ai_harness import CodeMode
 
 from .conftest import IsDatetime, IsPartialDict, IsStr

@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -20,7 +21,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, SqliteStepStore, StepEvent
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,

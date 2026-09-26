@@ -13,11 +13,11 @@ from anyio.to_thread import run_sync as in_worker
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-
 from pydantic_clai2 import Session, chat
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands

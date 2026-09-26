@@ -16,6 +16,8 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import History
 from pydantic import ValidationError
+from rich.console import Console
+
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
@@ -23,7 +25,6 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from rich.console import Console
 
 from . import theme, warm_imports
 from ._branding import print_banner
@@ -62,8 +63,7 @@ from .session_settings import SessionSettings
 from .sessions import Sessions
 from .set_menu import set_command
 from .settings_store import SettingsStore
-from .shell_passthrough import HELP as SHELL_HELP
-from .shell_passthrough import run_shell_command, shell_command
+from .shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from .speculation import Speculation
 from .spinner_picker import spinner_command, spinner_completions
 from .spinners import Spinner, Spinners
@@ -204,7 +204,7 @@ async def chat(
                         transcript=shell.transcript,
                     )
                 )
-            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
+            except Exception as exc:
                 with transcript.capture(console):
                     console.print(
                         f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
@@ -225,27 +225,27 @@ class _ModelResolver:
 
     def codex_auth(self) -> 'CodexAuth':
         if self._auth is None:
-            from .auth import CodexAuth  # noqa: PLC0415
+            from .auth import CodexAuth
 
             self._auth = CodexAuth(self.console)
         return self._auth
 
     async def login(self, args: list[str]) -> str:
-        from .auth import login_command  # noqa: PLC0415
+        from .auth import login_command
 
         return await login_command(args, codex=self.codex_auth())
 
     async def resolve(self, name: str) -> Model | str:
         if name.startswith('openrouter:'):
-            from . import openrouter  # noqa: PLC0415
+            from . import openrouter
 
             return await asyncio.to_thread(openrouter.model, name)
         if name.startswith('vllm:'):
-            from . import vllm  # noqa: PLC0415
+            from . import vllm
 
             return await asyncio.to_thread(vllm.model, name)
         if name.startswith('github-copilot:'):
-            from . import github_copilot  # noqa: PLC0415
+            from . import github_copilot
 
             return await asyncio.to_thread(github_copilot.model, name)
         return self.codex_auth().model(name) if name.startswith('openai-codex:') else name
@@ -297,12 +297,12 @@ def create_shell(
     async def add_model(args: list[str]) -> str:
         if args:
             return context.set_setting(['model', *args])
-        from .model_menu import open_add_model_menu  # noqa: PLC0415
+        from .model_menu import open_add_model_menu
 
         return await open_add_model_menu(context)
 
     async def model_settings(args: list[str]) -> str:
-        from .model_menu import model_settings_command  # noqa: PLC0415
+        from .model_menu import model_settings_command
 
         return await model_settings_command(context, args)
 
@@ -741,7 +741,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if headless:
             try:
                 result = await self.session.prompt(start.text)
-            except Exception as exc:  # noqa: BLE001 -- report a failed headless turn to the CLI.
+            except Exception as exc:
                 return TurnEnd(text=start.text, outcome='failed', error=exc)
             return TurnEnd(text=start.text, outcome='completed', result=result)
         # Menus open mid-turn only after this turn has captured its settings; session changes
@@ -796,7 +796,7 @@ def _report_interrupt(completed: bool, console: Console) -> None:
 async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status) -> None:
     try:
         console.print(await commands.execute_async(text), markup=False)
-    except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
+    except Exception as exc:
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
     console.print()
     _reset_status(text, status)
@@ -878,7 +878,7 @@ async def _run_prompt(
     except asyncio.CancelledError:
         await renderer.abort()
         raise
-    except Exception as exc:  # noqa: BLE001 -- interactive boundary reports plugin/provider failures.
+    except Exception as exc:
         await renderer.finish()
         console.print(f'{type(exc).__name__}: {error_message(exc)}', style=theme.color(theme.ERROR), markup=False)
         console.print(

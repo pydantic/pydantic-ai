@@ -6,10 +6,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.filesystem import RIPGREP_TOOL_NAMES, FilesSearchedEvent, FileSystem, FileSystemToolset
 
 from .._tool_calls import call_tool

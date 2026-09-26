@@ -29,11 +29,11 @@ import json
 import logging
 from datetime import datetime
 
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pymongo import AsyncMongoClient, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
 from pydantic_ai_harness.media._mongo import MongoMediaStore  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness.step_persistence._store import (

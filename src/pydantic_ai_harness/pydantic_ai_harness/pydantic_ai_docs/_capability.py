@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness.pydantic_ai_docs._toolset import PydanticAIDocsToolset, PydanticAIDocsTopic
 
 if TYPE_CHECKING:

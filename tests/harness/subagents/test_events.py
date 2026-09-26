@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
 import pytest
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, HookTimeoutError, on_event
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
@@ -23,7 +24,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
-
 from pydantic_ai_harness import ToolGuardrail
 from pydantic_ai_harness.guardrails import GuardrailResult
 from pydantic_ai_harness.subagents import (

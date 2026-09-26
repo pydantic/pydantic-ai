@@ -8,7 +8,6 @@ and end in step with the run rather than at the next stream drain.
 from dataclasses import dataclass
 
 from pydantic_ai import CapabilityEvent
-
 from pydantic_ai_harness.ask_user._types import AskUserRequest, AskUserResponse
 
 ASK_USER_EVENTS = 'ask_user'

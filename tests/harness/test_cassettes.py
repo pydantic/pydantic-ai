@@ -77,7 +77,7 @@ def test_cassettes_discovered() -> None:
 @pytest.mark.parametrize('path', _cassettes())
 def test_cassette_replays_without_an_optional_decompressor(path: Path) -> None:
     # `vcr`'s own loader, because a cassette can carry tags `yaml.safe_load` rejects.
-    document = yamlserializer.deserialize(path.read_text())  # pyright: ignore[reportUnknownMemberType]
+    document = yamlserializer.deserialize(path.read_text(encoding='utf-8'))  # pyright: ignore[reportUnknownMemberType]
     cassette = _Cassette.model_validate(document)
     needs = [
         f'{interaction.request.uri} responds `Content-Encoding: {encoding}`'

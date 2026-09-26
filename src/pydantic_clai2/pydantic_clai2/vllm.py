@@ -6,10 +6,11 @@ import json
 import httpx
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, HttpUrl, SecretStr, TypeAdapter, ValidationError
+from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.vllm import VLLMProvider
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
 
 from .api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
 from .command_context import CommandContext

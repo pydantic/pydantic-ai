@@ -5,6 +5,7 @@ from pathlib import Path
 
 import keyring
 import pytest
+
 from pydantic_ai import models
 
 

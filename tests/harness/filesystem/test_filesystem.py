@@ -11,12 +11,12 @@ from pathlib import Path
 from types import FrameType
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.filesystem import (
     FILE_SYSTEM_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
@@ -427,7 +427,7 @@ class TestWriteFile:
                 return original_open(path, flags, mode)
 
             monkeypatch.setattr(os, 'open', swap_then_open)
-            with pytest.raises(ModelRetry, match="Path 'swap.txt' exists and is not a regular file"):
+            with pytest.raises(ModelRetry, match=r"Path 'swap.txt' exists and is not a regular file"):
                 await toolset.write_file('swap.txt', 'content')
 
         assert open_calls == 2
@@ -567,7 +567,7 @@ class TestWriteFile:
             return original_open(path, flags, mode)
 
         monkeypatch.setattr(os, 'open', swap_then_open)
-        with pytest.raises(ModelRetry, match="Path 'symlink-swap.txt'.*symlink"):
+        with pytest.raises(ModelRetry, match=r"Path 'symlink-swap.txt'.*symlink"):
             await toolset.write_file('symlink-swap.txt', 'content')
 
         assert open_calls == 2
@@ -1350,11 +1350,11 @@ class TestCreateDirectory:
             await toolset.create_directory('newdir')
 
     async def test_create_over_existing_file(self, toolset: FileSystemToolset[None]) -> None:
-        with pytest.raises(ModelRetry, match="'hello.txt' exists and is not a directory"):
+        with pytest.raises(ModelRetry, match=r"'hello.txt' exists and is not a directory"):
             await toolset.create_directory('hello.txt')
 
     async def test_create_under_existing_file(self, toolset: FileSystemToolset[None]) -> None:
-        with pytest.raises(ModelRetry, match="'hello.txt/nested' has a parent that is not a directory"):
+        with pytest.raises(ModelRetry, match=r"'hello.txt/nested' has a parent that is not a directory"):
             await toolset.create_directory('hello.txt/nested')
 
 
@@ -1845,7 +1845,7 @@ class TestModelSafeRecoverableErrors:
     async def test_write_through_file_names_the_parent(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         # The parent path 'hello.txt' exists as a file; the check names the
         # model's path, not the absolute host path the OS would report.
-        with pytest.raises(ModelRetry, match="'hello.txt/nested' has a parent that is not a directory") as exc_info:
+        with pytest.raises(ModelRetry, match=r"'hello.txt/nested' has a parent that is not a directory") as exc_info:
             await toolset.write_file('hello.txt/nested', 'x')
         _assert_no_host_root(str(exc_info.value), fs_root)
 

@@ -12,6 +12,8 @@ from opentelemetry import baggage, context
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pydantic_monty import FunctionSnapshot, instrument_telemetry
+
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelRetry
@@ -20,8 +22,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
-from pydantic_monty import FunctionSnapshot, instrument_telemetry
-
 from pydantic_ai_harness.code_mode import CodeModeToolset
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflowToolset, WorkflowAgent
 

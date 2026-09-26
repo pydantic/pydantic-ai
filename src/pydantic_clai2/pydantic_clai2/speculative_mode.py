@@ -23,6 +23,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeGuard
 
+from pydantic_monty import MountDir, OSAccess
+
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -41,7 +43,6 @@ from pydantic_ai_harness.code_mode import (
     SpeculativeCallMissedEvent,
 )
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_monty import MountDir, OSAccess
 
 from .customization import CustomizationGuide, read_clai_customization_guide
 from .eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming

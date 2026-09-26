@@ -19,6 +19,7 @@ from typing import TypeVar
 
 import anyio
 import anyio.abc
+
 from pydantic_ai.exceptions import ModelRetry
 
 _SEPARATOR = b'--\n'

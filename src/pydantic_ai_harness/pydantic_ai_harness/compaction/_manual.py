@@ -6,17 +6,17 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, overload
 
 from opentelemetry.trace import NoOpTracer
+
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.compaction._shared import SupportsFocus, compact_with_span
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
+
     from pydantic_ai._run_context import AgentDepsT
     from pydantic_ai.models import Model
-
     from pydantic_ai_harness.compaction._shared import CompactionStrategy
 
 

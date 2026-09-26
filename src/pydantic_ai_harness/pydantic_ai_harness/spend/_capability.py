@@ -28,7 +28,6 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, dur
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
-
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
 from pydantic_ai_harness.spend._composition import warn_about_inner_wrappers

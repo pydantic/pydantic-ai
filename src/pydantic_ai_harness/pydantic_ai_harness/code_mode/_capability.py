@@ -7,14 +7,14 @@ from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
+from typing_extensions import TypedDict
+
 from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
-from typing_extensions import TypedDict
-
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._speculation import (
     MAX_SPECULATIONS_PER_PART,

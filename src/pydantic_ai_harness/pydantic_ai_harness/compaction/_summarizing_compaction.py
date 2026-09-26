@@ -26,7 +26,6 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned

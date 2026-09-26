@@ -5,8 +5,8 @@ import json
 import httpx
 import pytest
 from pydantic import SecretStr
-from pydantic_ai.exceptions import UserError
 
+from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import api_keys, openrouter, vllm
 from pydantic_clai2.credential_store import load_codex_credentials
 

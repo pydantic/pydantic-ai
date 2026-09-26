@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness.capability_creation._store import CapabilityStore
 from pydantic_ai_harness.capability_creation._toolset import CapabilityCreationToolset
 

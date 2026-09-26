@@ -10,6 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import CapabilityOrdering, Instrumentation
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -19,7 +20,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputContext
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import GuardrailResult, OutputBlocked, OutputGuardrail
 from pydantic_ai_harness.guardrails import GuardrailError
 
@@ -85,7 +85,7 @@ class TestOutputGuardrail:
             TestModel(custom_output_text='leaks SSN 123-45-6789'),
             capabilities=[OutputGuardrail(guard=lambda out: 'SSN' not in str(out))],
         )
-        with pytest.raises(OutputBlocked, match='Output blocked by output guardrail.'):
+        with pytest.raises(OutputBlocked, match=r'Output blocked by output guardrail.'):
             await agent.run('hello')
 
     async def test_blocks_with_custom_message(self):

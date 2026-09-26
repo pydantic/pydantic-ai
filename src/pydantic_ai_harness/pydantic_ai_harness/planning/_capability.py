@@ -11,7 +11,6 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import CachePoint, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
     SUBTASK_TOOL_NAMES,

@@ -15,6 +15,7 @@ from typing import Literal
 
 from anyio import to_thread
 from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
+
 from pydantic_ai import RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
@@ -144,7 +145,7 @@ class MCPServers:
         try:
             await stack.enter_async_context(connection.toolset)
             listed = await connection.toolset.list_tools()
-        except Exception as exc:  # noqa: BLE001 -- any connection failure is reported, not raised.
+        except Exception as exc:
             await stack.aclose()
             connection.error = f'{type(exc).__name__}: {exc}'
             self.log(name, f'start failed: {connection.error}')

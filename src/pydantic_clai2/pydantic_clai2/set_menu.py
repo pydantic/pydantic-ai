@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 from pydantic import ValidationError
+
 from pydantic_ai.models import known_model_names
 
 from .api_keys import set_api_key

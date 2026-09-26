@@ -7,6 +7,7 @@ failed or over-budget summary degrades to truncation. `compact_now` drives the c
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
 from pydantic_ai_harness.compaction import (

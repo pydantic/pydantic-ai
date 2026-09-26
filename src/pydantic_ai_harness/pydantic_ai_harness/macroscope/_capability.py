@@ -7,7 +7,6 @@ from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.macroscope._toolset import MacroscopeToolset
 
 _REVIEW_INSTRUCTIONS = (

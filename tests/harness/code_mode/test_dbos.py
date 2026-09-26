@@ -25,6 +25,7 @@ import pytest
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
+
     from pydantic_ai.durable_exec.dbos import DBOSDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
@@ -33,7 +34,6 @@ from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
-
 from pydantic_ai_harness import CodeMode
 
 # ---------------------------------------------------------------------------

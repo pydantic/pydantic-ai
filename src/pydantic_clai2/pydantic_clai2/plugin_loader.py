@@ -13,9 +13,10 @@ from typing import Generic
 
 from anyio import CancelScope, fail_after
 from anyio.lowlevel import checkpoint
+from rich.console import Console
+
 from pydantic_ai import AgentStreamEvent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
-from rich.console import Console
 
 from . import theme
 from .commands import Commands, plugins_command
@@ -277,7 +278,7 @@ class PluginLoader(Generic[DepsT]):
             return
         try:
             await _dispatch(entry.host, SessionEnd(reason=reason))
-        except Exception as exc:  # noqa: BLE001 -- unloading must finish even if the plugin misbehaves.
+        except Exception as exc:
             self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
         finally:
             self._drop(entry)
@@ -438,6 +439,6 @@ async def _end_failed_session(handler: Callable[[HostEvent], Awaitable[None]]) -
     try:
         with fail_after(5):
             await handler(SessionEnd(reason='error'))
-    except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 -- reported by the caller.
+    except (Exception, asyncio.CancelledError) as exc:
         return exc
     return None

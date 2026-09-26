@@ -1,7 +1,5 @@
 """CLAI's existing brand colours, with opt-in Termflow palettes."""
 
-# ruff: noqa: PLC0415 -- the splash must not import Termflow at startup.
-
 from __future__ import annotations
 
 import os

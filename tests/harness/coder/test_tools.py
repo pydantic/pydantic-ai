@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import UserError
@@ -12,7 +13,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
-
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 

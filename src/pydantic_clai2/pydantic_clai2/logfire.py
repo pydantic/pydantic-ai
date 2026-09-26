@@ -8,6 +8,7 @@ import logfire
 from anyio import CancelScope, to_thread
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import BaseModel, ConfigDict, Field
+
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 

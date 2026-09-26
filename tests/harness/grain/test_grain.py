@@ -11,6 +11,7 @@ from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
 from mcp.server.fastmcp.server import FastMCP, Settings
 from mcp.types import ToolAnnotations
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
@@ -19,7 +20,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.grain import Grain
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency

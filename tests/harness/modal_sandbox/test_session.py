@@ -181,7 +181,7 @@ class TestErrors:
 
         monkeypatch.delitem(sys.modules, 'modal', raising=False)
         monkeypatch.setattr(builtins, '__import__', fake_import)
-        with pytest.raises(ModalSandboxError, match='modal.*package is required'):
+        with pytest.raises(ModalSandboxError, match=r'modal.*package is required'):
             async with ModalSandboxSession():
                 pass  # pragma: no cover
 

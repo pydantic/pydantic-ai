@@ -15,6 +15,7 @@ pytest.importorskip('pydantic_ai.mcp')
 from typing import Any
 
 import anyio
+
 from pydantic_ai import Agent, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
@@ -28,7 +29,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext, ToolDefinition
-
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
 
 from .conftest import FakeDurableContext
