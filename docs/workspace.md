@@ -304,7 +304,7 @@ or its provider's lifetime settings stop it. Each sandbox page shows how to dele
 
 A successful run returns `result.workspace.ref`, so you can continue in the sandbox or delete it
 later. A failed run returns no result, so delete its sandbox in an `on_run_error` hook, where
-`ctx.workspace.ref` names it. `after_run` doesn't run when a run fails.
+`ctx.workspace.ref` names it. `after_run` doesn't run when a run fails. If you delete the sandbox after each run, pass `workspace='new'` when continuing its history; otherwise the next run raises `WorkspaceUnavailableError` because the recorded environment is gone.
 
 ## Durable execution
 
