@@ -119,8 +119,14 @@ def _run_conformance_command(
         raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
     if cwd is not None and not posixpath.isabs(cwd):
         raise ValueError('cwd must be absolute')
+    if cwd is not None and cwd != '/' and cwd not in directories:
+        raise FileNotFoundError(cwd)
     if not isinstance(command, str) and list(command) == ['sh', '-c', 'sleep 30'] and timeout is not None:
         raise WorkspaceTimeoutError('command timed out')
+    if list(command) == ['sh', '-c', 'read value || printf eof']:
+        return FakeWorkspaceResult(stdout='eof')
+    if list(command) == ['sh', '-c', 'i=0; while [ "$i" -lt 1024 ]; do printf workspace; i=$((i+1)); done']:
+        return FakeWorkspaceResult(stdout='workspace' * 1024)
     if command == 'printf out; printf err >&2; exit 7':
         return FakeWorkspaceResult(exit_code=7, stdout='out', stderr='err')
     if list(command) == ['pydantic-ai-conformance-missing-program']:

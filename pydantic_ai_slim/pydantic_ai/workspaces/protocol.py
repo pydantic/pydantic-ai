@@ -151,7 +151,11 @@ class SupportsCommands(Protocol):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> WorkspaceResult:
-        """Execute a command and wait for it to complete; stop it if the awaiting task is cancelled.
+        """Execute a command with stdin at EOF, returning complete output or raising an error.
+
+        A missing argv program exits 127. A missing `cwd` raises `FileNotFoundError`.
+        On timeout or cancellation, stop the foreground process tree on a best-effort basis;
+        background jobs may continue if they detach.
 
         Args:
             command: An argv sequence, or a shell string with `shell=True`; a mismatch raises `TypeError`.
@@ -177,7 +181,7 @@ class SupportsFilesystem(Protocol):
         ...
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        """Write bytes to a file, creating missing parent directories and replacing existing contents."""
+        """Write bytes to a file, creating missing parents and writing through an existing symlink."""
         ...
 
     async def stat(self, path: str) -> WorkspaceFileEntry:

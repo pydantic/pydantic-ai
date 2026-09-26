@@ -71,9 +71,27 @@ class WorkspaceBackendSuite:
         with pytest.raises(TypeError):
             await commands.run(['true'], shell=True)
 
+    async def test_stdin_is_at_eof(self, backend: WorkspaceBackend) -> None:
+        """Noninteractive commands never wait for input from the caller."""
+        result = await _commands(backend).run(['sh', '-c', 'read value || printf eof'], timeout=5)
+        assert (result.exit_code, result.stdout) == (0, 'eof')
+
+    async def test_missing_cwd_raises_file_not_found(self, backend: WorkspaceBackend) -> None:
+        missing = posixpath.join(await backend.working_dir(), f'.pydantic-ai-missing-{uuid.uuid4().hex}')
+        with pytest.raises(FileNotFoundError):
+            await _commands(backend).run(['pwd'], cwd=missing)
+
     async def test_relative_cwd_is_rejected(self, backend: WorkspaceBackend) -> None:
         with pytest.raises(ValueError):
             await _commands(backend).run(['true'], cwd='relative')
+
+    async def test_command_output_is_complete(self, backend: WorkspaceBackend) -> None:
+        """If output cannot be collected in full, the backend must raise rather than return a truncated success."""
+        output = 'workspace' * 1024
+        result = await _commands(backend).run(
+            ['sh', '-c', 'i=0; while [ "$i" -lt 1024 ]; do printf workspace; i=$((i+1)); done']
+        )
+        assert (result.exit_code, result.stdout) == (0, output)
 
     async def test_result_reports_exit_code_stdout_and_stderr(self, backend: WorkspaceBackend) -> None:
         """A non-zero exit is a normal result, not an error."""
