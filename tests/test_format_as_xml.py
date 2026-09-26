@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 import pytest
@@ -648,4 +648,50 @@ def test_model_with_non_primitive_types():
 <name>John</name>
 <age>123.45</age>
 <uuid>123e4567-e89b-12d3-a456-426614174000</uuid>\
+""")
+
+
+def test_generator_of_nested_models_matches_list():
+    class Inner(BaseModel):
+        value: int = Field(description='Inner value')
+
+    class Outer(BaseModel):
+        name: str = Field(title='Name')
+        inner: Inner
+
+    models = [Outer(name='a', inner=Inner(value=1)), Outer(name='b', inner=Inner(value=2))]
+
+    assert format_as_xml((m for m in models), include_field_info=True) == format_as_xml(models, include_field_info=True)
+
+
+def test_generator_after_model_sibling_in_dict_matches_list():
+    class Inner(BaseModel):
+        value: int = Field(description='Inner value')
+
+    models = [Inner(value=1), Inner(value=2)]
+    generator_data = {'first': Inner(value=0), 'rest': (m for m in models)}
+    list_data = {'first': Inner(value=0), 'rest': models}
+
+    assert format_as_xml(generator_data, include_field_info=True) == format_as_xml(list_data, include_field_info=True)
+    assert format_as_xml([Inner(value=0), (m for m in models)]) == format_as_xml([Inner(value=0), models])
+
+
+def test_named_tuple_unaffected():
+    class P(NamedTuple):
+        a: int
+        b: str
+
+    assert format_as_xml(P(1, 'x'), root_tag='r') == snapshot("""\
+<r>
+  <item>1</item>
+  <item>x</item>
+</r>\
+""")
+    assert format_as_xml({'p': P(1, 'x')}, root_tag='r') == snapshot("""\
+<r>
+  <p>
+    <item>1</item>
+    <item>x</item>
+  </p>
+</r>\
 """)
