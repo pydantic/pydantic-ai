@@ -18,6 +18,7 @@ A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBacken
 
 from __future__ import annotations as _annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, runtime_checkable
@@ -34,6 +35,7 @@ __all__ = (
     'WorkspaceBackend',
     'WorkspaceCommand',
     'WorkspaceError',
+    'WorkspaceOutputLimitError',
     'WorkspaceFileEntry',
     'WorkspaceRef',
     'WorkspaceResult',
@@ -45,12 +47,28 @@ __all__ = (
     'SupportsRealpath',
 )
 
+
+def validate_timeout(timeout: float | None) -> None:
+    if timeout is not None and (not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError('timeout must be a positive finite number or None')
+
+
 WorkspaceCommand: TypeAlias = str | Sequence[str]
 """An argv sequence (`['python', '-c', 'print(1)']`), or a shell string with `shell=True`."""
 
 
 class WorkspaceError(RuntimeError):
     """The workspace layer deliberately failed an operation."""
+
+
+class WorkspaceOutputLimitError(WorkspaceError):
+    """A command exceeded its output cap; `stdout` and `stderr` hold their captured beginnings."""
+
+    def __init__(self, message: str, *, limit: int, stdout: str = '', stderr: str = '') -> None:
+        super().__init__(message)
+        self.limit = limit
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class WorkspaceUnavailableError(WorkspaceError):
@@ -153,17 +171,20 @@ class SupportsCommands(Protocol):
     ) -> WorkspaceResult:
         """Execute a command with stdin at EOF, returning complete output or raising an error.
 
+        Undecodable stdout/stderr bytes are replaced with U+FFFD, never dropped.
         A missing argv program exits 127. A missing `cwd` raises `FileNotFoundError`.
         On timeout or cancellation, stop the foreground process tree on a best-effort basis;
-        background jobs may continue if they detach.
+        background jobs may continue if they detach. Return when the direct command exits,
+        after at most a short output-drain grace even if a background child keeps stdout open.
 
         Args:
             command: An argv sequence, or a shell string with `shell=True`; a mismatch raises `TypeError`.
             shell: Whether to interpret `command` with the workspace's shell.
             cwd: Absolute working directory, defaulting to `working_dir()`; a relative one raises `ValueError`.
             env: Extra environment variables, layered over the backend's own.
-            timeout: Seconds before [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError];
-                no timeout by default.
+            timeout: A positive finite number of seconds before
+                [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]; no timeout by default.
+                Invalid values raise `ValueError`.
         """
         ...
 

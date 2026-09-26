@@ -91,6 +91,14 @@ class WorkspaceBackendSuite:
         with pytest.raises(ValueError):
             await _commands(backend).run(['true'], cwd='relative')
 
+    async def test_undecodable_command_bytes_are_replaced(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('fake has no command byte stream')
+        result = await _commands(backend).run(['sh', '-c', "printf '\\377'; printf '\\376' >&2"])
+        assert (result.stdout, result.stderr) == ('\ufffd', '\ufffd')
+
     async def test_command_output_is_complete(self, backend: WorkspaceBackend) -> None:
         """If output cannot be collected in full, the backend must raise rather than return a truncated success."""
         output = 'workspace' * 1024
@@ -98,6 +106,22 @@ class WorkspaceBackendSuite:
             ['sh', '-c', 'i=0; while [ "$i" -lt 1024 ]; do printf workspace; i=$((i+1)); done']
         )
         assert (result.exit_code, result.stdout) == (0, output)
+
+    @pytest.fixture
+    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
+        """Override only if the SDK cannot report exit independently of pipe EOF (E2B currently cannot)."""
+        return True
+
+    async def test_background_child_does_not_hold_up_completed_command(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool, can_detect_exit_with_inherited_output_pipes: bool
+    ) -> None:
+        if not has_real_posix_shell or not can_detect_exit_with_inherited_output_pipes:
+            pytest.skip('backend cannot observe the direct command exit independently of inherited output pipes')
+        await backend.working_dir()  # Provisioning is not part of the command's drain deadline.
+        # The direct command exits; a short grace may drain its inherited output pipes.
+        with anyio.fail_after(5):
+            result = await _commands(backend).run('sleep 4 & printf done', shell=True)
+        assert (result.exit_code, result.stdout) == (0, 'done')
 
     async def test_result_reports_exit_code_stdout_and_stderr(self, backend: WorkspaceBackend) -> None:
         """A non-zero exit is a normal result, not an error."""
@@ -124,6 +148,31 @@ class WorkspaceBackendSuite:
     async def test_timeout_raises_workspace_timeout_error(self, backend: WorkspaceBackend) -> None:
         with pytest.raises(WorkspaceTimeoutError):
             await _commands(backend).run(['sh', '-c', 'sleep 30'], timeout=1.0)
+
+    async def test_cancellation_stops_foreground_work(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('fake has no foreground process to cancel')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            started = posixpath.join(root, 'started')
+            leaked = posixpath.join(root, 'leaked')
+
+            async def command() -> None:
+                await _commands(backend).run(
+                    ['sh', '-c', 'printf ready > "$1"; sleep 2; printf leaked > "$2"', 'sh', started, leaked]
+                )
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(command)
+                with anyio.fail_after(30):
+                    while not await workspace.exists(started):
+                        await anyio.sleep(0.05)
+                tg.cancel_scope.cancel()
+            # A cancelled foreground command must not continue the rest of its script.
+            await anyio.sleep(2.1)
+            assert not await workspace.exists(leaked)
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         result = await _commands(backend).run(['sh', '-c', 'printf %s "$CONFORMANCE"'], env={'CONFORMANCE': 'value'})
@@ -166,6 +215,15 @@ class WorkspaceBackendSuite:
             for path in paths:
                 if await workspace.exists(path):
                     await workspace.remove(path)
+
+    async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None:
+        """A shell-derived filesystem must page reads rather than hit a command-output cap."""
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            path = posixpath.join(root, 'large.bin')
+            data = b'x' * (8 * 1024 * 1024)
+            await workspace.write_bytes(path, data)
+            assert await workspace.read_bytes(path) == data
 
     async def test_bytes_round_trip_and_write_creates_parents(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
@@ -243,6 +301,82 @@ class WorkspaceBackendSuite:
         async with _scratch_dir(workspace) as root:
             with pytest.raises(IsADirectoryError):
                 await workspace.write_bytes(root, b'data')
+
+    @pytest.fixture
+    def has_real_posix_shell(self) -> bool:
+        """Only a test double with no POSIX process/filesystem can opt out."""
+        return True
+
+    async def test_symlink_loop_does_not_break_listing(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('in-memory fake cannot create symlinks')
+        commands = _commands(backend)
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            loop = posixpath.join(root, 'loop')
+            if (await commands.run(['ln', '-s', 'loop', loop])).exit_code != 0:
+                pytest.skip('the environment cannot create symlinks with `ln -s`')
+            entries = await workspace.list_dir(root)
+            assert [(entry.name, entry.is_dir) for entry in entries] == [('loop', False)]
+
+    async def test_fifo_read_does_not_wait_for_writer(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('in-memory fake cannot create FIFOs')
+        commands = _commands(backend)
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            fifo = posixpath.join(root, 'fifo')
+            if (await commands.run(['mkfifo', fifo])).exit_code != 0:
+                pytest.skip('the environment does not provide `mkfifo`')
+            with anyio.fail_after(5):
+                with pytest.raises(OSError):
+                    await workspace.read_bytes(fifo)
+
+    @pytest.fixture
+    def enforces_parent_file_errors(self) -> bool:
+        """Opt out only for an in-memory test double without real path traversal."""
+        return True
+
+    @pytest.fixture
+    def filesystem_honors_shell_permissions(self) -> bool:
+        """Override only for provider file APIs that bypass the command user's permissions (e.g. E2B envd)."""
+        return True
+
+    async def test_permission_denied_uses_builtin_error(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool, filesystem_honors_shell_permissions: bool
+    ) -> None:
+        if not has_real_posix_shell or not filesystem_honors_shell_permissions:
+            pytest.skip('in-memory fake has no permissions')
+        commands = _commands(backend)
+        if (await commands.run(['id', '-u'])).stdout.strip() == '0':
+            pytest.skip('root bypasses filesystem permissions')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            file = posixpath.join(root, 'unreadable')
+            await workspace.write_bytes(file, b'data')
+            assert (await commands.run(['chmod', '000', file])).exit_code == 0
+            with pytest.raises(PermissionError):
+                await workspace.read_bytes(file)
+            with pytest.raises(PermissionError):
+                await workspace.write_bytes(file, b'changed')
+
+    async def test_file_as_parent_raises_not_a_directory(
+        self, backend: WorkspaceBackend, enforces_parent_file_errors: bool
+    ) -> None:
+        if not enforces_parent_file_errors:
+            pytest.skip('in-memory fake has no real path traversal')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            file = posixpath.join(root, 'file')
+            await workspace.write_bytes(file, b'data')
+            with pytest.raises(NotADirectoryError):
+                await workspace.write_bytes(posixpath.join(file, 'child'), b'data')
+            with pytest.raises(NotADirectoryError):
+                await workspace.make_dir(posixpath.join(file, 'child'))
 
     async def test_making_a_directory_over_a_file_raises_file_exists(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)

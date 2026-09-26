@@ -36,6 +36,20 @@ def test_response_ref_timing_and_local_absolute_root_guidance() -> None:
     assert 'absolute root' in docs
 
 
+def test_wrapper_policy_documents_command_and_symlink_escape() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    assert '`run()` bypasses file-method policies' in page
+    assert 'realpath' in page
+    assert 'symlink' in page
+
+
+def test_local_background_jobs_document_pipe_drain_grace() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    assert 'background jobs outlive' in page
+    assert 'redirect their output' in page
+    assert 'two-second drain' in page
+
+
 def test_no_unavailable_no_file_access_recipe() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert "no_files = UnavailableWorkspace(reason='This run has no file access.')" not in page

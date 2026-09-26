@@ -10,6 +10,7 @@ import asyncio
 import os
 import shutil
 import signal
+import stat as stat_module
 from collections.abc import Awaitable, Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path
@@ -29,10 +30,11 @@ from .protocol import (
     SupportsRealpath,
     WorkspaceBackend,
     WorkspaceCommand,
-    WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    validate_timeout,
 )
 
 __all__ = ('LocalWorkspaceBackend',)
@@ -88,6 +90,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     This isolates nothing: commands and absolute paths reach anywhere this process can. Commands
     inherit only `PATH`, `HOME` and locale (`LANG`, `LC_ALL`, `LC_CTYPE`), so they find the host's
     tools and use its text encoding without inheriting arbitrary secrets.
+    Background jobs outlive `run()`; redirect their output to avoid waiting up to two seconds
+    for inherited output pipes. The caller manages those jobs when the host exits.
     The directory is the environment: its [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
     exists from construction, and the first operation raises
     [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing.
@@ -151,12 +155,35 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     # File operations run in a thread: filesystem calls block, and must not stall the event loop.
 
     async def read_bytes(self, path: str) -> bytes:
-        return await run_in_executor(self._path(path).read_bytes)
+        def read() -> bytes:
+            # O_NONBLOCK lets us inspect FIFOs and devices without opening a blocking stream.
+            fd = os.open(self._path(path), os.O_RDONLY | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as file:
+                mode = os.fstat(fd).st_mode
+                if stat_module.S_ISDIR(mode):
+                    raise IsADirectoryError(path)
+                if not stat_module.S_ISREG(mode):
+                    raise OSError(f'not a regular file: {path!r}')
+                return file.read()
+
+        return await run_in_executor(read)
+
+    def _check_root(self, target: Path) -> None:
+        root = self._resolved_working_dir or self._working_dir
+        if target == root or root in target.parents:
+            if not root.is_dir():
+                raise WorkspaceUnavailableError(f'local workspace directory {root!s} does not exist')
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         def write() -> None:
             target = self._path(path)
-            target.parent.mkdir(parents=True, exist_ok=True)
+            self._check_root(target)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            except FileExistsError as error:
+                if any(parent.is_file() for parent in target.parents):
+                    raise NotADirectoryError(path) from error
+                raise
             target.write_bytes(data)
 
         await run_in_executor(write)
@@ -179,7 +206,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             with os.scandir(self._path(path)) as scan:
                 children = sorted(scan, key=lambda child: child.path)
             for child in children:
-                is_dir = child.is_dir()
+                try:
+                    is_dir = child.is_dir()
+                except OSError:
+                    # A symlink loop has no resolvable target; keep the entry, not the failure.
+                    is_dir = False
                 try:
                     # stat, not lstat: a symlinked file reports its target's size, matching `stat()`.
                     size = None if is_dir else child.stat().st_size
@@ -192,11 +223,25 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return await run_in_executor(list_entries)
 
     async def make_dir(self, path: str) -> None:
-        await run_in_executor(lambda: self._path(path).mkdir(parents=True, exist_ok=True))
+        def make() -> None:
+            target = self._path(path)
+            self._check_root(target)
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except FileExistsError as error:
+                if any(parent.is_file() for parent in target.parents):
+                    raise NotADirectoryError(path) from error
+                raise
+
+        await run_in_executor(make)
 
     async def remove(self, path: str) -> None:
         def remove() -> None:
             target = self._path(path)
+            root = self._resolved_working_dir or self._working_dir
+            # Never allow a recursive delete to take the workspace itself or its parents.
+            if not target.is_symlink() and target.resolve() in (root, *root.parents):
+                raise ValueError('cannot remove the workspace root or its ancestor')
             if target.is_dir() and not target.is_symlink():
                 shutil.rmtree(target)
             else:
@@ -219,6 +264,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        validate_timeout(timeout)
         absolute_deadline = None if timeout is None else anyio.current_time() + timeout
         if cwd is not None and not Path(cwd).is_absolute():
             raise ValueError(
@@ -251,6 +297,12 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         try:
             await _shielded(spawn())
         except (FileNotFoundError, PermissionError) as error:
+            if isinstance(error, FileNotFoundError) and not await run_in_executor(
+                (self._resolved_working_dir or self._working_dir).is_dir
+            ):
+                raise WorkspaceUnavailableError(
+                    f'local workspace directory {self._working_dir!s} does not exist'
+                ) from error
             # Like `sh`, a program that is missing (127) or not executable (126) is a normal result.
             # Only the program itself: a missing `cwd` raises the same error types and must still raise.
             if isinstance(command, str) or error.filename != command[0]:
@@ -338,9 +390,13 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 # child still holds a pipe open. The deadline above still bounds the grace period.
                 tg.cancel_scope.deadline = anyio.current_time() + _OUTPUT_DRAIN_GRACE
         if overflowed:
-            raise WorkspaceError(
+            # Keep a small preview from each stream without retaining the entire oversized capture.
+            raise WorkspaceOutputLimitError(
                 "local workspace output exceeded 10 MiB safety limit; redirect the command's "
-                'output to a file and read part of it instead'
+                'output to a file and read part of it instead',
+                limit=_MAX_CAPTURE_BYTES,
+                stdout=stdout_buffer[: 64 * 1024].decode('utf-8', errors='replace'),
+                stderr=stderr_buffer[: 64 * 1024].decode('utf-8', errors='replace'),
             )
         if exit_code is None:
             raise TimeoutError
@@ -349,10 +405,12 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def _wait_for_exit(self, process: anyio.abc.Process) -> int:
         """Return the exit code as soon as the command itself exits, whatever its children do with the pipes."""
         if not _waits_for_pipes():
-            return await process.wait()
-        while (exit_code := process.returncode) is None:
-            await anyio.sleep(_EXIT_POLL_INTERVAL)
-        return exit_code
+            exit_code = await process.wait()
+        else:
+            while (exit_code := process.returncode) is None:
+                await anyio.sleep(_EXIT_POLL_INTERVAL)
+        # Subprocess APIs report -N, whereas shells report signal deaths as 128+N.
+        return 128 - exit_code if exit_code < 0 else exit_code
 
     async def _close(self, process: anyio.abc.Process) -> None:
         """Release the process's pipes and reap it, without waiting for the pipes to close."""

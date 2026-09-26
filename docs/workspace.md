@@ -244,7 +244,31 @@ Commands are refused too, because a command could change files. A capability can
 For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `workspace=`, as the
 [reviewer above](#hand-the-workspace-to-another-agent) does. To write your own policy, subclass
 [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace], override the operations you want to
-change, and call `self.wrapped` for the rest.
+change, and call `self.wrapped` for the rest. `run()` bypasses file-method policies (including
+shell/grep tools built on it) unless the wrapper also overrides or refuses commands. Symlinks can
+also lead outside a file root; check `realpath` before a write, for example:
+
+```python
+import posixpath
+
+from pydantic_ai.workspaces import WorkspaceReadOnlyError, WrapperWorkspace
+
+
+class RootedWrites(WrapperWorkspace):
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        root = await self.wrapped.realpath(await self.working_dir())
+        target = await self.wrapped.realpath(await self.resolve(path))
+        if posixpath.commonpath((root, target)) != root:
+            raise WorkspaceReadOnlyError('outside the allowed root')
+        await self.wrapped.write_bytes(path, data)
+
+    async def run(self, command, **kwargs):
+        raise WorkspaceReadOnlyError('commands bypass file policy')
+```
+
+This is a preflight check, not a security boundary against concurrent symlink changes; use an
+isolated backend for untrusted commands. On a filesystem-only backend, `realpath` only normalizes
+text and cannot resolve symlinks, so do not use it to implement a symlink-aware jail.
 
 ## Choosing a run's workspace
 
@@ -419,7 +443,8 @@ A backend is the object that talks to one environment; `Workspace` wraps it to g
 `ref` and `working_dir`, then adds [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both. With commands only,
 `ctx.workspace` derives the file operations through the shell. With a filesystem only, file tools work
-and `ctx.workspace.run` raises `UserError`. With both, they must reach the same environment.
+and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular files (not FIFOs or devices). They transfer large files and directory listings in bounded chunks, but shell-derived file operations are slower than native provider file APIs. Local and shell-derived file operations refuse to remove the workspace root or an ancestor, and local writes do not recreate a removed workspace directory. `LocalWorkspace` accepts a history ref spelled through a symlink if it resolves to the configured directory; the ref never changes where commands run.
+With both, they must reach the same environment.
 Implement [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] if your platform can resolve
 symlinks natively; with commands only, `realpath` uses the shell, and with neither, symlinks aren't
 resolved, so a root-directory check such as the harness `FileSystem`'s is textual only.
@@ -504,7 +529,8 @@ class HostWorkspaceBackend(WorkspaceBackend):
   durable engine can retry them.
 
 A capability's `get_workspace` returns this backend, and users reach its provider-specific methods
-through `ctx.workspace.backend`.
+through `ctx.workspace.backend`. This is a provider API escape hatch and bypasses wrapper policies such as
+`read_only`; use `ctx.workspace` file/command methods when policies must apply.
 
 ### Checking a backend
 
@@ -545,6 +571,10 @@ including `env=` and file contents, are stored in durable history; do not pass s
 without a suitable payload codec.
 
 ## Platforms
+
+Local background jobs outlive `run()`; redirect their output to a file to avoid the two-second drain grace when they inherit stdout or stderr. The caller must clean up jobs when the host exits.
+
+Local commands that exceed the 10 MiB combined output limit raise `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large output to a file instead.
 
 The local backend and command-backed shell fallback require POSIX. A filesystem-only backend
 works without shell support, but cannot run commands.

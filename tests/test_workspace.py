@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import math
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import anyio
+import anyio.to_thread
 import pytest
 from pydantic import TypeAdapter
 
@@ -45,6 +50,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
     WrapperWorkspace,
+    local as local_module,
 )
 
 from .workspace_fakes import (
@@ -59,6 +65,12 @@ from .workspace_fakes import (
 )
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
+async def test_facade_rejects_invalid_timeout_before_backend(timeout: Any) -> None:
+    with pytest.raises(ValueError, match='timeout must be a positive finite number or None'):
+        await Workspace(FakeWorkspace('invalid-timeout')).run(['true'], timeout=timeout)
 
 
 async def test_wrapper_overrides_apply_to_text_reads():
@@ -181,6 +193,167 @@ async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
 
     with pytest.raises(WorkspaceError, match='invalid real path'):
         await workspace.realpath('x')
+
+
+async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / 'large').write_bytes(b'x' * (80 * 1024))
+    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(WorkspaceError, match='shell filesystem read exceeded command output limit'):
+        await workspace.read_bytes('large')
+
+
+async def test_shell_listing_output_limit_names_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for index in range(400):
+        (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
+    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(WorkspaceError, match='shell filesystem listing exceeded command output limit'):
+        await workspace.list_dir('.')
+
+
+async def test_shell_listing_larger_than_command_output_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for index in range(600):
+        (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
+    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 120 * 1024)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    assert len(await workspace.list_dir('.')) == 600
+
+
+async def test_shell_listing_uses_configured_temporary_directory(tmp_path: Path) -> None:
+    temporary = tmp_path / 'temp'
+    temporary.mkdir()
+
+    class TemporaryBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if isinstance(command, str) and 'find ' in command:
+                assert '/tmp/.pydantic-ai-' not in command
+            result = await super().run(command, shell=shell, cwd=cwd, env={'TMPDIR': str(temporary)}, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    workspace = Workspace(TemporaryBackend(LocalWorkspaceBackend(tmp_path)))
+    assert [entry.name for entry in await workspace.list_dir('.')] == ['temp']
+    assert list(temporary.iterdir()) == []
+
+
+async def test_shell_listing_removes_scratch_file_on_cancel(tmp_path: Path) -> None:
+    started = asyncio.Event()
+    temporary = tmp_path / 'temp'
+    temporary.mkdir()
+
+    class InterruptedBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if isinstance(command, str) and 'find ' in command:
+                match = re.search(r'\.pydantic-ai-[a-f0-9]+\.list', command)
+                assert match is not None
+                await anyio.to_thread.run_sync((temporary / match.group()).write_bytes, b'partial')
+                started.set()
+                await asyncio.Event().wait()
+            result = await super().run(command, shell=shell, cwd=cwd, env={'TMPDIR': str(temporary)}, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    workspace = Workspace(InterruptedBackend(LocalWorkspaceBackend(tmp_path)))
+    task = asyncio.create_task(workspace.list_dir('.'))
+    try:
+        with anyio.fail_after(3):
+            await started.wait()
+    finally:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(temporary.iterdir()) == []
+
+
+async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None:
+    class ByteListingBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if isinstance(command, str) and 'find ' in command:
+                listing = b'-/workspace/file-\xff\0'
+                return FakeWorkspaceResult(stdout=f'{len(listing)}\n{base64.b64encode(listing).decode()}')
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    workspace = Workspace(ByteListingBackend(LocalWorkspaceBackend(tmp_path)))
+    assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
+
+
+async def test_shell_filesystem_reads_file_larger_than_command_output_cap(tmp_path: Path) -> None:
+    data = b'x' * (8 * 1024 * 1024)
+    (tmp_path / 'large').write_bytes(data)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    assert await workspace.read_bytes('large') == data
+
+
+async def test_shell_filesystem_uses_builtin_path_errors(tmp_path: Path) -> None:
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    (tmp_path / 'file').write_bytes(b'x')
+    with pytest.raises(NotADirectoryError):
+        await workspace.write_bytes('file/child', b'x')
+    with pytest.raises(NotADirectoryError):
+        await workspace.make_dir('file/child')
+    with pytest.raises(IsADirectoryError):
+        await workspace.write_bytes('.', b'x')
+    with pytest.raises(FileExistsError):
+        await workspace.make_dir('file')
+
+
+async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip('root bypasses filesystem permissions')
+    (tmp_path / 'unreadable').write_bytes(b'x')
+    (tmp_path / 'unreadable').chmod(0)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(PermissionError):
+        await workspace.read_bytes('unreadable')
+    with pytest.raises(PermissionError):
+        await workspace.write_bytes('unreadable', b'x')
+    (tmp_path / 'unwritable').mkdir()
+    (tmp_path / 'unwritable').chmod(0o500)
+    with pytest.raises(PermissionError):
+        await workspace.make_dir('unwritable/child')
+
+
+async def test_shell_filesystem_refuses_to_remove_workspace_root(tmp_path: Path) -> None:
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    (tmp_path / 'safe').write_bytes(b'safe')
+    for path in ('.', str(tmp_path.parent)):
+        with pytest.raises(ValueError, match='workspace root'):
+            await workspace.remove(path)
+    assert (tmp_path / 'safe').read_bytes() == b'safe'
+
+
+async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
+    fifo = tmp_path / 'fifo'
+    os.mkfifo(fifo)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    with anyio.fail_after(2):
+        for operation in (workspace.read_bytes, workspace.stat):
+            with pytest.raises(OSError, match='not a regular file'):
+                await operation('fifo')
 
 
 async def test_shell_realpath_stops_at_a_symlink_loop(tmp_path: Path) -> None:
@@ -375,11 +548,11 @@ async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
 
 def _lose_the_head(stdout: str) -> str:
     """Only the tail of the output arrives, the way a backend that attached late loses it."""
-    return stdout[stdout.index('\n') + 1 :]
+    return stdout[4:]
 
 
 def _garble(stdout: str) -> str:
-    return '3\nAAA'
+    return 'AAA'
 
 
 @pytest.mark.parametrize(('corrupt', 'error'), [(_lose_the_head, 'incomplete output'), (_garble, 'invalid base64')])
@@ -399,7 +572,7 @@ async def test_shell_read_rejects_output_damaged_in_transit(
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            stdout = corrupt(result.stdout) if isinstance(command, str) and 'base64 <' in command else result.stdout
+            stdout = corrupt(result.stdout) if isinstance(command, str) and '| base64' in command else result.stdout
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=stdout, stderr=result.stderr)
 
     (tmp_path / 'data.bin').write_bytes(bytes(range(256)) * 100)

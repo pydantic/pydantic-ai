@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import shlex
 import signal
@@ -23,6 +24,7 @@ from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     Workspace,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -200,6 +202,15 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     await _assert_process_gone(int(pid_file.read_text()))
 
 
+async def test_output_limit_preserves_the_start_of_both_streams(tmp_path: Path):
+    workspace = LocalWorkspaceBackend(tmp_path)
+    with pytest.raises(WorkspaceOutputLimitError, match='10 MiB') as exc_info:
+        await workspace.run("printf 'out-first\\n'; printf 'err-first\\n' >&2; yes x", shell=True)
+    assert exc_info.value.limit == 10 * 1024 * 1024
+    assert exc_info.value.stdout.startswith('out-first\n')
+    assert exc_info.value.stderr.startswith('err-first\n')
+
+
 async def test_output_over_safety_cap_kills_the_process_group(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
@@ -261,6 +272,12 @@ async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
     error = exc_info.value
     assert error.stdout == 'stdout\n'
     assert error.stderr == 'stderr\n'
+
+
+async def test_local_command_replaces_undecodable_output_bytes(tmp_path: Path):
+    result = await LocalWorkspaceBackend(tmp_path).run(['sh', '-c', "printf '\\377' ; printf '\\376' >&2"])
+    assert result.stdout == '\ufffd'
+    assert result.stderr == '\ufffd'
 
 
 async def test_stdin_is_devnull(tmp_path: Path):
@@ -445,6 +462,55 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
         await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=5)
     assert isinstance(exc_info.value.__cause__, PermissionError)
     await _assert_process_gone(int(pid_file.read_text()))
+
+
+@pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
+async def test_local_rejects_invalid_command_timeout(tmp_path: Path, timeout: Any):
+    with pytest.raises(ValueError, match='timeout must be a positive finite number or None'):
+        await LocalWorkspaceBackend(tmp_path).run(['true'], timeout=timeout)
+
+
+async def test_signal_killed_command_reports_shell_exit_code(tmp_path: Path):
+    result = await LocalWorkspaceBackend(tmp_path).run('kill -9 $$', shell=True)
+    assert result.exit_code == 137
+
+
+async def test_removed_workspace_cannot_be_recreated_or_removed(tmp_path: Path):
+    root = tmp_path / 'workspace'
+    root.mkdir()
+    workspace = Workspace(LocalWorkspaceBackend(root))
+    await workspace.working_dir()
+    root.rmdir()
+    with pytest.raises(WorkspaceUnavailableError):
+        await workspace.run(['pwd'])
+    with pytest.raises(WorkspaceUnavailableError):
+        await workspace.write_bytes('sub/file', b'x')
+    with pytest.raises(WorkspaceUnavailableError):
+        await workspace.make_dir('sub')
+    assert not root.exists()
+
+    root.mkdir()
+    (root / 'file').write_bytes(b'safe')
+    with pytest.raises(ValueError, match='workspace root'):
+        await workspace.remove('.')
+    with pytest.raises(ValueError, match='workspace root'):
+        await workspace.remove(str(tmp_path))
+    assert (root / 'file').read_bytes() == b'safe'
+
+
+async def test_reading_fifo_fails_without_waiting_for_writer(tmp_path: Path):
+    fifo = tmp_path / 'fifo'
+    os.mkfifo(fifo)
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+    with anyio.fail_after(2):
+        with pytest.raises(OSError, match='not a regular file'):
+            await workspace.read_bytes('fifo')
+
+
+async def test_list_dir_keeps_self_loop_symlink(tmp_path: Path):
+    (tmp_path / 'loop').symlink_to('loop')
+    entries = await LocalWorkspaceBackend(tmp_path).list_dir(str(tmp_path))
+    assert [(entry.name, entry.is_dir, entry.size) for entry in entries] == [('loop', False, None)]
 
 
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):

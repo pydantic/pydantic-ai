@@ -7,12 +7,14 @@ import posixpath
 import shlex
 import uuid
 from collections.abc import Mapping, Sequence
+from typing import cast
 
 import anyio
 
 from pydantic_ai.exceptions import UserError
 
 from .protocol import (
+    CommandResult,
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
@@ -21,14 +23,17 @@ from .protocol import (
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceFileEntry,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceResult,
+    validate_timeout,
 )
 from .unavailable import UnavailableWorkspace
 
 __all__ = ('Workspace', 'WrapperWorkspace')
 
 
+_SHELL_READ_CHUNK_BYTES = 64 * 1024
 _SHELL_WRITE_CHUNK_BYTES = 64 * 1024
 """Maximum base64 characters embedded in one shell command.
 
@@ -49,6 +54,16 @@ _SHELL_EXIT_NOT_FOUND = 102
 _SHELL_EXIT_EXISTS = 117
 _SHELL_EXIT_NOT_DIRECTORY = 120
 _SHELL_EXIT_IS_DIRECTORY = 121
+_SHELL_EXIT_NOT_REGULAR = 122
+_SHELL_EXIT_PERMISSION = 113
+
+# Inspect each existing ancestor before `mkdir -p`; shell utilities' diagnostic wording is not portable.
+_SHELL_CHECK_PARENTS = (
+    'while [ "$parent" != / ]; do '
+    f'if test -e "$parent" && ! test -d "$parent"; then exit {_SHELL_EXIT_NOT_DIRECTORY}; fi; '
+    f'if test -d "$parent"; then test -w "$parent" || exit {_SHELL_EXIT_PERMISSION}; break; fi; '
+    'parent=${parent%/*}; [ -n "$parent" ] || parent=/; done; '
+)
 
 
 class _ShellFilesystem(SupportsFilesystem):
@@ -70,25 +85,38 @@ class _ShellFilesystem(SupportsFilesystem):
         quoted_path = shlex.quote(path)
         # Classify the path in the same command: `base64 < directory` succeeds with empty output
         # on macOS and fails generically on GNU, and every call is a round trip on a remote backend.
-        # The byte count comes first so output a backend lost in transit is an error, not a shorter file.
         result = await self._backend.run(
             f'if test -d {quoted_path}; then exit {_SHELL_EXIT_IS_DIRECTORY}; '
-            f'elif test -e {quoted_path}; then wc -c < {quoted_path} && base64 < {quoted_path}; '
+            f'elif test -f {quoted_path}; then '
+            f'test -r {quoted_path} || exit {_SHELL_EXIT_PERMISSION}; wc -c < {quoted_path}; '
+            f'elif test -e {quoted_path}; then exit {_SHELL_EXIT_NOT_REGULAR}; '
             f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
             shell=True,
         )
         await self._raise_for_error(result, path, missing=True)
-        size, _, encoded = result.stdout.partition('\n')
-        try:
-            data = base64.b64decode(encoded)
-        except ValueError as error:
-            raise WorkspaceError(f'shell filesystem returned invalid base64 while reading {path!r}') from error
-        if not size.strip().isdigit() or int(size) != len(data):
-            raise WorkspaceError(
-                f'shell filesystem returned incomplete output while reading {path!r}: '
-                f'got {len(data)} bytes, expected {size.strip()!r}'
-            )
-        return data
+        if not result.stdout.strip().isdigit():
+            raise WorkspaceError(f'shell filesystem returned an invalid size while reading {path!r}')
+        size = int(result.stdout)
+        data = bytearray()
+        # Bound each command's output; a single base64 stream can exceed remote run() limits.
+        for index in range((size + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
+            try:
+                result = await self._backend.run(
+                    f'dd if={quoted_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
+                    shell=True,
+                )
+            except WorkspaceOutputLimitError as error:
+                raise WorkspaceError(f'shell filesystem read exceeded command output limit for {path!r}') from error
+            await self._raise_for_error(result, path)
+            try:
+                chunk = base64.b64decode(result.stdout)
+            except ValueError as error:
+                raise WorkspaceError(f'shell filesystem returned invalid base64 while reading {path!r}') from error
+            expected = min(_SHELL_READ_CHUNK_BYTES, size - len(data))
+            if len(chunk) != expected:
+                raise WorkspaceError(f'shell filesystem returned incomplete output while reading {path!r}')
+            data.extend(chunk)
+        return bytes(data)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         parent = posixpath.dirname(path)
@@ -104,7 +132,13 @@ class _ShellFilesystem(SupportsFilesystem):
         ]
         try:
             for index, chunk in enumerate(chunks or ['']):
-                start = f'mkdir -p {quoted_parent} && ' if index == 0 else ''
+                start = (
+                    f'parent={quoted_parent}; {_SHELL_CHECK_PARENTS}'
+                    f'test -w {quoted_parent} || ! test -e {quoted_parent} || exit {_SHELL_EXIT_PERMISSION}; '
+                    f'mkdir -p {quoted_parent} && '
+                    if index == 0
+                    else ''
+                )
                 redirect = '>' if index == 0 else '>>'
                 result = await self._backend.run(
                     f"{start}printf '%s' {shlex.quote(chunk)} {redirect} {quoted_temporary}", shell=True
@@ -118,7 +152,9 @@ class _ShellFilesystem(SupportsFilesystem):
             # write rejects it. A symlink is written through, as a native write does, instead of
             # being replaced.
             result = await self._backend.run(
-                f'if test -d {quoted_path}; then status={_SHELL_EXIT_IS_DIRECTORY}; else '
+                f'if test -d {quoted_path}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
+                f'elif test -e {quoted_path} && ! test -w {quoted_path}; '
+                f'then status={_SHELL_EXIT_PERMISSION}; else '
                 f'{{ test -f {quoted_path} && cp {quoted_path} {quoted_decoded}; }}; '
                 f'base64 -d < {quoted_temporary} > {quoted_decoded} '
                 f'&& if test -L {quoted_path}; then cat {quoted_decoded} > {quoted_path}; '
@@ -142,7 +178,11 @@ class _ShellFilesystem(SupportsFilesystem):
         quoted_path = shlex.quote(path)
         # Follows a symlink to its target, like the other operations.
         result = await self._backend.run(
-            f"if test -d {quoted_path}; then printf 'directory\\n'; else wc -c < {quoted_path}; fi",
+            f"if test -d {quoted_path}; then printf 'directory\\n'; "
+            f'elif test -f {quoted_path}; then '
+            f'test -r {quoted_path} || exit {_SHELL_EXIT_PERMISSION}; wc -c < {quoted_path}; '
+            f'elif test -e {quoted_path}; then exit {_SHELL_EXIT_NOT_REGULAR}; '
+            f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
             shell=True,
         )
         await self._raise_for_error(result, path, missing=True)
@@ -161,10 +201,10 @@ class _ShellFilesystem(SupportsFilesystem):
         result = await self._list_paths(quoted_path)
         await self._raise_for_error(result, path, missing=True)
         listing = self._decode_sized_output(result.stdout, path, 'directory listing')
-        try:
-            entries = listing.decode().split('\0')
-        except UnicodeDecodeError as error:
-            raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}') from error
+        # POSIX filenames are bytes; preserve undecodable names for a round trip via os.fsencode.
+        entries = listing.decode(errors='surrogateescape').split('\0')
+        if any(entry and (entry[0] not in 'd-' or not entry[1:].startswith('/')) for entry in entries):
+            raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}')
         # Each entry is `<d|-><path>`: whether it is a directory, following a symlink to its target.
         return tuple(
             FileEntry(name=posixpath.basename(entry[1:]), path=entry[1:], is_dir=entry[0] == 'd', size=None)
@@ -172,33 +212,81 @@ class _ShellFilesystem(SupportsFilesystem):
         )
 
     async def _list_paths(self, quoted_path: str) -> WorkspaceResult:
-        temporary_path = f'/tmp/.pydantic-ai-{uuid.uuid4().hex}.list'
-        quoted_temporary = shlex.quote(temporary_path)
+        # Keep the scratch file in the environment's temp directory (which needn't be /tmp).
+        temporary_path = f'"${{TMPDIR:-/tmp}}/.pydantic-ai-{uuid.uuid4().hex}.list"'
         # `test` and `printf` rather than `find -printf`, which BusyBox and macOS lack.
         mark = ' -exec sh -c \'for f do test -d "$f" && d=d || d=-; printf "%s%s\\000" "$d" "$f"; done\' sh {} +'
         # Do not pipe `find` into `base64`: a POSIX shell reports only `base64`'s exit status and
         # could turn a failed traversal into a successful partial listing. The temporary file keeps
         # `find`'s status authoritative, and the trap removes it on every shell exit path.
-        return await self._backend.run(
-            f'file={quoted_temporary}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
-            f'if ! test -d {quoted_path}; then '
-            f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
-            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" '
-            '&& wc -c < "$file" && base64 < "$file"',
-            shell=True,
-        )
+        paged = False
+        completed = False
+        try:
+            result = await self._backend.run(
+                f'file={temporary_path}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
+                f'if ! test -d {quoted_path}; then '
+                f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
+                f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" '
+                f'&& size=$(wc -c < "$file") && printf "%s\\n" "$size" && '
+                f'if [ "$size" -le {_SHELL_READ_CHUNK_BYTES} ]; then base64 < "$file"; '
+                'else printf "PAGED\\n"; trap - EXIT HUP INT TERM; fi',
+                shell=True,
+            )
+            size, separator, encoded = result.stdout.partition('\n')
+            if result.exit_code != 0 or not separator or encoded.strip() != 'PAGED':
+                completed = True
+                return result
+            paged = True
+            if not size.strip().isdigit():
+                raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {quoted_path!r}')
+            length = int(size)
+            listing = bytearray()
+            # Each remote command is below the command-output cap, even for a huge directory.
+            for index in range((length + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
+                try:
+                    chunk_result = await self._backend.run(
+                        f'dd if={temporary_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
+                        shell=True,
+                    )
+                except WorkspaceOutputLimitError as error:
+                    raise WorkspaceError('shell filesystem listing exceeded command output limit') from error
+                await self._raise_for_error(chunk_result, quoted_path)
+                try:
+                    chunk = base64.b64decode(chunk_result.stdout)
+                except ValueError as error:
+                    raise WorkspaceError('shell filesystem returned invalid base64 while listing') from error
+                if len(chunk) != min(_SHELL_READ_CHUNK_BYTES, length - len(listing)):
+                    raise WorkspaceError('shell filesystem returned incomplete output while listing')
+                listing.extend(chunk)
+            completed = True
+            return CommandResult(exit_code=0, stdout=f'{size}\n{base64.b64encode(listing).decode()}', stderr='')
+        finally:
+            # A cancelled command may be killed before its EXIT trap runs. Paged listings also
+            # keep the file alive across commands; shield only the bounded cleanup.
+            with anyio.move_on_after(_SHELL_CLEANUP_TIMEOUT, shield=True):
+                try:
+                    if paged or not completed:
+                        await self._backend.run(f'rm -f {temporary_path}', shell=True)
+                except Exception:
+                    pass
 
     async def make_dir(self, path: str) -> None:
         quoted_path = shlex.quote(path)
         # `mkdir -p` fails generically over an existing file; classify it like a native `mkdir`.
         result = await self._backend.run(
             f'if test -e {quoted_path} && ! test -d {quoted_path}; then exit {_SHELL_EXIT_EXISTS}; fi; '
+            f'parent={shlex.quote(posixpath.dirname(path))}; {_SHELL_CHECK_PARENTS}'
             f'mkdir -p {quoted_path}',
             shell=True,
         )
         await self._raise_for_error(result, path)
 
     async def remove(self, path: str) -> None:
+        root = await cast(WorkspaceBackend, self._backend).working_dir()
+        # Refuse an ancestor before invoking `rm -rf`; never let removal of `.` destroy the environment.
+        normalized = posixpath.normpath(path)
+        if root == normalized or root.startswith(normalized.rstrip('/') + '/'):
+            raise ValueError('cannot remove the workspace root or its ancestor')
         quoted_path = shlex.quote(path)
         result = await self._backend.run(
             f'(test -e {quoted_path} || test -L {quoted_path}) && rm -rf {quoted_path}', shell=True
@@ -257,6 +345,10 @@ class _ShellFilesystem(SupportsFilesystem):
             raise IsADirectoryError(path)
         if result.exit_code == _SHELL_EXIT_EXISTS:
             raise FileExistsError(path)
+        if result.exit_code == _SHELL_EXIT_NOT_REGULAR:
+            raise OSError(f'not a regular file: {path!r}')
+        if result.exit_code == _SHELL_EXIT_PERMISSION:
+            raise PermissionError(path)
         if missing and not await self.exists(path):
             raise FileNotFoundError(path)
         message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'
@@ -326,6 +418,7 @@ class Workspace(WorkspaceBackend):
 
         There is no default `timeout`. Raises `UserError` if the backend can't run commands.
         """
+        validate_timeout(timeout)
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
@@ -383,7 +476,7 @@ class Workspace(WorkspaceBackend):
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
 
         Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath], else `readlink` in
-        its shell; a backend with neither only normalizes the path.
+        its shell; filesystem-only backends only normalize the path and do not resolve symlinks.
         """
         if not posixpath.isabs(path):
             # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
