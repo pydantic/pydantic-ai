@@ -375,16 +375,35 @@ async def test_kill_tolerates_an_already_exited_group():
         LocalWorkspaceBackend._kill(process)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_commands_inherit_only_path_and_home_from_the_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_commands_inherit_only_path_home_and_locale_from_the_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setenv('LOCAL_WORKSPACE_HOST_SECRET', 'do-not-pass')
     monkeypatch.setenv('PATH', '/host/bin:/usr/bin')
     monkeypatch.setenv('HOME', '/host/home')
+    for name in ('LANG', 'LC_ALL', 'LC_CTYPE'):
+        monkeypatch.setenv(name, 'C.UTF-8')
     workspace = LocalWorkspaceBackend(tmp_path, env={'SHARED': 'backend', 'HOME': 'backend'})
 
     result = await workspace.run(['/usr/bin/env'], env={'SHARED': 'call'})
 
     child_environment = dict(line.split('=', 1) for line in result.stdout.splitlines())
-    assert child_environment == {'PATH': '/host/bin:/usr/bin', 'HOME': 'backend', 'SHARED': 'call'}
+    assert child_environment == {
+        'PATH': '/host/bin:/usr/bin',
+        'HOME': 'backend',
+        'SHARED': 'call',
+        'LANG': 'C.UTF-8',
+        'LC_ALL': 'C.UTF-8',
+        'LC_CTYPE': 'C.UTF-8',
+    }
+
+
+async def test_local_workspace_inherits_utf8_locale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ('LANG', 'LC_ALL', 'LC_CTYPE'):
+        monkeypatch.setenv(name, 'en_US.UTF-8')
+    workspace = LocalWorkspaceBackend(tmp_path)
+    result = await workspace.run(['sh', '-c', 'printf "%s:%s:%s" "$LANG" "$LC_ALL" "$LC_CTYPE"'])
+    assert result.stdout == 'en_US.UTF-8:en_US.UTF-8:en_US.UTF-8'
 
 
 async def test_symlinked_working_dir_with_dotdot_keeps_one_environment(tmp_path: Path):

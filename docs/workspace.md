@@ -164,8 +164,8 @@ agent can review a local checkout in one run and a sandbox in the next.
 you pass only sets where commands start. The directory must already exist. Use it for your own,
 trusted work, and a sandbox for code you don't trust.
 
-Commands in a `LocalWorkspace` get your `PATH` and `HOME`, so they find your tools and your git and
-package-manager configuration. Nothing else from your environment reaches them. Pass other variables
+Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, so they find
+host tools and configuration and use your locale. No other host variables reach them. Pass other variables
 with `env=`:
 
 ```python

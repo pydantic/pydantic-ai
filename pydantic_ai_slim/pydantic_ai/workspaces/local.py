@@ -38,7 +38,7 @@ from .protocol import (
 __all__ = ('LocalWorkspaceBackend',)
 
 # Not secrets, and without them commands miss the host's tools and the user's configuration.
-_INHERITED_ENV = ('PATH', 'HOME')
+_INHERITED_ENV = ('PATH', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE')
 _MAX_CAPTURE_BYTES = 10 * 1024 * 1024
 """Ceiling on the combined stdout and stderr a single command may produce."""
 
@@ -86,7 +86,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     """Run commands as subprocesses on this machine and use its filesystem (POSIX only).
 
     This isolates nothing: commands and absolute paths reach anywhere this process can. Commands
-    inherit only `PATH` and `HOME`, so they find the host's tools and config but none of its secrets.
+    inherit only `PATH`, `HOME` and locale (`LANG`, `LC_ALL`, `LC_CTYPE`), so they find the host's
+    tools and use its text encoding without inheriting arbitrary secrets.
     The directory is the environment: its [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
     exists from construction, and the first operation raises
     [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing.
