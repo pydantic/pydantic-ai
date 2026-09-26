@@ -36,6 +36,7 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceFileEntry,
+    WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceResult,
@@ -71,6 +72,7 @@ class WorkspaceCallError:
     message: str
     stdout: str = ''
     stderr: str = ''
+    limit: int | None = None
     errno: int | None = None
     strerror: str | None = None
     filename: str | None = None
@@ -172,6 +174,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WorkspaceReadOnlyError,
+    WorkspaceOutputLimitError,
     WorkspaceError,
     FileNotFoundError,
     NotADirectoryError,
@@ -216,6 +219,10 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
             end=error.end,
             reason=error.reason,
         )
+    if isinstance(error, WorkspaceOutputLimitError):
+        return WorkspaceCallError(
+            type=error_type.__name__, message=str(error), limit=error.limit, stdout=error.stdout, stderr=error.stderr
+        )
     if isinstance(error, WorkspaceTimeoutError):
         return WorkspaceCallError(
             type=error_type.__name__, message=str(error), stdout=error.stdout, stderr=error.stderr
@@ -226,6 +233,9 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
 def raise_error(error: WorkspaceCallError) -> Never:
     """Re-raise an error that crossed a durable boundary as data, with its original type."""
     error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[error.type])
+    if error_type is WorkspaceOutputLimitError:
+        assert error.limit is not None
+        raise WorkspaceOutputLimitError(error.message, limit=error.limit, stdout=error.stdout, stderr=error.stderr)
     if error_type is WorkspaceTimeoutError:
         raise WorkspaceTimeoutError(error.message, stdout=error.stdout, stderr=error.stderr)
     if error_type is UnicodeEncodeError:
