@@ -1037,21 +1037,7 @@ async def test_capability_backend_is_available_without_connecting_during_run_set
     assert capability.backend.create_calls == 0
 
 
-async def test_run_never_cleans_up_the_workspace() -> None:
-    backend = FakeWorkspace('persistent')
-    agent = Agent(_tool_call_model(), capabilities=[])
-
-    @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
-        await ctx.workspace.run(['true'])
-        return 'ok'
-
-    await agent.run('go', workspace=backend)
-
-    assert backend.cleanup_calls == []
-
-
-async def test_failed_run_never_cleans_up_the_workspace() -> None:
+async def test_failed_run_stamps_the_workspace_ref() -> None:
     backend = FakeWorkspace('failed')
     agent = Agent(_tool_call_model('explode'))
 
@@ -1063,13 +1049,12 @@ async def test_failed_run_never_cleans_up_the_workspace() -> None:
     with capture_run_messages() as messages, pytest.raises(RuntimeError, match='boom'):
         await agent.run('go', workspace=backend)
 
-    assert backend.cleanup_calls == []
     response = next(message for message in reversed(messages) if isinstance(message, ModelResponse))
     assert response.workspace_ref == backend.ref
     assert backend.ref is not None
 
 
-async def test_cancelled_run_never_cleans_up_the_workspace() -> None:
+async def test_cancelled_run_stamps_the_workspace_ref() -> None:
     backend = FakeWorkspace('cancelled')
     agent = Agent(_tool_call_model())
     entered = anyio.Event()
@@ -1095,7 +1080,6 @@ async def test_cancelled_run_never_cleans_up_the_workspace() -> None:
         await entered.wait()
         tg.cancel_scope.cancel()
 
-    assert backend.cleanup_calls == []
     response = next(message for message in reversed(captured_messages) if isinstance(message, ModelResponse))
     assert response.workspace_ref == backend.ref
     assert backend.ref is not None

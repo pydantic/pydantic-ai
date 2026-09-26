@@ -152,13 +152,11 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._lock = anyio.Lock()
         self.create_calls = 0
         self.attach_calls = 0
-        self.cleanup_calls: list[str] = []
         self.commands: list[str | Sequence[str]] = []
         self.files = files if files is not None else {}
         self.directories = {'/workspace'}
         for path in self.files:
             _add_parent_directories(self.directories, path)
-        self.reads: list[str] = []
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -195,7 +193,6 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def read_bytes(self, path: str) -> bytes:
         await self.ensure_ready()
-        self.reads.append(path)
         if path in self.directories:
             raise IsADirectoryError(path)
         try:
@@ -231,12 +228,6 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # The environment has no symlinks, so resolving a path only normalizes it.
         await self.ensure_ready()
         return posixpath.normpath(path)
-
-    async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
-        self.cleanup_calls.append(f'close:{terminate}')
-
-    async def release(self) -> None:  # pragma: no cover
-        self.cleanup_calls.append('release')
 
 
 class FilesystemOnlyWorkspaceBackend(WorkspaceBackend, SupportsFilesystem):
@@ -284,7 +275,6 @@ class RecordingWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     def __init__(self, ref: WorkspaceRef) -> None:
         self._ref = ref
         self.commands: list[str | Sequence[str]] = []
-        self.cleanup_calls: list[str] = []
 
     @property
     def ref(self) -> WorkspaceRef:
@@ -304,9 +294,6 @@ class RecordingWorkspaceBackend(WorkspaceBackend, SupportsCommands):
 
     async def working_dir(self) -> str:
         return '/workspace'
-
-    async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
-        self.cleanup_calls.append(f'close:{terminate}')
 
 
 class _CommandWorkspaceBackend(WorkspaceBackend, SupportsCommands, Protocol):
@@ -340,8 +327,7 @@ class RunOnlyWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         return await self.inner.working_dir()
 
 
-def ref_workspace(ref: WorkspaceRef, supplier: AbstractCapability[Any] | None = None) -> Workspace:
-    del supplier
+def ref_workspace(ref: WorkspaceRef) -> Workspace:
     return Workspace(RecordingWorkspaceBackend(ref))
 
 
