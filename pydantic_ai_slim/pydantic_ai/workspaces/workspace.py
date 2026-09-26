@@ -51,6 +51,14 @@ _SHELL_EXIT_EXISTS = 117
 _SHELL_EXIT_NOT_DIRECTORY = 120
 _SHELL_EXIT_IS_DIRECTORY = 121
 _SHELL_EXIT_NOT_REGULAR = 122
+_SHELL_EXIT_PERMISSION = 113
+
+# Inspect each existing ancestor before `mkdir -p`; shell utilities' diagnostic wording is not portable.
+_SHELL_CHECK_PARENTS = (
+    'while [ "$parent" != / ]; do '
+    f'if test -e "$parent" && ! test -d "$parent"; then exit {_SHELL_EXIT_NOT_DIRECTORY}; fi; '
+    'parent=${parent%/*}; [ -n "$parent" ] || parent=/; done; '
+)
 
 
 class _ShellFilesystem(SupportsFilesystem):
@@ -75,7 +83,9 @@ class _ShellFilesystem(SupportsFilesystem):
         # The byte count comes first so output a backend lost in transit is an error, not a shorter file.
         result = await self._backend.run(
             f'if test -d {quoted_path}; then exit {_SHELL_EXIT_IS_DIRECTORY}; '
-            f'elif test -f {quoted_path}; then wc -c < {quoted_path} && base64 < {quoted_path}; '
+            f'elif test -f {quoted_path}; then '
+            f'test -r {quoted_path} || exit {_SHELL_EXIT_PERMISSION}; '
+            f'wc -c < {quoted_path} && base64 < {quoted_path}; '
             f'elif test -e {quoted_path}; then exit {_SHELL_EXIT_NOT_REGULAR}; '
             f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
             shell=True,
@@ -107,7 +117,13 @@ class _ShellFilesystem(SupportsFilesystem):
         ]
         try:
             for index, chunk in enumerate(chunks or ['']):
-                start = f'mkdir -p {quoted_parent} && ' if index == 0 else ''
+                start = (
+                    f'parent={quoted_parent}; {_SHELL_CHECK_PARENTS}'
+                    f'test -w {quoted_parent} || ! test -e {quoted_parent} || exit {_SHELL_EXIT_PERMISSION}; '
+                    f'mkdir -p {quoted_parent} && '
+                    if index == 0
+                    else ''
+                )
                 redirect = '>' if index == 0 else '>>'
                 result = await self._backend.run(
                     f"{start}printf '%s' {shlex.quote(chunk)} {redirect} {quoted_temporary}", shell=True
@@ -121,7 +137,9 @@ class _ShellFilesystem(SupportsFilesystem):
             # write rejects it. A symlink is written through, as a native write does, instead of
             # being replaced.
             result = await self._backend.run(
-                f'if test -d {quoted_path}; then status={_SHELL_EXIT_IS_DIRECTORY}; else '
+                f'if test -d {quoted_path}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
+                f'elif test -e {quoted_path} && ! test -w {quoted_path}; '
+                f'then status={_SHELL_EXIT_PERMISSION}; else '
                 f'{{ test -f {quoted_path} && cp {quoted_path} {quoted_decoded}; }}; '
                 f'base64 -d < {quoted_temporary} > {quoted_decoded} '
                 f'&& if test -L {quoted_path}; then cat {quoted_decoded} > {quoted_path}; '
@@ -146,7 +164,8 @@ class _ShellFilesystem(SupportsFilesystem):
         # Follows a symlink to its target, like the other operations.
         result = await self._backend.run(
             f"if test -d {quoted_path}; then printf 'directory\\n'; "
-            f'elif test -f {quoted_path}; then wc -c < {quoted_path}; '
+            f'elif test -f {quoted_path}; then '
+            f'test -r {quoted_path} || exit {_SHELL_EXIT_PERMISSION}; wc -c < {quoted_path}; '
             f'elif test -e {quoted_path}; then exit {_SHELL_EXIT_NOT_REGULAR}; '
             f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
             shell=True,
@@ -199,6 +218,7 @@ class _ShellFilesystem(SupportsFilesystem):
         # `mkdir -p` fails generically over an existing file; classify it like a native `mkdir`.
         result = await self._backend.run(
             f'if test -e {quoted_path} && ! test -d {quoted_path}; then exit {_SHELL_EXIT_EXISTS}; fi; '
+            f'parent={shlex.quote(posixpath.dirname(path))}; {_SHELL_CHECK_PARENTS}'
             f'mkdir -p {quoted_path}',
             shell=True,
         )
@@ -270,6 +290,8 @@ class _ShellFilesystem(SupportsFilesystem):
             raise FileExistsError(path)
         if result.exit_code == _SHELL_EXIT_NOT_REGULAR:
             raise OSError(f'not a regular file: {path!r}')
+        if result.exit_code == _SHELL_EXIT_PERMISSION:
+            raise PermissionError(path)
         if missing and not await self.exists(path):
             raise FileNotFoundError(path)
         message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'

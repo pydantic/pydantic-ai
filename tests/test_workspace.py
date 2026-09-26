@@ -183,6 +183,31 @@ async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
         await workspace.realpath('x')
 
 
+async def test_shell_filesystem_uses_builtin_path_errors(tmp_path: Path) -> None:
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    (tmp_path / 'file').write_bytes(b'x')
+    with pytest.raises(NotADirectoryError):
+        await workspace.write_bytes('file/child', b'x')
+    with pytest.raises(NotADirectoryError):
+        await workspace.make_dir('file/child')
+    with pytest.raises(IsADirectoryError):
+        await workspace.write_bytes('.', b'x')
+    with pytest.raises(FileExistsError):
+        await workspace.make_dir('file')
+
+
+async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip('root bypasses filesystem permissions')
+    (tmp_path / 'unreadable').write_bytes(b'x')
+    (tmp_path / 'unreadable').chmod(0)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(PermissionError):
+        await workspace.read_bytes('unreadable')
+    with pytest.raises(PermissionError):
+        await workspace.write_bytes('unreadable', b'x')
+
+
 async def test_shell_filesystem_refuses_to_remove_workspace_root(tmp_path: Path) -> None:
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     (tmp_path / 'safe').write_bytes(b'safe')
