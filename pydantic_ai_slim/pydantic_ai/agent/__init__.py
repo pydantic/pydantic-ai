@@ -1722,6 +1722,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The workspace is selected before `for_run`, like the bootstrap model above, so `for_run` can use
         # it. Selecting does no I/O: a backend creates or attaches on its first operation.
+        if (
+            workspace is not None
+            and workspace != 'new'
+            and not isinstance(workspace, (WorkspaceRef, Workspace, WorkspaceBackend))
+        ):
+            raise TypeError(
+                'workspace= must be a Workspace, WorkspaceBackend, WorkspaceRef(provider=..., id=...), '
+                "or 'new'; use LocalWorkspaceBackend(path) for a str or Path"
+            )
         requested_ref = workspace if isinstance(workspace, WorkspaceRef) else None
         # `'new'` asks for a fresh environment, so the ref in history is not offered.
         # The automatic unattached placeholder is not an explicit refusal: a child can

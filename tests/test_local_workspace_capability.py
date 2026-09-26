@@ -26,6 +26,13 @@ pytestmark = [
 ]
 
 
+@pytest.mark.parametrize('invalid', [{'provider': 'local', 'id': '/tmp'}, '/tmp', Path('/tmp'), 'old', 42])
+async def test_invalid_workspace_argument_fails_before_model_call(invalid: object) -> None:
+    agent = Agent(TestModel())
+    with pytest.raises(TypeError, match=r'workspace=.*WorkspaceRef.*LocalWorkspaceBackend'):
+        await agent.run('go', workspace=invalid)  # type: ignore[arg-type]
+
+
 async def test_unattached_placeholder_does_not_shadow_child_capability(tmp_path: Path) -> None:
     child = Agent(TestModel(call_tools=['write']), capabilities=[LocalWorkspace(tmp_path)])
 
