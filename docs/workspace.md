@@ -372,7 +372,7 @@ class UserDirectory(AbstractCapability[str]):
         return backend
 ```
 
-`LocalWorkspaceBackend` never creates its directory, so create each user's directory when you create
+`LocalWorkspaceBackend` never creates its directory for relative file operations, so create each user's directory when you create
 the user. This separates where users start; like `LocalWorkspace`, it isolates nothing.
 
 - With `ref=None`, return the backend for a new or default environment.
@@ -541,7 +541,8 @@ works without shell support, but cannot run commands.
 
 ## Limits
 
-- `LocalWorkspace` isolates nothing, never creates its directory, and runs only on POSIX systems
+- `LocalWorkspace` isolates nothing and runs only on POSIX systems. Create its directory before using
+  relative paths; an absolute root that does not exist may be created by an absolute-path write.
   (macOS and Linux). Its ref normalizes `.` and `..` without resolving symlinks, so differently
   spelled symlink roots have distinct refs even if they point to the same directory.
 - A run has one workspace.

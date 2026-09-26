@@ -2879,8 +2879,9 @@ class ModelResponse:
     workspace_ref: WorkspaceRef | None = None
     """The [workspace](../workspace.md) environment the run worked in, so a run continuing this history reuses it.
 
-    A run with no attached workspace carries the conversation's ref forward, unless it was started
-    with `workspace='new'`. Not sent to the model.
+    Each response records the ref when it is produced; the last response is refreshed when the run
+    ends. A run with no attached workspace carries the conversation's ref forward, unless it was
+    started with `workspace='new'`. Not sent to the model.
     """
 
     state: ModelResponseState = 'complete'

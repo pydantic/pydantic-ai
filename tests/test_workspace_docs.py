@@ -28,6 +28,14 @@ def test_ui_adapter_workspace_ref_round_trip_limit_and_approval_recipe() -> None
     assert 'workspace=' in approval.split('## Tool Approval', 1)[1].split('## Tool input validation', 1)[0]
 
 
+def test_response_ref_timing_and_local_absolute_root_guidance() -> None:
+    root = Path(__file__).resolve().parents[1]
+    response = (root / 'pydantic_ai_slim/pydantic_ai/messages.py').read_text()
+    docs = (root / 'docs/workspace.md').read_text()
+    assert 'Each response records the ref when it is produced' in response
+    assert 'absolute root' in docs
+
+
 def test_no_unavailable_no_file_access_recipe() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert "no_files = UnavailableWorkspace(reason='This run has no file access.')" not in page
