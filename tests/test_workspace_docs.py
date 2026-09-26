@@ -33,7 +33,7 @@ def test_response_ref_timing_and_local_absolute_root_guidance() -> None:
     response = (root / 'pydantic_ai_slim/pydantic_ai/messages.py').read_text()
     docs = (root / 'docs/workspace.md').read_text()
     assert 'Each response records the ref when it is produced' in response
-    assert 'absolute root' in docs
+    assert 'Create the configured local root before use, including absolute file writes beneath it' in docs
 
 
 def test_wrapper_policy_documents_command_and_symlink_escape() -> None:
