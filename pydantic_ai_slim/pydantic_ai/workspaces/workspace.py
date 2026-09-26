@@ -29,7 +29,7 @@ from .unavailable import UnavailableWorkspace
 __all__ = ('Workspace', 'WrapperWorkspace')
 
 
-_SHELL_WRITE_CHUNK_BYTES = 64 * 1024
+_SHELL_WRITE_CHUNK_CHARS = 64 * 1024
 """Maximum base64 characters embedded in one shell command.
 
 Linux limits one `execve` argument to 128 KiB, independently of `ARG_MAX`. Leaving half of
@@ -99,8 +99,8 @@ class _ShellFilesystem(SupportsFilesystem):
         quoted_decoded = shlex.quote(decoded_path)
         encoded = base64.b64encode(data).decode()
         chunks = [
-            encoded[start : start + _SHELL_WRITE_CHUNK_BYTES]
-            for start in range(0, len(encoded), _SHELL_WRITE_CHUNK_BYTES)
+            encoded[start : start + _SHELL_WRITE_CHUNK_CHARS]
+            for start in range(0, len(encoded), _SHELL_WRITE_CHUNK_CHARS)
         ]
         try:
             for index, chunk in enumerate(chunks or ['']):
@@ -158,7 +158,20 @@ class _ShellFilesystem(SupportsFilesystem):
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
         quoted_path = shlex.quote(path)
-        result = await self._list_paths(quoted_path)
+        temporary_path = f'/tmp/.pydantic-ai-{uuid.uuid4().hex}.list'
+        quoted_temporary = shlex.quote(temporary_path)
+        # `test` and `printf` rather than `find -printf`, which BusyBox and macOS lack.
+        mark = ' -exec sh -c \'for f do test -d "$f" && d=d || d=-; printf "%s%s\\000" "$d" "$f"; done\' sh {} +'
+        # Do not pipe `find` into `base64`: a POSIX shell reports only `base64`'s exit status and
+        # could turn a failed traversal into a successful partial listing. The temporary file keeps
+        # `find`'s status authoritative, and the trap removes it on every shell exit path.
+        result = await self._backend.run(
+            f'file={quoted_temporary}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
+            f'if ! test -d {quoted_path}; then '
+            f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
+            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" && base64 < "$file"',
+            shell=True,
+        )
         await self._raise_for_error(result, path, missing=True)
         try:
             entries = base64.b64decode(result.stdout).decode().split('\0')
@@ -168,22 +181,6 @@ class _ShellFilesystem(SupportsFilesystem):
         return tuple(
             FileEntry(name=posixpath.basename(entry[1:]), path=entry[1:], is_dir=entry[0] == 'd', size=None)
             for entry in sorted((entry for entry in entries if entry), key=lambda entry: entry[1:])
-        )
-
-    async def _list_paths(self, quoted_path: str) -> WorkspaceResult:
-        temporary_path = f'/tmp/.pydantic-ai-{uuid.uuid4().hex}.list'
-        quoted_temporary = shlex.quote(temporary_path)
-        # `test` and `printf` rather than `find -printf`, which BusyBox and macOS lack.
-        mark = ' -exec sh -c \'for f do test -d "$f" && d=d || d=-; printf "%s%s\\000" "$d" "$f"; done\' sh {} +'
-        # Do not pipe `find` into `base64`: a POSIX shell reports only `base64`'s exit status and
-        # could turn a failed traversal into a successful partial listing. The temporary file keeps
-        # `find`'s status authoritative, and the trap removes it on every shell exit path.
-        return await self._backend.run(
-            f'file={quoted_temporary}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
-            f'if ! test -d {quoted_path}; then '
-            f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
-            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" && base64 < "$file"',
-            shell=True,
         )
 
     async def make_dir(self, path: str) -> None:

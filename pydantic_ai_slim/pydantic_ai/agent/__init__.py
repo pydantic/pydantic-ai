@@ -1725,12 +1725,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # `'new'` asks for a fresh environment, so the ref in history is not offered.
         offered_ref = historical_workspace_ref if workspace is None else requested_ref
         # A backend or `Workspace` passed to the run is used as is.
-        explicit = None if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef) else workspace
+        live_workspace = (
+            None if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef) else workspace
+        )
         # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
         pre_run_layers = _combine_layer_duplicates([base_capability], extra_capabilities)
         pre_run_root = _compose_layers(pre_run_layers)
-        if explicit is not None:
-            selected = explicit if isinstance(explicit, Workspace) else Workspace(explicit)
+        if live_workspace is not None:
+            selected = live_workspace if isinstance(live_workspace, Workspace) else Workspace(live_workspace)
         else:
             selected = select_workspace(
                 pre_run_root,
@@ -1741,7 +1743,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         initial_ctx.root_capability = pre_run_root
         if selected is not None:
             initial_ctx.workspace = pre_run_root._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
-                initial_ctx, selected, explicit=explicit is not None
+                initial_ctx, selected, explicit=live_workspace is not None
             )
         # An explicit `Instrumentation` capability (agent- or call-level) replaces the one injected from
         # `instrumentation_settings` (see `_resolve_run_capabilities`), so `for_run` hooks and metadata
@@ -1798,7 +1800,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # A workspace capability that exists only after `for_run` (a capability function's) is asked now.
         # One selected before `for_run` is final: `for_run` may have used it.
         initial_ctx.root_capability = run_capability
-        if explicit is None and not model_layers_unchanged:
+        if live_workspace is None and not model_layers_unchanged:
             candidate = select_workspace(
                 run_capability, initial_ctx, ref=offered_ref, run_layer=resolved_caps.run_layer
             )
