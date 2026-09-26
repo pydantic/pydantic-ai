@@ -457,10 +457,17 @@ files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]
+addopts = "-p no:cassetter"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+markers = ["modal_live: runs against a real Modal control plane; needs credentials"]
 filterwarnings = [
     "error",
+    # Experimental harness capabilities warn on import by design; tests assert it where it matters.
+    # Matched by message: the warning class lives in a package some install cells do not have.
+    "ignore:`pydantic_ai_harness\\.experimental\\.[a-z_.]+` is experimental:UserWarning",
+    # browser-use's observability decorators call it at import time.
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:browser_use",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
