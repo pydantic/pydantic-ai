@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import anyio
+import anyio.to_thread
 import pytest
 from pydantic import TypeAdapter
 
@@ -182,6 +185,66 @@ async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
 
     with pytest.raises(WorkspaceError, match='invalid real path'):
         await workspace.realpath('x')
+
+
+async def test_shell_listing_uses_configured_temporary_directory(tmp_path: Path) -> None:
+    temporary = tmp_path / 'temp'
+    temporary.mkdir()
+
+    class TemporaryBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if isinstance(command, str) and 'find ' in command:
+                assert '/tmp/.pydantic-ai-' not in command
+            result = await super().run(command, shell=shell, cwd=cwd, env={'TMPDIR': str(temporary)}, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    workspace = Workspace(TemporaryBackend(LocalWorkspaceBackend(tmp_path)))
+    assert [entry.name for entry in await workspace.list_dir('.')] == ['temp']
+    assert list(temporary.iterdir()) == []
+
+
+async def test_shell_listing_removes_scratch_file_on_cancel(tmp_path: Path) -> None:
+    started = asyncio.Event()
+    temporary = tmp_path / 'temp'
+    temporary.mkdir()
+
+    class InterruptedBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if isinstance(command, str) and 'find ' in command:
+                match = re.search(r'\.pydantic-ai-[a-f0-9]+\.list', command)
+                assert match is not None
+                await anyio.to_thread.run_sync((temporary / match.group()).write_bytes, b'partial')
+                started.set()
+                await asyncio.Event().wait()
+            result = await super().run(command, shell=shell, cwd=cwd, env={'TMPDIR': str(temporary)}, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    workspace = Workspace(InterruptedBackend(LocalWorkspaceBackend(tmp_path)))
+    task = asyncio.create_task(workspace.list_dir('.'))
+    try:
+        with anyio.fail_after(3):
+            await started.wait()
+    finally:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(temporary.iterdir()) == []
 
 
 async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None:

@@ -205,21 +205,30 @@ class _ShellFilesystem(SupportsFilesystem):
         )
 
     async def _list_paths(self, quoted_path: str) -> WorkspaceResult:
-        temporary_path = f'/tmp/.pydantic-ai-{uuid.uuid4().hex}.list'
-        quoted_temporary = shlex.quote(temporary_path)
+        # Keep the scratch file in the environment's temp directory (which needn't be /tmp).
+        temporary_path = f'"${{TMPDIR:-/tmp}}/.pydantic-ai-{uuid.uuid4().hex}.list"'
         # `test` and `printf` rather than `find -printf`, which BusyBox and macOS lack.
         mark = ' -exec sh -c \'for f do test -d "$f" && d=d || d=-; printf "%s%s\\000" "$d" "$f"; done\' sh {} +'
         # Do not pipe `find` into `base64`: a POSIX shell reports only `base64`'s exit status and
         # could turn a failed traversal into a successful partial listing. The temporary file keeps
         # `find`'s status authoritative, and the trap removes it on every shell exit path.
-        return await self._backend.run(
-            f'file={quoted_temporary}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
-            f'if ! test -d {quoted_path}; then '
-            f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
-            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" '
-            '&& wc -c < "$file" && base64 < "$file"',
-            shell=True,
-        )
+        try:
+            return await self._backend.run(
+                f'file={temporary_path}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
+                f'if ! test -d {quoted_path}; then '
+                f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
+                f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" '
+                '&& wc -c < "$file" && base64 < "$file"',
+                shell=True,
+            )
+        except BaseException:
+            # A cancelled command may be killed before its EXIT trap runs; clean up separately.
+            with anyio.move_on_after(_SHELL_CLEANUP_TIMEOUT, shield=True):
+                try:
+                    await self._backend.run(f'rm -f {temporary_path}', shell=True)
+                except Exception:
+                    pass
+            raise
 
     async def make_dir(self, path: str) -> None:
         quoted_path = shlex.quote(path)
