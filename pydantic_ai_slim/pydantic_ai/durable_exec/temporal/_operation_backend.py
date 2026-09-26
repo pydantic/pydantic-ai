@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
@@ -26,6 +26,7 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.durable_exec._workspace import WorkspaceCallParams
+from pydantic_ai.exceptions import UserError
 
 from ._activity_execution import execute_activity
 from ._operation_names import TemporalOperationNamer
@@ -118,6 +119,15 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         payload = self._operation.parameter_transport.dump(params)
         activity_config = cast(ActivityConfig, config or self._config).copy()
         operation_id = self._operation.operation_id
+        if isinstance(params, WorkspaceCallParams) and params.call.method == 'write_bytes' and workflow.in_workflow():
+            # An oversized input fails the workflow task (which retries forever), not the activity.
+            # The server limit is not exposed in workflows; use its default 2 MB as a safe ceiling.
+            encoded = workflow.payload_converter().to_payloads(cast(Sequence[Any], payload))
+            if sum(len(part.SerializeToString()) for part in encoded) > 2_000_000:
+                raise UserError(
+                    'Workspace write is too large for Temporal (default 2MB activity payload limit). '
+                    'Move the file transfer into a tool, or configure external payload storage.'
+                )
         if isinstance(params, WorkspaceCallParams) and params.call.method == 'run':
             activity_config = workspace_run_activity_config(activity_config, params.call.timeout)
         model_name = ''

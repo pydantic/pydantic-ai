@@ -8,12 +8,16 @@ from typing_extensions import TypeVar
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
 from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
+from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
-from pydantic_ai.workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.workspaces.unavailable import (
+    UnavailableWorkspace,
+    _UnattachedWorkspace,  # pyright: ignore[reportPrivateUsage]
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -261,6 +265,14 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         # `TemporalRunContext.__init__` supplies the inert default when no reference was serialized.
         if (workspace_ref := ctx.workspace.ref) is not None:
             serialized['workspace_ref'] = workspace_ref
+        else:
+            # The durable wrapper forbids `.backend` in workflow code; inspect its original
+            # workspace only to preserve an explicit unavailable reason without a ref.
+            workspace = ctx.workspace.wrapped if isinstance(ctx.workspace, DurableWorkspace) else ctx.workspace
+            if isinstance(workspace.backend, UnavailableWorkspace) and not isinstance(
+                workspace.backend, _UnrestoredWorkspace
+            ):
+                serialized['workspace_unavailable_reason'] = workspace.backend.reason
         return serialized
 
     @classmethod
@@ -314,6 +326,8 @@ def _restore_workspace(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> 
     if not isinstance(workspace, Workspace) or not isinstance(workspace.backend, _UnrestoredWorkspace):
         return
     if not isinstance(ref, WorkspaceRef):
+        if (reason := ctx.__dict__.get('workspace_unavailable_reason')) is not None:
+            ctx.__dict__['workspace'] = Workspace(UnavailableWorkspace(reason))
         return
     restored = select_workspace(agent.root_capability, ctx, ref=ref)
     if restored is None:

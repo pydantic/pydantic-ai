@@ -545,7 +545,10 @@ def test_error_table_round_trips_every_kind(error: Exception) -> None:
 
 def test_unexpected_errors_fail_the_unit() -> None:
     assert error_as_data(ConnectionError('flaky')) is None
-    assert error_as_data(OSError('other')) is None
+    assert error_as_data(TimeoutError('flaky')) is None
+    assert error_as_data(InterruptedError('flaky')) is None
+    assert error_as_data(BlockingIOError('flaky')) is None
+    assert error_as_data(OSError('other')) == WorkspaceCallError(type='OSError', message='other')
 
 
 async def test_run_never_ensures_without_an_attached_workspace() -> None:

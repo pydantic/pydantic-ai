@@ -8,6 +8,7 @@ sandboxed workflow can construct a backend for one but only an activity can touc
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import sys
@@ -26,6 +27,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -40,6 +42,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces.unavailable import UnavailableWorkspace
 
 try:
     from temporalio import activity, workflow
@@ -51,7 +54,7 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall
+    from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall, execute_call, raise_error
     from pydantic_ai.durable_exec.prefect import PrefectDurability
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -60,7 +63,7 @@ try:
         _workflow_runner,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._operation_backend import workspace_run_activity_config
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import with_non_retryable_errors
     from pydantic_ai.durable_exec.temporal._transports import _WorkspaceCallWire
 
@@ -151,6 +154,18 @@ def test_workspace_run_activity_has_time_for_command_and_cleanup() -> None:
     assert workspace_run_activity_config(config, 120).get('start_to_close_timeout') == timedelta(seconds=150)
     assert workspace_run_activity_config(config, None).get('start_to_close_timeout') == timedelta(hours=1)
     assert config.get('start_to_close_timeout') == timedelta(seconds=60)
+
+
+async def test_unavailable_workspace_reason_survives_activity_context() -> None:
+    agent = Agent(TestModel(), name='unavailable')
+    ctx = RunContext(
+        deps=None, model=TestModel(), usage=RunUsage(), workspace=Workspace(UnavailableWorkspace('disabled by policy'))
+    )
+    restored = deserialize_run_context(
+        TemporalRunContext, TemporalRunContext.serialize_run_context(ctx), deps=None, agent=agent
+    )
+    with pytest.raises(WorkspaceUnavailableError, match='disabled by policy'):
+        await restored.workspace.working_dir()
 
 
 # --- A fake remote provider ---------------------------------------------------------------------
@@ -496,6 +511,90 @@ async def test_binary_content_and_expected_errors_cross_the_activity_boundary(cl
         }
     )
     assert _ENVIRONMENTS['env-1']['/remote/blob.bin'] == _BINARY
+
+
+@workflow.defn
+class LargeWriteWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await binary_agent.run('Nothing to do.')
+        try:
+            await result.workspace.write_bytes('big.bin', b'x' * 2_000_000)
+        except UserError as error:
+            return str(error)
+        return 'unexpected success'
+
+
+async def test_large_workflow_write_fails_before_scheduling_activity(client: Client) -> None:
+    _reset_provider()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[LargeWriteWorkflow], plugins=[AgentPlugin(binary_agent)]
+    ):
+        message = await client.execute_workflow(
+            LargeWriteWorkflow.run,
+            id=f'{LargeWriteWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=10),
+        )
+    assert 'too large for Temporal' in message
+    assert 'big.bin' not in _ENVIRONMENTS['env-1']
+
+
+async def test_unicode_encode_error_crosses_workspace_boundary() -> None:
+    class EncodingBackend(RemoteBackend):
+        async def working_dir(self) -> str:
+            return '/remote'
+
+        async def write_bytes(self, path: str, data: bytes) -> None:
+            raise UnicodeEncodeError('ascii', 'café', 3, 4, 'ordinal not in range')
+
+    result = await execute_call(Workspace(EncodingBackend(None)), WorkspaceCall(method='write_bytes', path='x'))
+    assert result.error is not None
+    with pytest.raises(UnicodeEncodeError) as exc_info:
+        raise_error(result.error)
+    assert (exc_info.value.encoding, exc_info.value.object, exc_info.value.start, exc_info.value.end) == (
+        'ascii',
+        'café',
+        3,
+        4,
+    )
+
+
+async def test_workspace_os_error_preserves_type_and_both_filenames() -> None:
+    class RenameBackend(RemoteBackend):
+        async def working_dir(self) -> str:
+            return '/remote'
+
+        async def remove(self, path: str) -> None:
+            raise FileNotFoundError(errno.ENOENT, 'No such file', path, None, '/remote/new')
+
+    workspace = Workspace(RenameBackend(None))
+    with pytest.raises(FileNotFoundError) as plain:
+        await workspace.remove('old')
+    result = await execute_call(workspace, WorkspaceCall(method='remove', path='old'))
+    assert result.error is not None
+    with pytest.raises(FileNotFoundError) as durable:
+        raise_error(result.error)
+    assert type(durable.value) is type(plain.value)
+    assert durable.value.errno == plain.value.errno
+    assert durable.value.filename2 == plain.value.filename2
+    assert str(durable.value) == str(plain.value)
+
+
+async def test_deterministic_os_error_crosses_workspace_boundary_without_retry() -> None:
+    class LongNameBackend(RemoteBackend):
+        async def working_dir(self) -> str:
+            return '/remote'
+
+        async def read_bytes(self, path: str) -> bytes:
+            raise OSError(errno.ENAMETOOLONG, 'File name too long', path)
+
+    result = await execute_call(Workspace(LongNameBackend(None)), WorkspaceCall(method='read_bytes', path='long-name'))
+    assert result.error is not None
+    with pytest.raises(OSError) as exc_info:
+        raise_error(result.error)
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    assert exc_info.value.filename == '/remote/long-name'
 
 
 # --- An uncaught workspace error fails the workflow instead of hanging it ----------------------
