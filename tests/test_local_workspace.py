@@ -447,6 +447,15 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     await _assert_process_gone(int(pid_file.read_text()))
 
 
+async def test_reading_fifo_fails_without_waiting_for_writer(tmp_path: Path):
+    fifo = tmp_path / 'fifo'
+    os.mkfifo(fifo)
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+    with anyio.fail_after(2):
+        with pytest.raises(OSError, match='not a regular file'):
+            await workspace.read_bytes('fifo')
+
+
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
     """A symlinked file reports its target's size (as `stat` does); a broken symlink
     doesn't fail the listing, it just has no size."""

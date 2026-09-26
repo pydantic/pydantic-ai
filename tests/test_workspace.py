@@ -183,6 +183,16 @@ async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
         await workspace.realpath('x')
 
 
+async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
+    fifo = tmp_path / 'fifo'
+    os.mkfifo(fifo)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    with anyio.fail_after(2):
+        for operation in (workspace.read_bytes, workspace.stat):
+            with pytest.raises(OSError, match='not a regular file'):
+                await operation('fifo')
+
+
 async def test_shell_realpath_stops_at_a_symlink_loop(tmp_path: Path) -> None:
     (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))

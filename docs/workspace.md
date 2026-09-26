@@ -408,7 +408,8 @@ A backend is the object that talks to one environment; `Workspace` wraps it to g
 `ref` and `working_dir`, then adds [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both. With commands only,
 `ctx.workspace` derives the file operations through the shell. With a filesystem only, file tools work
-and `ctx.workspace.run` raises `UserError`. With both, they must reach the same environment.
+and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular files (not FIFOs or devices).
+With both, they must reach the same environment.
 Implement [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] if your platform can resolve
 symlinks natively; with commands only, `realpath` uses the shell, and with neither, symlinks aren't
 resolved, so a root-directory check such as the harness `FileSystem`'s is textual only.

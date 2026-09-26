@@ -49,6 +49,7 @@ _SHELL_EXIT_NOT_FOUND = 102
 _SHELL_EXIT_EXISTS = 117
 _SHELL_EXIT_NOT_DIRECTORY = 120
 _SHELL_EXIT_IS_DIRECTORY = 121
+_SHELL_EXIT_NOT_REGULAR = 122
 
 
 class _ShellFilesystem(SupportsFilesystem):
@@ -73,7 +74,8 @@ class _ShellFilesystem(SupportsFilesystem):
         # The byte count comes first so output a backend lost in transit is an error, not a shorter file.
         result = await self._backend.run(
             f'if test -d {quoted_path}; then exit {_SHELL_EXIT_IS_DIRECTORY}; '
-            f'elif test -e {quoted_path}; then wc -c < {quoted_path} && base64 < {quoted_path}; '
+            f'elif test -f {quoted_path}; then wc -c < {quoted_path} && base64 < {quoted_path}; '
+            f'elif test -e {quoted_path}; then exit {_SHELL_EXIT_NOT_REGULAR}; '
             f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
             shell=True,
         )
@@ -142,7 +144,10 @@ class _ShellFilesystem(SupportsFilesystem):
         quoted_path = shlex.quote(path)
         # Follows a symlink to its target, like the other operations.
         result = await self._backend.run(
-            f"if test -d {quoted_path}; then printf 'directory\\n'; else wc -c < {quoted_path}; fi",
+            f"if test -d {quoted_path}; then printf 'directory\\n'; "
+            f'elif test -f {quoted_path}; then wc -c < {quoted_path}; '
+            f'elif test -e {quoted_path}; then exit {_SHELL_EXIT_NOT_REGULAR}; '
+            f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
             shell=True,
         )
         await self._raise_for_error(result, path, missing=True)
@@ -257,6 +262,8 @@ class _ShellFilesystem(SupportsFilesystem):
             raise IsADirectoryError(path)
         if result.exit_code == _SHELL_EXIT_EXISTS:
             raise FileExistsError(path)
+        if result.exit_code == _SHELL_EXIT_NOT_REGULAR:
+            raise OSError(f'not a regular file: {path!r}')
         if missing and not await self.exists(path):
             raise FileNotFoundError(path)
         message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'

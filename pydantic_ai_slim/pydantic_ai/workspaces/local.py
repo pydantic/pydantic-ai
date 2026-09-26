@@ -10,6 +10,7 @@ import asyncio
 import os
 import shutil
 import signal
+import stat as stat_module
 from collections.abc import Awaitable, Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path
@@ -151,7 +152,15 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     # File operations run in a thread: filesystem calls block, and must not stall the event loop.
 
     async def read_bytes(self, path: str) -> bytes:
-        return await run_in_executor(self._path(path).read_bytes)
+        def read() -> bytes:
+            # O_NONBLOCK lets us inspect FIFOs and devices without opening a blocking stream.
+            fd = os.open(self._path(path), os.O_RDONLY | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as file:
+                if not stat_module.S_ISREG(os.fstat(fd).st_mode):
+                    raise OSError(f'not a regular file: {path!r}')
+                return file.read()
+
+        return await run_in_executor(read)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         def write() -> None:
