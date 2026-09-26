@@ -14,9 +14,9 @@ from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
-from pydantic_ai.workspaces.unavailable import (  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.workspaces.unavailable import (
     UnavailableWorkspace,
-    _UnattachedWorkspace,
+    _UnattachedWorkspace,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
