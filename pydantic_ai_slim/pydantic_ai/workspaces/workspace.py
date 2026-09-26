@@ -34,7 +34,7 @@ __all__ = ('Workspace', 'WrapperWorkspace')
 
 
 _SHELL_READ_CHUNK_BYTES = 64 * 1024
-_SHELL_WRITE_CHUNK_BYTES = 64 * 1024
+_SHELL_WRITE_CHUNK_CHARS = 64 * 1024
 """Maximum base64 characters embedded in one shell command.
 
 Linux limits one `execve` argument to 128 KiB, independently of `ARG_MAX`. Leaving half of
@@ -136,8 +136,8 @@ class _ShellFilesystem(SupportsFilesystem):
         quoted_decoded = shlex.quote(decoded_path)
         encoded = base64.b64encode(data).decode()
         chunks = [
-            encoded[start : start + _SHELL_WRITE_CHUNK_BYTES]
-            for start in range(0, len(encoded), _SHELL_WRITE_CHUNK_BYTES)
+            encoded[start : start + _SHELL_WRITE_CHUNK_CHARS]
+            for start in range(0, len(encoded), _SHELL_WRITE_CHUNK_CHARS)
         ]
         try:
             for index, chunk in enumerate(chunks or ['']):

@@ -39,25 +39,16 @@ async def test_read_only_workspace_forwards_reads_and_refuses_run_and_writes() -
     workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
 
     assert await workspace.read_text('data.txt') == 'original'
+    assert (await workspace.stat('data.txt')).name == 'data.txt'
+    assert [entry.name for entry in await workspace.list_dir('/workspace')] == ['data.txt']
+    assert await workspace.exists('data.txt') is True
+    assert await workspace.working_dir() == '/workspace'
     assert workspace.ref == ref
 
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.run(['rm', 'data.txt'])
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.write_text('data.txt', 'changed')
-
-    assert backend.files['/workspace/data.txt'] == b'original'
-
-
-async def test_read_only_workspace_forwards_every_read_and_refuses_every_write() -> None:
-    backend = FakeWorkspace('read-only', {'/workspace/data.txt': b'original'})
-    workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
-
-    assert (await workspace.stat('data.txt')).name == 'data.txt'
-    assert [entry.name for entry in await workspace.list_dir('/workspace')] == ['data.txt']
-    assert await workspace.exists('data.txt') is True
-    assert await workspace.working_dir() == '/workspace'
-
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.make_dir('new-dir')
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):

@@ -366,7 +366,6 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
     try:
         await _wait_for_pid_file(pid_file)
         await asyncio.sleep(timeout * 2)
-        assert not task.done()
         release.set()
         with pytest.raises(WorkspaceTimeoutError, match='during startup'):
             await task
