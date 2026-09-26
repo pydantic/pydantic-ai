@@ -162,9 +162,16 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
         return await run_in_executor(read)
 
+    def _check_root(self, target: Path) -> None:
+        root = self._resolved_working_dir or self._working_dir
+        if target == root or root in target.parents:
+            if not root.is_dir():
+                raise WorkspaceUnavailableError(f'local workspace directory {root!s} does not exist')
+
     async def write_bytes(self, path: str, data: bytes) -> None:
         def write() -> None:
             target = self._path(path)
+            self._check_root(target)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
 
@@ -201,11 +208,20 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return await run_in_executor(list_entries)
 
     async def make_dir(self, path: str) -> None:
-        await run_in_executor(lambda: self._path(path).mkdir(parents=True, exist_ok=True))
+        def make() -> None:
+            target = self._path(path)
+            self._check_root(target)
+            target.mkdir(parents=True, exist_ok=True)
+
+        await run_in_executor(make)
 
     async def remove(self, path: str) -> None:
         def remove() -> None:
             target = self._path(path)
+            root = self._resolved_working_dir or self._working_dir
+            # Never allow a recursive delete to take the workspace itself or its parents.
+            if not target.is_symlink() and target.resolve() in (root, *root.parents):
+                raise ValueError('cannot remove the workspace root or its ancestor')
             if target.is_dir() and not target.is_symlink():
                 shutil.rmtree(target)
             else:
@@ -260,6 +276,12 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         try:
             await _shielded(spawn())
         except (FileNotFoundError, PermissionError) as error:
+            if isinstance(error, FileNotFoundError) and not await run_in_executor(
+                (self._resolved_working_dir or self._working_dir).is_dir
+            ):
+                raise WorkspaceUnavailableError(
+                    f'local workspace directory {self._working_dir!s} does not exist'
+                ) from error
             # Like `sh`, a program that is missing (127) or not executable (126) is a normal result.
             # Only the program itself: a missing `cwd` raises the same error types and must still raise.
             if isinstance(command, str) or error.filename != command[0]:

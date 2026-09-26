@@ -183,6 +183,15 @@ async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
         await workspace.realpath('x')
 
 
+async def test_shell_filesystem_refuses_to_remove_workspace_root(tmp_path: Path) -> None:
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    (tmp_path / 'safe').write_bytes(b'safe')
+    for path in ('.', str(tmp_path.parent)):
+        with pytest.raises(ValueError, match='workspace root'):
+            await workspace.remove(path)
+    assert (tmp_path / 'safe').read_bytes() == b'safe'
+
+
 async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
     fifo = tmp_path / 'fifo'
     os.mkfifo(fifo)

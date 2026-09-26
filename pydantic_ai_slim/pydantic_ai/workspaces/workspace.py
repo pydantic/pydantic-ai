@@ -7,6 +7,7 @@ import posixpath
 import shlex
 import uuid
 from collections.abc import Mapping, Sequence
+from typing import cast
 
 import anyio
 
@@ -204,6 +205,11 @@ class _ShellFilesystem(SupportsFilesystem):
         await self._raise_for_error(result, path)
 
     async def remove(self, path: str) -> None:
+        root = await cast(WorkspaceBackend, self._backend).working_dir()
+        # Refuse an ancestor before invoking `rm -rf`; never let removal of `.` destroy the environment.
+        normalized = posixpath.normpath(path)
+        if root == normalized or root.startswith(normalized.rstrip('/') + '/'):
+            raise ValueError('cannot remove the workspace root or its ancestor')
         quoted_path = shlex.quote(path)
         result = await self._backend.run(
             f'(test -e {quoted_path} || test -L {quoted_path}) && rm -rf {quoted_path}', shell=True

@@ -447,6 +447,29 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     await _assert_process_gone(int(pid_file.read_text()))
 
 
+async def test_removed_workspace_cannot_be_recreated_or_removed(tmp_path: Path):
+    root = tmp_path / 'workspace'
+    root.mkdir()
+    workspace = Workspace(LocalWorkspaceBackend(root))
+    await workspace.working_dir()
+    root.rmdir()
+    with pytest.raises(WorkspaceUnavailableError):
+        await workspace.run(['pwd'])
+    with pytest.raises(WorkspaceUnavailableError):
+        await workspace.write_bytes('sub/file', b'x')
+    with pytest.raises(WorkspaceUnavailableError):
+        await workspace.make_dir('sub')
+    assert not root.exists()
+
+    root.mkdir()
+    (root / 'file').write_bytes(b'safe')
+    with pytest.raises(ValueError, match='workspace root'):
+        await workspace.remove('.')
+    with pytest.raises(ValueError, match='workspace root'):
+        await workspace.remove(str(tmp_path))
+    assert (root / 'file').read_bytes() == b'safe'
+
+
 async def test_reading_fifo_fails_without_waiting_for_writer(tmp_path: Path):
     fifo = tmp_path / 'fifo'
     os.mkfifo(fifo)
