@@ -437,7 +437,7 @@ class Workspace(WorkspaceBackend):
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
 
         Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath], else `readlink` in
-        its shell; a backend with neither only normalizes the path.
+        its shell; filesystem-only backends only normalize the path and do not resolve symlinks.
         """
         if not posixpath.isabs(path):
             # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.

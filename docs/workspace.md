@@ -244,7 +244,31 @@ Commands are refused too, because a command could change files. A capability can
 For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `workspace=`, as the
 [reviewer above](#hand-the-workspace-to-another-agent) does. To write your own policy, subclass
 [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace], override the operations you want to
-change, and call `self.wrapped` for the rest.
+change, and call `self.wrapped` for the rest. `run()` bypasses file-method policies (including
+shell/grep tools built on it) unless the wrapper also overrides or refuses commands. Symlinks can
+also lead outside a file root; check `realpath` before a write, for example:
+
+```python
+import posixpath
+
+from pydantic_ai.workspaces import WrapperWorkspace, WorkspaceReadOnlyError
+
+
+class RootedWrites(WrapperWorkspace):
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        root = await self.wrapped.realpath(await self.working_dir())
+        target = await self.wrapped.realpath(await self.resolve(path))
+        if posixpath.commonpath((root, target)) != root:
+            raise WorkspaceReadOnlyError('outside the allowed root')
+        await self.wrapped.write_bytes(path, data)
+
+    async def run(self, command, **kwargs):
+        raise WorkspaceReadOnlyError('commands bypass file policy')
+```
+
+This is a preflight check, not a security boundary against concurrent symlink changes; use an
+isolated backend for untrusted commands. On a filesystem-only backend, `realpath` only normalizes
+text and cannot resolve symlinks, so do not use it to implement a symlink-aware jail.
 
 ## Choosing a run's workspace
 
@@ -487,7 +511,8 @@ class HostWorkspaceBackend(WorkspaceBackend):
   durable engine can retry them.
 
 A capability's `get_workspace` returns this backend, and users reach its provider-specific methods
-through `ctx.workspace.backend`.
+through `ctx.workspace.backend`. This is a provider API escape hatch and bypasses wrapper policies such as
+`read_only`; use `ctx.workspace` file/command methods when policies must apply.
 
 ### Checking a backend
 
