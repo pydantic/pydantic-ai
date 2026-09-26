@@ -145,7 +145,8 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_webrtc=False,
-        supports_async_tool_calls=True,
+        async_tool_call_mode='always',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_thinking=False,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,

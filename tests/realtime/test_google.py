@@ -20,7 +20,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, PydanticAIDeprecationWarning, UserError
 from pydantic_ai.messages import (
     BinaryAudio,
     BinaryContent,
@@ -819,9 +819,8 @@ def test_profile() -> None:
     assert GoogleRealtimeModel('gemini-3.1-flash-live-preview').profile.get('supported_native_tools') == frozenset(
         {WebSearchTool}
     )
-    # The default model is native-audio, the only Gemini family that honors `NON_BLOCKING`.
-    # Supported is not the same as enabled: it gates the opt-in `google_async_tool_calls` setting.
-    assert profile.get('supports_async_tool_calls') is True
+    # The default model is native-audio, where async tool calls are the session's choice.
+    assert profile.get('async_tool_call_mode') == 'optional'
     # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
     assert profile.get('supports_tool_return_schema') is True
     assert profile.get('audio_input_sample_rate') == 16000
@@ -929,20 +928,6 @@ def test_config_thinking_on_non_thinking_model_is_ignored(monkeypatch: pytest.Mo
     )
     config = model._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config is None
-
-
-def test_async_tool_calls_opt_in_resolution() -> None:
-    # Opt-in and capability-gated: off unless asked for, and on only where the model honors it.
-    # A Live model that doesn't (verified live: it accepts `NON_BLOCKING` and blocks anyway) warns
-    # rather than quietly promising speech that never arrives.
-    on = GoogleRealtimeModelSettings(google_async_tool_calls=True)
-    native_audio = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')
-    assert native_audio._async_tool_calls(None) is False  # pyright: ignore[reportPrivateUsage]
-    assert native_audio._async_tool_calls(GoogleRealtimeModelSettings()) is False  # pyright: ignore[reportPrivateUsage]
-    assert native_audio._async_tool_calls(on) is True  # pyright: ignore[reportPrivateUsage]
-
-    half_cascade = GoogleRealtimeModel('gemini-live-2.5-flash-preview')
-    assert half_cascade._async_tool_calls(on) is False  # pyright: ignore[reportPrivateUsage]
 
 
 def test_config_minimal_text_no_transcription_no_vad() -> None:
@@ -2591,33 +2576,221 @@ def test_thinking_false_still_disables_where_it_can() -> None:
 
 
 @pytest.mark.parametrize(
-    ('model_name', 'settings', 'expected'),
+    ('model_name', 'mode'),
     [
-        # Opt-in on a model that honors it; silently ignored on one that doesn't.
-        ('gemini-2.5-flash-native-audio-latest', {'google_async_tool_calls': True}, True),
-        ('gemini-2.5-flash-native-audio-latest', None, False),
-        ('gemini-3.1-flash-live-preview', {'google_async_tool_calls': True}, False),
-        # `gemini-3.8-live` honors the opt-in like the native-audio models do.
-        ('gemini-3.8-live', {'google_async_tool_calls': True}, True),
-        ('gemini-3.8-live', None, False),
-        # Forced on where the model has no blocking mode, whether or not the session asked.
-        ('gemini-3.8-live-extended-thinking', None, True),
-        ('gemini-3.8-live-extended-thinking', {'google_async_tool_calls': True}, True),
+        # Verified live: these keep talking and answer the user through a slow tool when asked to.
+        ('gemini-2.5-flash-native-audio-latest', 'optional'),
+        ('gemini-live-2.5-flash-native-audio', 'optional'),
+        ('gemini-3.8-live', 'optional'),
+        # Verified live: a `BLOCKING` declaration closes the session.
+        ('gemini-3.8-live-extended-thinking', 'always'),
+        # Verified live: these accept `NON_BLOCKING` and wait for the result anyway.
+        ('gemini-3.1-flash-live-preview', 'never'),
+        ('gemini-live-2.5-flash', 'never'),
     ],
 )
-def test_async_tool_calls_resolution(
-    model_name: str, settings: GoogleRealtimeModelSettings | None, expected: bool
-) -> None:
+def test_async_tool_call_mode_per_model(model_name: str, mode: str) -> None:
+    profile = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile
+    assert profile.get('async_tool_call_mode') == mode
+    # The deprecated flag stays readable, derived from the mode, with the values it always had.
+    assert profile.get('supports_async_tool_calls') is (mode != 'never')
+
+
+_NEVER_MODEL = 'gemini-3.1-flash-live-preview'
+_OPTIONAL_MODEL = 'gemini-3.8-live'
+_ALWAYS_MODEL = 'gemini-3.8-live-extended-thinking'
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings', 'expected'),
+    [
+        # `'never'` ignores the setting, silently.
+        (_NEVER_MODEL, None, False),
+        (_NEVER_MODEL, {'async_tool_calls': None}, False),
+        (_NEVER_MODEL, {'async_tool_calls': True}, False),
+        (_NEVER_MODEL, {'async_tool_calls': False}, False),
+        # `'optional'` follows it, and the model default (`None` or unset) is off.
+        (_OPTIONAL_MODEL, None, False),
+        (_OPTIONAL_MODEL, {'async_tool_calls': None}, False),
+        (_OPTIONAL_MODEL, {'async_tool_calls': True}, True),
+        (_OPTIONAL_MODEL, {'async_tool_calls': False}, False),
+        # `'always'` ignores it too, including an explicit `False`.
+        (_ALWAYS_MODEL, None, True),
+        (_ALWAYS_MODEL, {'async_tool_calls': None}, True),
+        (_ALWAYS_MODEL, {'async_tool_calls': True}, True),
+        (_ALWAYS_MODEL, {'async_tool_calls': False}, True),
+    ],
+)
+def test_async_tool_calls_resolution(model_name: str, settings: RealtimeModelSettings | None, expected: bool) -> None:
     model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession())))
     assert model._async_tool_calls(settings) is expected  # pyright: ignore[reportPrivateUsage]
 
 
-def test_async_tool_calls_opt_out_ignored_where_required() -> None:
-    """Asking for blocking tool calls on a model that has none is ignored, like any setting a model can't honor."""
+def _declared_behavior(model: GoogleRealtimeModel, settings: GoogleRealtimeModelSettings | None) -> str | None:
+    tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})
+    config = model._config('', [tool], model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert config.tools is not None
+    genai_tool = config.tools[0]
+    assert isinstance(genai_tool, genai_types.Tool) and genai_tool.function_declarations
+    behavior = genai_tool.function_declarations[0].behavior
+    return behavior.value if behavior else None
+
+
+def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
+    provider = GoogleProvider(client=_fake_client(_RecordingSession()))
     model = GoogleRealtimeModel(
-        'gemini-3.8-live-extended-thinking', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
+        _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(google_async_tool_calls=True)
     )
-    assert model._async_tool_calls({'google_async_tool_calls': False}) is True  # pyright: ignore[reportPrivateUsage]
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+        assert _declared_behavior(model, None) == 'NON_BLOCKING'
+    # Each settings layer is translated on its own, so a session-level setting still overrides a model-level
+    # one, whichever of the two spellings each uses.
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+        assert _declared_behavior(model, {'async_tool_calls': False}) == 'BLOCKING'
+    model = GoogleRealtimeModel(
+        _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(async_tool_calls=True)
+    )
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+        assert _declared_behavior(model, {'google_async_tool_calls': False}) == 'BLOCKING'
+    # Within one layer, the shared setting wins.
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+        assert _declared_behavior(model, {'google_async_tool_calls': True, 'async_tool_calls': False}) == 'BLOCKING'
+
+
+async def test_deprecated_google_async_tool_calls_setting_reaches_the_connection() -> None:
+    """The alias is honored at connect time too, where the connection learns to schedule results."""
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
+    )
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+        async with model.connect(
+            messages=[],
+            model_settings=GoogleRealtimeModelSettings(google_async_tool_calls=True),
+            model_request_parameters=ModelRequestParameters(),
+        ) as conn:
+            assert conn._async_tool_calls_enabled is True  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'profile', 'mode'),
+    [
+        # `True` asks for the choice, `False` takes it away, as the flag did.
+        (_NEVER_MODEL, {'supports_async_tool_calls': True}, 'optional'),
+        (_OPTIONAL_MODEL, {'supports_async_tool_calls': False}, 'never'),
+        # It never made a model with no blocking mode block, and still doesn't.
+        (_ALWAYS_MODEL, {'supports_async_tool_calls': False}, 'always'),
+        # An explicit mode in the same layer wins.
+        (_NEVER_MODEL, {'supports_async_tool_calls': False, 'async_tool_call_mode': 'optional'}, 'optional'),
+    ],
+)
+def test_deprecated_supports_async_tool_calls_profile_key(
+    model_name: str, profile: RealtimeModelProfile, mode: str
+) -> None:
+    model = GoogleRealtimeModel(
+        model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession())), profile=profile
+    )
+    with pytest.warns(PydanticAIDeprecationWarning, match='`supports_async_tool_calls` is deprecated'):
+        resolved = model.profile
+    assert resolved.get('async_tool_call_mode') == mode
+    assert resolved.get('supports_async_tool_calls') is (mode != 'never')
+
+
+def test_deprecated_supports_async_tool_calls_from_a_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A third-party provider's table is translated like a user's `profile=`."""
+
+    def legacy_profile(model_name: str) -> RealtimeModelProfile:
+        return RealtimeModelProfile(supports_async_tool_calls=True)
+
+    monkeypatch.setattr(GoogleProvider, 'realtime_model_profile', staticmethod(legacy_profile))
+    model = GoogleRealtimeModel(_NEVER_MODEL, provider=GoogleProvider(client=_fake_client(_RecordingSession())))
+    with pytest.warns(PydanticAIDeprecationWarning, match='`supports_async_tool_calls` is deprecated'):
+        assert model.profile.get('async_tool_call_mode') == 'optional'
+
+
+def test_callable_profile_passing_the_derived_flag_through_is_not_deprecated() -> None:
+    """A callable is handed the derived flag, and handing it back unchanged doesn't warn."""
+    seen: list[bool | None] = []
+
+    def keep(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+        seen.append(resolved.get('supports_async_tool_calls'))
+        return resolved
+
+    provider = GoogleProvider(client=_fake_client(_RecordingSession()))
+    profile = GoogleRealtimeModel(_OPTIONAL_MODEL, provider=provider, profile=keep).profile
+    assert seen == [True]
+    assert profile.get('async_tool_call_mode') == 'optional'
+    assert profile.get('supports_async_tool_calls') is True
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'change', 'mode'),
+    [
+        (_NEVER_MODEL, RealtimeModelProfile(supports_async_tool_calls=True), 'optional'),
+        (_OPTIONAL_MODEL, RealtimeModelProfile(supports_async_tool_calls=False), 'never'),
+        (_ALWAYS_MODEL, RealtimeModelProfile(supports_async_tool_calls=False), 'always'),
+        # A mode the callable changed too wins over the flag.
+        (_NEVER_MODEL, RealtimeModelProfile(supports_async_tool_calls=True, async_tool_call_mode='always'), 'always'),
+    ],
+)
+def test_callable_profile_changing_the_deprecated_flag_is_translated(
+    model_name: str, change: RealtimeModelProfile, mode: str
+) -> None:
+    def update(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+        return {**resolved, **change}
+
+    provider = GoogleProvider(client=_fake_client(_RecordingSession()))
+    model = GoogleRealtimeModel(model_name, provider=provider, profile=update)
+    with pytest.warns(PydanticAIDeprecationWarning, match='`supports_async_tool_calls` is deprecated'):
+        assert model.profile.get('async_tool_call_mode') == mode
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'flag', 'mode'),
+    [
+        (_NEVER_MODEL, True, 'optional'),
+        # The flag a replacement profile carries means what it says, even when it matches the one handed in.
+        (_OPTIONAL_MODEL, True, 'optional'),
+        (_OPTIONAL_MODEL, False, 'never'),
+    ],
+)
+def test_callable_profile_replacing_the_profile_with_the_deprecated_flag(
+    model_name: str, flag: bool, mode: str
+) -> None:
+    """A callable that builds a profile from scratch with only the flag gets the mode it implies."""
+    provider = GoogleProvider(client=_fake_client(_RecordingSession()))
+    model = GoogleRealtimeModel(
+        model_name, provider=provider, profile=lambda _: RealtimeModelProfile(supports_async_tool_calls=flag)
+    )
+    with pytest.warns(PydanticAIDeprecationWarning, match='`supports_async_tool_calls` is deprecated'):
+        assert model.profile.get('async_tool_call_mode') == mode
+
+
+def test_callable_profile_mutating_the_deprecated_flag_is_translated() -> None:
+    """A callable that sets the flag on the profile it's handed, and returns that, is still seen to change it."""
+
+    def mutate(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+        resolved['supports_async_tool_calls'] = True
+        return resolved
+
+    provider = GoogleProvider(client=_fake_client(_RecordingSession()))
+    model = GoogleRealtimeModel(_NEVER_MODEL, provider=provider, profile=mutate)
+    with pytest.warns(PydanticAIDeprecationWarning, match='`supports_async_tool_calls` is deprecated'):
+        assert model.profile.get('async_tool_call_mode') == 'optional'
+
+
+@pytest.mark.parametrize(('requires', 'mode'), [(True, 'always'), (False, 'never')])
+def test_deprecated_google_requires_async_tool_calls_profile_key(requires: bool, mode: str) -> None:
+    model = GoogleRealtimeModel(
+        _NEVER_MODEL,
+        provider=GoogleProvider(client=_fake_client(_RecordingSession())),
+        profile=GoogleRealtimeModelProfile(google_requires_async_tool_calls=requires),
+    )
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_requires_async_tool_calls` is deprecated'):
+        profile = model.profile
+    # `False` carried no signal of its own, so it leaves the model's mode alone.
+    assert profile.get('async_tool_call_mode') == mode
+    assert profile.get('supports_async_tool_calls') is requires
+    assert 'google_requires_async_tool_calls' not in profile
 
 
 @pytest.mark.parametrize(
@@ -2738,10 +2911,16 @@ def test_profile_recognizes_snapshot_variants_of_3_8_live(model_name: str, is_ex
     assert (
         profile.get('supports_thinking'),
         profile.get('google_thinking_always_enabled'),
-        profile.get('supports_async_tool_calls'),
+        profile.get('async_tool_call_mode'),
         profile.get('google_async_tool_calls_by_default'),
         profile.get('google_supports_async_tool_call_scheduling'),
-    ) == (is_extended_thinking, is_extended_thinking, True, True, not is_extended_thinking)
+    ) == (
+        is_extended_thinking,
+        is_extended_thinking,
+        'always' if is_extended_thinking else 'optional',
+        True,
+        not is_extended_thinking,
+    )
 
 
 @pytest.mark.parametrize(
@@ -2867,7 +3046,7 @@ def test_turn_stays_open_while_the_exchange_is_stalled(
     [
         # The 3.8 family defaults an unset behavior to non-blocking, so a blocking call has to say so.
         ('gemini-3.8-live', None, 'BLOCKING'),
-        ('gemini-3.8-live', {'google_async_tool_calls': True}, 'NON_BLOCKING'),
+        ('gemini-3.8-live', {'async_tool_calls': True}, 'NON_BLOCKING'),
         ('gemini-3.8-live-extended-thinking', None, 'NON_BLOCKING'),
         # Every older Live model keeps the declaration it always had: unset means blocking there.
         ('gemini-2.5-flash-native-audio-latest', None, None),

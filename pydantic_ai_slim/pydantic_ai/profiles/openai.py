@@ -511,8 +511,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_seeding_audio': False,
         'supports_webrtc': False,
         # Speech and delegated work run independently: the Live model can keep the conversation going
-        # while the backend works, so a tool call doesn't hold up speech.
-        'supports_async_tool_calls': True,
+        # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
+        'async_tool_call_mode': 'always',
         'supports_thinking': False,
         'emits_input_speech_events': False,
         'synthesizes_turn_boundary': True,
@@ -541,10 +541,11 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_seeding_images': True,
         'supports_seeding_audio': True,
         # The realtime models keep talking while a tool call is outstanding — they're tuned to
-        # emit filler ("let me check that") rather than going silent — so there's no per-tool
+        # emit filler ("let me check that") rather than going silent — and answer the user before the
+        # result is back (verified live 2026-09-25 with a 15-second tool), so there's no per-tool
         # wire flag to set, unlike Gemini. The session already runs tools in the background and
         # defers `response.create` while a response is active, so this is true end to end.
-        'supports_async_tool_calls': True,
+        'async_tool_call_mode': 'always',
         'emits_input_speech_events': True,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,

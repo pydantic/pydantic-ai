@@ -652,8 +652,9 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=False,
         supports_thinking=True,  # native-audio and 3.x Live models take a thinking config
-        # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
-        supports_async_tool_calls=True,
+        # The session's choice, via the `async_tool_calls` setting, which is off by default.
+        async_tool_call_mode='optional',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
         supports_tool_return_schema=True,
         # Search grounding only: Live models reject or silently ignore code execution and URL context.
@@ -669,7 +670,6 @@ def test_profile_allow_seeding() -> None:
         # Thinking is optional, tool calls block unless opted in, and an async result can be scheduled.
         google_thinking_always_enabled=False,
         google_async_tool_calls_by_default=False,
-        google_requires_async_tool_calls=False,
         google_supports_async_tool_call_scheduling=True,
         google_supports_affective_dialog=True,
         # A typed turn doesn't see an image sent just before it as a video frame (verified live).
