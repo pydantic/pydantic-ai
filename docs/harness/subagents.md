@@ -33,6 +33,9 @@ orchestrator = Agent(
 
 result = orchestrator.run_sync('Research the history of TLS and write a one-paragraph summary.')
 print(result.output)
+"""
+TLS grew out of Netscape's SSL in the mid-1990s and was standardized by the IETF as TLS 1.0 in 1999. Versions 1.1 and 1.2 hardened it against attacks, and TLS 1.3 (2018) simplified the handshake and removed legacy ciphers.
+"""
 ```
 
 A delegate's name -- how the parent model refers to it, and how it is listed in the prompt -- is the agent's own `name`, or a `SubAgent(name=...)` override. Two delegates resolving to the same name is an error, and an agent with no name and no override is rejected.

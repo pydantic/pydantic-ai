@@ -34,6 +34,7 @@ from pydantic_ai_harness import Pylon
 agent = Agent('openai:gpt-5.6-sol', capabilities=[Pylon()])
 result = agent.run_sync('Summarize my open Pylon issues')
 print(result.output)
+#> You have 3 open issues: two billing questions and one login bug report.
 ```
 
 Set `PYLON_ACCESS_TOKEN` to a Pylon access token, or pass `auth=` a token. On your own machine, `auth='oauth'` signs you in through the browser instead. To serve several users from one agent, pass a function instead (see [Per-user credentials](#per-user-credentials)). The agent sees the same issues, accounts, and contacts that user sees in the Pylon dashboard.

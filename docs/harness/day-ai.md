@@ -84,7 +84,7 @@ Day AI's server does not mark any tool as read-only, so there is no `read_only` 
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call, which suits tools that create or update CRM records and send notifications:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.messages import DeferredToolRequests
 from pydantic_ai_harness import DayAI

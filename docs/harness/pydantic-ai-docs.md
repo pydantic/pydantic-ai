@@ -38,6 +38,9 @@ agent = Agent(
 
 result = agent.run_sync('Read the toolsets docs, then explain how to build a FunctionToolset.')
 print(result.output)
+"""
+Create `FunctionToolset(tools=[...])` with your functions, or decorate them with `@toolset.tool`, then pass it to `Agent(toolsets=[...])`.
+"""
 ```
 
 The capability also adds a short static instruction telling the model that the `read_pyai_docs` tool exists and to read the relevant topic before authoring or modifying a Pydantic AI capability, hook, tool, or toolset, rather than relying on memory. The instruction is cache-stable, so it does not invalidate the prompt-cache prefix between turns.

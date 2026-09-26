@@ -29,7 +29,9 @@ agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
 
 result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
 print(result.output)
-#> Found it: `parse()` returned None on empty input instead of raising. Fixed in src/parser.py; tests pass now.
+"""
+Found it: `parse()` returned None on empty input instead of raising. Fixed in src/parser.py; tests pass now.
+"""
 ```
 
 Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.

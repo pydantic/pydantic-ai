@@ -39,7 +39,7 @@ export MODAL_TOKEN_SECRET=...
 
 Add `ModalSandbox` to the agent:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import ModalSandbox
 
@@ -91,18 +91,20 @@ ModalSandbox(sandbox_id='sb-abc123')
 To share a sandbox across runs while controlling its lifetime, create and enter a
 `ModalSandboxSession` yourself:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import ModalSandbox
 from pydantic_ai_harness.modal_sandbox import ModalSandboxSession
 
-async with ModalSandboxSession(image='python:3.12-slim', sandbox_timeout=1800) as session:
-    agent = Agent(
-        'anthropic:claude-sonnet-4-6',
-        capabilities=[ModalSandbox(session=session, max_command_timeout=600)],
-    )
-    await agent.run('Install the project dependencies.')
-    await agent.run('Run the test suite in the same sandbox.')
+
+async def main():
+    async with ModalSandboxSession(image='python:3.12-slim', sandbox_timeout=1800) as session:
+        agent = Agent(
+            'anthropic:claude-sonnet-4-6',
+            capabilities=[ModalSandbox(session=session, max_command_timeout=600)],
+        )
+        await agent.run('Install the project dependencies.')
+        await agent.run('Run the test suite in the same sandbox.')
 ```
 
 Size the session's `sandbox_timeout` to the whole workload; the default 300s
@@ -237,7 +239,7 @@ capabilities:
       sandbox_timeout: 600
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import ModalSandbox
 

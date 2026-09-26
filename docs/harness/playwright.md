@@ -59,6 +59,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[PlaywrightBrowser()])
 async def main():
     result = await agent.run('Open https://example.com and tell me the page title.')
     print(result.output)
+    #> The page title is "Example Domain".
 ```
 
 `PlaywrightBrowser` is a [capability](../capabilities/overview.md): it registers the

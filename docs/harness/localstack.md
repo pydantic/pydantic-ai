@@ -41,6 +41,7 @@ agent = Agent(
 
 result = agent.run_sync('Create an S3 bucket called reports and list all buckets.')
 print(result.output)
+#> Created the `reports` bucket. Buckets: reports.
 ```
 
 By default the agent connects to a LocalStack instance you started separately --

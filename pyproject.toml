@@ -463,7 +463,8 @@ markers = ["modal_live: runs against a real Modal control plane; needs credentia
 filterwarnings = [
     "error",
     # Experimental harness capabilities warn on import by design; tests assert it where it matters.
-    "ignore::pydantic_ai_harness.experimental.HarnessExperimentalWarning",
+    # Matched by message: the warning class lives in a package some install cells do not have.
+    "ignore:`pydantic_ai_harness\\.experimental\\.[a-z_.]+` is experimental:UserWarning",
     # browser-use's observability decorators call it at import time.
     "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:browser_use",
     # boto3

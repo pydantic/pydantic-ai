@@ -32,6 +32,7 @@ agent = Agent(
 
 result = agent.run_sync('Summarize the coding-assistant setup in this repo.')
 print(result.output)
+#> The repo has a CLAUDE.md and an AGENTS.md with coding conventions.
 ```
 
 ### 1. Walk-up instruction autoload (on by default)

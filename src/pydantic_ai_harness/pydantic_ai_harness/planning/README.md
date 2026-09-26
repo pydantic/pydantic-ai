@@ -82,6 +82,9 @@ Built-in stores: `InMemoryPlanStore` (default), `SqlitePlanStore` (local file, s
 The tail reminder reads the store on every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. That is deliberate: a plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`, and `PlanStore` is a protocol precisely so you can wrap one:
 
 ```python
+from pydantic_ai_harness.planning import PlanItem, PlanStore
+
+
 class BestEffort:
     """Serve the last known plan when the backing store is unreachable."""
 
@@ -103,13 +106,19 @@ class BestEffort:
 A shared store is the whole handoff mechanism between two runs. One agent writes the plan, a second one executes it, and the plan is the only state that crosses between them:
 
 ```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import Planning
+from pydantic_ai_harness.planning import SqlitePlanStore
+
 store = SqlitePlanStore('plan.db', session='issue-403')
 
 planner = Agent('anthropic:claude-opus-4-7', capabilities=[Planning(store=store)])
 executor = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning(store=store)])
 
-await planner.run('Investigate the issue and write a plan. Do not implement anything.')
-await executor.run('Implement the plan.')
+
+async def main():
+    await planner.run('Investigate the issue and write a plan. Do not implement anything.')
+    await executor.run('Implement the plan.')
 ```
 
 The executor starts with no `message_history`, so it never pays for the planner's investigation. Its first request carries only the new prompt plus the plan reminder, which the capability rebuilds from the store. That is why the two agents can run on different models: a large-context model can do the reading and the reasoning, and a smaller one can execute against the resulting checklist.

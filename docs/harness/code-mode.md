@@ -55,11 +55,12 @@ def get_weather(city: str) -> dict:
 
 result = agent.run_sync("What's the weather in Paris and Tokyo, in Celsius?")
 print(result.output)
+#> Paris is 22.2°C and Tokyo is 22.2°C, both sunny.
 ```
 
 Inside a single `run_code` call, the model writes code like the following (illustrative -- the exact code the model emits will vary):
 
-```python
+```python {lint="skip" test="skip"}
 import asyncio
 
 paris, tokyo = await asyncio.gather(
@@ -153,7 +154,7 @@ That fold-in grows `run_code`'s description, which invalidates the prompt-cache 
 
 The last expression in the snippet is automatically captured as the return value -- the model does not need to `print()`. An assignment stores a value in the REPL but does not return it. A final expression that evaluates to `None` is also treated as no result. Without a non-`None` final expression or print output, `run_code` returns `{}`. Put the assigned name on the final line:
 
-```python
+```python {lint="skip" test="skip"}
 result = await get_weather(city='Paris')
 result
 ```
@@ -236,7 +237,7 @@ agent = Agent(
 
 For example, suppose the model produces this code one line at a time:
 
-```python
+```python {lint="skip" test="skip"}
 first = await fetch_item(item_id=1)
 second = await fetch_item(item_id=2)
 [first, second]
@@ -326,7 +327,9 @@ result = agent.run_sync(
     'Call both tools independently with the literal keyword argument title="Frankenstein".'
 )
 print(result.output)
+#> Frankenstein was written by Mary Shelley and published in 1818.
 print(code_mode.speculation_stats)
+#> SpeculationStats(launched=0, adopted=0, evicted=0)
 ```
 
 The model chooses the snippet, so the prompt does not guarantee speculative launches.
@@ -368,7 +371,7 @@ arm claims its result and the other launch is discarded.
 Lookahead stops at a known tool call that is not eligible, including a `sequential` tool.
 For example, if `update_record` is not eligible and `search` is eligible:
 
-```python {test="skip"}
+```python {lint="skip" test="skip"}
 await update_record(key='status', value='ready')
 await search(query='status')  # Runs after the update, not speculatively ahead of it.
 ```
@@ -576,7 +579,7 @@ Both parameters are fixed when the capability is built, so construct `CodeMode` 
 
 Reach for `mount` when the agent works with real files: analyzing a dataset you've dropped in a folder and writing a report back, editing a checkout, or processing a batch of documents. Sandboxed `pathlib` code reads and writes under the mounted path. (For environment variables or the clock, use `os_access` instead.)
 
-```python
+```python {test="skip"}
 from pydantic_monty import MountDir
 
 from pydantic_ai import Agent
@@ -668,7 +671,7 @@ capabilities:
   - CodeMode: {}
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 

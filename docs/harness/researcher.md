@@ -28,6 +28,9 @@ agent = Agent('openai:gpt-5.6-sol', capabilities=[Researcher()])
 
 result = agent.run_sync('What changed in the last three major releases of Django?')
 print(result.output)
+"""
+Django 5.0 added field groups and database-computed defaults, 5.1 added LoginRequiredMiddleware, and 5.2 added composite primary keys.
+"""
 ```
 
 The same agent works with every Pydantic AI interface: [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) for terminal chat, [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) for a browser chat UI.

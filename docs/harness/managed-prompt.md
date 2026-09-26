@@ -73,6 +73,7 @@ agent = Agent(
 
 result = agent.run_sync('My order never arrived.')
 print(result.output)
+#> I'm sorry to hear that. Could you share your order number so I can check its status?
 ```
 
 Pinning `label='production'` is the recommended default: the resolved value only changes on a

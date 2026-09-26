@@ -49,6 +49,9 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[YouSearch(), YouResea
 
 result = agent.run_sync('What changed in the latest stable Python release?')
 print(result.output)
+"""
+Python 3.14 added template string literals, deferred evaluation of annotations, and an officially supported free-threaded build.
+"""
 ```
 
 Use `YouSearch` on its own if you only need search and page reads.

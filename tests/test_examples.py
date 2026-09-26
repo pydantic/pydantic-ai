@@ -525,9 +525,11 @@ def test_docs_examples(
     env.set('TAVILY_API_KEY', 'testing')
     # docs/harness/: capabilities that read their credential when constructed
     env.set('EXA_API_KEY', 'testing')
+    env.set('DAY_AI_ACCESS_TOKEN', 'testing')
     env.set('GITHUB_TOKEN', 'testing')
     env.set('GRAIN_ACCESS_TOKEN', 'testing')
     env.set('LINEAR_ACCESS_TOKEN', 'testing')
+    env.set('ORDINAL_ACCESS_TOKEN', 'testing')
     env.set('PYLON_ACCESS_TOKEN', 'testing')
     env.set('YDC_API_KEY', 'testing')
     env.set('ZAI_API_KEY', 'testing')
@@ -1022,6 +1024,49 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'My order never arrived.': "I'm sorry to hear that. Could you share your order number so I can check its status?",
     'Find out why tests/test_parser.py fails and fix the bug it caught.': (
         'Found it: `parse()` returned None on empty input instead of raising. Fixed in src/parser.py; tests pass now.'
+    ),
+    'Find ThinkingPartDelta and confirm the callable allowance': (
+        'ThinkingPartDelta is defined in pydantic_ai/messages.py and accepts a callable.'
+    ),
+    'Where is ThinkingPartDelta defined?': 'ThinkingPartDelta is defined in pydantic_ai/messages.py.',
+    'Which models emit it?': 'Models that stream thinking, such as Anthropic and OpenAI reasoning models.',
+    'Read _apply_provider_details_delta and check the path': (
+        'The path is correct: provider details are merged into the part.'
+    ),
+    'List the Python files and summarize the largest one.': (
+        'The largest Python file is app.py, which defines the web routes.'
+    ),
+    'Start the dev server with `npm run dev`, wait for it to boot, then curl http://localhost:3000/health and report the status.': (
+        'The dev server is running and /health returned 200 OK.'
+    ),
+    'Check example.com and tell me the price of the Pro plan.': 'The Pro plan costs $20 per month.',
+    'Log in to app.example.com with the stored credentials.': 'Logged in to app.example.com.',
+    'Now open the latest report.': 'The latest report is open.',
+    'Fix the flaky checkout test and add a regression test.': (
+        'Fixed the race in the checkout test and added a regression test.'
+    ),
+    'Design a zero-downtime database migration. Consult the advisor before choosing a plan.': (
+        'Use an expand-and-contract migration: add the column, backfill, then switch reads.'
+    ),
+    "What's the weather in Paris and Tokyo, in Celsius?": 'Paris is 22.2°C and Tokyo is 22.2°C, both sunny.',
+    'Use run_code to look up the author and publication year of Frankenstein. Call both tools independently with the literal keyword argument title="Frankenstein".': (
+        'Frankenstein was written by Mary Shelley and published in 1818.'
+    ),
+    "What's the weather in Paris?": 'It is 72°F and sunny in Paris.',
+    'Refactor the auth module and add tests.': 'I refactored the auth module and added tests.',
+    'Investigate the issue and write a plan. Do not implement anything.': 'I wrote a plan with three steps.',
+    'Implement the plan.': 'All plan steps are complete.',
+    'Create an S3 bucket called reports and list all buckets.': 'Created the `reports` bucket. Buckets: reports.',
+    'Summarize the coding-assistant setup in this repo.': (
+        'The repo has a CLAUDE.md and an AGENTS.md with coding conventions.'
+    ),
+    'Summarize the open pull requests.': 'There are 3 open pull requests: two bug fixes and a docs update.',
+    'Draft release notes from them.': 'Fixed two bugs and updated the docs.',
+    'Compare the two latest releases.': 'The latest release adds streaming support; the one before fixed retries.',
+    'Research the history of TLS and write a one-paragraph summary.': (
+        "TLS grew out of Netscape's SSL in the mid-1990s and was standardized by the IETF as TLS 1.0 in 1999. "
+        'Versions 1.1 and 1.2 hardened it against attacks, and TLS 1.3 (2018) simplified the handshake and removed '
+        'legacy ciphers.'
     ),
 }
 
