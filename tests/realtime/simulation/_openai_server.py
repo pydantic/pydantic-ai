@@ -320,6 +320,9 @@ class OpenAIServer:
                 # The call was never made on this conversation (or was abandoned): the real API refuses it.
                 self._emit(session, _error('invalid_value', f'No tool call found with call_id {call_id!r}.'))
                 return
+            if call.output_received:
+                # Replayed with the rest of the history on a re-dial: already part of the conversation.
+                return
             call.output_received = True
             self.truth.add_input(call_id, 'tool_output')
             session.unanswered_tool_outputs.append(call_id)

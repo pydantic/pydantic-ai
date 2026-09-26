@@ -120,20 +120,55 @@ def test_known_late_cancel_drops_a_finished_reply() -> None:
     reproduce('SIM-10', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
 
 
-@known('OR9')
-def test_known_push_to_talk_turn_filed_after_its_answer() -> None:
-    """The transcript of a committed turn arrives after its answer is recorded."""
+@known('SIM-11')
+def test_known_turn_spoken_before_a_reply_filed_before_it() -> None:
+    """The user started talking, the model answered a typed turn, and only then was the spoken turn committed."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
+        sim.send_text()
+        sim.settle()
         sim.commit_audio()
-        sim.create_response()
-        sim.speak()
-        sim.finish()
-        sim.transcribe()
         sim.settle()
 
-    reproduce('OR9', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
+    reproduce('SIM-11', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
+
+
+@known('SIM-12')
+def test_known_refused_tool_results_request_leaves_wait_hanging() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.reject_next('response')
+        sim.finish()
+        sim.settle()
+
+    reproduce('SIM-12', OpenAISimulation(), scenario)
+
+
+@known('OR9')
+def test_known_turn_committed_by_hand_under_server_vad_filed_late() -> None:
+    """Server VAD hears the user start; the app commits the buffer by hand before VAD commits the rest."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.commit_audio()
+        sim.settle()
+
+    reproduce('OR9', OpenAISimulation(), scenario)
+
+
+@known('SIM-13')
+def test_known_gemini_cut_off_tool_turn_ends_the_wait_early() -> None:
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools(deliver=False)
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+
+    reproduce('SIM-13', GeminiSimulation(), scenario)
 
 
 @known('E')
@@ -549,6 +584,7 @@ def test_scenario_openai_server_vad_edges() -> None:
 
 def test_scenario_openai_refusals() -> None:
     def scenario(sim: OpenAISimulation) -> None:
+        sim.interrupt(mode='played_ms')
         sim.reject_next('content')
         sim.send_text()
         sim.wait_for_reply()
@@ -573,6 +609,7 @@ def test_scenario_openai_connection_faults() -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
         sim.speak()
+        sim.call_tool()
         sim.finish()
         sim.settle()
         sim.fail_next_send(fault='ambiguous')
@@ -602,6 +639,24 @@ def test_scenario_xai_resumption() -> None:
         sim.send_text()
 
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(dialect='xai')), scenario)
+
+
+def test_push_to_talk_turn_filed_before_its_answer() -> None:
+    """The transcript of a committed turn arrives after its answer is recorded (OR9, fixed by #8764).
+
+    The turn is still filed by inserting it into recorded history, which is known finding E.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.commit_audio()
+        sim.create_response()
+        sim.speak()
+        sim.finish()
+        sim.transcribe()
+        sim.settle()
+
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
 
 
 def test_scenario_gemini_barge_in_and_faults() -> None:

@@ -40,12 +40,6 @@ class Finding:
         return f'{self.id}: {self.title} (tracked by {self.tracked_by})'
 
 
-def _input_kind(sim: Simulation, violation: InvariantViolation) -> str | None:
-    key = violation.context.get('input')
-    input_ = sim.truth.input(key) if isinstance(key, str) else None
-    return input_.kind if input_ is not None else None
-
-
 def _inserted_user_speech(sim: Simulation, violation: InvariantViolation) -> bool:
     from ._invariants import is_user_speech_request
 
@@ -92,6 +86,23 @@ RAISING_TOOL_HANG = Finding(
 )
 
 
+def _tool_results_request_refused(sim: Simulation, violation: InvariantViolation) -> bool:
+    return any(input_.kind == 'tool_output' and input_.refused_read is not None for input_ in sim.truth.inputs)
+
+
+REFUSED_TOOL_RESULTS_REQUEST = Finding(
+    id='SIM-12',
+    title=(
+        'a response request for tool results that the provider refuses keeps its reply reservation (a refused request '
+        'for a user turn releases it), so `wait_for_reply()` hangs'
+    ),
+    tracked_by='the reply reservations (#8765, redesign P3); new, found by this simulator',
+    codes=frozenset({'wait.hang'}),
+    providers=OPENAI_PROTOCOL,
+    matches=_tool_results_request_refused,
+)
+
+
 def _late_cancel(sim: Simulation, violation: InvariantViolation) -> bool:
     return getattr(getattr(sim, 'server', None), 'late_cancels', 0) > 0
 
@@ -106,15 +117,6 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
     codes=frozenset({'response.truncated', 'response.missing'}),
     providers=OPENAI_PROTOCOL,
     matches=_late_cancel,
-)
-
-USER_TURN_ORDER = Finding(
-    id='OR9',
-    title='a spoken user turn is filed on the wrong side of a response (push-to-talk, barge-in, transcription off)',
-    tracked_by='#8764',
-    codes=frozenset({'history.order'}),
-    providers=ALL,
-    matches=lambda sim, violation: _input_kind(sim, violation) == 'speech',
 )
 
 ANCHORED_USER_TURNS = Finding(
@@ -226,6 +228,57 @@ SENT_BEFORE_REPLY_STARTED = Finding(
 )
 
 
+def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A spoken turn committed after a response ended, whose voiced audio started streaming before its content arrived."""
+    input_ = sim.truth.input(violation.context.get('input', ''))
+    response = sim.truth.responses.get(violation.context.get('response', ''))
+    if input_ is None or response is None or input_.kind != 'speech' or response.seq_end is None:
+        return False
+    return input_.seq > response.seq_end and any(
+        operation.name == 'send_audio' and (response.content_read is None or operation.issued < response.content_read)
+        for operation in sim.operations
+    )
+
+
+SPEAKING_ORDER = Finding(
+    id='SIM-11',
+    title=(
+        'a spoken turn whose voiced audio began streaming before a response said anything, but which the provider '
+        'committed after that response ended, is recorded before it (speaking order, since #8764), while the '
+        "provider's conversation has it after"
+    ),
+    tracked_by=(
+        'a design question, not necessarily a bug: which order history follows when the two differ '
+        '(redesign P5, history projected from an append-only log); new, found by this simulator'
+    ),
+    codes=frozenset({'history.order'}),
+    providers=ALL,
+    matches=_spoken_before_reply,
+)
+
+
+def _committed_by_hand_under_server_vad(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A spoken turn that reached the server before a response started, with a manual commit in the trace."""
+    input_ = sim.truth.input(violation.context.get('input', ''))
+    response = sim.truth.responses.get(violation.context.get('response', ''))
+    if input_ is None or response is None or input_.kind != 'speech':
+        return False
+    return input_.seq < response.seq_start and any(operation.name == 'commit_audio' for operation in sim.operations)
+
+
+COMMITTED_BY_HAND_UNDER_SERVER_VAD = Finding(
+    id='OR9',
+    title=(
+        'a spoken turn committed by hand while server VAD is on is filed after the reply to a turn VAD committed '
+        'later (the rest of OR9: push-to-talk, barge-in, and transcription off were fixed by #8764)'
+    ),
+    tracked_by='#8764 (follow-up)',
+    codes=frozenset({'history.order'}),
+    providers=OPENAI_PROTOCOL,
+    matches=_committed_by_hand_under_server_vad,
+)
+
+
 def _waited_before_reply_content(sim: Simulation, violation: InvariantViolation) -> bool:
     """The wait began after the client read that a response started, but before any of its content."""
     response = sim.truth.responses.get(violation.context.get('response', ''))
@@ -275,11 +328,13 @@ KNOWN_FINDINGS: list[Finding] = [
     WAIT_BEFORE_REPLY_CONTENT,
     RESERVATION_TAKEN_BY_OTHER_RESPONSE,
     RAISING_TOOL_HANG,
-    USER_TURN_ORDER,
+    REFUSED_TOOL_RESULTS_REQUEST,
     ANCHORED_USER_TURNS,
     REPEATED_TERMINAL,
     LATE_CANCEL_DROPS_CONTENT,
     SENT_BEFORE_REPLY_STARTED,
+    SPEAKING_ORDER,
+    COMMITTED_BY_HAND_UNDER_SERVER_VAD,
     LOST_UNSTARTED_REQUEST,
     RECEIVE_LOOP_SEND_FAILURE,
 ]
@@ -315,6 +370,21 @@ GEMINI_BATCH_RESERVATIONS = Finding(
     codes=frozenset({'wait.hang'}),
     providers=GEMINI,
     matches=_parallel_calls,
+)
+
+CUT_OFF_TOOL_TURN_COMPLETE = Finding(
+    id='SIM-13',
+    title=(
+        'a typed turn that cuts off a model turn waiting on tool results (Gemini cancels the calls) gets its '
+        "`wait_for_reply()` ended by the cut-off turn's `turn_complete`, before its own reply"
+    ),
+    tracked_by=(
+        'redesign P2/P3 (turn boundaries mapped to the exchange they close; obligations resolved only by their answer); '
+        'related to #8766; new, found by this simulator'
+    ),
+    codes=frozenset({'wait.early'}),
+    providers=GEMINI,
+    matches=lambda sim, violation: any(call.cancelled_by_server for call in sim.truth.tool_calls.values()),
 )
 
 GEMINI_EARLY_TURN_COMPLETE = Finding(
@@ -437,6 +507,7 @@ KNOWN_FINDINGS.extend(
         GEMINI_SPLIT_PARALLEL_CALLS,
         GEMINI_BATCH_RESERVATIONS,
         GEMINI_EARLY_TURN_COMPLETE,
+        CUT_OFF_TOOL_TURN_COMPLETE,
         GEMINI_RESUMED_SESSION_FORGETS_CALLS,
         # The general reservation leaks last: a more specific finding explains a hang better.
         MERGED_REQUESTS_LEAK,

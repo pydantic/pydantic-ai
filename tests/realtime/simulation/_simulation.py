@@ -199,7 +199,6 @@ class Simulation(ABC):
         self._close_event: asyncio.Event | None = None
         self._play_permits = 0
         self._player_wakeup: asyncio.Event | None = None
-        self.played_chunks = 0
         self._text_counter = 0
         self._image_counter = 0
         self._checker: _invariants.Checker | None = None
@@ -328,7 +327,6 @@ class Simulation(ABC):
                     await self._player_wakeup.wait()
                 self._play_permits -= 1
                 await anext(view)
-                self.played_chunks += 1
         except StopAsyncIteration:
             return
 
@@ -462,7 +460,7 @@ class Simulation(ABC):
             for _ in range(chunks):
                 await session.send_audio(chunk)
 
-        self._issue('send_audio', stream, caller='mic', ticks=ticks)
+        self._issue('send_audio' if voiced else 'send_silence', stream, caller='mic', ticks=ticks)
 
     def input_audio_chunk(self, *, voiced: bool) -> bytes:
         rate = self._require_session().audio_input_sample_rate
@@ -495,11 +493,20 @@ class Simulation(ABC):
             if mode == 'played_bytes':
                 await session.interrupt(played_bytes=session.played_audio_bytes)
             elif mode == 'played_ms':
-                await session.interrupt(played_ms=self.played_chunks * 100)
+                await session.interrupt(played_ms=self._played_ms_of_latest_reply())
             else:
                 await session.interrupt()
 
         self._issue(f'interrupt_{mode}', interrupt, ticks=ticks)
+
+    def _played_ms_of_latest_reply(self) -> int:
+        """What an app counting its own playback passes as `played_ms`: how much of the latest reply's audio it played."""
+        replies = sorted((r for r in self.truth.responses.values() if r.audio_bytes), key=lambda r: r.number)
+        if not replies:
+            return 0
+        earlier = sum(reply.audio_bytes for reply in replies[:-1])
+        played = min(max(0, self._require_session().played_audio_bytes - earlier), replies[-1].audio_bytes)
+        return played // self.output_bytes_per_ms
 
     @step
     def play(self, chunks: int = 1, ticks: int | None = None) -> None:
