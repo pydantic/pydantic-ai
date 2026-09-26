@@ -4301,3 +4301,165 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
 
     assert events[0] == RealtimeSessionReconnectEvent(state_restored=False)
     assert not [frame for frame in fresh.sent if 'conversation.item.create' in frame]
+
+
+class _DroppableWebSocket:
+    """A socket fed live: `drop()` closes it, after which sends raise like a closed `websockets` socket."""
+
+    close_code: int | None = 1006
+    close_reason: str = ''
+
+    def __init__(self) -> None:
+        self._inbox: asyncio.Queue[str | None] = asyncio.Queue()
+        for frame in (_created(), _updated()):
+            self._inbox.put_nowait(json.dumps(sdk_frame(json.loads(frame))))
+        self.sent: list[dict[str, Any]] = []
+        self.dropped = False
+
+    async def recv(self) -> Any:
+        return await self._inbox.get()
+
+    async def send(self, data: str) -> None:
+        if self.dropped:
+            raise rt_openai.websockets.ConnectionClosed(None, None)
+        self.sent.append(json.loads(data))
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        while (frame := await self._inbox.get()) is not None:
+            yield frame
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+
+    def push(self, frame: dict[str, Any]) -> None:
+        self._inbox.put_nowait(json.dumps(sdk_frame(frame)))
+
+    def drop(self) -> None:
+        self.dropped = True
+        self._inbox.put_nowait(None)
+
+
+class _GatedConnectSequence:
+    """Hands out `sockets` in order; every dial after the first waits for `release`."""
+
+    def __init__(self, sockets: list[_DroppableWebSocket]) -> None:
+        self._sockets = list(sockets)
+        self._dials = 0
+        self.redialing = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _GatedConnectSequence:
+        return self
+
+    async def __aenter__(self) -> _DroppableWebSocket:
+        self._dials += 1
+        if self._dials > 1:
+            self.redialing.set()
+            await self.release.wait()
+        return self._sockets.pop(0)
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+@pytest.mark.anyio
+async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `response.create` that hit the dead socket never reached the server, so it isn't left active.
+
+    Left active, the reconnect would re-ask for it as an unstarted response, although the caller was
+    told the request failed.
+    """
+    first, second = _DroppableWebSocket(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        first.drop()
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await conn.send(CreateResponse())
+        assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+        connect.release.set()
+        async for event in conn:  # pragma: no branch
+            assert event == RealtimeSessionReconnectEvent(state_restored=False)
+            break
+
+    assert [frame['type'] for frame in second.sent] == ['session.update']
+
+
+@pytest.mark.anyio
+async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deferred `response.create` that the receive loop fails to send is still asked for after the reconnect.
+
+    Only a caller's own failed request is taken back (it was told it failed); the receive loop's has no
+    caller to tell, so the reply the second turn is waiting for must come from the new connection.
+    """
+    first, second = _DroppableWebSocket(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    connect.release.set()
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        await conn.send('first')  # asks for response A, now active
+        first.push({'type': 'response.created', 'response': {'id': 'A'}})
+        events = conn.__aiter__()
+        await conn.send('second')  # deferred behind A
+        first.dropped = True  # the link is dead for writes before A's terminal arrives
+        first.push(_response_done({'id': 'A', 'status': 'completed', 'output': []}))
+        first.drop()
+        async for event in events:  # pragma: no branch
+            assert isinstance(event, RealtimeSessionReconnectEvent)
+            break
+
+    assert [frame['type'] for frame in second.sent] == ['session.update', 'response.create']
+
+
+@pytest.mark.anyio
+async def test_a_stale_response_request_failing_after_the_redial_keeps_the_replayed_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller's `response.create` that fails on the old socket after the re-dial doesn't clear the new socket's response.
+
+    The re-dial already re-asked for that response on the new socket; the caller's late failure is about
+    the old one, so marking no response active would let the next request start a second response.
+    """
+
+    class _SlowCreate(_DroppableWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = asyncio.Event()
+
+        async def send(self, data: str) -> None:
+            if json.loads(data)['type'] == 'response.create':
+                await self.gate.wait()
+            await super().send(data)
+
+    first, second = _SlowCreate(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    connect.release.set()
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        sender = asyncio.ensure_future(conn.send('hi'))  # its `response.create` is stuck on the old socket
+        await _settle()
+        first.drop()
+        async for event in conn:  # pragma: no branch
+            assert isinstance(event, RealtimeSessionReconnectEvent)
+            break
+        first.gate.set()
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await sender
+        await conn.send(CreateResponse())  # the replayed response is still active, so this one waits
+
+    assert [frame['type'] for frame in second.sent].count('response.create') == 1

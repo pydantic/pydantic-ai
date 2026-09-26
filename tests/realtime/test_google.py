@@ -60,6 +60,7 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     ResponseDone,
@@ -2392,6 +2393,12 @@ async def test_reconnect_closes_orphaned_turn_with_interrupted_boundary() -> Non
     ]
 
 
+def _handle_update(handle: str) -> Any:
+    return genai_types.LiveServerMessage(
+        session_resumption_update=genai_types.LiveServerSessionResumptionUpdate(new_handle=handle, resumable=True)
+    )
+
+
 async def test_reconnect_closes_orphaned_turn_opened_by_a_tool_call() -> None:
     # A tool call opens the turn like audio output does: the session holds a partial response for
     # it, so a socket that drops between the `toolCall` and `turn_complete` needs the same synthetic
@@ -2401,19 +2408,19 @@ async def test_reconnect_closes_orphaned_turn_opened_by_a_tool_call() -> None:
             function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
         )
     )
-    s1 = _RecordingSession([[tool_call]])
+    s1 = _RecordingSession([[_handle_update('h1'), tool_call]])
     dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
     )
-    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
 
     events = [e async for e in conn]
 
-    assert events[:4] == [
+    assert events[:5] == [
         ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'),
+        ToolCallCancelled(tool_call_ids=['c1']),
         ResponseDone(interrupted=True),
-        RealtimeSessionReconnectEvent(state_restored=True),
+        RealtimeSessionReconnectEvent(state_restored=False),
         OutputTranscript(text='back', is_final=True),
     ]
 
@@ -2446,25 +2453,440 @@ async def test_reconnect_without_state_abandons_outstanding_tool_calls() -> None
     assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_reconnect_with_restored_state_keeps_outstanding_tool_calls() -> None:
-    # A resumption handle means the same server-side session continues, so it still knows the call:
-    # the running tool task's result is deliverable and the call must not be abandoned.
+async def test_reconnect_abandons_tool_calls_still_running_at_the_drop() -> None:
+    # Gemini issues no resumption handle while a call is executing, so a call still running at a drop
+    # was made after the latest handle, whenever that handle arrived: the resumed server doesn't know it
+    # (seen live on 2.5 and 3.8). Its result would go unanswered, and the response reserved for
+    # it would hang `wait_for_reply()` for the rest of the session. The call is abandoned like one lost
+    # without any handle, and the reconnect reports the exchange as not restored. A call cancelled by
+    # Gemini before the drop is already gone and isn't reported again. The resumed session is answered
+    # with an interrupted error for the lost call: without it, `gemini-3.8-live` treats the user's next
+    # input as closing the stale exchange and never answers it (verified live).
+    def calls(*ids: str) -> Any:
+        return genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id=call_id, name='get_weather', args={}) for call_id in ids]
+            )
+        )
+
+    cancellation = genai_types.LiveServerMessage(
+        tool_call_cancellation=genai_types.LiveServerToolCallCancellation(ids=['c0'])
+    )
+    s1 = _RecordingSession([[_handle_update('h1'), calls('c0', 'c1'), cancellation]])
+    s2 = _RecordingSession([[_turn('back')]])
+    dial, handles = _dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+
+    events = [e async for e in conn]
+
+    assert events[:6] == [
+        ToolCall(tool_call_id='c0', tool_name='get_weather', args='{}'),
+        ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'),
+        ToolCallCancelled(tool_call_ids=['c0']),
+        ToolCallCancelled(tool_call_ids=['c1']),
+        ResponseDone(interrupted=True),
+        RealtimeSessionReconnectEvent(state_restored=False),
+    ]
+    assert handles[0] == 'h1'
+    assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
+    assert s2.tool_responses == [
+        [
+            genai_types.FunctionResponse(
+                id='c1',
+                name='get_weather',
+                response={'error': 'The tool call was interrupted before a result was produced.'},
+            )
+        ]
+    ]
+
+
+async def test_answering_lost_calls_is_retried_after_the_resumed_socket_drops() -> None:
+    # Answering the lost calls is the first send on the new socket. If that socket is already gone, the
+    # answer is still owed: the next resumed session carries the same stale exchange, so it gets it.
+    class _DeadOnArrival(_RecordingSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            raise ConnectionClosed(None, None)
+
     tool_call = genai_types.LiveServerMessage(
         tool_call=genai_types.LiveServerToolCall(
             function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
         )
     )
-    s1 = _RecordingSession([[tool_call]])
-    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    s1 = _RecordingSession([[_handle_update('h1'), tool_call]])
+    s3 = _RecordingSession([[_turn('back')]])
+    dial, handles = _dialer(_DeadOnArrival([]), s3)
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
     )
-    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
 
     events = [e async for e in conn]
 
-    assert not any(isinstance(event, ToolCallCancelled) for event in events)
-    assert conn._tool_calls == {'c1': ('get_weather', 'c1')}  # pyright: ignore[reportPrivateUsage]
+    assert [e for e in events if isinstance(e, (ToolCallCancelled, RealtimeSessionReconnectEvent))] == [
+        ToolCallCancelled(tool_call_ids=['c1']),
+        RealtimeSessionReconnectEvent(state_restored=False),
+        RealtimeSessionReconnectEvent(state_restored=True),
+    ]
+    assert OutputTranscript(text='back', is_final=True) in events
+    assert handles[:2] == ['h1', 'h1']
+    assert [[response.id for response in responses] for responses in s3.tool_responses] == [['c1']]
+
+
+async def test_input_after_a_reconnect_goes_out_after_the_lost_calls_are_answered() -> None:
+    # The stale exchange on the resumed session swallows whatever input reaches it first, so a user
+    # input sent as soon as the calls are cancelled still goes out after their interrupted answer.
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+    s1 = _RecordingSession([[_handle_update('h1'), tool_call]])
+    s2 = _RecordingSession([[_turn('back')]])
+    dial, _ = _dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    order: list[str] = []
+    s2.send_tool_response = lambda **kw: _record(order, 'tool_response')  # type: ignore[method-assign]
+    s2.send_client_content = lambda **kw: _record(order, 'client_content')  # type: ignore[method-assign]
+
+    async for event in conn:  # pragma: no branch
+        if isinstance(event, ToolCallCancelled):
+            await conn.send('are you there?')
+            break
+
+    assert order == ['tool_response', 'client_content']
+
+
+async def _record(order: list[str], kind: str) -> None:
+    order.append(kind)
+
+
+async def test_a_typed_turn_sent_since_the_resumption_handle_is_reported_lost() -> None:
+    # A resumed session is restored as of its handle, and Gemini 2.5 only issues one after a turn
+    # completes, so a typed turn sent after it and cut off before its reply started is gone: nothing will
+    # answer it. The response it asked for is reported refused (so `wait_for_reply()` doesn't wait for it
+    # forever) and the reconnect as not restored, so the app knows to send it again. A turn whose reply
+    # had already finished isn't reported.
+    s1 = _DroppableSession()
+    s2 = _DroppableSession()
+    dial, dialing, release = _gated_dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    not_resumable = genai_types.LiveServerMessage(
+        session_resumption_update=genai_types.LiveServerSessionResumptionUpdate()
+    )
+    consumer = asyncio.create_task(consume())
+    s1.push(_handle_update('h1'))
+    await conn.send('answered')
+    s1.push(not_resumable)  # what Gemini 2.5 sends as it takes up a turn
+    s1.push(_turn('Sure.'))
+    s1.push(_handle_update('h2'))
+    await conn.send('lost')  # dropped before its own update arrives
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+
+    assert events[-2:] == [
+        InputRejected(input_index=1, refused='response'),
+        RealtimeSessionReconnectEvent(state_restored=False),
+    ]
+
+
+async def test_a_typed_turn_is_kept_on_a_server_that_never_withholds_handles() -> None:
+    # Gemini 3.8 never withholds a handle mid-turn, and a session resumed from one still has a typed turn
+    # sent after it (verified live: it answers the turn), so nothing is reported lost.
+    s1 = _DroppableSession()
+    dial, dialing, release = _gated_dialer(_DroppableSession())
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            return  # the reconnect is the first and only event here
+
+    consumer = asyncio.create_task(consume())
+    s1.push(_handle_update('h1'))
+    await conn.send('What is two plus two?')
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+
+    assert events == [RealtimeSessionReconnectEvent(state_restored=True)]
+
+
+async def _drop_and_collect(s1: _DroppableSession, sends: Any) -> list[Any]:
+    """Run `sends(conn)` against a reconnecting connection over `s1`, drop it, and collect up to the reconnect."""
+    dial, dialing, release = _gated_dialer(_DroppableSession())
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    consumer = asyncio.create_task(consume())
+    await sends(conn)
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+    return events
+
+
+async def test_a_late_handle_does_not_cover_a_typed_turn_still_awaiting_its_reply() -> None:
+    # A handle's arrival time says nothing about which inputs it covers: one created before the turn can
+    # arrive after it was sent. On a server that withholds handles mid-turn, only a handle after the
+    # turn's reply covers it, so the turn is still reported lost.
+    not_resumable = genai_types.LiveServerMessage(
+        session_resumption_update=genai_types.LiveServerSessionResumptionUpdate()
+    )
+    s1 = _DroppableSession()
+
+    async def sends(conn: GoogleRealtimeConnection) -> None:
+        await conn.send('first')
+        s1.push(not_resumable)
+        s1.push(_turn('Sure.'))
+        s1.push(_handle_update('h1'))
+        await conn.send('second')
+        s1.push(_handle_update('h1-late'))
+
+    events = await _drop_and_collect(s1, sends)
+    assert events[-2:] == [
+        InputRejected(input_index=1, refused='response'),
+        RealtimeSessionReconnectEvent(state_restored=False),
+    ]
+
+
+async def test_a_handle_less_update_between_turns_does_not_mark_the_server_as_withholding() -> None:
+    # Only an update without a handle while a typed turn is outstanding is evidence of a server that
+    # withholds handles mid-turn; one between turns isn't, and turns stay trusted to the resumed session.
+    s1 = _DroppableSession()
+
+    async def sends(conn: GoogleRealtimeConnection) -> None:
+        s1.push(_handle_update('h1'))
+        s1.push(
+            genai_types.LiveServerMessage(session_resumption_update=genai_types.LiveServerSessionResumptionUpdate())
+        )
+        await _settle()
+        await conn.send('What is two plus two?')
+
+    events = await _drop_and_collect(s1, sends)
+    assert events == [RealtimeSessionReconnectEvent(state_restored=True)]
+
+
+async def test_a_typed_turn_that_fails_to_send_is_not_tracked() -> None:
+    # A send the dead socket refused never reached the server; it is retried, not reported lost.
+    s1 = _DroppableSession()
+
+    async def sends(conn: GoogleRealtimeConnection) -> None:
+        s1.push(_handle_update('h1'))
+        await _settle()
+        s1.dropped = True
+        with pytest.raises(ConnectionClosed):
+            await conn.send('never sent')
+
+    events = await _drop_and_collect(s1, sends)
+    assert events == [RealtimeSessionReconnectEvent(state_restored=True)]
+
+
+async def test_a_typed_turn_whose_reply_was_cut_off_is_not_reported_lost() -> None:
+    # A reply that had started streaming already took the turn's response, and is closed as interrupted,
+    # so the turn itself isn't reported: resumption keeps a restored state as before.
+    s1 = _DroppableSession()
+    s2 = _DroppableSession()
+    dial, dialing, release = _gated_dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    consumer = asyncio.create_task(consume())
+    s1.push(_handle_update('h1'))
+    await conn.send('count to thirty')
+    s1.push(
+        genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(
+                output_transcription=genai_types.Transcription(text='One,', finished=False)
+            )
+        )
+    )
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+
+    assert not any(isinstance(event, InputRejected) for event in events)
+    assert events[-2:] == [ResponseDone(interrupted=True), RealtimeSessionReconnectEvent(state_restored=True)]
+
+
+async def test_wait_for_reply_returns_when_a_resumed_session_lost_the_typed_turn() -> None:
+    first, second = _DroppableSession(), _DroppableSession()
+    dial, dialing, release = _gated_dialer(second)
+    session = _reconnecting_session(first, dial)
+    async with session:
+        first.push(_handle_update('h1'))
+        await session.send('Price of a teapot?')
+        # What Gemini 2.5 sends as it takes up a turn: no handle until the turn is over.
+        first.push(
+            genai_types.LiveServerMessage(session_resumption_update=genai_types.LiveServerSessionResumptionUpdate())
+        )
+        await _settle()
+        first.drop()
+        await dialing.wait()
+        release.set()
+        await asyncio.wait_for(session.wait_for_reply(), 5)
+        reconnect = None
+        async for reconnect in session:  # pragma: no branch
+            break
+    assert reconnect == RealtimeSessionReconnectEvent(state_restored=False)
+    # The turn stays in history: the user did say it, and the app sends it again.
+    assert [
+        part.content for message in session.all_messages() for part in message.parts if isinstance(part, UserPromptPart)
+    ] == ['Price of a teapot?']
+
+
+class _DroppableSession:
+    """A fake `AsyncSession` fed live: messages are pushed while the test runs, and `drop()` closes it.
+
+    Once dropped, every send raises `ConnectionClosed` like the SDK's socket does, and `receive()` raises
+    it too, so the connection's receive loop notices the drop and reconnects.
+    """
+
+    def __init__(self) -> None:
+        self._inbox: asyncio.Queue[Any] = asyncio.Queue()
+        self.dropped = False
+        self.sent: list[tuple[str, Any]] = []
+
+    def _record(self, kind: str, payload: Any) -> None:
+        if self.dropped:
+            raise ConnectionClosed(None, None)
+        self.sent.append((kind, payload))
+
+    async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
+        self._record('client_content', turns)
+
+    async def send_tool_response(self, *, function_responses: Any) -> None:
+        self._record('tool_response', function_responses)
+
+    async def receive(self) -> AsyncIterator[Any]:
+        while True:
+            message = await self._inbox.get()
+            if message is None:
+                raise ConnectionClosed(None, None)
+            yield message
+
+    def push(self, message: Any) -> None:
+        self._inbox.put_nowait(message)
+
+    def drop(self) -> None:
+        self.dropped = True
+        self._inbox.put_nowait(None)
+
+    def kinds(self) -> list[str]:
+        return [kind for kind, _ in self.sent]
+
+
+def _gated_dialer(session: _DroppableSession) -> tuple[Any, asyncio.Event, asyncio.Event]:
+    """A `dial` that holds the reconnect open until `release` is set, signalling `dialing` meanwhile."""
+    dialing, release = asyncio.Event(), asyncio.Event()
+
+    async def dial(handle: str | None) -> AsyncSession:
+        dialing.set()
+        await release.wait()
+        return cast('AsyncSession', session)
+
+    return dial, dialing, release
+
+
+def _reconnecting_session(first: _DroppableSession, dial: Any, runner: Any = None) -> RealtimeSession:
+    connection = GoogleRealtimeConnection(
+        cast('AsyncSession', first), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    return RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, model_name='gemini-live', system='google'),
+        tool_manager=make_tool_manager(runner) if runner is not None else make_tool_manager(),
+    )
+
+
+async def _settle() -> None:
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
+async def test_a_lost_call_finishing_while_the_resumed_session_is_told_stays_cancelled() -> None:
+    # Telling the resumed session about the lost call is an await on the new socket. The call's task is
+    # cancelled before it, so a tool that would have finished meanwhile can't put its real result on the
+    # new socket (where nothing answers it) or trip over the call being forgotten.
+    finish = asyncio.Event()
+
+    class _SlowToAcknowledge(_DroppableSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            finish.set()
+            await _settle()
+            await super().send_tool_response(function_responses=function_responses)
+
+    first, second = _DroppableSession(), _SlowToAcknowledge()
+    dial, dialing, release = _gated_dialer(second)
+    finished: list[str] = []
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await finish.wait()
+        finished.append(call_id)  # pragma: no cover - the reconnect cancels the call first
+        return 'sunny'  # pragma: no cover
+
+    session = _reconnecting_session(first, dial, runner)
+    async with session:
+        await session.wait_for_reply()
+        first.push(_handle_update('h1'))
+        first.push(
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+                )
+            )
+        )
+        await _settle()
+        first.drop()
+        await dialing.wait()
+        release.set()
+        await asyncio.wait_for(session.wait_for_reply(), 5)
+        await session.send('Anything else?')
+        second.push(_turn('No.'))
+        await asyncio.wait_for(session.wait_for_reply(), 5)
+
+    assert finished == []
+    assert second.kinds() == ['tool_response', 'client_content']
 
 
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2885,3 +3307,196 @@ def test_declared_tool_behavior_per_model(
     assert isinstance(genai_tool, genai_types.Tool) and genai_tool.function_declarations
     behavior = genai_tool.function_declarations[0].behavior
     assert (behavior.value if behavior else None) == expected_behavior
+
+
+async def test_answer_for_a_lost_call_is_owed_again_after_resuming_from_the_same_handle() -> None:
+    # The answer for a lost call went out on the resumed session, which dropped before issuing a newer
+    # handle. Resuming from the same old handle again lands on a session still stuck on the call, so it
+    # is answered again; only a handle issued after the answer settles it.
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+    s1 = _RecordingSession([[_handle_update('h1'), tool_call]])
+    s2 = _RecordingSession([])
+    s3 = _RecordingSession([[_handle_update('h3')], [_turn('back')]])
+    s4 = _RecordingSession([[_turn('again')]])
+    dial, handles = _dialer(s2, s3, s4)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+
+    [e async for e in conn]
+
+    assert handles[:3] == ['h1', 'h1', 'h3']
+    answered = [[[response.id for response in responses] for responses in s.tool_responses] for s in (s2, s3, s4)]
+    # s3 issued a handle after its answer, so the session resumed from it (s4) is owed nothing.
+    assert answered == [[['c1']], [['c1']], []]
+
+
+async def test_typed_turn_still_on_the_wire_at_a_drop_fails_its_send_and_is_not_reported() -> None:
+    # A typed send still in flight when the drop is noticed fails with the transport error (not a
+    # bookkeeping error), and the reconnect doesn't also report it lost: the failed send already takes it
+    # back.
+    gate = asyncio.Event()
+
+    class _Slow(_DroppableSession):
+        async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
+            await gate.wait()
+            await super().send_client_content(turns=turns, turn_complete=turn_complete)
+
+    s1 = _Slow()
+    dial, dialing, release = _gated_dialer(_DroppableSession())
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    consumer = asyncio.create_task(consume())
+    # A server that withholds handles mid-turn, so an unanswered turn would otherwise be reported lost.
+    gate.set()
+    await conn.send('warm up')
+    s1.push(genai_types.LiveServerMessage(session_resumption_update=genai_types.LiveServerSessionResumptionUpdate()))
+    s1.push(_turn('ok'))
+    s1.push(_handle_update('h1'))
+    await _settle()
+    gate.clear()
+    sender = asyncio.create_task(conn.send('in flight'))
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    gate.set()
+    with pytest.raises(ConnectionClosed):
+        await sender
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+    assert not any(isinstance(event, InputRejected) for event in events)
+
+
+async def test_tool_result_landing_while_re_dialing_does_not_break_the_reconnect() -> None:
+    # A result whose write completes while the connection re-dials forgets its call; the reconnect,
+    # which already counted the call as lost, still cancels it and answers the resumed session for it.
+    gate = asyncio.Event()
+
+    class _SlowTool(_DroppableSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            await gate.wait()
+            self.sent.append(('tool_response', function_responses))
+
+    s1 = _SlowTool()
+    s2 = _DroppableSession()
+    dial, dialing, release = _gated_dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    consumer = asyncio.create_task(consume())
+    s1.push(_handle_update('h1'))
+    s1.push(
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+    await _settle()
+    sender = asyncio.create_task(conn.send(ToolResult(tool_call_id='c1', output='sunny')))
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    gate.set()
+    await sender
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+    await conn.send('are you there?')
+    assert ToolCallCancelled(tool_call_ids=['c1']) in events
+    assert [kind for kind, _ in s2.sent] == ['tool_response', 'client_content']
+
+
+async def test_tool_result_refused_for_its_content_is_forgotten() -> None:
+    # A result refused for binary content never goes out; its call is forgotten like one that did, so a
+    # later drop doesn't count it as lost.
+    conn = _conn(_RecordingSession())
+    conn._tool_calls['c1'] = ('get_weather', 'c1')  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='JSON-only'):
+        await conn.send(
+            ToolResult(tool_call_id='c1', output='chart', content=[BinaryContent(data=b'x', media_type='image/png')])
+        )
+    assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_typed_turns_are_not_tracked_without_a_reconnect_policy() -> None:
+    conn = _conn(_RecordingSession())
+    await conn.send('hello')
+    assert conn._uncovered_typed_turns == []  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_answer_for_a_lost_call_that_completes_on_the_old_session_still_leaves_the_new_one_owed() -> None:
+    # An answer for a lost call still on the wire when the resumed session drops too completes on that
+    # old session; the session resumed after it is still stuck on the call, so it is answered as well.
+    gate = asyncio.Event()
+
+    class _AnswersLate(_DroppableSession):
+        calls = 0
+
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            _AnswersLate.calls += 1
+            if _AnswersLate.calls == 1:
+                raise ConnectionClosed(None, None)  # the receive loop's own answer fails
+            await gate.wait()
+            self.sent.append(('tool_response', function_responses))  # written before the close
+
+    s1, s2, s3 = _DroppableSession(), _AnswersLate(), _DroppableSession()
+    sessions = iter([s2, s3])
+
+    async def dial(handle: str | None) -> AsyncSession:
+        return cast('AsyncSession', next(sessions))
+
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    s1.push(_handle_update('h1'))
+    s1.push(
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+    s1.drop()
+    reconnects = 0
+    second_reconnect = asyncio.Event()
+
+    async def consume() -> None:
+        nonlocal reconnects
+        async for event in conn:  # pragma: no branch
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                reconnects += 1
+                if reconnects == 2:
+                    second_reconnect.set()
+                    return
+
+    consumer = asyncio.create_task(consume())
+    await _settle()
+    sender = asyncio.create_task(conn.send('hello'))  # its answer for c1 is stuck on s2
+    await _settle()
+    s2.drop()
+    await asyncio.wait_for(second_reconnect.wait(), 5)
+    gate.set()
+    await sender  # its answer landed on s2, so s3 is answered before the input goes out there
+    await consumer
+    assert s3.kinds() == ['tool_response', 'client_content']

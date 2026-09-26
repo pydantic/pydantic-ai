@@ -222,7 +222,9 @@ For [state-restoring reconnects](lifecycle.md#state-restoration), set the `recon
 automatically alongside it (`google_enable_session_resumption` can still request handles without a
 policy, and explicitly setting it to `False` next to a policy raises
 [`UserError`][pydantic_ai.exceptions.UserError] rather than silently losing the conversation).
-Reconnection uses the latest in-memory server handle and emits `state_restored=True`.
+Reconnection uses the latest in-memory server handle and emits `state_restored=True`, unless the
+drop cut off an exchange the resumed session no longer has (see
+[State restoration](lifecycle.md#state-restoration)).
 
 !!! note "The connection cap can briefly interrupt a turn"
     Gemini sends `GoAway` shortly before its provider-defined connection cap. Pydantic AI reconnects
@@ -249,6 +251,11 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
 - Gemini 3.x Live models transcribe the user's speech even with input transcription
   [turned off](audio.md#input-transcription). Pydantic AI discards those transcripts, so the setting
   still keeps the user's words out of history, but they are still produced on Google's side.
+- After resuming from a handle it issued at the start of a turn, `gemini-3.8-live` can stream that
+  turn's answer without ever sending `turn_complete`, then answer the next input with
+  `RealtimeResponseInterruptedEvent` and nothing more. The reply stays open, so
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] doesn't return. This
+  happens on Google's side, and no client-side workaround is known.
 - Native transcription can produce only a completed sentence on some models.
   [Caption UIs](audio.md#live-captions) should replace text from `TranscriptUpdate.transcript`
   rather than assume incremental deltas.
