@@ -27,7 +27,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 
 ## Connect
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import DayAI
 
@@ -124,7 +124,7 @@ capabilities:
   - DayAI: {}
 ```
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import DayAI
 

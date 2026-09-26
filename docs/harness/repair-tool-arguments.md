@@ -31,7 +31,6 @@ async def greet(name: str) -> str:
 
 result = agent.run_sync('Greet someone')
 print(result.output)
-#> {"greet":"Hello, a!"}
 ```
 
 ## Validation and safety

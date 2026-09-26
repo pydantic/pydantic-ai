@@ -45,7 +45,7 @@ ID is not hard-coded. You can pass `api_key=` directly instead, but keep secrets
 
 ## Run your first agent
 
-```python {test="skip"}
+```python
 import os
 
 from pydantic_ai import Agent
@@ -123,6 +123,7 @@ what it is for:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import PrefixTools
+
 from pydantic_ai_harness import StackOne
 
 agent = Agent(
@@ -161,7 +162,7 @@ agent = Agent(
 Approval is not enabled automatically. For operations that need human confirmation, use the public
 `StackOneToolset` with Pydantic AI's [tool approval](../toolsets.md#requiring-tool-approval):
 
-```python {test="skip"}
+```python
 import os
 
 from pydantic_ai import Agent
@@ -191,7 +192,7 @@ capabilities:
       actions: ['*_list_*']
 ```
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne
 

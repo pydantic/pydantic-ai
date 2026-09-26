@@ -39,19 +39,12 @@ Past $100 in a UTC day, the next request raises `SpendLimitExceeded`.
 A budget is a ceiling, a period, and optionally a partition. They compose, so several apply at once:
 
 ```python
-from dataclasses import dataclass
 from decimal import Decimal
 
 from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget
 
-
-@dataclass
-class Deps:
-    tenant_id: str
-
-
-SpendLimits[Deps](
+SpendLimits(
     budgets=[
         Budget(usd=Decimal('5'), window='run'),  # one runaway run
         Budget(usd=Decimal('100'), window='day'),  # the whole deployment, per day
@@ -79,20 +72,10 @@ Budgets that share a `name`, `window`, and `scope` share one counter, which is h
 **A budget with no ceiling is a counter.** It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
 
 ```python
-from dataclasses import dataclass
-
 from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget
 
-
-@dataclass
-class Deps:
-    tenant_id: str
-
-
-SpendLimits[Deps](
-    budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id, name='chargeback')]
-)
+SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id, name='chargeback')])
 ```
 
 ## What the gate guarantees
@@ -152,6 +135,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext
+
 from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget
 
@@ -185,6 +169,7 @@ import dataclasses
 from decimal import Decimal
 
 from pydantic_ai import Agent, capture_run_messages
+
 from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget, SpendLimitExceeded
 

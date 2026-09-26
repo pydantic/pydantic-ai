@@ -43,7 +43,6 @@ agent = Agent(
 
 result = agent.run_sync('Fix the flaky checkout test and add a regression test.')
 print(result.output)
-#> Fixed the race in the checkout test and added a regression test.
 ```
 
 ## Cadence and window

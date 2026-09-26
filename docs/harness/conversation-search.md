@@ -23,11 +23,7 @@ The shipped source, `SnapshotHistorySource`, reads the snapshots `StepPersistenc
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness import (
-    ConversationSearch,
-    SlidingWindowCompaction,
-    StepPersistence,
-)
+from pydantic_ai_harness import ConversationSearch, SlidingWindowCompaction, StepPersistence
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.step_persistence import SqliteStepStore
 
@@ -65,12 +61,6 @@ Overlap matching keys off a content hash of each serialized message, not object 
 `scope='conversation'` restricts the corpus to runs whose `conversation_id` matches the calling run. Pass an authenticated, tenant-scoped value as `conversation_id` when running the agent:
 
 ```python
-from pydantic_ai import Agent
-from pydantic_ai_harness import ConversationSearch, StepPersistence
-from pydantic_ai_harness.conversation_search import SnapshotHistorySource
-from pydantic_ai_harness.step_persistence import SqliteStepStore
-
-store = SqliteStepStore(database='sessions.db')
 agent = Agent(
     'openai:gpt-5',
     capabilities=[

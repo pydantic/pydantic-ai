@@ -55,8 +55,9 @@ pip/uv-add "pydantic-ai-harness[browser-use]"
 Then pass `BrowserUse` to an `Agent` via the `capabilities` parameter, with a
 model for the sub-agent:
 
-```python {py="3.11"}
+```python
 from pydantic_ai import Agent
+
 from pydantic_ai_harness import BrowserUse
 
 agent = Agent(
@@ -71,7 +72,6 @@ agent = Agent(
 
 result = agent.run_sync('Check example.com and tell me the price of the Pro plan.')
 print(result.output)
-#> The Pro plan costs $20 per month.
 ```
 
 Each `browse_web` call runs the sub-agent's loop to completion in a browser
@@ -123,7 +123,7 @@ browser-use can upload those files to a page without an approval or destination
 policy. Use a custom factory to introduce uploads only with controls appropriate
 to your application.
 
-```python {py="3.11"}
+```python
 from pydantic_ai_harness import BrowserUse
 from pydantic_ai_harness.browser_use import BrowserAgentSettings
 
@@ -148,7 +148,7 @@ The tool then returns the validated result as JSON; a final result that does
 not parse surfaces to the host model as a retry prompt instead of malformed
 output:
 
-```python {py="3.11"}
+```python
 from pydantic import BaseModel
 
 from pydantic_ai_harness import BrowserUse
@@ -175,7 +175,7 @@ seeing the values: the model is shown only placeholder keys and writes
 browser. Scope entries to a domain with the nested form, and combine with
 `allowed_domains` so the values cannot be typed anywhere else:
 
-```python {py="3.11"}
+```python
 from pydantic_ai_harness import BrowserUse
 
 BrowserUse(
@@ -269,8 +269,9 @@ origin.
   manager. Closing is final: a `browse_web` after `aclose()` raises rather than
   starting a browser that nothing is left to close.
 
-```python {py="3.11"}
+```python
 from pydantic_ai import Agent
+
 from pydantic_ai_harness import BrowserUse
 
 
@@ -306,7 +307,7 @@ below, or to `''` to contribute no instructions at all. (`guidance` steers the
 
 Every field of `BrowserUse` with its default:
 
-```python {py="3.11"}
+```python
 from pydantic_ai_harness import BrowserUse
 
 BrowserUse(
@@ -338,7 +339,7 @@ substitute a fake in tests so nothing launches a browser. It receives a
 `BrowserTask` with everything the tool prepared for the call, including the
 resolved `settings`, and returns the agent to run:
 
-```python {py="3.11"}
+```python
 from browser_use import Agent as BrowserUseAgent
 
 from pydantic_ai_harness import BrowserUse
@@ -400,8 +401,9 @@ capabilities:
       session_scope: call
 ```
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
+
 from pydantic_ai_harness import BrowserUse
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[BrowserUse])

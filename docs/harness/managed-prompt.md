@@ -54,8 +54,8 @@ your code always runs even before you create the prompt in Logfire.
 
 ```python
 import logfire
-
 from pydantic_ai import Agent
+
 from pydantic_ai_harness import ManagedPrompt
 
 logfire.configure()
@@ -73,7 +73,6 @@ agent = Agent(
 
 result = agent.run_sync('My order never arrived.')
 print(result.output)
-#> I'm sorry to hear that. Could you share your order number so I can check its status?
 ```
 
 Pinning `label='production'` is the recommended default: the resolved value only changes on a
@@ -91,6 +90,7 @@ key lives in your agent's `deps`:
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
+
 from pydantic_ai_harness import ManagedPrompt
 
 
@@ -134,6 +134,7 @@ from `deps`:
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
+
 from pydantic_ai_harness import ManagedPrompt
 
 
@@ -183,8 +184,8 @@ example a template variable, or one registered for `variables_push`:
 
 ```python
 import logfire
-
 from pydantic_ai import Agent
+
 from pydantic_ai_harness import ManagedPrompt
 
 logfire.configure()

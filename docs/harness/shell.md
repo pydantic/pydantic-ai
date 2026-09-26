@@ -43,7 +43,6 @@ agent = Agent(
 
 result = agent.run_sync('List the Python files and summarize the largest one.')
 print(result.output)
-#> The largest Python file is app.py, which defines the web routes.
 ```
 
 By default `Shell` runs in the current directory with the built-in destructive-command
@@ -218,7 +217,6 @@ result = agent.run_sync(
     'then curl http://localhost:3000/health and report the status.'
 )
 print(result.output)
-#> The dev server is running and /health returned 200 OK.
 ```
 
 ## Persistent commands
@@ -311,7 +309,7 @@ at the configured `cwd`.
 
 Every field of `Shell` with its default:
 
-```python {lint="skip" test="skip"}
+```python
 from pydantic_ai_harness import Shell
 
 Shell(
@@ -348,7 +346,7 @@ capabilities:
       allowed_commands: ['ls', 'cat', 'rg', 'pytest']
 ```
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import Shell
 

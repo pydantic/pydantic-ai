@@ -12,7 +12,7 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 !!! note "Import path"
     Import these helpers from their submodule -- there is no top-level `pydantic_ai_harness` re-export:
 
-    ```python {noqa="F401"}
+    ```python
     from pydantic_ai_harness.media import (
         DiskMediaStore,
         S3MediaStore,
@@ -69,23 +69,15 @@ store = MongoMediaStore(client=client, database='agent_media')
 `externalize_media` and `restore_media` walk a message node and swap payloads for URIs and back:
 
 ```python
-from pydantic_ai import BinaryContent, ModelRequest, UserPromptPart
 from pydantic_ai_harness.media import DiskMediaStore, externalize_media, restore_media
 
 store = DiskMediaStore(directory='./media')
-message = ModelRequest(
-    parts=[UserPromptPart(content=[BinaryContent(data=b'\x89PNG' * 10_000, media_type='image/png')])]
-)
 
+# Replace binary and text payloads at or above the threshold with media+sha256:// URIs.
+lean = await externalize_media(message, media_store=store, threshold_bytes=32_000)
 
-async def main():
-    # Replace binary and text payloads at or above the threshold with media+sha256:// URIs.
-    lean = await externalize_media(message, media_store=store, threshold_bytes=32_000)
-
-    # Later, rehydrate the URIs back into the original parts.
-    full = await restore_media(lean, media_store=store)
-    print(full == message)
-    #> True
+# Later, rehydrate the URIs back into the original parts.
+full = await restore_media(lean, media_store=store)
 ```
 
 `externalize_media` externalizes both large `BinaryContent` and large text: any message part whose string `content` reaches `threshold_bytes` UTF-8 bytes (`TextPart`, `ThinkingPart`, a string-returning `ToolReturnPart`, a string-valued `UserPromptPart`), plus any `TextContent` element travelling inside a `UserPromptPart.content` sequence or a `ToolReturn`. The same `threshold_bytes` governs binary and text, and payloads below it stay inline. Round-trip is transparent -- `restore_media` re-inlines binary bytes and text symmetrically. If you need to key media yourself, `media_uri_for` and `parse_media_uri` give you the raw URI round-trip.
@@ -101,16 +93,13 @@ When a store is fronted by a CDN, a local HTTP server, or a signed-URL service, 
 A static base URL, for a public bucket or CDN:
 
 ```python
-import os
-
 from pydantic_ai_harness.media import S3MediaStore, make_static_public_url
 
 store = S3MediaStore(
     bucket='my-bucket',
     endpoint='https://<acc>.r2.cloudflarestorage.com',
     region='auto',
-    access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-    secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    access_key_id=..., secret_access_key=...,
     key_prefix='media/',
     public_url=make_static_public_url('https://pub-abc.r2.dev', key_prefix='media/'),
 )
@@ -119,32 +108,15 @@ store = S3MediaStore(
 A presigned or rotating-signature URL -- pass any async callable that takes `(uri, MediaContext)`:
 
 ```python
-import hashlib
-import hmac
-import os
-import time
-
 from pydantic_ai_harness.media import MediaContext, S3MediaStore
-
-CDN_SIGNING_KEY = b'cdn-signing-secret'
 
 
 async def presign(uri: str, ctx: MediaContext) -> str:
     key = 'media/' + uri.removeprefix('media+sha256://') + '.bin'
-    expires = int(time.time()) + 3600
-    signature = hmac.new(CDN_SIGNING_KEY, f'{key}:{expires}'.encode(), hashlib.sha256).hexdigest()
-    return f'https://cdn.example.com/{key}?expires={expires}&signature={signature}'
+    return await my_signer.generate(key, ttl=3600, content_type=ctx.media_type)
 
 
-store = S3MediaStore(
-    bucket='my-bucket',
-    endpoint='https://<acc>.r2.cloudflarestorage.com',
-    region='auto',
-    access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-    secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-    key_prefix='media/',
-    public_url=presign,
-)
+store = S3MediaStore(..., public_url=presign)
 ```
 
 ## `MediaContext`

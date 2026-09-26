@@ -282,7 +282,6 @@ does not rerun the CLI or recursively reload third-party packages. Use
 
 ```python
 import asyncio
-
 from pydantic_ai import Agent
 from pydantic_clai2 import chat
 

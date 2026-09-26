@@ -87,6 +87,7 @@ run's event stream:
 ```python
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
+
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
 
 

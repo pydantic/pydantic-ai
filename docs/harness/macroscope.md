@@ -31,9 +31,6 @@ agent = Agent('anthropic:claude-sonnet-5', capabilities=[Macroscope()])
 
 result = agent.run_sync('Run a Macroscope review and fix any real findings.')
 print(result.output)
-"""
-Macroscope reported 2 findings; I fixed the real one, an unchecked `None` in `parse()`, and left the false positive.
-"""
 ```
 
 The `macroscope` CLI must be installed and authenticated on the host first:
@@ -105,7 +102,7 @@ capabilities:
       timeout: 900
 ```
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import Macroscope
 

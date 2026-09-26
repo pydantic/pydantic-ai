@@ -32,7 +32,6 @@ agent = Agent(
 
 result = agent.run_sync('Summarize the coding-assistant setup in this repo.')
 print(result.output)
-#> The repo has a CLAUDE.md and an AGENTS.md with coding conventions.
 ```
 
 ### 1. Walk-up instruction autoload (on by default)
@@ -102,7 +101,7 @@ Injecting file contents into the system prompt costs prompt-cache stability: a c
 
 ## Configuration
 
-```python {lint="skip" test="skip"}
+```python
 RepoContext(
     workspace_dir,                  # Path -- the deepest dir the agent works in (required)
     home_dir=None,                  # Path | None -- shallowest dir to stop walk-up at, inclusive

@@ -40,7 +40,6 @@ agent = Agent(
 
 result = agent.run_sync('Read config.toml and tell me the package name.')
 print(result.output)
-#> The package name in config.toml is `my-package`.
 ```
 
 `root_dir` defaults to the current directory (`.`), but passing an explicit
@@ -328,7 +327,7 @@ reject them.
 
 ## Configuration
 
-```python {lint="skip" test="skip"}
+```python
 from pydantic_ai_harness import FileSystem
 
 FileSystem(
@@ -366,7 +365,7 @@ capabilities:
       allowed_patterns: ['*.py', '*.toml']
 ```
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import FileSystem
 

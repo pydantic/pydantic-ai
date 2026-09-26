@@ -249,7 +249,7 @@ for code-defined capabilities.
 
 ## Configuration
 
-```python {lint="skip" test="skip"}
+```python {test="skip"}
 Skills(
     directories: str | Path | Sequence[str | Path],
     *,

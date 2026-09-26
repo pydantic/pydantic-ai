@@ -130,12 +130,7 @@ Set `Truncate(keep_tail_lines=N)` to reserve the final N lines before allocating
 the character budget. The default is zero, which leaves existing truncation behavior unchanged.
 
 ```python
-from pydantic_ai_harness.tool_output_limits import (
-    Band,
-    ToolOutputLimits,
-    Truncate,
-    TruncationStrategy,
-)
+from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate, TruncationStrategy
 
 truncate = Truncate(max_chars=4_000, strategy=TruncationStrategy.head, keep_tail_lines=2)
 limits = ToolOutputLimits(bands=[], per_tool={'run_command': [Band(over=4_000, action=truncate)]})
@@ -167,6 +162,7 @@ Keep Shell's native `max_output_chars` above the `ToolOutputLimits` thresholds. 
 
 ```python
 from pydantic_ai import Agent
+
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.tool_output_limits import (
     Band,
@@ -244,11 +240,7 @@ pages by line, so page 1 returns the whole payload and page 2 is empty. Setting 
 stores the value in a layout with real lines instead:
 
 ```python
-from pydantic_ai_harness.tool_output_limits import (
-    ToolOutputLimits,
-    indented_json,
-    json_lines,
-)
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, indented_json, json_lines
 
 ToolOutputLimits(serializer=indented_json)  # one field per line
 ToolOutputLimits(serializer=json_lines)  # one record per line
