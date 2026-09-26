@@ -355,7 +355,9 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
 
     async def held_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
         process = await real_open_process(*args, **kwargs)
-        await release.wait()
+        # Simulate a spawn that acknowledges a created process after its deadline.
+        with anyio.CancelScope(shield=True):
+            await release.wait()
         return process
 
     monkeypatch.setattr(anyio, 'open_process', held_spawn)
@@ -366,7 +368,7 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
         await asyncio.sleep(timeout * 2)
         assert not task.done()
         release.set()
-        with pytest.raises(WorkspaceTimeoutError, match='was killed'):
+        with pytest.raises(WorkspaceTimeoutError, match='during startup'):
             await task
     finally:
         release.set()
@@ -375,6 +377,60 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
         await asyncio.wait([task])
 
     await _assert_process_gone(int(pid_file.read_text()))
+
+
+@pytest.mark.parametrize('mode', ['deadline', 'cancel'])
+async def test_stalled_spawn_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str):
+    entered = anyio.Event()
+    cancelled = anyio.Event()
+
+    async def stalled_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
+        entered.set()
+        try:
+            await anyio.sleep_forever()
+        finally:
+            cancelled.set()
+        raise AssertionError('unreachable')
+
+    monkeypatch.setattr(anyio, 'open_process', stalled_spawn)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    async with anyio.create_task_group() as tg:
+
+        async def run() -> None:
+            if mode == 'deadline':
+                with pytest.raises(WorkspaceTimeoutError):
+                    await workspace.run(['true'], timeout=0.05)
+            else:
+                with pytest.raises(anyio.get_cancelled_exc_class()):
+                    await workspace.run(['true'])
+
+        tg.start_soon(run)
+        await entered.wait()
+        if mode == 'cancel':
+            tg.cancel_scope.cancel()
+        with anyio.fail_after(5, shield=True):
+            await cancelled.wait()
+
+
+async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    workspace = LocalWorkspaceBackend(tmp_path)
+    real_close = workspace._close  # pyright: ignore[reportPrivateUsage]
+    entered = anyio.Event()
+
+    async def stalled_close(process: anyio.abc.Process) -> None:
+        entered.set()
+        try:
+            await anyio.sleep_forever()
+        finally:
+            # The fake stalls only the first close; release real OS resources after cancellation.
+            with anyio.move_on_after(2, shield=True):
+                await real_close(process)
+
+    monkeypatch.setattr(workspace, '_close', stalled_close)
+    with anyio.fail_after(5):
+        with pytest.raises(WorkspaceTimeoutError):
+            await workspace.run(['sh', '-c', 'sleep 30'], timeout=0.05)
+    assert entered.is_set()
 
 
 async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

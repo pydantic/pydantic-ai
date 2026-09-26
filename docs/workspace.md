@@ -563,7 +563,9 @@ working directory). Local process startup counts as command time. The deadline c
 `timeout=None` has no command deadline. A provider's sandbox lifetime and idle limits are
 separate. Commands receive stdin at EOF, so use non-interactive flags (such as `-y`). On its
 own deadline the foreground command is stopped and `WorkspaceTimeoutError` carries any partial
-`stdout` and `stderr` collected so far.
+`stdout` and `stderr` collected so far. For the local backend, the command deadline also
+bounds subprocess startup; even with `timeout=None`, startup and process reaping have finite
+safety bounds.
 
 ## Security choices
 

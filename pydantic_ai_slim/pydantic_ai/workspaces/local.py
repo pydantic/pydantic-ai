@@ -7,6 +7,7 @@ subprocesses — it **isolates nothing**.
 from __future__ import annotations as _annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import signal
@@ -54,6 +55,9 @@ _OUTPUT_DRAIN_GRACE = 2.0
 # once `anyio>=4.15` is the minimum.
 _ANYIO_WAITS_FOR_PIPES = tuple(int(part) for part in version('anyio').split('.')[:2]) < (4, 15)
 _EXIT_POLL_INTERVAL = 0.005
+_SPAWN_GRACE = 2.0
+_REAP_GRACE = 2.0
+logger = logging.getLogger(__name__)
 
 
 def _waits_for_pipes() -> bool:
@@ -64,15 +68,16 @@ def _waits_for_pipes() -> bool:
     return _ANYIO_WAITS_FOR_PIPES
 
 
-async def _shielded(awaitable: Awaitable[None]) -> None:
-    """Await to completion even if the caller is cancelled meanwhile; the cancellation is raised after.
-
-    Runs in a task-group child, because a shielded scope alone does not stop asyncio's `Task.cancel()`.
-    """
+async def _shielded(awaitable: Awaitable[None], deadline: float) -> None:
+    """Finish or cancel bounded work even when the caller is cancelled."""
+    timed_out = False
 
     async def child() -> None:
-        with anyio.CancelScope(shield=True):
+        nonlocal timed_out
+        # A child owns the operation until completion: native Task.cancel() cannot interrupt its shield.
+        with anyio.move_on_after(max(0, deadline - anyio.current_time()), shield=True) as scope:
             await awaitable
+        timed_out = scope.cancel_called
 
     try:
         async with anyio.create_task_group() as tg:
@@ -82,6 +87,11 @@ async def _shielded(awaitable: Awaitable[None]) -> None:
         error = group.exceptions[0]
         error.__suppress_context__ = True
         raise error
+    # An outer cancellation takes precedence over the child's safety deadline.
+    await anyio.sleep(0)
+    if timed_out:
+        logger.warning('Local workspace subprocess operation exceeded its safety deadline')
+        raise TimeoutError('local workspace subprocess operation exceeded its grace period')
 
 
 class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
@@ -298,7 +308,9 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             )
 
         try:
-            await _shielded(spawn())
+            # Startup has its own finite bound, capped by the command deadline when supplied.
+            spawn_deadline = min(anyio.current_time() + _SPAWN_GRACE, absolute_deadline or float('inf'))
+            await _shielded(spawn(), spawn_deadline)
         except (FileNotFoundError, PermissionError) as error:
             if isinstance(error, FileNotFoundError) and not await run_in_executor(
                 (self._resolved_working_dir or self._working_dir).is_dir
@@ -316,9 +328,16 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 stdout='',
                 stderr=f'{command[0]}: {"command not found" if missing else "Permission denied"}\n',
             )
-        except BaseException:
+        except BaseException as error:
             if process is not None:
                 await self._terminate(process)
+            if (
+                isinstance(error, TimeoutError)
+                and absolute_deadline is not None
+                and anyio.current_time() >= absolute_deadline
+            ):
+                logger.warning('Local workspace command exceeded its deadline during subprocess startup')
+                raise WorkspaceTimeoutError(f'command timed out after {timeout} seconds during startup') from error
             raise
         running_process = process
         assert running_process is not None
@@ -330,7 +349,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             exit_code = await self._wait_and_collect_output(
                 running_process, stdout_buffer, stderr_buffer, absolute_deadline
             )
-            await self._close(running_process)
+            await _shielded(self._close(running_process), anyio.current_time() + _REAP_GRACE)
         except BaseException as error:
             denial = await self._terminate(running_process)
             if isinstance(error, TimeoutError):
@@ -437,7 +456,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         except PermissionError as denial:
             return denial
         finally:
-            await _shielded(self._close(process))
+            try:
+                # Teardown must not hold a cancelled caller indefinitely if a pipe/reap stalls.
+                await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
+            except TimeoutError:
+                logger.warning('Timed out reaping local workspace process group %s after kill', process.pid)
         return None
 
     @staticmethod
