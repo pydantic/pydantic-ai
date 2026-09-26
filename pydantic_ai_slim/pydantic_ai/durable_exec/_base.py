@@ -494,6 +494,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 'belongs on that capability (for example `LocalWorkspace(..., read_only=True)`), not around the '
                 'argument.'
             )
+        # A caller-side read-only wrapper cannot travel to activities; refusing it prevents
+        # a read-only run silently becoming writable on another worker.
+        if not isinstance(workspace, DurableWorkspace) and workspace.read_only and not rebuilt.read_only:
+            raise UserError(
+                f'Under {self.engine_name}, a read-only `workspace=` argument would lose its policy across '
+                'durable units; put read_only on the capability (for example `LocalWorkspace(..., read_only=True)`).'
+            )
         return rebuilt
 
     def _bind_capability_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:

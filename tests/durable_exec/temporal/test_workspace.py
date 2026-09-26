@@ -567,7 +567,9 @@ async def read_seed(ctx: RunContext[Any]) -> str:
     return await ctx.workspace.read_text('seed.txt')
 
 
-ExplicitKind = Literal['ref', 'live_with_ref', 'live_fresh', 'foreign_ref', 'previous_result', 'dead_ref']
+ExplicitKind = Literal[
+    'ref', 'live_with_ref', 'live_read_only', 'live_fresh', 'foreign_ref', 'previous_result', 'dead_ref'
+]
 
 
 @workflow.defn
@@ -579,6 +581,8 @@ class ExplicitWorkspaceWorkflow:
             workspace: Any = seeded
         elif kind == 'live_with_ref':
             workspace = RemoteBackend(seeded)
+        elif kind == 'live_read_only':
+            workspace = ReadOnlyWorkspace(Workspace(RemoteBackend(seeded)))
         elif kind == 'live_fresh':
             workspace = RemoteBackend(None)
         elif kind == 'foreign_ref':
@@ -650,6 +654,24 @@ async def test_explicit_workspace_nobody_can_rebuild_is_rejected(
     cause = _workflow_failure_cause(exc_info.value)
     assert (cause.type, cause.message) == ('UserError', message)
     assert _ENVIRONMENTS == {}
+
+
+async def test_explicit_read_only_workspace_cannot_lose_its_policy(client: Client) -> None:
+    _reset_provider()
+    _ENVIRONMENTS['seeded'] = {'/remote/seed.txt': b'seed'}
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ExplicitWorkspaceWorkflow], plugins=[AgentPlugin(explicit_agent)]
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExplicitWorkspaceWorkflow.run,
+                'live_read_only',
+                id=f'{ExplicitWorkspaceWorkflow.__name__}-read-only-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == 'UserError'
+    assert 'read_only on the capability' in cause.message
 
 
 async def test_a_dead_environment_fails_the_workflow_with_the_workspace_error(client: Client) -> None:

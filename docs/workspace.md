@@ -342,8 +342,8 @@ Tools use `ctx.workspace` as they would in a plain run.
 - Workspace calls retry like tools do, so a command or write may run again if a worker dies mid-call,
   and a `run(timeout=...)` must fit within the call's own timeout (Temporal's `start_to_close_timeout`).
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
-  capabilities. A wrapper such as `ReadOnlyWorkspace(...)` passed to the run is dropped, and a
-  capability passed to the run that changes the workspace raises `UserError`. Put policy on the
+  capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
+  read-only policy; a capability passed to the run that changes the workspace also raises `UserError`. Put policy on the
   agent's capability instead, such as `LocalWorkspace(..., read_only=True)`.
 - `workspace.backend` is not available in workflow code. Reach the provider's own API from a tool.
 - The deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers refuse a workspace.
