@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
@@ -181,6 +182,27 @@ async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
 
     with pytest.raises(WorkspaceError, match='invalid real path'):
         await workspace.realpath('x')
+
+
+async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None:
+    class ByteListingBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if isinstance(command, str) and 'find ' in command:
+                listing = b'-/workspace/file-\xff\0'
+                return FakeWorkspaceResult(stdout=f'{len(listing)}\n{base64.b64encode(listing).decode()}')
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    workspace = Workspace(ByteListingBackend(LocalWorkspaceBackend(tmp_path)))
+    assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
 
 
 async def test_shell_filesystem_reads_file_larger_than_command_output_cap(tmp_path: Path) -> None:

@@ -194,10 +194,10 @@ class _ShellFilesystem(SupportsFilesystem):
         result = await self._list_paths(quoted_path)
         await self._raise_for_error(result, path, missing=True)
         listing = self._decode_sized_output(result.stdout, path, 'directory listing')
-        try:
-            entries = listing.decode().split('\0')
-        except UnicodeDecodeError as error:
-            raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}') from error
+        # POSIX filenames are bytes; preserve undecodable names for a round trip via os.fsencode.
+        entries = listing.decode(errors='surrogateescape').split('\0')
+        if any(entry and (entry[0] not in 'd-' or not entry[1:].startswith('/')) for entry in entries):
+            raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}')
         # Each entry is `<d|-><path>`: whether it is a directory, following a symlink to its target.
         return tuple(
             FileEntry(name=posixpath.basename(entry[1:]), path=entry[1:], is_dir=entry[0] == 'd', size=None)
