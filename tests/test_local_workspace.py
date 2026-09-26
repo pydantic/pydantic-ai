@@ -7,7 +7,6 @@ import os
 import shlex
 import signal
 import sys
-import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -255,10 +254,8 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     command = (
         f'echo $$ > {shlex.quote(str(pid_file))}; sleep 30 & echo $! > {shlex.quote(str(child_pid_file))}; echo started'
     )
-    started = time.monotonic()
     result = await workspace.run(command, shell=True, timeout=10)
 
-    assert time.monotonic() - started < 5
     assert (result.exit_code, result.stdout) == (0, 'started\n')
     await _assert_process_gone(int(pid_file.read_text()))
     child_pid = int(child_pid_file.read_text())

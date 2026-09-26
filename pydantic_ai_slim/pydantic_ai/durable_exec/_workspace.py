@@ -363,9 +363,6 @@ class WorkspaceEnsurer(AbstractCapability[AgentDepsT]):
     capability's `wrap_run` would run `ensure` itself through the lazy fallback.
     """
 
-    def __init__(self, durability: BaseDurabilityCapability[AgentDepsT]) -> None:
-        self._durability = durability
-
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 

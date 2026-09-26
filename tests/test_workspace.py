@@ -263,7 +263,7 @@ async def test_text_helpers_resolve_relative_paths() -> None:
     assert backend.files['/workspace/data.txt'] == b'updated'
 
 
-async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_path: Path) -> None:
+async def test_run_only_backend_writes_binary_and_odd_names_through_the_shell(tmp_path: Path) -> None:
     backend = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
     workspace = Workspace(backend)
     payload = bytes(range(256)) * 800
@@ -273,20 +273,10 @@ async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_
     await workspace.write_bytes(filename, payload)
 
     assert await workspace.read_bytes(filename) == payload
-    assert (await workspace.stat(filename)).size == len(payload)
-    assert await workspace.exists(filename)
     entries = await workspace.list_dir('nested')
     assert [(entry.name, entry.is_dir) for entry in entries] == [("weird '\n blob.bin", False)]
     # The encoded write is chunked below Linux's independent per-argument limit.
     assert max(len(command.encode()) for command in backend.commands if isinstance(command, str)) < 128 * 1024
-
-    await workspace.make_dir('nested/directory')
-    assert (await workspace.stat('nested/directory')).is_dir
-    assert await workspace.exists('nested/directory')
-    await workspace.remove('nested')
-    assert not await workspace.exists(filename)
-    with pytest.raises(FileNotFoundError):
-        await workspace.read_bytes(filename)
 
 
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])

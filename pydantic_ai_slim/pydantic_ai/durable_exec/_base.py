@@ -335,7 +335,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Capabilities to compose around the bound copy, outermost first."""
         if self._bound_workspace_operation is None:
             return []
-        return [WorkspaceEnsurer(self)]
+        return [WorkspaceEnsurer()]
 
     def _bind_for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""

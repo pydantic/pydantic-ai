@@ -204,6 +204,18 @@ class WorkspaceBackendSuite:
                 'target': True,
             }
 
+    async def test_writes_go_through_a_symlink(self, backend: WorkspaceBackend) -> None:
+        commands = _commands(backend)
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            target, link = posixpath.join(root, 'target'), posixpath.join(root, 'link')
+            await workspace.write_bytes(target, b'old')
+            if (await commands.run(['ln', '-s', target, link])).exit_code != 0 or not await workspace.exists(link):
+                pytest.skip('the environment cannot create symlinks with `ln -s`')
+            await workspace.write_bytes(link, b'new')
+            assert await workspace.read_bytes(target) == b'new'
+            assert await workspace.realpath(link) == target
+
     async def test_a_backend_attached_by_ref_sees_the_same_files(
         self, backend: WorkspaceBackend, attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None
     ) -> None:

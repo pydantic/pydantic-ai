@@ -103,10 +103,10 @@ class _ShellFilesystem(SupportsFilesystem):
         ]
         try:
             for index, chunk in enumerate(chunks or ['']):
+                start = f'mkdir -p {quoted_parent} && ' if index == 0 else ''
                 redirect = '>' if index == 0 else '>>'
                 result = await self._backend.run(
-                    f"mkdir -p {quoted_parent} && printf '%s' {shlex.quote(chunk)} {redirect} {quoted_temporary}",
-                    shell=True,
+                    f"{start}printf '%s' {shlex.quote(chunk)} {redirect} {quoted_temporary}", shell=True
                 )
                 await self._raise_for_error(result, path)
 
@@ -114,10 +114,12 @@ class _ShellFilesystem(SupportsFilesystem):
             # Decode beside the destination and rename into place so cancellation or a failed
             # decode never leaves a partially written file. Copying an existing regular file
             # first preserves its mode bits; a directory destination is deliberately rejected.
+            # A symlink is written through, as a native write does, instead of being replaced.
             result = await self._backend.run(
                 f'{{ test -f {quoted_path} && cp {quoted_path} {quoted_decoded}; }}; '
-                f'base64 -d < {quoted_temporary} > {quoted_decoded} '
-                f'&& test ! -d {quoted_path} && mv -f {quoted_decoded} {quoted_path}; '
+                f'base64 -d < {quoted_temporary} > {quoted_decoded} && test ! -d {quoted_path} '
+                f'&& if test -L {quoted_path}; then cat {quoted_decoded} > {quoted_path}; '
+                f'else mv -f {quoted_decoded} {quoted_path}; fi; '
                 f'status=$?; rm -f {quoted_temporary} {quoted_decoded}; exit $status',
                 shell=True,
             )
