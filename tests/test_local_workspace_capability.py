@@ -43,6 +43,11 @@ async def test_resolver_cannot_substitute_a_different_workspace(tmp_path: Path) 
         await agent.run('go', workspace=WorkspaceRef(provider='local', id='/wrong'))
 
 
+def test_local_workspace_rejects_deferred_loading(tmp_path: Path) -> None:
+    with pytest.raises(UserError, match='workspace is chosen at run setup'):
+        LocalWorkspace(tmp_path, defer_loading=True)
+
+
 async def test_unattached_placeholder_does_not_shadow_child_capability(tmp_path: Path) -> None:
     child = Agent(TestModel(call_tools=['write']), capabilities=[LocalWorkspace(tmp_path)])
 

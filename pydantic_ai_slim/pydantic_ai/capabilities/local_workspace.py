@@ -5,6 +5,7 @@ from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
 
 from .abstract import AbstractCapability
@@ -42,6 +43,9 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     """Fixed, so a later `LocalWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
 
     def __post_init__(self) -> None:
+        # Workspace selection precedes deferred capability loading; deferral cannot supply it.
+        if self.defer_loading:
+            raise UserError('LocalWorkspace cannot be deferred: the workspace is chosen at run setup.')
         # Pin a relative `working_dir` to today's directory, and surface an unusable platform where the
         # capability is written, not on the first run.
         self.working_dir = LocalWorkspaceBackend(self.working_dir).ref.id
