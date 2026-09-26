@@ -109,7 +109,7 @@ When `trace` is set to `'enabled'` in the guardrail configuration (as in the exa
 Claude answers a forced tool choice without thinking, and manual extended thinking
 (`bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', ...}}`) rejects one outright. So while a
 Claude request thinks, whether because of a thinking setting or because the model thinks by default (Claude Opus 5 and
-later, Claude Sonnet 5), Pydantic AI doesn't force the output tool:
+later, Claude Sonnet 5, Claude Fable 5), Pydantic AI doesn't force the output tool:
 
 - A bare structured `output_type` uses [`NativeOutput`][pydantic_ai.output.NativeOutput] where Bedrock supports it for
   the model. Otherwise it keeps tool output, with the output tool offered under `toolChoice={'auto': {}}` and a text

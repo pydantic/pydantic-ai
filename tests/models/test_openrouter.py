@@ -1550,6 +1550,31 @@ async def test_openrouter_forced_tool_choice_follows_default_thinking(
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == expected_tool_choice
 
 
+@pytest.mark.parametrize(
+    ('settings', 'expected_tool_choice'),
+    [
+        pytest.param({'tool_choice': 'required'}, 'required', id='explicit-forcing-without-thinking-setting'),
+        pytest.param({}, 'auto', id='inferred-forcing'),
+    ],
+)
+async def test_openrouter_forcing_on_anthropic_model_that_thinks_by_default(
+    allow_model_requests: None, settings: dict[str, Any], expected_tool_choice: str
+) -> None:
+    """Claude Opus 5 thinks without a thinking setting. An explicit forcing `tool_choice` still goes out, as on the
+    direct API, while forcing Pydantic AI inferred falls back to `auto` so the model keeps thinking."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-opus-5', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_settings=cast(OpenRouterModelSettings, settings),
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == expected_tool_choice
+
+
 @pytest.mark.parametrize('model_name', ['anthropic/claude-opus-5.5', 'anthropic/claude-fable-5.1'])
 async def test_openrouter_forced_tool_choice_on_anthropic_model_that_rejects_it(
     allow_model_requests: None, model_name: str

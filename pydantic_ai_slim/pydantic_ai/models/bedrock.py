@@ -2053,8 +2053,8 @@ def _support_tool_forcing(
 ) -> bool:
     """Whether to send a forced `toolChoice`, raising `UserError` if explicitly requested but unavailable.
 
-    On top of the profile's forcing flags, extended thinking blocks forced tool choice, while adaptive
-    thinking allows it.
+    On top of the profile's forcing flags, extended thinking rejects a forced tool choice, and adaptive thinking
+    accepts it but answers without thinking, so only an explicit forcing `tool_choice` is sent then.
     """
     thinking_type = _effective_thinking_type(model_settings, model_request_parameters, profile)
     if profile.get('bedrock_supports_tool_choice', False):

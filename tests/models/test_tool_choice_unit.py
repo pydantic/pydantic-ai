@@ -619,8 +619,9 @@ def test_support_tool_forcing_thinking_detection(settings: Any, params_thinking:
     ],
 )
 def test_support_tool_forcing_adaptive_profile_mapping(supports_adaptive_thinking: bool, expected: bool):
-    """Unified thinking maps to adaptive (compatible with forcing) on adaptive-capable profiles and
-    to extended thinking (incompatible) otherwise."""
+    """Unified thinking maps to adaptive thinking, which accepts forcing, on adaptive-capable profiles and to
+    extended thinking, which rejects it, otherwise. The hand-built profile doesn't set
+    `forced_tool_choice_disables_thinking`, so this pins the extended-thinking rule on its own."""
     settings: AnthropicModelSettings = {'thinking': 'high'}
     profile = AnthropicModelProfile(anthropic_supports_adaptive_thinking=supports_adaptive_thinking)
     result = anthropic_support_tool_forcing('test-model', profile, settings, ModelRequestParameters())
