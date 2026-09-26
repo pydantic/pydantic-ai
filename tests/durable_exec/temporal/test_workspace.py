@@ -540,6 +540,47 @@ async def test_large_workflow_write_fails_before_scheduling_activity(client: Cli
     assert 'big.bin' not in _ENVIRONMENTS['env-1']
 
 
+async def test_unicode_encode_error_crosses_workspace_boundary() -> None:
+    class EncodingBackend(RemoteBackend):
+        async def working_dir(self) -> str:
+            return '/remote'
+
+        async def write_bytes(self, path: str, data: bytes) -> None:
+            raise UnicodeEncodeError('ascii', 'café', 3, 4, 'ordinal not in range')
+
+    result = await execute_call(Workspace(EncodingBackend(None)), WorkspaceCall(method='write_bytes', path='x'))
+    assert result.error is not None
+    with pytest.raises(UnicodeEncodeError) as exc_info:
+        raise_error(result.error)
+    assert (exc_info.value.encoding, exc_info.value.object, exc_info.value.start, exc_info.value.end) == (
+        'ascii',
+        'café',
+        3,
+        4,
+    )
+
+
+async def test_workspace_os_error_preserves_type_and_both_filenames() -> None:
+    class RenameBackend(RemoteBackend):
+        async def working_dir(self) -> str:
+            return '/remote'
+
+        async def remove(self, path: str) -> None:
+            raise FileNotFoundError(errno.ENOENT, 'No such file', path, None, '/remote/new')
+
+    workspace = Workspace(RenameBackend(None))
+    with pytest.raises(FileNotFoundError) as plain:
+        await workspace.remove('old')
+    result = await execute_call(workspace, WorkspaceCall(method='remove', path='old'))
+    assert result.error is not None
+    with pytest.raises(FileNotFoundError) as durable:
+        raise_error(result.error)
+    assert type(durable.value) is type(plain.value)
+    assert durable.value.errno == plain.value.errno
+    assert durable.value.filename2 == plain.value.filename2
+    assert str(durable.value) == str(plain.value)
+
+
 async def test_deterministic_os_error_crosses_workspace_boundary_without_retry() -> None:
     class LongNameBackend(RemoteBackend):
         async def working_dir(self) -> str:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 import anyio
 from pydantic import ConfigDict
@@ -75,6 +75,11 @@ class WorkspaceCallError:
     strerror: str | None = None
     filename: str | None = None
     filename2: str | None = None
+    encoding: str | None = None
+    object: str | None = None
+    start: int | None = None
+    end: int | None = None
+    reason: str | None = None
 
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
@@ -174,6 +179,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     PermissionError,
     FileExistsError,
     OSError,
+    UnicodeEncodeError,
     NotImplementedError,
     UserError,
     TypeError,
@@ -200,6 +206,16 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
             filename=error.filename,
             filename2=error.filename2,
         )
+    if isinstance(error, UnicodeEncodeError):
+        return WorkspaceCallError(
+            type=error_type.__name__,
+            message=str(error),
+            encoding=error.encoding,
+            object=error.object,
+            start=error.start,
+            end=error.end,
+            reason=error.reason,
+        )
     if isinstance(error, WorkspaceTimeoutError):
         return WorkspaceCallError(
             type=error_type.__name__, message=str(error), stdout=error.stdout, stderr=error.stderr
@@ -209,9 +225,13 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
 
 def raise_error(error: WorkspaceCallError) -> Never:
     """Re-raise an error that crossed a durable boundary as data, with its original type."""
-    error_type = _EXPECTED_ERRORS_BY_NAME[error.type]
+    error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[error.type])
     if error_type is WorkspaceTimeoutError:
         raise WorkspaceTimeoutError(error.message, stdout=error.stdout, stderr=error.stderr)
+    if error_type is UnicodeEncodeError:
+        assert error.encoding is not None and error.object is not None
+        assert error.start is not None and error.end is not None and error.reason is not None
+        raise UnicodeEncodeError(error.encoding, error.object, error.start, error.end, error.reason)
     if issubclass(error_type, OSError) and not issubclass(error_type, WorkspaceError):
         if error.errno is None:
             # Some backends raise FileNotFoundError(path), without OS error fields.
