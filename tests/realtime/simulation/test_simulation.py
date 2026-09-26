@@ -222,7 +222,7 @@ def test_known_reply_lost_to_a_drop_keeps_its_reservation_gemini() -> None:
     reproduce('SIM-1', GeminiSimulation(), scenario)
 
 
-@known('SIM-2')
+@known('SIM-2a')
 def test_known_turn_sent_before_reply_content_recorded_ahead_of_it() -> None:
     """The first reply ended empty before the second turn was sent, but the client hadn't read it yet."""
 
@@ -232,10 +232,10 @@ def test_known_turn_sent_before_reply_content_recorded_ahead_of_it() -> None:
         sim.send_text(respond=False)
         sim.settle()
 
-    reproduce('SIM-2', OpenAISimulation(), scenario)
+    reproduce('SIM-2a', OpenAISimulation(), scenario)
 
 
-@known('SIM-2')
+@known('SIM-2b')
 def test_known_wait_returns_before_a_started_vad_reply() -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
@@ -243,16 +243,16 @@ def test_known_wait_returns_before_a_started_vad_reply() -> None:
         sim.speech_stop()
         sim.wait_for_reply()
 
-    reproduce('SIM-2', OpenAISimulation(), scenario)
+    reproduce('SIM-2b', OpenAISimulation(), scenario)
 
 
-@known('SIM-2')
+@known('SIM-2b')
 def test_known_wait_returns_before_a_delegated_reply() -> None:
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
         sim.wait_for_reply()
 
-    reproduce('SIM-2', LiveSimulation(), scenario)
+    reproduce('SIM-2b', LiveSimulation(), scenario)
 
 
 @known('SIM-3')

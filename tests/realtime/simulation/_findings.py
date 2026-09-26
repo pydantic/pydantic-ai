@@ -217,7 +217,7 @@ def _sent_before_reply_content(sim: Simulation, violation: InvariantViolation) -
 
 
 SENT_BEFORE_REPLY_STARTED = Finding(
-    id='SIM-2',
+    id='SIM-2a',
     title=(
         'a turn sent while a reply is requested or already started, but before any of its content arrived, is recorded '
         'ahead of that reply, though the reply never saw it: the session learns a response exists only from its content'
@@ -292,7 +292,7 @@ def _waited_before_reply_content(sim: Simulation, violation: InvariantViolation)
 
 
 WAIT_BEFORE_REPLY_CONTENT = Finding(
-    id='SIM-2',
+    id='SIM-2b',
     title=(
         '`wait_for_reply()` returns at once while a response the provider started on its own (server VAD, a GPT-Live '
         'delegation) has produced no content yet: the session learns a response exists only from its content'
@@ -529,3 +529,4 @@ def matching_findings(sim: Simulation, violation: InvariantViolation) -> list[Fi
 
 
 FINDINGS_BY_ID: dict[str, Finding] = {finding.id: finding for finding in KNOWN_FINDINGS}
+assert len(FINDINGS_BY_ID) == len(KNOWN_FINDINGS), 'finding ids must be unique'
