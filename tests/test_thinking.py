@@ -1008,6 +1008,59 @@ class TestBedrockThinkingTranslation:
         # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
         assert result is None
 
+    @pytest.mark.parametrize(
+        ('thinking', 'expected_effort'),
+        [
+            (True, 'medium'),
+            ('minimal', 'low'),
+            ('low', 'low'),
+            ('medium', 'medium'),
+            ('high', 'high'),
+            ('xhigh', 'xhigh'),
+        ],
+    )
+    def test_xai_variant_thinking_levels(self, thinking: ThinkingLevel, expected_effort: str):
+        """Grok on Converse takes effort nested as `reasoning.effort`, not the flat gpt-oss `reasoning_effort`."""
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='xai',
+                supports_thinking=True,
+            )
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=thinking)
+        result = model._build_additional_model_request_fields(settings, params)
+        assert result == {'reasoning': {'effort': expected_effort}}
+
+    def test_xai_variant_thinking_false(self):
+        """thinking=False on the xAI Bedrock variant is a no-op (Grok always reasons)."""
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='xai',
+                supports_thinking=True,
+            )
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = model._build_additional_model_request_fields(settings, params)
+        assert result is None
+
+    def test_xai_variant_user_reasoning_wins(self):
+        """A user-supplied `reasoning` in `bedrock_additional_model_requests_fields` is left untouched."""
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='xai',
+                supports_thinking=True,
+            )
+        )
+
+        settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'low'}})
+        params = ModelRequestParameters(thinking='high')
+        result = model._build_additional_model_request_fields(settings, params)
+        assert result == {'reasoning': {'effort': 'low'}}
+
     def test_no_variant_thinking_passthrough(self):
         """When bedrock_thinking_variant is None, unified thinking is a no-op."""
         model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant=None))

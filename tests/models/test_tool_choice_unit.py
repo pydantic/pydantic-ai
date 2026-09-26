@@ -8,7 +8,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 from __future__ import annotations
 
 import re
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -546,6 +546,43 @@ def test_bedrock_explicit_tool_forcing_non_anthropic_thinking_errors():
 
     with pytest.raises(UserError, match='with thinking enabled'):
         bedrock_support_tool_forcing('test-model', profile, settings, ModelRequestParameters(), 'required')
+
+
+@skip_if_no_bedrock
+@pytest.mark.parametrize(
+    ('tool_choice_value', 'expected_tool_choice'),
+    [
+        pytest.param('required', {'any': {}}, id='required'),
+        pytest.param(['tool_a'], {'tool': {'name': 'tool_a'}}, id='single_tool'),
+    ],
+)
+def test_bedrock_xai_grok_forces_tools_with_thinking(tool_choice_value: Any, expected_tool_choice: dict[str, Any]):
+    """Grok always reasons on Converse and accepts `toolChoice` `any`/`tool`, so thinking does not block forcing."""
+    provider = BedrockProvider(bedrock_client=MagicMock())
+    model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], thinking='high')
+
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value))  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config.get('toolChoice') == expected_tool_choice
+
+
+@skip_if_no_bedrock
+@pytest.mark.parametrize('output_mode', ['auto', 'tool'])
+def test_bedrock_xai_grok_keeps_tool_output_with_thinking(output_mode: Literal['auto', 'tool']):
+    provider = BedrockProvider(bedrock_client=MagicMock())
+    model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
+    params = ModelRequestParameters(
+        output_mode=output_mode,
+        output_tools=[make_tool('final_result')],
+        allow_text_output=False,
+        thinking='high',
+    )
+
+    _, prepared = model.prepare_request(None, params)
+
+    assert prepared.output_mode == 'tool'
 
 
 @skip_if_no_bedrock
