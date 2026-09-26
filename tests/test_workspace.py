@@ -903,8 +903,8 @@ async def test_a_workspace_capability_cannot_be_deferred(tmp_path: Path) -> None
     with pytest.raises(UserError, match=f'`WrapperCapability` {message}'):
         Agent(TestModel(), capabilities=[WrapperCapability(LocalWorkspace(tmp_path), defer_loading=True, id='ws')])
 
-    with pytest.raises(UserError, match=f'`LocalWorkspace` {message}'):
-        await Agent(TestModel()).run('go', capabilities=[LocalWorkspace(tmp_path, defer_loading=True)])
+    with pytest.raises(UserError, match='workspace is chosen at run setup'):
+        LocalWorkspace(tmp_path, defer_loading=True)
 
 
 async def test_wrapper_composes_workspace_policy_over_combined_capability() -> None:
