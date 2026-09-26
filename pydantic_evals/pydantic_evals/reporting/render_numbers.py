@@ -68,12 +68,15 @@ def default_render_number_diff(old: float | int, new: float | int) -> str | None
             _default_format_number_diff(3, 4) -> '+1'
       - For floats (or a mix of float and int):
           * Compute the raw delta = new - old and format it with ABS_SIG_FIGS significant figures.
-          * If `old` is nonzero, compute a relative change:
+          * If `old` is nonzero, compute a relative change against |old|, so that its sign
+            tracks the direction of the change rather than the sign of the baseline:
               - If |delta|/|old| ≤ 1, render the relative change as a percentage with
                 PERC_DECIMALS decimal places, e.g. '+0.7 / +70.0%'.
-              - If |delta|/|old| > 1, render a multiplier (new/old). Use one decimal place
-                if the absolute multiplier is less than MULTIPLIER_ONE_DECIMAL_THRESHOLD,
-                otherwise no decimals.
+              - If |delta|/|old| > 1 and `old` is positive, render a multiplier (new/old).
+                Use one decimal place if the absolute multiplier is less than
+                MULTIPLIER_ONE_DECIMAL_THRESHOLD, otherwise no decimals.
+              - If `old` is negative, keep the percentage form: a multiplier over a negative
+                base reads backwards, e.g. -1.0 -> -3.0 would show as '3.0x'.
           * However, if the percentage rounds to 0.0% (e.g. '+0.0%'), return only the absolute diff.
           * Also, if |old| is below BASE_THRESHOLD and |delta| exceeds MULTIPLIER_DROP_FACTOR×|old|,
             drop the relative change indicator.
@@ -140,15 +143,20 @@ def _render_relative(new: float, base: float, small_base_threshold: float) -> st
     if abs(base) < small_base_threshold and abs(delta) > MULTIPLIER_DROP_FACTOR * abs(base):
         return None
 
-    # Compute the relative change as a percentage.
-    rel_change = (delta / base) * 100
+    # Compute the relative change as a percentage of the base's magnitude. Dividing by the
+    # signed base would invert the sign for negative bases, so an improvement from -2.0 to
+    # -1.0 would render as '-50.0%' next to an absolute diff of '+1.0'.
+    rel_change = (delta / abs(base)) * 100
     perc_str = f'{rel_change:+.{PERC_DECIMALS}f}%'
     # If the percentage rounds to 0.0%, return only the absolute difference.
     if perc_str in ('+0.0%', '-0.0%'):
         return None
 
-    # Decide whether to use percentage style or multiplier style.
-    if abs(delta) / abs(base) <= 1:
+    # Decide whether to use percentage style or multiplier style. A multiplier is only used
+    # for positive bases: for a negative base, `new / base` is arithmetically true but reads
+    # backwards (-1.0 -> -3.0 would render as '3.0x'), so percentages above 100% are used
+    # there instead.
+    if abs(delta) / abs(base) <= 1 or base < 0:
         # Percentage style.
         return perc_str
     else:
