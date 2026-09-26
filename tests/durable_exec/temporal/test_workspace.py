@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import Any, Literal
 
@@ -47,10 +48,16 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
+    from pydantic_ai.durable_exec.temporal import (
+        AgentPlugin,
+        PydanticAIPlugin,
+        TemporalDurability,
+        _workflow_runner,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._operation_backend import workspace_run_activity_config
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import with_non_retryable_errors
@@ -99,6 +106,28 @@ with workflow.unsafe.imports_passed_through():
 _REF_ADAPTER: TypeAdapter[WorkspaceRef | None] = TypeAdapter(WorkspaceRef | None)
 
 pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::pydantic.PydanticDeprecatedSince20')]
+
+
+def test_temporal_runner_passes_installed_harness_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_ai.durable_exec import temporal
+
+    runner = SandboxedWorkflowRunner()
+
+    def installed(module: str) -> ModuleSpec | None:
+        return ModuleSpec(module, loader=None) if module == 'pydantic_ai_harness' else None
+
+    monkeypatch.setattr(temporal, 'find_spec', installed)
+    configured = _workflow_runner(runner)
+    assert isinstance(configured, SandboxedWorkflowRunner)
+    assert 'pydantic_ai_harness' in configured.restrictions.passthrough_modules
+
+    def absent(module: str) -> ModuleSpec | None:
+        return None
+
+    monkeypatch.setattr(temporal, 'find_spec', absent)
+    configured = _workflow_runner(runner)
+    assert isinstance(configured, SandboxedWorkflowRunner)
+    assert 'pydantic_ai_harness' not in configured.restrictions.passthrough_modules
 
 
 def test_workspace_failures_do_not_retry_temporal_activities() -> None:

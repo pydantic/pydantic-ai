@@ -610,14 +610,23 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         return self.wrapped.id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if self._lifecycle == 'enter-outside-durable':
+        wrapped = await self.wrapped.for_run(ctx)
+        if wrapped is self.wrapped:
             return self
-        return await super().for_run(ctx)
+        # Engine wrappers carry registered callbacks that `dataclasses.replace` cannot reconstruct.
+        replacement = copy.copy(self)
+        replacement.wrapped = wrapped
+        replacement._run_held = None
+        return replacement
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if self._lifecycle == 'enter-outside-durable':
+        wrapped = await self.wrapped.for_run_step(ctx)
+        if wrapped is self.wrapped:
             return self
-        return await super().for_run_step(ctx)
+        replacement = copy.copy(self)
+        replacement.wrapped = wrapped
+        replacement._run_held = None
+        return replacement
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]

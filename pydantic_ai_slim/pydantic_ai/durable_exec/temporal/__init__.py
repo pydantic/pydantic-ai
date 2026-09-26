@@ -11,6 +11,7 @@ except ImportError as _import_error:
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
+from importlib.util import find_spec
 from typing import Any
 
 from pydantic.errors import PydanticUserError
@@ -114,9 +115,13 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     # Temporal without running a sandboxed worker, then leaves the registry alone.
     set_replay_isolation_guard(workflow.unsafe.in_sandbox)
 
+    # Harness file-tool orchestration runs workflow-side for pre-write vetoes; importing it
+    # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
+    harness_modules = ('pydantic_ai_harness',) if find_spec('pydantic_ai_harness') is not None else ()
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
+            *harness_modules,
             'pydantic_ai',
             'pydantic_graph',
             'pydantic',

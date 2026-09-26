@@ -335,7 +335,10 @@ agent = Agent(
 )
 ```
 
-Tools use `ctx.workspace` as they would in a plain run.
+Tools use `ctx.workspace` as they would in a plain run. On Temporal, a tool that must run
+its orchestration in the workflow (for example, to approve a file change before writing) can
+set `metadata={'temporal': False}` on its tool definition; workspace operations it calls still
+run as durable activities.
 
 - Every run creates or attaches its environment at its start, even if no tool uses it. Retries,
   replays and recovery then reattach to that same environment.
