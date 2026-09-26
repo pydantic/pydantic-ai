@@ -2514,7 +2514,14 @@ def test_output_type_union_text_fallback_invalid_data_retries():
     assert retry_parts == snapshot(
         [
             RetryPromptPart(
-                content=[{'type': 'missing', 'loc': ('color',), 'msg': 'Field required', 'input': {'length': 12.0}}],
+                content=[
+                    {
+                        'type': 'missing',
+                        'loc': ('result', 'data', 'color'),
+                        'msg': 'Field required',
+                        'input': {'length': 12.0},
+                    }
+                ],
                 tool_call_id=IsStr(),
                 timestamp=IsDatetime(),
             )
@@ -2612,6 +2619,71 @@ def test_prompted_output_union_invalid_kind_retries():
             )
         ]
     )
+
+
+def test_output_type_native_output_invalid_data_retries():
+    """When a `NativeOutput` union envelope has the right `kind` but `data` that doesn't match
+    that member's schema, validation fails and the model is re-prompted with the error rooted
+    under the envelope path (`result.data`), so the failing input is retained in the feedback.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        assert info.model_request_parameters.output_mode == 'native'
+        if calls == 1:
+            # Correct `kind`, but `data` has `length` as a string where `Banana` requires a float.
+            text = '{"result": {"kind": "Banana", "data": {"length": "long"}}}'
+        else:
+            text = '{"result": {"kind": "Banana", "data": {"length": 6.0}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=NativeOutput([Apple, Banana]))
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Banana(length=6.0))
+    assert calls == 2
+
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    assert len(retry_parts) == 1
+    retry_content = retry_parts[0].content
+    assert isinstance(retry_content, list)
+    assert retry_content[0]['loc'] == ('result', 'data', 'length')
+    assert 'long' in retry_parts[0].model_response()
+
+
+def test_output_type_prompted_output_invalid_data_retries():
+    """When a `PromptedOutput` union envelope has the right `kind` but `data` that doesn't match
+    that member's schema, the re-prompt error is rooted under the envelope path (`result.data`),
+    matching the envelope-level errors for an invalid `kind`.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        assert info.model_request_parameters.output_mode == 'prompted'
+        assert not info.output_tools
+        if calls == 1:
+            # Correct `kind`, but `data` has `length` as a string where `Banana` requires a float.
+            text = '{"result": {"kind": "Banana", "data": {"length": "long"}}}'
+        else:
+            text = '{"result": {"kind": "Banana", "data": {"length": 6.0}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput([Apple, Banana]))
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Banana(length=6.0))
+    assert calls == 2
+
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    assert len(retry_parts) == 1
+    retry_content = retry_parts[0].content
+    assert isinstance(retry_content, list)
+    assert retry_content[0]['loc'] == ('result', 'data', 'length')
+    assert 'long' in retry_parts[0].model_response()
 
 
 def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
