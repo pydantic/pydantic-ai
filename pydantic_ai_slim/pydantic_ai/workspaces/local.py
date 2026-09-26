@@ -386,10 +386,12 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def _wait_for_exit(self, process: anyio.abc.Process) -> int:
         """Return the exit code as soon as the command itself exits, whatever its children do with the pipes."""
         if not _waits_for_pipes():
-            return await process.wait()
-        while (exit_code := process.returncode) is None:
-            await anyio.sleep(_EXIT_POLL_INTERVAL)
-        return exit_code
+            exit_code = await process.wait()
+        else:
+            while (exit_code := process.returncode) is None:
+                await anyio.sleep(_EXIT_POLL_INTERVAL)
+        # Subprocess APIs report -N, whereas shells report signal deaths as 128+N.
+        return 128 - exit_code if exit_code < 0 else exit_code
 
     async def _close(self, process: anyio.abc.Process) -> None:
         """Release the process's pipes and reap it, without waiting for the pipes to close."""

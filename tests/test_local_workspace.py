@@ -454,6 +454,11 @@ async def test_local_rejects_invalid_command_timeout(tmp_path: Path, timeout: An
         await LocalWorkspaceBackend(tmp_path).run(['true'], timeout=timeout)
 
 
+async def test_signal_killed_command_reports_shell_exit_code(tmp_path: Path):
+    result = await LocalWorkspaceBackend(tmp_path).run('kill -9 $$', shell=True)
+    assert result.exit_code == 137
+
+
 async def test_removed_workspace_cannot_be_recreated_or_removed(tmp_path: Path):
     root = tmp_path / 'workspace'
     root.mkdir()
