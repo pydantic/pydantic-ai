@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
+import anyio
 import pytest
 
 from .protocol import SupportsCommands, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
@@ -134,6 +135,15 @@ class WorkspaceBackendSuite:
         assert isinstance(created, WorkspaceRef) and backend.ref == created
         assert before in (None, created)
 
+    async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None:
+        """A shell-derived filesystem must page reads rather than hit a command-output cap."""
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            path = posixpath.join(root, 'large.bin')
+            data = b'x' * (8 * 1024 * 1024)
+            await workspace.write_bytes(path, data)
+            assert await workspace.read_bytes(path) == data
+
     async def test_bytes_round_trip_and_write_creates_parents(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
@@ -210,6 +220,59 @@ class WorkspaceBackendSuite:
         async with _scratch_dir(workspace) as root:
             with pytest.raises(IsADirectoryError):
                 await workspace.write_bytes(root, b'data')
+
+    @pytest.fixture
+    def has_real_posix_shell(self) -> bool:
+        """Only a test double with no POSIX process/filesystem can opt out."""
+        return True
+
+    async def test_symlink_loop_does_not_break_listing(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('in-memory fake cannot create symlinks')
+        commands = _commands(backend)
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            loop = posixpath.join(root, 'loop')
+            if (await commands.run(['ln', '-s', 'loop', loop])).exit_code != 0:
+                pytest.skip('the environment cannot create symlinks with `ln -s`')
+            entries = await workspace.list_dir(root)
+            assert [(entry.name, entry.is_dir) for entry in entries] == [('loop', False)]
+
+    async def test_fifo_read_does_not_wait_for_writer(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('in-memory fake cannot create FIFOs')
+        commands = _commands(backend)
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            fifo = posixpath.join(root, 'fifo')
+            if (await commands.run(['mkfifo', fifo])).exit_code != 0:
+                pytest.skip('the environment does not provide `mkfifo`')
+            with anyio.fail_after(5):
+                with pytest.raises(OSError):
+                    await workspace.read_bytes(fifo)
+
+    @pytest.fixture
+    def enforces_parent_file_errors(self) -> bool:
+        """Opt out only for an in-memory test double without real path traversal."""
+        return True
+
+    async def test_file_as_parent_raises_not_a_directory(
+        self, backend: WorkspaceBackend, enforces_parent_file_errors: bool
+    ) -> None:
+        if not enforces_parent_file_errors:
+            pytest.skip('in-memory fake has no real path traversal')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            file = posixpath.join(root, 'file')
+            await workspace.write_bytes(file, b'data')
+            with pytest.raises(NotADirectoryError):
+                await workspace.write_bytes(posixpath.join(file, 'child'), b'data')
+            with pytest.raises(NotADirectoryError):
+                await workspace.make_dir(posixpath.join(file, 'child'))
 
     async def test_making_a_directory_over_a_file_raises_file_exists(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)

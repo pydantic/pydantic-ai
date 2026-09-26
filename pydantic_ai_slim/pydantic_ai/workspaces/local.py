@@ -175,7 +175,12 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         def write() -> None:
             target = self._path(path)
             self._check_root(target)
-            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            except FileExistsError as error:
+                if any(parent.is_file() for parent in target.parents):
+                    raise NotADirectoryError(path) from error
+                raise
             target.write_bytes(data)
 
         await run_in_executor(write)
@@ -218,7 +223,12 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         def make() -> None:
             target = self._path(path)
             self._check_root(target)
-            target.mkdir(parents=True, exist_ok=True)
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except FileExistsError as error:
+                if any(parent.is_file() for parent in target.parents):
+                    raise NotADirectoryError(path) from error
+                raise
 
         await run_in_executor(make)
 

@@ -43,6 +43,14 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
 
 class TestFilesystemOnlyWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
+    def enforces_parent_file_errors(self) -> bool:
+        return False  # The in-memory fake records paths without traversing parent directories.
+
+    @pytest.fixture
+    def has_real_posix_shell(self) -> bool:
+        return False  # No shell: only a dict-backed filesystem.
+
+    @pytest.fixture
     def backend(self) -> FilesystemOnlyWorkspaceBackend:
         return FilesystemOnlyWorkspaceBackend(FakeWorkspace('filesystem-only-conformance'))
 
@@ -67,6 +75,14 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
 
 
 class TestProviderBackend(WorkspaceBackendSuite):
+    @pytest.fixture
+    def enforces_parent_file_errors(self) -> bool:
+        return False  # Its in-memory provider uses the same simplified file map.
+
+    @pytest.fixture
+    def has_real_posix_shell(self) -> bool:
+        return False  # Its `run` is a stub, not a POSIX process.
+
     @pytest.fixture
     def provider(self) -> InMemoryProvider:
         return InMemoryProvider('conformance-provider')
