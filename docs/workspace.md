@@ -508,6 +508,27 @@ The suite needs the anyio pytest plugin. A class-scoped fixture starts one envir
 suite instead of one per rule. Provide the optional `attach_backend` and `destroy_environment`
 fixtures to enable the reattachment rules.
 
+## Timeouts and clocks
+
+`run(timeout=...)` starts its clock after the sandbox is ready and covers the command only;
+`timeout=None` has no command deadline. A provider's sandbox lifetime and idle limits are
+separate. Commands receive stdin at EOF, so use non-interactive flags (such as `-y`). On its
+own deadline the foreground command is stopped and `WorkspaceTimeoutError` carries any partial
+`stdout` and `stderr` collected so far.
+
+## Security choices
+
+`LocalWorkspace` has the full authority of the host user. Neither `working_dir` nor a harness
+`FileSystem` root jails shell commands. Do not pass `os.environ` to untrusted workspaces:
+explicitly choose the variables the command needs. Arguments to workflow-side workspace calls,
+including `env=` and file contents, are stored in durable history; do not pass secrets there
+without a suitable payload codec.
+
+## Platforms
+
+The local backend and command-backed shell fallback require POSIX. A filesystem-only backend
+works without shell support, but cannot run commands.
+
 ## Limits
 
 - `LocalWorkspace` isolates nothing, never creates its directory, and runs only on POSIX systems
