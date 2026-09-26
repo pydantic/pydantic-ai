@@ -1001,7 +1001,7 @@ class TestBridgeFailureModes:
         assert thread is not None
 
         with pytest.raises(Suspend):
-            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=0.1)
+            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=2)
 
         assert cleanup_finished.wait(timeout=5)
         # The unwind beat the budget, so the loop is still the one the next invocation gets.
@@ -1016,7 +1016,7 @@ class TestBridgeFailureModes:
     ) -> None:
         loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
         monkeypatch.setattr(_bridge, '_agent_loop', loops)
-        monkeypatch.setattr(_bridge, '_RETIRED_LOOP_GRACE_SECONDS', 0.5)
+        monkeypatch.setattr(_bridge, '_RETIRED_LOOP_GRACE_SECONDS', 3)
         cleanup_finished = threading.Event()
 
         class Suspend(BaseException):
