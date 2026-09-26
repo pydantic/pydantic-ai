@@ -248,6 +248,12 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for details on setting up tools that require approval.
 
+If an approved tool needs the same workspace on the next request, save `result.workspace.ref`
+in `on_complete` on your server (keyed by an authorized conversation identity), then pass that
+saved ref as `workspace=` on the approval turn. Vercel AI messages do not carry workspace refs;
+client-submitted history alone cannot resume a sandbox. See
+[Continuing in the same workspace](../workspace.md#continuing-in-the-same-workspace).
+
 To enable tool approval streaming, pass `sdk_version=6` to `dispatch_request`:
 
 ```py {test="skip" lint="skip"}

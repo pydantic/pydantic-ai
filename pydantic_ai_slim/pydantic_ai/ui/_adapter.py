@@ -374,8 +374,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     server-side provider credentials. Reconnect explicitly by passing an authorized `workspace=` to
     the run method instead.
 
-    Set to `False` only when the client is trusted to hold the conversation's workspace identity,
-    so that a run continues in the environment its earlier responses were produced in.
+    The Vercel AI and AG-UI protocols do not carry workspace references. Setting this to `False`
+    only affects `sanitize_messages` and custom adapters; it does not round-trip a reference through
+    those protocols. Persist the ref server-side and pass an authorized `workspace=` instead.
     """
 
     @classmethod

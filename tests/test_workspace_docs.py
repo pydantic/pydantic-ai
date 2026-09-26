@@ -17,6 +17,17 @@ def test_host_backend_rejects_untrusted_ref_id() -> None:
     assert 'ref ids can come from' in page.lower()
 
 
+def test_ui_adapter_workspace_ref_round_trip_limit_and_approval_recipe() -> None:
+    root = Path(__file__).resolve().parents[1]
+    overview = (root / 'docs/ui/overview.md').read_text()
+    approval = (root / 'docs/ui/vercel-ai.md').read_text()
+    adapter = (root / 'pydantic_ai_slim/pydantic_ai/ui/_adapter.py').read_text()
+    for text in (overview, adapter):
+        assert 'Vercel AI and AG-UI protocols do not carry workspace references' in text
+    assert 'result.workspace.ref' in approval
+    assert 'workspace=' in approval.split('## Tool Approval', 1)[1].split('## Tool input validation', 1)[0]
+
+
 def test_no_unavailable_no_file_access_recipe() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert "no_files = UnavailableWorkspace(reason='This run has no file access.')" not in page
