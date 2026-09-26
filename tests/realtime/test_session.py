@@ -5005,6 +5005,26 @@ async def test_audio_chunk_that_hits_a_reconnecting_link_is_dropped() -> None:
         await RealtimeSession(without_policy, model_name='gpt-realtime').send_audio(b'\x01\x01')
 
 
+async def test_audio_raises_once_receiving_has_ended_even_if_the_connection_still_claims_a_reconnect() -> None:
+    # A re-dial can fail with an error the reconnect loop doesn't expect, ending receiving without the
+    # connection marking its reconnect as given up. Once a consumer has caught that failure, nothing will
+    # replace the link, so a mic chunk must raise rather than be dropped silently forever.
+    class _DialBlowsUp(_ReconnectingDisconnectedConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            raise RuntimeError('handshake rejected')
+            yield  # pragma: no cover  (makes this an async generator)
+
+    conn = _DialBlowsUp()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        with pytest.raises(RuntimeError, match='handshake rejected'):
+            async for _ in session:
+                pass  # pragma: no cover - the failure is the only thing that arrives
+        conn.dropped = True
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            await session.send_audio(b'\x01\x01')
+
+
 def test_a_connection_does_not_reconnect_by_default() -> None:
     assert FakeRealtimeConnection([])._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
 

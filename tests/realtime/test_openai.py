@@ -3254,6 +3254,18 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.anyio
+async def test_openai_connection_cannot_reconnect_once_a_reconnect_has_failed() -> None:
+    async def dial() -> Any:
+        raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(DroppingWebSocket([]), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})  # type: ignore[arg-type]
+    assert conn._can_reconnect  # pyright: ignore[reportPrivateUsage]
+    events = [event async for event in conn]
+    assert isinstance(events[-1], RealtimeSessionErrorEvent) and 'reconnect failed' in events[-1].message
+    assert conn._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_openai_connection_can_reconnect_only_with_a_policy() -> None:
     async def dial() -> Any:
         raise NotImplementedError  # pragma: no cover

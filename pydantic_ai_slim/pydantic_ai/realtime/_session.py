@@ -5,7 +5,6 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import io
-import logging
 import wave
 import weakref
 from collections import deque
@@ -168,9 +167,6 @@ as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent]
 as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as realtime
 control-plane events.
 """
-
-
-_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, repr=False, kw_only=True)
@@ -1702,9 +1698,9 @@ class RealtimeSession:
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
 
         With a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy, a chunk sent
-        while a dropped connection is being re-dialed is discarded (logged at debug level) rather than
-        raised, so a microphone task survives the reconnect. That includes a one-shot clip passed as a
-        single chunk: resend it after the
+        while a dropped connection is being re-dialed is discarded rather than raised, so a microphone
+        task survives the reconnect. That includes a one-shot clip passed as a single chunk: resend it
+        after the
         [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] if it matters.
         """
         self._require_media_ownership('send_audio')
@@ -1754,8 +1750,7 @@ class RealtimeSession:
                 # The link dropped and the connection's reconnect policy is replacing it, with receiving
                 # still live to deliver it. A chunk of live audio is worthless once late, so it is dropped
                 # rather than raised: the capture loop outlives the reconnect instead of dying on it. Once
-                # the reconnect fails, the next chunk raises that failure.
-                _logger.debug('Dropped a %d-byte audio chunk sent while the realtime connection re-dials.', len(data))
+                # the reconnect fails, the next chunk raises again.
                 return
             raise
 
