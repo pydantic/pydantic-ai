@@ -48,6 +48,9 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch()])
 
 result = agent.run_sync('What changed in the latest stable Python release?')
 print(result.output)
+"""
+Python 3.14 added template string literals, deferred evaluation of annotations, and an officially supported free-threaded build.
+"""
 ```
 
 ## Tools
@@ -131,7 +134,12 @@ application reads it from the `ToolReturnPart` in the message history, so
 rendering citations needs no text parsing:
 
 ```python
+from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai_harness import ExaSearch
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch()])
+result = agent.run_sync('What changed in the latest stable Python release?')
 
 for message in result.all_messages():
     if isinstance(message, ModelRequest):
@@ -205,7 +213,6 @@ instead of returning the deferred requests:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.tools import DeferredToolRequests
-
 from pydantic_ai_harness import ExaAgent
 
 agent = Agent(
@@ -223,7 +230,6 @@ the agent to resume the deferred run:
 
 ```python
 from pydantic_ai.tools import DeferredToolResults
-
 from pydantic_ai_harness.exa import RUN_ID_METADATA_KEY, agent_run_result
 
 
@@ -276,7 +282,6 @@ names:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import PrefixTools
-
 from pydantic_ai_harness import ExaSearch
 
 agent = Agent(
@@ -378,7 +383,7 @@ capabilities:
       effort: low
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import ExaAgent, ExaSearch
 

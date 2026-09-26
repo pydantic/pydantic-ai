@@ -41,6 +41,7 @@ agent = Agent(
 
 result = agent.run_sync('Create an S3 bucket called reports and list all buckets.')
 print(result.output)
+#> Created the `reports` bucket. Buckets: reports.
 ```
 
 By default the agent connects to a LocalStack instance you started separately --
@@ -132,7 +133,7 @@ environment is already trusted.
 
 The same lifecycle is available standalone as an async context manager:
 
-```python
+```python {test="skip"}
 import asyncio
 
 from pydantic_ai_harness.localstack import LocalStackContainer
@@ -140,7 +141,7 @@ from pydantic_ai_harness.localstack import LocalStackContainer
 
 async def main() -> None:
     async with LocalStackContainer(environment={'DEBUG': '1'}) as localstack:
-        ...  # talk to localstack.endpoint_url
+        print(localstack.endpoint_url)
 
 
 asyncio.run(main())
@@ -193,7 +194,7 @@ capabilities:
       allowed_services: ['s3', 'dynamodb', 'sqs']
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import LocalStack
 

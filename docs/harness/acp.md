@@ -11,13 +11,14 @@ Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio J
     Unlike the graduated capabilities in these docs, ACP itself may still be **removed**, not just changed -- it lives under `pydantic_ai_harness.experimental` and may change or be removed in any release, without a deprecation period. Import it from the experimental path -- there is no top-level export:
 
     ```python
-    from pydantic_ai_harness.experimental.acp import run_acp_stdio_sync
+
     ```
 
     Importing any experimental capability emits a `HarnessExperimentalWarning`. Silence **all** harness experimental warnings with a single filter (no per-capability lines needed):
 
     ```python
     import warnings
+
     from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 
     warnings.filterwarnings('ignore', category=HarnessExperimentalWarning)
@@ -51,7 +52,7 @@ This pulls in the [`agent-client-protocol`](https://pypi.org/project/agent-clien
 
 Write a script that builds your agent and serves it:
 
-```python
+```python {dunder_name="not_main"}
 # my_acp_agent.py
 from pydantic_ai import Agent
 from pydantic_ai_harness.experimental.acp import run_acp_stdio_sync
@@ -92,11 +93,15 @@ The provider environment must be available to the launched subprocess. GUI edito
 
 A coding agent should read and write files in the workspace the editor opened, not wherever the subprocess started. ACP gives each session a working directory (`cwd`); a `session_config` factory turns that into per-session tools:
 
-```python
+```python {dunder_name="not_main"}
 from pydantic_ai import Agent
+from pydantic_ai_harness.experimental.acp import (
+    AcpSession,
+    AcpSessionConfig,
+    run_acp_stdio_sync,
+)
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, run_acp_stdio_sync
 
 agent = Agent('anthropic:claude-sonnet-4-6')
 
@@ -125,9 +130,14 @@ Use `capabilities` for session behavior so hooks, instructions, ordering constra
 The local [`FileSystem`](filesystem.md) and [`Shell`](shell.md) above operate on the agent process's own disk and subprocesses. An editor's source of truth is different: unsaved buffers, its own idea of the workspace layout, and -- for a remote or containerized editor -- the machine the code actually lives on. When the client advertises support, `acp_filesystem` and `acp_terminal` give the agent `read_file`/`write_file`/`run_command` tools that route through the client, so it acts where the user is:
 
 ```python
+from pydantic_ai_harness.experimental.acp import (
+    AcpSession,
+    AcpSessionConfig,
+    acp_filesystem,
+    acp_terminal,
+)
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, acp_filesystem, acp_terminal
 
 
 def session_config(session: AcpSession) -> AcpSessionConfig[None]:
@@ -148,6 +158,11 @@ If a client advertises filesystem reads but not writes, `acp_filesystem` keeps e
 Mark a tool to require approval and ACP relays the decision to the client, which shows the user an approve/reject prompt:
 
 ```python
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-sonnet-4-6')
+
+
 @agent.tool_plain(requires_approval=True)
 def delete_file(path: str) -> str:
     ...
@@ -165,7 +180,28 @@ An ACP client may offer MCP servers during session setup. This adapter does not 
 
 ```python
 from acp import schema
-from pydantic_ai_harness.experimental.acp import PydanticAIACPAgent
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai_harness.experimental.acp import (
+    AcpSession,
+    AcpSessionConfig,
+    PydanticAIACPAgent,
+)
+
+agent = Agent('anthropic:claude-sonnet-4-6')
+
+
+def connect_mcp_servers(session: AcpSession) -> AcpSessionConfig[None]:
+    return AcpSessionConfig(
+        deps=None,
+        toolsets=[
+            MCPToolset(server.url)
+            for server in session.mcp_servers
+            if isinstance(server, (schema.HttpMcpServer, schema.SseMcpServer))
+        ],
+    )
+
 
 PydanticAIACPAgent(
     agent,
@@ -178,9 +214,13 @@ PydanticAIACPAgent(
 
 The agent advertises which prompt content it accepts. The default is **text only**, so a client is not invited to send blocks a text model cannot handle. Enable the kinds your model supports:
 
-```python
+```python {test="skip"}
 from acp import schema
 
+from pydantic_ai import Agent
+from pydantic_ai_harness.experimental.acp import run_acp_stdio_sync
+
+agent = Agent('anthropic:claude-sonnet-4-6')
 run_acp_stdio_sync(agent, prompt_capabilities=schema.PromptCapabilities(image=True, embedded_context=True))
 ```
 
@@ -188,8 +228,14 @@ run_acp_stdio_sync(agent, prompt_capabilities=schema.PromptCapabilities(image=Tr
 
 Pass a `session_store` to let a client reopen a past conversation with `session/load`. Each committed turn is persisted as two parts -- the model's message history and the client-visible transcript -- and reopening restores the history into the agent and replays the transcript to the client, so its UI is rebuilt as the user last saw it. Without a store, `session/load` is advertised as unsupported.
 
-```python
-from pydantic_ai_harness.experimental.acp import InMemorySessionStore
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness.experimental.acp import (
+    InMemorySessionStore,
+    run_acp_stdio_sync,
+)
+
+agent = Agent('anthropic:claude-sonnet-4-6')
 
 run_acp_stdio_sync(agent, session_store=InMemorySessionStore())
 ```
@@ -200,7 +246,11 @@ run_acp_stdio_sync(agent, session_store=InMemorySessionStore())
 
 Pass `models` to advertise a stable ACP session config option named `model` (using Pydantic AI [model names](../models/overview.md)). The first is each session's default. A selection is applied as a per-run override -- the shared agent is never mutated -- and is persisted with the session when a `session_store` is set.
 
-```python
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness.experimental.acp import run_acp_stdio_sync
+
+agent = Agent('anthropic:claude-sonnet-4-6')
 run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-4-6', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
 ```
 
@@ -217,7 +267,7 @@ A model id is any string a Pydantic AI model accepts, so newer models not yet in
 
 ## API
 
-```python {test="skip"}
+```python {lint="skip" test="skip"}
 run_acp_stdio(            # async; serve until the client disconnects
     agent,
     *,

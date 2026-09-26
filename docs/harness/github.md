@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-harness[github]" "pydantic-ai-slim[openai]"
 
 Set `GITHUB_TOKEN` to a GitHub personal access token, or pass `auth=` a token. See the [provider setup](https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md).
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.github import GitHub
 

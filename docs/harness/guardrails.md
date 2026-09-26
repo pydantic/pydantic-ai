@@ -147,7 +147,10 @@ channels of a `ToolReturn`:
 
 ```python
 from pydantic_ai_harness import ToolGuardrail
-from pydantic_ai_harness.guardrails.detectors import for_tool_result_text, redact_secrets
+from pydantic_ai_harness.guardrails.detectors import (
+    for_tool_result_text,
+    redact_secrets,
+)
 
 ToolGuardrail(result_guard=for_tool_result_text(redact_secrets))
 ```
@@ -222,7 +225,7 @@ from pydantic_ai_harness import GuardrailResult
 
 GuardrailResult.allow()                 # let the value through
 GuardrailResult.block('reason')         # refuse; `reason` is optional (a default is used otherwise)
-GuardrailResult.replace(cleaned_value)  # substitute a sanitized value and continue
+GuardrailResult.replace('cleaned value')  # substitute a sanitized value and continue
 GuardrailResult.retry('instruction')    # ask the model to redo the output or the tool call
 GuardrailResult.approve()               # ToolGuardrail arguments only: defer the call for human approval
 ```
@@ -234,9 +237,19 @@ The block/retry message is produced at the moment the guard decides, so it can c
 Return `GuardrailResult.replace(value)` to sanitize rather than refuse. `InputGuardrail` rewrites the prompt sent to the model; `OutputGuardrail` substitutes the output returned to the caller.
 
 ```python
-def scrub_emails(text: str) -> GuardrailResult:
-    cleaned = EMAIL_RE.sub('[email]', text)
-    return GuardrailResult.replace(cleaned) if cleaned != text else GuardrailResult.allow()
+import re
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import GuardrailResult, InputGuardrail, OutputGuardrail
+
+EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.]+')
+
+
+def scrub_emails(value: object) -> GuardrailResult:
+    if not isinstance(value, str):
+        return GuardrailResult.allow()
+    cleaned = EMAIL_RE.sub('[email]', value)
+    return GuardrailResult.replace(cleaned) if cleaned != value else GuardrailResult.allow()
 
 
 agent = Agent(
@@ -255,6 +268,13 @@ Input redaction requires sequential mode -- it is incompatible with `parallel=Tr
 `OutputGuardrail` can send a bad output back to the model instead of blocking it. Return `GuardrailResult.retry(instruction)` -- the instruction is the retry prompt the model sees. This reuses pydantic-ai's normal retry machinery and counts against the run's output-retry budget.
 
 ```python
+from pydantic_ai_harness import GuardrailResult, OutputGuardrail
+
+
+def has_citations(output: object) -> bool:
+    return 'https://' in str(output)
+
+
 def must_cite_sources(output: object) -> GuardrailResult:
     if not has_citations(output):
         return GuardrailResult.retry('Include at least one source citation.')
@@ -269,8 +289,15 @@ OutputGuardrail(guard=must_cite_sources)
 A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature, so prompt-only guards need not declare it:
 
 ```python
+from dataclasses import dataclass
+
 from pydantic_ai import RunContext
 from pydantic_ai_harness import InputGuardrail
+
+
+@dataclass
+class MyDeps:
+    tier: str
 
 
 def tenant_policy(ctx: RunContext[MyDeps], prompt: str) -> bool:
@@ -285,6 +312,13 @@ InputGuardrail(guard=tenant_policy)
 A slow guard (an LLM classifier, a network call) run sequentially adds its latency to every turn. Set `parallel=True` to run the guard concurrently with the model call instead, overlapping the two so the guard adds no latency on the pass path. The model call is cancelled the moment the guard reports a violation.
 
 ```python
+from pydantic_ai_harness import InputGuardrail
+
+
+async def slow_async_classifier(prompt: str) -> bool:
+    return True  # stand-in for a call to a moderation model
+
+
 InputGuardrail(guard=slow_async_classifier, parallel=True)
 ```
 
@@ -296,6 +330,10 @@ Parallel mode trades tokens for latency: sequential mode never calls the model w
 
 ```python
 from pydantic_ai_harness import InputBlocked
+
+
+def contains_credentials(prompt: str) -> bool:
+    return 'api_key=' in prompt.lower()
 
 
 def strict_guard(prompt: str) -> bool:
@@ -311,14 +349,17 @@ Any exception raised by the guard propagates as-is -- use `InputBlocked` / `Outp
 `ToolGuardrail` inspects both sides of a tool call: `guard` sees the validated arguments before the tool runs, `result_guard` sees what it returned before the model does.
 
 ```python
+import re
 from pathlib import Path
 
 import httpx
+
 from pydantic_ai import Agent
 from pydantic_ai_harness import GuardrailResult, ToolGuardrail
 from pydantic_ai_harness.guardrails import ToolCallInfo, ToolResultInfo
 
 WORKSPACE = Path('/workspace')
+SECRET_RE = re.compile(r'sk-[A-Za-z0-9]{20,}')
 
 
 def stay_in_the_workspace(call: ToolCallInfo) -> GuardrailResult:
@@ -375,9 +416,19 @@ The outcomes map onto Pydantic AI control flow rather than a parallel mechanism:
 Pydantic AI already owns the approval round trip: a call raising `ApprovalRequired` is held back, the run finishes with a `DeferredToolRequests` output, and you resume it with the human's answers. `ToolGuardrail` plugs into that rather than inventing a second mechanism, which means approvals a guard asks for and tools marked `requires_approval=True` arrive in the same place.
 
 ```python
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai import (
+    Agent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolCallPart,
+    ToolDenied,
+)
 from pydantic_ai_harness import GuardrailResult, ToolGuardrail
 from pydantic_ai_harness.guardrails import ToolCallInfo
+
+
+def operator_says_yes(call: ToolCallPart) -> bool:
+    return False  # stand-in for asking a human
 
 
 def confirm_production(call: ToolCallInfo) -> GuardrailResult:
@@ -398,16 +449,22 @@ def deploy(env: str) -> str:
     return f'deployed to {env}'
 
 
-deferred = await agent.run('deploy the new build')
-if isinstance(deferred.output, DeferredToolRequests):
-    approvals = {
-        call.tool_call_id: True if operator_says_yes(call) else ToolDenied('not on a Friday')
-        for call in deferred.output.approvals
-    }
-    final = await agent.run(
-        message_history=deferred.all_messages(),
-        deferred_tool_results=DeferredToolResults(approvals=approvals),
-    )
+async def main():
+    deferred = await agent.run('deploy the new build')
+    if isinstance(deferred.output, DeferredToolRequests):
+        approvals = DeferredToolResults(
+            approvals={
+                call.tool_call_id: True
+                if operator_says_yes(call)
+                else ToolDenied('not on a Friday')
+                for call in deferred.output.approvals
+            }
+        )
+        final = await agent.run(
+            message_history=deferred.all_messages(),
+            deferred_tool_results=approvals,
+        )
+        print(final.output)
 ```
 
 A denial reaches the model as the tool's result, so the agent can explain itself or try something else. On the resumed run the guard is evaluated again, and `approve` becomes a no-op for a call the human already cleared -- every other verdict still applies, so a policy that has since changed its mind can still block an approved call.
@@ -423,6 +480,17 @@ Two shapes of approval, and which to reach for:
 The in-process shape needs nothing extra -- a guard may be async, so it can await the human directly:
 
 ```python
+from collections.abc import Mapping
+from typing import Any
+
+from pydantic_ai_harness import GuardrailResult, ToolGuardrail
+from pydantic_ai_harness.guardrails import ToolCallInfo
+
+
+async def operator_approves(tool_name: str, args: Mapping[str, Any]) -> bool:
+    return False  # stand-in for a prompt to a human operator
+
+
 async def ask_the_operator(call: ToolCallInfo) -> GuardrailResult:
     if await operator_approves(call.name, call.args):
         return GuardrailResult.allow()
@@ -437,6 +505,19 @@ Pydantic AI also offers approval without a guard at all: `requires_approval=True
 Two fields narrow what a guard sees:
 
 ```python
+from pathlib import Path
+
+from pydantic_ai_harness import GuardrailResult, ToolGuardrail
+from pydantic_ai_harness.guardrails import ToolCallInfo
+
+
+def stay_in_the_workspace(call: ToolCallInfo) -> GuardrailResult:
+    target = Path(str(call.args.get('path', '/workspace'))).resolve()
+    if not target.is_relative_to('/workspace'):
+        return GuardrailResult.block(f'{target} is outside the workspace.')
+    return GuardrailResult.allow()
+
+
 ToolGuardrail(
     guard=stay_in_the_workspace,
     tools=['write_file', 'run_shell'],  # guard only these; None (default) guards every tool
@@ -483,7 +564,7 @@ Two things it has that this deliberately does not. Its `PromptInjection` matches
 
 ## API
 
-```python
+```python {lint="skip" test="skip"}
 InputGuardrail(
     guard,              # one guard, or a sequence run in order
     parallel=False,     # run concurrently with the model call

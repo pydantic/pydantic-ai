@@ -155,17 +155,21 @@ overhead.
 
 A strategy's `compact` takes a `RunContext`, which an application holding a conversation *between* runs does not have -- and that is exactly when a user types `/compact`. `compact_now` builds a throwaway context so the same strategy the agent uses can be driven from a command handler:
 
-```python {test="skip"}
+```python
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness import SummarizingCompaction
 from pydantic_ai_harness.compaction import compact_now
 
 strategy = SummarizingCompaction(max_fraction=0.9, keep_messages=20)
-history = await compact_now(
-    strategy,
-    history,
-    model='anthropic:claude-sonnet-5',
-    focus='the auth refactor, not the earlier CSS work',
-)
+
+
+async def on_compact_command(history: list[ModelMessage]) -> list[ModelMessage]:
+    return await compact_now(
+        strategy,
+        history,
+        model='anthropic:claude-sonnet-5',
+        focus='the auth refactor, not the earlier CSS work',
+    )
 ```
 
 `compact_now` applies no trigger of its own, so a strategy whose `compact` is unconditional runs whatever the history size. A strategy that defines its own stop condition still honours it: `TieredCompaction` escalates only until the history fits its target, so a history already under target comes back unchanged. Pass the tier directly if you need it to run regardless.
@@ -184,8 +188,13 @@ The field consensus (Anthropic, OpenCode, Letta) is to clear and dedupe first, a
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness import ClearToolResults, DeduplicateFileReads, SummarizingCompaction, TieredCompaction
 from pydantic_ai.messages import ToolCallPart
+from pydantic_ai_harness import (
+    ClearToolResults,
+    DeduplicateFileReads,
+    SummarizingCompaction,
+    TieredCompaction,
+)
 
 
 def my_file_key(call: ToolCallPart) -> str | None:
@@ -218,7 +227,11 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 Register it directly when summarization should fall back to deterministic truncation:
 
 ```python
-from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness import (
+    FallbackCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+)
 
 fallback = FallbackCompaction(
     max_fraction=0.85,
@@ -271,7 +284,11 @@ Request-side parts (user prompts, tool *returns*, system prompts) are deliberate
 Use it as the first tier of `TieredCompaction`, before `ClearToolResults`:
 
 ```python
-from pydantic_ai_harness import ClampOversizedMessages, ClearToolResults, TieredCompaction
+from pydantic_ai_harness import (
+    ClampOversizedMessages,
+    ClearToolResults,
+    TieredCompaction,
+)
 
 TieredCompaction(
     tiers=[

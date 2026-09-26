@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-harness[notion]" "pydantic-ai-slim[openai]"
 
 Set `NOTION_ACCESS_TOKEN` to a Notion OAuth access token, or pass `auth=` a token. On your own machine, `auth='oauth'` signs you in through the browser instead. See the [provider setup](https://developers.notion.com/guides/mcp/build-mcp-client).
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.notion import Notion
 
@@ -75,7 +75,7 @@ Connect with a Notion OAuth access token. Notion integration tokens are a differ
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import DeferredToolRequests
 from pydantic_ai_harness.notion import Notion

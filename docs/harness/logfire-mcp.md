@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-harness[logfire-mcp]" "pydantic-ai-slim[openai]"
 
 Set `LOGFIRE_API_KEY`, or pass `auth=` an API key. On your own machine, `auth='oauth'` signs you in through the browser instead. See the [provider setup](https://pydantic.dev/docs/logfire/guides/mcp-server/).
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 
@@ -70,7 +70,11 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import DynamicCapability
-from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
+from pydantic_ai_harness.logfire_mcp import (
+    LOGFIRE_EU_MCP_URL,
+    LOGFIRE_US_MCP_URL,
+    LogfireMCP,
+)
 
 
 @dataclass
@@ -103,7 +107,7 @@ The capability adds short guidance to the agent's instructions: the current UTC 
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import DeferredToolRequests
 from pydantic_ai_harness.logfire_mcp import LogfireMCP

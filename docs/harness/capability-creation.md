@@ -52,7 +52,7 @@ A capability **cannot** be added to a live, already-executing run. pydantic-ai r
 
 The orchestrator drives the loop, so it owns the one-line contract: thread the store's active capabilities into each run via `agent.run(..., capabilities=...)`. With that in place, the authored capability is live on the very next loop iteration -- no process restart:
 
-```python
+```python {test="skip"}
 from pathlib import Path
 
 from pydantic_ai import Agent
@@ -61,14 +61,16 @@ from pydantic_ai_harness import CapabilityCreation
 creation = CapabilityCreation(directory=Path('.authored'))
 agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[creation])
 
-history = None
-done = False
-next_prompt = 'Start the task.'
-while not done:
-    extra = creation.store.load_active()
-    result = await agent.run(next_prompt, message_history=history, capabilities=extra)
-    history = result.all_messages()
-    # ... decide `next_prompt` and `done` from `result` ...
+
+async def main():
+    history = None
+    done = False
+    next_prompt = 'Start the task.'
+    while not done:
+        extra = creation.store.load_active()
+        result = await agent.run(next_prompt, message_history=history, capabilities=extra)
+        history = result.all_messages()
+        # ... decide `next_prompt` and `done` from `result` ...
 ```
 
 `creation.store` is the disk-backed `CapabilityStore` over the same `directory`. `store.load_active()` re-imports and re-constructs every active authored capability for injection into the next run. Entries that fail to load (corrupt source, construction error) are skipped, not raised, so one bad capability never blocks the rest.

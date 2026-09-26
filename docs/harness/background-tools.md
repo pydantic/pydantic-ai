@@ -82,6 +82,7 @@ Combine with [`SetToolMetadata`](../capabilities/set-tool-metadata.md) or `Funct
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai_harness import BackgroundTools
 
+
 async def deep_research(query: str) -> str:
     return f'Research findings for {query!r}'
 
@@ -145,7 +146,7 @@ replay.
 
 ## API
 
-```python {test="skip"}
+```python {lint="skip" test="skip"}
 BackgroundTools(tools: ToolSelector = {'background': True})
 ```
 
@@ -164,7 +165,7 @@ capabilities:
   - BackgroundTools: {}
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import BackgroundTools
 

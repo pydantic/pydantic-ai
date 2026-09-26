@@ -22,9 +22,12 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import WarnOnCacheBusts
 
 agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[WarnOnCacheBusts()])
-result = await agent.run('...')  # a CacheBustWarning fires if a cached prefix collapses mid-run
-# ...and on the next turn, if the prefix the first turn cached no longer reads back:
-await agent.run('...', message_history=result.all_messages())
+
+
+async def main():
+    result = await agent.run('Summarize the open pull requests.')  # a CacheBustWarning fires if a cached prefix collapses mid-run
+    # ...and on the next turn, if the prefix the first turn cached no longer reads back:
+    await agent.run('Draft release notes from them.', message_history=result.all_messages())
 ```
 
 The verdict is cross-provider for free -- pyai normalizes every provider into the `cache_read_tokens` / `cache_write_tokens` fields on `RequestUsage`.
@@ -53,7 +56,12 @@ There is no bespoke suppression API. Use the stdlib `warnings` machinery, exactl
 
 ```python
 import warnings
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import WarnOnCacheBusts
 from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning
+
+agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[WarnOnCacheBusts()])
 
 # Silence the whole category:
 warnings.filterwarnings('ignore', category=CacheBustWarning)
@@ -61,7 +69,7 @@ warnings.filterwarnings('ignore', category=CacheBustWarning)
 # Silence one intentional bust, scoped to the operation that causes it:
 with warnings.catch_warnings():
     warnings.simplefilter('ignore', CacheBustWarning)
-    result = agent.run_sync('...')  # e.g. a step that switches models or adds a file
+    result = agent.run_sync('Compare the two latest releases.')  # e.g. a step that switches models or adds a file
 
 # Treat every bust as an error (dev/CI enforcement):
 warnings.filterwarnings('error', category=CacheBustWarning)

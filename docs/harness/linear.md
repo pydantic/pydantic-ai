@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-harness[linear]" "pydantic-ai-slim[openai]"
 
 Set `LINEAR_ACCESS_TOKEN` to a Linear API key or OAuth access token, or pass `auth=` a token. On your own machine, `auth='oauth'` signs you in through the browser instead. See the [provider setup](https://linear.app/docs/mcp).
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.linear import Linear
 

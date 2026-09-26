@@ -34,6 +34,7 @@ result = agent.run_sync(
     'Design a zero-downtime database migration. Consult the advisor before choosing a plan.'
 )
 print(result.output)
+#> Use an expand-and-contract migration: add the column, backfill, then switch reads.
 ```
 
 The executor decides when to consult. Ask it explicitly in the user prompt or the agent's instructions when a consultation is required.
@@ -46,6 +47,7 @@ Provider-native advisor tools do not accept an output schema. A non-default `out
 
 ```python
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai_harness.advisor import Advisor
 
