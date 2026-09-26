@@ -24,8 +24,8 @@ The core half of this lives in `pydantic-ai`'s `tests/test_capability_combine.py
 Two of the names imported below are private to pydantic-ai, which is right: the duplicate-resolution
 pipeline is internal and no code in this package needs it. This file reaches in anyway rather than
 reimplementing the two questions the resolver asks -- a lookalike would drift from the real answer
-silently, which is the one thing the policy table exists to prevent. A rename surfaces in the
-harness-compat job, which is where a private-API dependency should surface.
+silently, which is the one thing the policy table exists to prevent. Both live in this repository,
+so a rename fails this test in the same pull request.
 """
 
 from __future__ import annotations
