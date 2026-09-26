@@ -30,13 +30,43 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
         return LocalWorkspaceBackend(tmp_path)
 
     @pytest.fixture
+    def destructive_backend(self, tmp_path_factory: pytest.TempPathFactory) -> Callable[[], WorkspaceBackend]:
+        path = tmp_path_factory.mktemp('fresh-ws')
+        return lambda: LocalWorkspaceBackend(path)
+
+    @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return lambda ref: LocalWorkspaceBackend(ref.id)
 
     @pytest.fixture
-    def destroy_environment(self, tmp_path: Path) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
-            await anyio.to_thread.run_sync(shutil.rmtree, tmp_path)
+            assert backend.ref is not None
+            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id)
+
+        return destroy
+
+
+class TestSharedLocalWorkspaceBackend(WorkspaceBackendSuite):
+    @pytest.fixture(scope='class')
+    @classmethod
+    def backend(cls, tmp_path_factory: pytest.TempPathFactory) -> LocalWorkspaceBackend:
+        return LocalWorkspaceBackend(tmp_path_factory.mktemp('shared-ws'))
+
+    @pytest.fixture
+    def destructive_backend(self, tmp_path_factory: pytest.TempPathFactory) -> Callable[[], WorkspaceBackend]:
+        path = tmp_path_factory.mktemp('destructive-ws')
+        return lambda: LocalWorkspaceBackend(path)
+
+    @pytest.fixture
+    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
+        return lambda ref: LocalWorkspaceBackend(ref.id)
+
+    @pytest.fixture
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+        async def destroy(backend: WorkspaceBackend) -> None:
+            assert backend.ref is not None
+            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id)
 
         return destroy
 
@@ -63,13 +93,19 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
         return RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
 
     @pytest.fixture
+    def destructive_backend(self, tmp_path_factory: pytest.TempPathFactory) -> Callable[[], WorkspaceBackend]:
+        path = tmp_path_factory.mktemp('fresh-run-ws')
+        return lambda: RunOnlyWorkspaceBackend(LocalWorkspaceBackend(path))
+
+    @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return lambda ref: RunOnlyWorkspaceBackend(LocalWorkspaceBackend(ref.id))
 
     @pytest.fixture
-    def destroy_environment(self, tmp_path: Path) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
-            await anyio.to_thread.run_sync(shutil.rmtree, tmp_path)
+            assert backend.ref is not None
+            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id)
 
         return destroy
 
@@ -90,6 +126,10 @@ class TestProviderBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, provider: InMemoryProvider) -> ProviderBackend:
         return provider.backend(None)
+
+    @pytest.fixture
+    def fresh_backend(self, provider: InMemoryProvider) -> Callable[[], WorkspaceBackend]:
+        return lambda: provider.backend(None)
 
     @pytest.fixture
     def attach_backend(self, provider: InMemoryProvider) -> Callable[[WorkspaceRef], WorkspaceBackend]:

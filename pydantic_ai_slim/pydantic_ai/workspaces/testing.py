@@ -57,6 +57,13 @@ class WorkspaceBackendSuite:
         return None
 
     @pytest.fixture
+    def destructive_backend(
+        self, fresh_backend: Callable[[], WorkspaceBackend] | None
+    ) -> Callable[[], WorkspaceBackend] | None:
+        """Build an independent environment for destruction; defaults to `fresh_backend`."""
+        return fresh_backend
+
+    @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend] | None:
         """Build a second backend that attaches to `ref`. Enables the reattach rules."""
         return None
@@ -437,12 +444,14 @@ class WorkspaceBackendSuite:
 
     async def test_attaching_to_a_destroyed_environment_raises_unavailable(
         self,
-        backend: WorkspaceBackend,
+        destructive_backend: Callable[[], WorkspaceBackend] | None,
         attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None,
         destroy_environment: Callable[[WorkspaceBackend], Awaitable[None]] | None,
     ) -> None:
-        if attach_backend is None or destroy_environment is None:
-            pytest.skip('provide `attach_backend` and `destroy_environment` fixtures to enable this rule')
+        if destructive_backend is None or attach_backend is None or destroy_environment is None:
+            pytest.skip('provide `destructive_backend`, `attach_backend` and `destroy_environment` to enable this rule')
+        # Never destroy the shared backend fixture: other rules may run after this one.
+        backend = destructive_backend()
         await backend.working_dir()
         assert backend.ref is not None
         await destroy_environment(backend)

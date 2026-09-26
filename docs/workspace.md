@@ -553,8 +553,9 @@ class TestMyBackend(WorkspaceBackendSuite):
 ```
 
 The suite needs the anyio pytest plugin. A class-scoped fixture starts one environment for the whole
-suite instead of one per rule. Provide the optional `attach_backend` and `destroy_environment`
-fixtures to enable the reattachment rules.
+suite instead of one per rule. Provide `attach_backend` to check reattachment; to check destruction,
+also provide `destroy_environment` and `destructive_backend`, a factory for an independent environment.
+The latter defaults to `fresh_backend` when supplied. The destructive rule never uses the shared `backend` fixture.
 
 ## Timeouts and clocks
 
