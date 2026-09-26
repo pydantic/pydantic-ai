@@ -206,6 +206,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
+    def _default_run_id(self) -> str | None:
+        return DBOS.workflow_id if self.in_durable_context else None
+
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
         # safe, so only guard once actually inside a workflow.

@@ -23,7 +23,7 @@ from ..workspace_fakes import InMemoryProvider
 
 try:
     from prefect import flow
-    from prefect.context import TaskRunContext
+    from prefect.context import FlowRunContext, TaskRunContext
     from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
@@ -79,6 +79,23 @@ def record_task_names(monkeypatch: pytest.MonkeyPatch) -> None:
         return await original(self, **kwargs)
 
     monkeypatch.setattr(_operation_backend.PrefectOperationBackend, 'execute', execute)
+
+
+async def test_prefect_default_run_id_survives_flow_retry() -> None:
+    agent = Agent(TestModel(), name='prefect_run_id', capabilities=[PrefectDurability()])
+    ids: list[str] = []
+
+    @flow(retries=1)
+    async def run() -> str:
+        context = FlowRunContext.get()
+        assert context is not None and context.flow_run is not None
+        result = await agent.run('hello')
+        ids.append(result.run_id)
+        if len(ids) == 1:
+            raise RuntimeError('retry')
+        return str(context.flow_run.id)
+
+    assert await run() == ids[0] == ids[1]
 
 
 async def test_prefect_workspace_operations_run_as_tasks_and_a_flow_retry_replays_them() -> None:

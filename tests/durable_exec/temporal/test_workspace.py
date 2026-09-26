@@ -332,6 +332,23 @@ class FreshWorkspaceWorkflow:
         }
 
 
+@workflow.defn
+class RunIdWorkflow:
+    @workflow.run
+    async def run(self) -> tuple[str, str]:
+        info = workflow.info()
+        result = await fresh_agent.run('Use both tools.')
+        return result.run_id, f'{info.workflow_id}:{info.run_id}'
+
+
+async def test_temporal_default_run_id_is_execution_id(client: Client) -> None:
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[RunIdWorkflow], plugins=[AgentPlugin(fresh_agent)]):
+        actual, expected = await client.execute_workflow(
+            RunIdWorkflow.run, id=f'run-id-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+    assert actual == expected
+
+
 async def test_fresh_workspace_is_provisioned_once_and_shared_by_every_side(client: Client) -> None:
     _reset_provider()
 

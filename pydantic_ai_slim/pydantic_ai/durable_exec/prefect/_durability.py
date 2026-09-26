@@ -109,6 +109,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
+    def _default_run_id(self) -> str | None:
+        context = FlowRunContext.get()
+        if context is None:
+            return None
+        if context.flow_run is None:
+            raise RuntimeError('Prefect flow run has no ID; cannot persist a durable run ID.')
+        return str(context.flow_run.id)
+
     def get_durable_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
         def tool_config(
             operation_id: DurableOperationId, tool: object | None, tool_name: str

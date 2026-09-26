@@ -1640,7 +1640,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             output_retries_used=0,
             run_step=0,
-            run_id=_agent_graph.resolve_run_id(run_id, message_history),
+            # Durable engines derive this from their execution identity, not a random UUID:
+            # replaying the workflow must address the same per-run workspace state.
+            run_id=_agent_graph.resolve_run_id(
+                run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
+                message_history,
+            ),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
         historical_response = next(

@@ -490,6 +490,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
+    def _default_run_id(self) -> str | None:
+        if not self.in_durable_context:
+            return None
+        info = workflow.info()
+        # Use both IDs: a new execution of the same workflow must not inherit its predecessor's cwd.
+        return f'{info.workflow_id}:{info.run_id}'
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],

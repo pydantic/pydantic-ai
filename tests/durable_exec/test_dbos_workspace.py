@@ -98,6 +98,18 @@ async def fresh_workflow() -> dict[str, Any]:
     }
 
 
+async def test_dbos_default_run_id_is_workflow_id(dbos: DBOS) -> None:
+    workflow_id = f'run-id-{uuid.uuid4()}'
+
+    @DBOS.workflow()
+    async def run() -> tuple[str, str]:
+        result = await fresh_agent.run('Read the hook file.')
+        return result.run_id, (await fresh_agent.run('Read the hook file.', run_id='explicit')).run_id
+
+    with SetWorkflowID(workflow_id):
+        assert await run() == (workflow_id, 'explicit')
+
+
 async def test_dbos_workspace_operations_run_as_steps_and_a_fork_replays_them(dbos: DBOS) -> None:
     provider.reset()
     workflow_id = f'workspace-{uuid.uuid4()}'
