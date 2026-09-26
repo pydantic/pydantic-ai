@@ -303,6 +303,29 @@ class WorkspaceBackendSuite:
         """Opt out only for an in-memory test double without real path traversal."""
         return True
 
+    @pytest.fixture
+    def filesystem_honors_shell_permissions(self) -> bool:
+        """Override only for provider file APIs that bypass the command user's permissions (e.g. E2B envd)."""
+        return True
+
+    async def test_permission_denied_uses_builtin_error(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool, filesystem_honors_shell_permissions: bool
+    ) -> None:
+        if not has_real_posix_shell or not filesystem_honors_shell_permissions:
+            pytest.skip('in-memory fake has no permissions')
+        commands = _commands(backend)
+        if (await commands.run(['id', '-u'])).stdout.strip() == '0':
+            pytest.skip('root bypasses filesystem permissions')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            file = posixpath.join(root, 'unreadable')
+            await workspace.write_bytes(file, b'data')
+            assert (await commands.run(['chmod', '000', file])).exit_code == 0
+            with pytest.raises(PermissionError):
+                await workspace.read_bytes(file)
+            with pytest.raises(PermissionError):
+                await workspace.write_bytes(file, b'changed')
+
     async def test_file_as_parent_raises_not_a_directory(
         self, backend: WorkspaceBackend, enforces_parent_file_errors: bool
     ) -> None:
