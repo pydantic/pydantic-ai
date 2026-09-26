@@ -1689,6 +1689,37 @@ def test_tool_raises_call_deferred():
     )
 
 
+def test_test_model_same_name_calls_get_distinct_ids_and_both_run():
+    executed: list[tuple[int, int]] = []
+
+    def add(left: int, right: int) -> int:
+        executed.append((left, right))
+        return left + right
+
+    agent = Agent(TestModel(call_tools=['add', 'add'], custom_output_text='done'))
+    agent.tool_plain(add)
+
+    result = agent.run_sync('hello')
+
+    assert result.output == 'done'
+    assert len(executed) == 2
+    tool_call_parts = [
+        p for m in result.all_messages() for p in m.parts if isinstance(p, ToolCallPart) and p.tool_name == 'add'
+    ]
+    assert [p.tool_call_id for p in tool_call_parts] == ['pyd_ai_tool_call_id__add', 'pyd_ai_tool_call_id__add__2']
+    tool_return_ids = [p.tool_call_id for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert sorted(tool_return_ids) == ['pyd_ai_tool_call_id__add', 'pyd_ai_tool_call_id__add__2']
+
+    # A single call to the same tool keeps the documented `pyd_ai_tool_call_id__{name}` id format.
+    single_agent = Agent(TestModel(call_tools=['add'], custom_output_text='done'))
+    single_agent.tool_plain(add)
+    single_result = single_agent.run_sync('hello')
+    single_parts = [
+        p for m in single_result.all_messages() for p in m.parts if isinstance(p, ToolCallPart) and p.tool_name == 'add'
+    ]
+    assert [p.tool_call_id for p in single_parts] == ['pyd_ai_tool_call_id__add']
+
+
 def test_tool_raises_approval_required():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:

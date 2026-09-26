@@ -257,13 +257,22 @@ class TestModel(Model):
 
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(name, self.gen_tool_args(args), tool_call_id=f'pyd_ai_tool_call_id__{name}')
-                    for name, args in tool_calls
-                ],
-                model_name=self._model_name,
-            )
+            # Multiple calls to the same tool would otherwise share the documented
+            # `pyd_ai_tool_call_id__{name}` id, which tool execution rejects as ambiguous, so
+            # uniquify only from the second occurrence of a name onward.
+            name_call_counts: dict[str, int] = {}
+            parts: list[ToolCallPart] = []
+            for name, args in tool_calls:
+                call_count = name_call_counts.get(name, 0) + 1
+                name_call_counts[name] = call_count
+                parts.append(
+                    ToolCallPart(
+                        name,
+                        self.gen_tool_args(args),
+                        tool_call_id=f'pyd_ai_tool_call_id__{name}' + (f'__{call_count}' if call_count > 1 else ''),
+                    )
+                )
+            return ModelResponse(parts=parts, model_name=self._model_name)
 
         if messages:  # pragma: no branch
             last_message = messages[-1]
