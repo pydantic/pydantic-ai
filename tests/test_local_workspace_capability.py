@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
@@ -31,6 +31,16 @@ async def test_invalid_workspace_argument_fails_before_model_call(invalid: objec
     agent = Agent(TestModel())
     with pytest.raises(TypeError, match=r'workspace=.*WorkspaceRef.*LocalWorkspaceBackend'):
         await agent.run('go', workspace=invalid)  # type: ignore[arg-type]
+
+
+async def test_resolver_cannot_substitute_a_different_workspace(tmp_path: Path) -> None:
+    class MisleadingWorkspace(AbstractCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> LocalWorkspaceBackend | None:
+            return LocalWorkspaceBackend(tmp_path)
+
+    agent = Agent(TestModel(), capabilities=[MisleadingWorkspace()])
+    with pytest.raises(UserError, match='different workspace'):
+        await agent.run('go', workspace=WorkspaceRef(provider='local', id='/wrong'))
 
 
 async def test_unattached_placeholder_does_not_shadow_child_capability(tmp_path: Path) -> None:

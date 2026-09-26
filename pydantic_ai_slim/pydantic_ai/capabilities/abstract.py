@@ -1386,6 +1386,9 @@ def select_workspace(
             (workspace for branch in ordered if (workspace := branch.get_workspace(ctx, ref=ref)) is not None),
             None,
         )
+    if ref is not None and selected is not None and selected.ref is not None and selected.ref != ref:
+        # A resolver must not replace an expired or unauthorized environment with a fresh one.
+        raise UserError(f'Workspace resolver returned a different workspace than requested: {ref!r}')
     return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
 
 
