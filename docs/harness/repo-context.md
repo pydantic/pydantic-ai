@@ -1,0 +1,135 @@
+---
+title: Repo Context
+description: "Load a repo's AGENTS.md and CLAUDE.md instruction files into a Pydantic AI agent and inventory its skills, subagents, and hooks under .claude or .agents."
+---
+
+# Repo Context
+
+`RepoContext` discovers and loads a repo's accumulated coding-assistant context engineering (CE): the instruction files (`CLAUDE.md`/`AGENTS.md`) scattered across the tree and the assets under `.claude`/`.agents`/`.codex`/`.grok` (skills, sub-agents, hooks).
+
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/repo_context/)
+
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
+## The problem
+
+A repo accumulates CE for whatever coding assistant worked in it: instruction files (`CLAUDE.md`/`AGENTS.md`) scattered across the tree, and assets under `.claude`/`.agents`/`.codex`/`.grok` (skills, sub-agents, hooks). An agent that loads only the top-level instruction file misses the ancestor context and has no idea the rest of the setup exists, so it can neither honor it nor translate it.
+
+## The solution
+
+`RepoContext` bundles three strategies, each independently toggleable. Construct it with `RepoContext(...)` in an `Agent`'s `capabilities`, anchored at the deepest directory the agent works in:
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import RepoContext
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[RepoContext(workspace_dir=Path('.'), home_dir=Path.home())],
+)
+
+result = agent.run_sync('Summarize the coding-assistant setup in this repo.')
+print(result.output)
+```
+
+### 1. Walk-up instruction autoload (on by default)
+
+Loads `CLAUDE.md`/`AGENTS.md` from `workspace_dir` and every ancestor up to `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by resolved real path and by content hash, so a symlinked `AGENTS.md -> CLAUDE.md` or two ancestors sharing identical content load once.
+
+When `home_dir` is `None` (the default), only `workspace_dir` is scanned -- no walk-up. Pass `home_dir=Path.home()` to walk up to your home directory.
+
+### 2. Asset inventory (on by default)
+
+Exposes one tool, `inventory_agent_context()`, that reports where the repo's CE assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each, the `skills/` (`SKILL.md`), `agents/` (`.md`), and `settings.json` (hooks) it contains. It returns a structured `AgentContextInventory`; it locates assets and does not parse them, leaving translation to the orchestrator.
+
+Rename the tool with `inventory_tool_name`, or scope which roots it scans with `asset_roots`.
+
+### 3. Nested-on-traversal (off by default)
+
+When the model lists or reads a directory, surface that directory's
+`CLAUDE.md`/`AGENTS.md`. This strategy subscribes to `FileReadEvent` and
+`DirectoryListedEvent`, so it receives normalized, containment-checked paths
+instead of inspecting raw tool arguments. It remains opt-in:
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import FileSystem, RepoContext
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        FileSystem(root_dir='.'),
+        RepoContext(
+            workspace_dir=Path('.'),
+            nested_traversal=True,
+            nested_inject='pointer',  # or 'contents'
+        )
+    ],
+)
+```
+
+`nested_inject='pointer'` (default) enqueues a one-line note pointing at the
+file; `'contents'` enqueues the file body. The note reaches message history
+before the next model request. Each directory is surfaced at most once per run.
+
+`FileSystem` emits these events directly. Hosts with other file tools can emit
+the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
+`pydantic_ai_harness.filesystem`; set `root_dir` to the directory the event's
+`path` is relative to.
+
+The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
+subdirectory of `workspace_dir` still surfaces the right directory. A
+traversal that resolves outside `workspace_dir` is ignored: it is not nested in
+the workspace, so there is no nested context to surface.
+
+`traversal_tool_names` and `traversal_path_arg` are deprecated. Setting either
+to a non-default value emits `HarnessDeprecationWarning` and keeps the old
+tool-name and argument sniffing path active for hosts that do not emit events.
+With the defaults, sniffing is disabled, so a `FileSystem` event cannot deliver
+the same note twice.
+
+## Cache cost
+
+Injecting file contents into the system prompt costs prompt-cache stability: a changed prefix re-bills the whole cached region. `RepoContext` keeps the two cache-relevant paths separate:
+
+- Strategy 1 reads its files once at run start and injects them as static system instructions, so the cached prefix stays byte-identical across turns.
+- Strategy 3 is volatile (it depends on which directory was just touched), so its note is enqueued in the message tail, never in the system prompt, and cannot invalidate the cached prefix.
+
+## Configuration
+
+```python
+RepoContext(
+    workspace_dir,                  # Path -- the deepest dir the agent works in (required)
+    home_dir=None,                  # Path | None -- shallowest dir to stop walk-up at, inclusive
+    filenames=('CLAUDE.md', 'AGENTS.md'),
+    autoload_instructions=True,     # Strategy 1
+    expose_inventory_tool=True,     # Strategy 2
+    inventory_tool_name='inventory_agent_context',
+    nested_traversal=False,         # Strategy 3
+    nested_inject='pointer',        # 'pointer' | 'contents'
+    traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
+    traversal_path_arg='path',                                       # deprecated fallback
+    asset_roots=('.claude', '.agents', '.codex', '.grok'),
+)
+```
+
+## Scope
+
+`RepoContext` locates and loads CE; it does not parse skill/sub-agent frontmatter or hook bodies, and it does not rewrite or translate assets. Strategy 1 reads its files once per run, so mid-run edits to those files are not reloaded.
+
+## Further reading
+
+- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Pydantic AI hooks](/ai/core-concepts/hooks/)
+
+## API reference
+
+::: pydantic_ai_harness.repo_context.RepoContext
+
+::: pydantic_ai_harness.repo_context.AgentContextInventory
+
+::: pydantic_ai_harness.repo_context.AssetRoot

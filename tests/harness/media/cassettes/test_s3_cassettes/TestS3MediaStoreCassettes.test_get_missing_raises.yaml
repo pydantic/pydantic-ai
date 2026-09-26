@@ -1,0 +1,38 @@
+interactions:
+  - request:
+      body: ''
+      headers:
+        Accept:
+          - '*/*'
+        Accept-Encoding:
+          - gzip, deflate
+        Connection:
+          - keep-alive
+        User-Agent:
+          - python-httpx/0.28.1
+        authorization:
+          - REDACTED
+        host:
+          - account.r2.cloudflarestorage.com
+        x-amz-content-sha256:
+          - e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        x-amz-date:
+          - REDACTED
+      method: GET
+      uri: https://account.r2.cloudflarestorage.com/harness-test-bucket/harness-vcr/0000000000000000000000000000000000000000000000000000000000000000.bin
+    response:
+      body:
+        string: ''
+      headers:
+        Connection:
+          - keep-alive
+        Content-Type:
+          - application/xml
+        Date:
+          - Mon, 25 May 2026 04:00:31 GMT
+        Server:
+          - cloudflare
+      status:
+        code: 404
+        message: Not Found
+version: 1

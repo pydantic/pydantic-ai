@@ -1,0 +1,894 @@
+"""Interactive terminal shell around a capability-independent session."""
+
+import asyncio
+import math
+import sys
+from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from threading import Thread
+from typing import TYPE_CHECKING, Generic, TypeVar
+
+from anyio import create_memory_object_stream, create_task_group
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.history import History
+from pydantic import ValidationError
+from pydantic_ai import Agent, AgentStreamEvent
+from pydantic_ai.agent import AbstractAgent
+from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse
+from pydantic_ai.models import Model
+from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from rich.console import Console
+
+from . import theme, warm_imports
+from ._branding import print_banner
+from ._completion_adapter import COMPLETION_STYLE, PromptCompleter
+from ._rendering import StreamRenderer
+from ._session import Session
+from .command_context import CommandContext, CommandProvider
+from .commands import (
+    Command,
+    Commands,
+    config_command,
+    config_completions,
+    expand_bare_command,
+    is_command_input,
+    set_completions,
+)
+from .config import PluginSettings, Settings
+from .customization import customization_guide
+from .errors import error_message
+from .forks import Forks
+from .image_input import ImageInput
+from .input_history import input_history
+from .interrupts import Interrupts
+from .key_menu import keys_command
+from .live_prompt import LivePrompt
+from .menu_worker import holding_output
+from .model_picker import model_command, model_completions
+from .plugin_loader import PluginError, PluginLoader
+from .plugin_menu import open_plugins_menu
+from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart, bare_screen
+from .project_settings import ProjectSettings
+from .prompt_transcript import TranscriptBuffer
+from .reloading import reload_clai
+from .screen import Screen
+from .session_settings import SessionSettings
+from .sessions import Sessions
+from .set_menu import set_command
+from .settings_store import SettingsStore
+from .shell_passthrough import HELP as SHELL_HELP
+from .shell_passthrough import run_shell_command, shell_command
+from .speculation import Speculation
+from .spinner_picker import spinner_command, spinner_completions
+from .spinners import Spinner, Spinners
+from .status import Status, StatusLine
+from .theme_picker import theme_command
+from .tool_output import terminal_text
+from .usage_report import cost_line, session_usage
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup
+
+if TYPE_CHECKING:
+    from .auth import CodexAuth
+
+DepsT = TypeVar('DepsT')
+OutputT = TypeVar('OutputT')
+_PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload')
+
+
+DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
+    PluginSettings(
+        id='coder',
+        factory='pydantic_ai_harness.coder:Coder',
+        settings={'unrestricted_filesystem': True, 'repo_context': False, 'sub_agents': False},
+    ),
+    PluginSettings(id='ask_user', factory='pydantic_clai2.ask_user_menu:activate'),
+    PluginSettings(id='repo_context', factory='pydantic_clai2.repo_context'),
+    PluginSettings(id='compaction', factory='pydantic_clai2.compaction', settings={}),
+    PluginSettings(id='persistence', factory='pydantic_clai2.sessions'),
+    PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
+    PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
+    PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
+)
+"""Built-in declarations, each integrated with the shell. `remove` restores their defaults.
+
+Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
+
+`coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
+"""
+
+
+def create_agent(model: str | None = None) -> Agent[None, str]:
+    """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
+    return Agent(model, deps_type=type(None), capabilities=[customization_guide()])
+
+
+async def chat(
+    agent: AbstractAgent[DepsT, OutputT],
+    *,
+    deps: DepsT,
+    plugins: Sequence[AgentCapability[DepsT]] = (),
+    usage_limits: UsageLimits | None = None,
+    console: Console | None = None,
+    settings: Settings | None = None,
+    store: SettingsStore | None = None,
+    builtin_plugins: Sequence[PluginSettings] = (),
+    project: ProjectSettings | None = None,
+    resume: str | None = None,
+) -> None:
+    """Start an asyncio terminal conversation with a caller-supplied agent.
+
+    Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
+    Failed and cancelled turns retain their captured history. Resume never replays tools.
+    `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
+    """
+    console = console or Console()
+    transcript = TranscriptBuffer()
+    with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
+        console.print()
+        print_banner(console)
+        console.print(
+            '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
+            style=theme.color(theme.MUTED),
+        )
+        project = project or ProjectSettings()
+        _report_project(project, console)
+        use_defaults = builtin_plugins is DEFAULT_PLUGINS
+        shell = create_shell(
+            agent,
+            deps=deps,
+            plugins=plugins,
+            usage_limits=usage_limits,
+            console=console,
+            settings=settings,
+            store=store,
+            builtin_plugins=builtin_plugins,
+            project=project,
+            transcript=transcript,
+        )
+    fresh = False
+    warming: Thread | None = None
+    async with agent:
+        while True:
+            reason: SessionEndReason = 'error'
+            with theme.use(lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None):
+                try:
+                    async with create_task_group() as workers:
+                        workers.start_soon(shell.sessions.namer.run)
+                        try:
+                            with transcript.capture(console):
+                                await shell.loader.load_all(fresh=fresh)
+                                _report_project_plugins(shell.loader, console)
+                                if resume is not None:
+                                    console.print(
+                                        await shell.sessions.command([resume] if resume else []), markup=False
+                                    )
+                                    resume = None
+                            warming = warming or warm_imports.start()
+                            reason = await shell.run()
+                        finally:
+                            workers.cancel_scope.cancel()
+                except BaseExceptionGroup as exc:
+                    if len(exc.exceptions) == 1:
+                        raise exc.exceptions[0] from None
+                    raise
+                finally:
+                    with transcript.capture(console):
+                        await shell.loader.close(reason)
+            if not shell.reload_requested:
+                return
+            shell.reload_requested = False
+            if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
+                warming.join()
+            try:
+                shell = reload_clai(
+                    lambda shell=shell: create_shell(
+                        agent,
+                        deps=deps,
+                        plugins=plugins,
+                        usage_limits=shell.session.usage_limits,
+                        console=console,
+                        settings=shell.context.settings,
+                        store=SettingsStore(shell.context.store.path),
+                        builtin_plugins=DEFAULT_PLUGINS if use_defaults else builtin_plugins,
+                        project=project,
+                        message_history=shell.session.messages,
+                        summary=shell.session.summary,
+                        transcript=shell.transcript,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
+                with transcript.capture(console):
+                    console.print(
+                        f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
+                    )
+                fresh = False
+            else:
+                with transcript.capture(console):
+                    console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
+                fresh = True
+
+
+@dataclass(kw_only=True)
+class _ModelResolver:
+    """Load provider integrations on demand, retaining Codex authentication per conversation."""
+
+    console: Console
+    _auth: 'CodexAuth | None' = None
+
+    def codex_auth(self) -> 'CodexAuth':
+        if self._auth is None:
+            from .auth import CodexAuth  # noqa: PLC0415
+
+            self._auth = CodexAuth(self.console)
+        return self._auth
+
+    async def login(self, args: list[str]) -> str:
+        from .auth import login_command  # noqa: PLC0415
+
+        return await login_command(args, codex=self.codex_auth())
+
+    async def resolve(self, name: str) -> Model | str:
+        if name.startswith('openrouter:'):
+            from . import openrouter  # noqa: PLC0415
+
+            return await asyncio.to_thread(openrouter.model, name)
+        if name.startswith('vllm:'):
+            from . import vllm  # noqa: PLC0415
+
+            return await asyncio.to_thread(vllm.model, name)
+        if name.startswith('github-copilot:'):
+            from . import github_copilot  # noqa: PLC0415
+
+            return await asyncio.to_thread(github_copilot.model, name)
+        return self.codex_auth().model(name) if name.startswith('openai-codex:') else name
+
+
+def create_shell(
+    agent: AbstractAgent[DepsT, OutputT],
+    *,
+    deps: DepsT,
+    plugins: Sequence[AgentCapability[DepsT]],
+    usage_limits: UsageLimits | None,
+    console: Console,
+    settings: Settings | None,
+    store: SettingsStore | None,
+    builtin_plugins: Sequence[PluginSettings],
+    project: ProjectSettings,
+    message_history: Sequence[ModelMessage] = (),
+    summary: ConversationSummary | None = None,
+    transcript: TranscriptBuffer | None = None,
+    headless: bool = False,
+) -> '_Shell[DepsT, OutputT]':
+    """Build shared session services, without attaching terminal input in headless mode."""
+    settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
+    store = store or SettingsStore()
+    conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+    session = Session(
+        agent,
+        deps=deps,
+        plugins=plugins,
+        usage_limits=usage_limits,
+        message_history=message_history,
+        conversations=conversations,
+    )
+    if summary is not None:
+        session.summary = summary
+    session.model = settings.model
+    session.tool_retries = settings.tool_retries
+    models = _ModelResolver(console=console)
+    session.resolve_model = models.resolve
+    if session.model is None and agent.model is None:
+        console.print('Add a model with /add_model.', style=theme.color(theme.INFO))
+
+    session_settings = SessionSettings(session=session, console=console, settings=settings)
+
+    context = CommandContext(
+        settings=settings, store=store, clear_history=session.clear, apply_setting=session_settings, project=project
+    )
+
+    async def add_model(args: list[str]) -> str:
+        if args:
+            return context.set_setting(['model', *args])
+        from .model_menu import open_add_model_menu  # noqa: PLC0415
+
+        return await open_add_model_menu(context)
+
+    async def model_settings(args: list[str]) -> str:
+        from .model_menu import model_settings_command  # noqa: PLC0415
+
+        return await model_settings_command(context, args)
+
+    sessions = Sessions(session=session, store=conversations, context=context)
+    commands = Commands()
+    commands.register(Command(name='resume', description='Browse or restore a saved session', handler=sessions.command))
+    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command))
+    commands.register(
+        Command(
+            name='login',
+            description='Connect your ChatGPT/Codex or GitHub Copilot subscription',
+            handler=models.login,
+            complete=lambda _: ('openai-codex', 'github-copilot'),
+        )
+    )
+    commands.register(
+        Command(
+            name='set',
+            description='Change settings; no arguments opens the menu',
+            handler=lambda args: set_command(context, args),
+            complete=set_completions,
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='theme',
+            description='Select a Termflow palette; no arguments opens the picker',
+            handler=lambda args: theme_command(context, args),
+            complete=lambda args: theme.names() if len(args) <= 1 else (),
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='model',
+            description='Select an added model; no arguments opens the picker',
+            handler=lambda args: model_command(context, args),
+            complete=lambda args: model_completions(context, args),
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='add_model',
+            description='Add and use a model, or browse providers and model settings',
+            handler=add_model,
+            complete=lambda args: set_completions(['model', *args]) if len(args) <= 1 else (),
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='model_settings',
+            description='Choose an added model to configure, or edit a named model',
+            handler=model_settings,
+            complete=lambda args: model_completions(context, args),
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
+    )
+
+    new_command = Command(
+        name='new',
+        description='Start a new session; preserve the previous session',
+        handler=lambda _: session.clear() or 'New session started. Previous session remains saved.',
+    )
+    commands.register(new_command)
+    commands.register(replace(new_command, name='clear', description='Alias of /new'))
+    commands.register(
+        Command(
+            name='usage',
+            description='Show tokens and cost per turn',
+            handler=lambda _: sessions.usage(console=console),
+        )
+    )
+    commands.register(
+        Command(
+            name='cost',
+            description='Show retained history cost and tokens',
+            handler=lambda _: cost_line(session_usage(session.messages)),
+        )
+    )
+    commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
+    commands.register(
+        Command(
+            name='config',
+            description='show|get|set|reset settings',
+            handler=lambda args: config_command(store, args),
+            complete=config_completions,
+        )
+    )
+    screen = Screen()
+    status = Status()
+    loader: PluginLoader[DepsT] = PluginLoader(
+        store=store,
+        console=console,
+        commands=commands,
+        session_start=lambda: SessionStart(agent=agent, settings=context.settings),
+        builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
+        full_screen=screen.full,
+        project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
+        conversation=session,
+        status=status,
+    )
+    spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
+    commands.register(
+        Command(
+            name='spinner',
+            description='Select the working animation; no arguments opens the picker',
+            handler=lambda args: spinner_command(context, spinners, args),
+            complete=lambda args: spinner_completions(spinners, args),
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='plugins',
+            description='Manage plugins; no arguments opens the menu',
+            handler=lambda args: loader.command(args) if args else open_plugins_menu(loader),
+            complete=lambda args: _PLUGIN_ACTIONS if len(args) <= 1 else (entry.name for entry in loader.entries()),
+        )
+    )
+    for plugin in plugins:
+        if isinstance(plugin, CommandProvider):
+            commands.register_many(plugin.get_commands(context))
+    images = ImageInput()
+    history = input_history(store.path.with_name('input-history'))
+    prompt = None
+    if not headless and not console.is_terminal:
+        prompt = PromptSession[str](
+            history=history,
+            completer=PromptCompleter(commands),
+            complete_while_typing=True,
+            style=COMPLETION_STYLE,
+            reserve_space_for_menu=6,
+            bottom_toolbar=lambda: FormattedText(
+                [
+                    (theme.color(style), text)
+                    for style, text in ([(theme.MUTED, images.notice)] if images.notice else status.toolbar())
+                ]
+            ),
+        )
+    shell = _Shell(
+        agent=agent,
+        session=session,
+        plugins=tuple(plugins),
+        loader=loader,
+        commands=commands,
+        console=console,
+        context=context,
+        status=status,
+        prompt=prompt,
+        history=history,
+        transcript=transcript if transcript is not None else TranscriptBuffer(),
+        images=images,
+        interrupts=Interrupts(),
+        screen=screen,
+        sessions=sessions,
+        speculation=Speculation(context=context, console=console),
+        session_settings=session_settings,
+        spinners=spinners,
+    )
+    if prompt is not None:
+        prompt.key_bindings = images.bindings()
+    commands.register(
+        Command(name='reload', description='Reload CLAI2 code without restarting', handler=shell.request_reload)
+    )
+    commands.register(
+        Command(
+            name='fork',
+            description='Run a copy of this conversation in the background: /fork [@model] PROMPT',
+            handler=shell.forks.fork_command,
+            complete=shell.forks.complete,
+            raw=True,
+        )
+    )
+    commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
+    return shell
+
+
+@dataclass(kw_only=True)
+class _Shell(Generic[DepsT, OutputT]):
+    """The prompt loop; one turn is one `TurnStart`, one agent run, one `TurnEnd`."""
+
+    agent: AbstractAgent[DepsT, OutputT]
+    session: Session[DepsT, OutputT]
+    plugins: tuple[AgentCapability[DepsT], ...]
+    loader: PluginLoader[DepsT]
+    commands: Commands
+    console: Console
+    context: CommandContext
+    status: Status
+    prompt: PromptSession[str] | None
+    history: History
+    interrupts: Interrupts
+    screen: Screen
+    sessions: Sessions[DepsT, OutputT]
+    speculation: Speculation
+    session_settings: SessionSettings[DepsT, OutputT]
+    spinners: Spinners
+    transcript: TranscriptBuffer = field(default_factory=TranscriptBuffer)
+    images: ImageInput = field(default_factory=ImageInput)
+    reload_requested: bool = False
+    editor: LivePrompt | None = None
+    forks: Forks[DepsT, OutputT] = field(init=False)
+    _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.forks = Forks(
+            console=self.console,
+            history=lambda: self.session.messages,
+            spawn=self.fork_session,
+            fire=self.loader.fire,
+            models=self.context.store.models,
+        )
+
+    def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
+        """Capabilities bound to the next run: supplied, plugin-registered, then speculation.
+
+        Speculation sees the others, so its sandbox mount stays within their `FileSystem`.
+        """
+        granted = (*self.plugins, *self.loader.capabilities())
+        return (*granted, *self.speculation.capabilities(granted))
+
+    def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
+        """A separately saved session configured like the foreground one, seeded with `history`."""
+        child = Session(
+            self.agent,
+            deps=self.session.deps,
+            plugins=self.run_plugins(),
+            message_history=history,
+            usage_limits=self.session.usage_limits,
+            conversations=self.session.conversations,
+            workspace=Path(self.session.workspace),
+        )
+        child.model = model or self.session.model
+        child.tool_retries = self.session.tool_retries
+        child.resolve_model = self.session.resolve_model
+        child.model_settings = self.context.model_settings(child.model or _model_label(self.agent))
+        return child
+
+    def request_reload(self, args: list[str]) -> str:
+        if args:
+            raise ValueError('Usage: /reload')
+        self.reload_requested = True
+        return 'Reloading CLAI2...'
+
+    async def run(self) -> SessionEndReason:
+        try:
+            return await self._run()
+        finally:
+            await self.forks.close()
+
+    async def _run(self) -> SessionEndReason:
+        if self.console.is_terminal:
+            self.editor = LivePrompt(
+                console=self.console,
+                commands=self.commands,
+                history=self.history,
+                images=self.images,
+                interrupts=self.interrupts,
+                toolbar=self.status.toolbar,
+                steer=self.steer,
+                run_now=self.run_now,
+                transcript=self.transcript,
+                chords={'ctrl-x ctrl-s': self.speculation.toggle},
+                pinned=self.speculation.row,
+                spinner=self.spinners.active,
+                panel=self.forks.rows,
+            )
+            self.screen.editor = self.editor.suspended
+            try:
+                async with self.editor.opened():
+                    return await self._read_loop()
+            finally:
+                self.screen.editor = None
+                self.editor = None
+        return await self._read_loop()
+
+    def steer(self, text: str) -> bool:
+        """Resolve attachments and route input without printing over streamed output."""
+        try:
+            resolved, images = self.images.resolve(text)
+        except ValueError as exc:
+            self.images.notice = str(exc)
+            return True
+        if not self.session.steer(resolved, images=images):
+            return False
+        self.images.notice = f'Steering sent: {text}'
+        return True
+
+    def _released(self) -> AbstractAsyncContextManager[None]:
+        """Hand the terminal to a command or shell, restoring the editor afterwards."""
+        return (self.editor.suspended if self.editor is not None else bare_screen)()
+
+    def run_now(self, text: str) -> bool:
+        """Open a bare `during_turn` command's menu over a streaming turn instead of queueing it.
+
+        Key handlers call this from an input reader callback, which runs on the event loop but
+        outside any task, so it hands the command to the turn's task rather than spawning one.
+        """
+        if self._mid_turn_commands is None or not self.commands.runs_during_turn(text):
+            return False
+        self._mid_turn_commands.send_nowait(text)
+        return True
+
+    async def _serve_mid_turn(self, commands: MemoryObjectReceiveStream[str]) -> None:
+        async with commands, create_task_group() as menus:
+            async for text in commands:
+                menus.start_soon(self._run_mid_turn, text)
+
+    async def _run_mid_turn(self, text: str) -> None:
+        async with self.screen.overlay():
+            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
+            self.console.print()
+            with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
+                await _execute_command(self.commands, text, console=self.console, status=self.status)
+
+    async def _read_loop(self) -> SessionEndReason:
+        while True:
+            self.images.retain(
+                [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
+            )
+            try:
+                self.status.model = self.session.model or _model_label(self.agent)
+                self.status.workspace = self.session.workspace
+                self.status.status_segments = tuple(self.loader.status_segments())
+                if self.editor is not None:
+                    text = await self.editor.read()
+                else:
+                    assert self.prompt is not None
+                    text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+            except KeyboardInterrupt:
+                if self.interrupts.press():
+                    return 'exit'
+                self.console.print(
+                    'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
+                )
+                continue
+            except EOFError:
+                return 'eof'
+            self.images.notice = ''
+            if not text:
+                continue
+            if self.editor is not None:
+                self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
+            self.console.print()
+            if (command := shell_command(text)) is not None:
+                async with self.forks.busy(), self._released():
+                    await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                if self.interrupts.exit_requested:
+                    return 'exit'
+                continue
+            if is_command_input(text):
+                async with self.forks.busy(), self._released():
+                    await self.interrupts.run(
+                        _execute_command(self.commands, text, console=self.console, status=self.status)
+                    )
+                if text == '/exit' or self.interrupts.exit_requested or self.reload_requested:
+                    return 'exit'
+                continue
+            if self.session.model is None and self.agent.model is None:
+                self.images.retry_text = text
+                self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
+                continue
+            try:
+                async with self.forks.busy():
+                    if await self._turn(text):
+                        return 'exit'
+            finally:
+                if self.editor is not None:
+                    await self.editor.output.drain()
+
+    async def _turn(self, text: str) -> bool:
+        try:
+            text, images = self.images.resolve(text)
+        except ValueError as exc:
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            return False
+        start = TurnStart(text=text)
+        ended: TurnEnd | None = None
+
+        async def run_turn() -> None:
+            nonlocal ended
+            ended = await self.run_turn(start, images=images)
+
+        completed = await self.interrupts.run(run_turn())
+        self.sessions.namer.submit(self.session.summary.id)
+        if self.editor is not None:
+            await self.editor.output.drain()
+        _report_interrupt(completed, self.console)
+        if not completed and (cancelled := self.forks.cancel_running()):
+            self.console.print(
+                f'Cancelled {cancelled} running fork(s) with the turn.',
+                style=theme.color(theme.MUTED),
+            )
+            self.console.print()
+        await self.interrupts.run(self.loader.fire(ended or TurnEnd(text=start.text, outcome='cancelled')))
+        return self.interrupts.exit_requested
+
+    async def run_turn(
+        self, start: TurnStart, *, images: Sequence[BinaryContent] = (), headless: bool = False
+    ) -> TurnEnd:
+        """Apply turn hooks and settings, then run with optional terminal rendering."""
+        try:
+            await self.loader.fire(start)
+        except PluginError as exc:
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            self.console.print()
+            return TurnEnd(text=start.text, outcome='failed', error=exc)
+        if start.cancelled:
+            self.console.print(
+                f'Turn cancelled by a plugin: {start.cancel_reason or "no reason given"}',
+                style=theme.color(theme.WARNING),
+            )
+            self.console.print()
+            return TurnEnd(text=start.text, outcome='cancelled')
+        self.session.plugins = self.run_plugins()
+        model = self.session.model or _model_label(self.agent)
+        try:
+            self.session.model_settings = self.context.model_settings(model)
+        except ValidationError as exc:
+            self.console.print(
+                f'Invalid saved model settings for {model}. Fix or reset them with /model_settings {model}.',
+                style=theme.ERROR,
+                markup=False,
+            )
+            for error in exc.errors(include_input=False, include_url=False):
+                location = '.'.join(str(part) for part in error['loc'])
+                self.console.print(f'{location}: {error["msg"]}', style=theme.ERROR, markup=False)
+            self.console.print()
+            return TurnEnd(text=start.text, outcome='failed', error=exc)
+        if headless:
+            try:
+                result = await self.session.prompt(start.text)
+            except Exception as exc:  # noqa: BLE001 -- report a failed headless turn to the CLI.
+                return TurnEnd(text=start.text, outcome='failed', error=exc)
+            return TurnEnd(text=start.text, outcome='completed', result=result)
+        # Menus open mid-turn only after this turn has captured its settings; session changes
+        # they save apply once it ends. A menu still open when it ends delays the next prompt.
+        ended = TurnEnd(text=start.text, outcome='cancelled')
+        with self.session_settings.turn():
+            send, receive = create_memory_object_stream[str](math.inf)
+            async with create_task_group() as mid_turn:
+                mid_turn.start_soon(self._serve_mid_turn, receive)
+                self._mid_turn_commands = send
+                try:
+                    ended = await _run_prompt(
+                        self.session,
+                        start.text,
+                        images=images,
+                        console=self.console,
+                        settings=self.context.settings,
+                        status=self.status,
+                        renderers=self.loader.renderers(),
+                        screen=self.screen,
+                        spinner=self.spinners.active,
+                    )
+                finally:
+                    self._mid_turn_commands = None
+                    send.close()
+        return ended
+
+
+def _report_project(project: ProjectSettings, console: Console) -> None:
+    if project.path is None:
+        return
+    console.print(f'Project settings: {project.path}', style=theme.color(theme.MUTED))
+    if project.unknown:
+        console.print(f'Ignoring unknown settings: {", ".join(project.unknown)}', style=theme.color(theme.WARNING))
+
+
+def _report_project_plugins(loader: PluginLoader[DepsT], console: Console) -> None:
+    waiting = [entry.name for entry in loader.entries() if entry.project and entry.host is None]
+    if waiting:
+        console.print(
+            f'Project plugins not loaded; approve one with /plugins enable NAME: {", ".join(waiting)}',
+            style=theme.color(theme.INFO),
+        )
+
+
+def _report_interrupt(completed: bool, console: Console) -> None:
+    if not completed:
+        console.print('Turn cancelled. Use /exit to quit.', style=theme.color(theme.MUTED), highlight=False)
+        console.print()
+
+
+async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status) -> None:
+    try:
+        console.print(await commands.execute_async(text), markup=False)
+    except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
+        console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+    console.print()
+    _reset_status(text, status)
+
+
+def _reset_status(command: str, status: Status) -> None:
+    if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
+        status.context_tokens = None
+        status.context_alert = False
+        status.output_tokens = None
+        status.cost = None
+        status.streamed_chars = 0
+
+
+def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
+    model = agent.model
+    if isinstance(model, str):  # pragma: no cover -- concrete Agent resolves string models before chat.
+        return model
+    return model.model_name if model else 'agent default'
+
+
+async def _run_prompt(
+    session: Session[DepsT, OutputT],
+    text: str,
+    *,
+    console: Console,
+    settings: Settings,
+    status: Status,
+    renderers: Sequence[Renderer[AgentStreamEvent]],
+    screen: Screen,
+    spinner: Callable[[], Spinner],
+    images: Sequence[BinaryContent] = (),
+) -> TurnEnd:
+    renderer = StreamRenderer(
+        console,
+        stop_loading=lambda: None,
+        show_thinking=settings.thinking,
+        smooth_seconds=settings.smooth_seconds,
+        show_tool_output=settings.tool_output,
+        shell_lines=settings.shell_lines,
+        grep_lines=settings.grep_lines,
+        renderers=renderers,
+    )
+    status.streamed_chars = 0
+    status.output_tokens = None
+    status.activity = 'waiting'
+
+    async def observe(event: AgentStreamEvent) -> None:
+        status.observe(event)
+        await renderer.on_stream_event(event)
+
+    def context_usage(tokens: int) -> None:
+        status.context_tokens = tokens
+
+    session.on_context_usage = context_usage
+    session.on_stream_event = observe
+    status_line = StatusLine(console, status, enabled=screen.editor is None, spinner=spinner)
+
+    @asynccontextmanager
+    async def take_screen() -> AsyncGenerator[None]:
+        await renderer.finish()
+        async with status_line.paused():
+            yield
+
+    try:
+        with screen.bound(take_screen):
+            async with status_line:
+                result = await session.prompt(text, images=images)
+                await renderer.finish()
+        status.output_tokens = result.usage.output_tokens
+        for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
+            if isinstance(message, ModelResponse):
+                status.context_tokens = message.usage.total_tokens or None
+                break
+        if not renderer.rendered_text or not isinstance(result.output, str):
+            console.print(str(result.output), markup=False)
+            console.print()
+        return TurnEnd(text=text, outcome='completed', result=result)
+    except asyncio.CancelledError:
+        await renderer.abort()
+        raise
+    except Exception as exc:  # noqa: BLE001 -- interactive boundary reports plugin/provider failures.
+        await renderer.finish()
+        console.print(f'{type(exc).__name__}: {error_message(exc)}', style=theme.color(theme.ERROR), markup=False)
+        console.print(
+            'Turn failed. Retained history may include partial progress. External tool side effects may already have occurred.',
+            style=theme.color(theme.MUTED),
+        )
+        console.print()
+        return TurnEnd(text=text, outcome='failed', error=exc)
+    finally:
+        status.activity = 'ready'
+        status.cost = session_usage(session.messages).total.cost
+        session.on_context_usage = None
+        await renderer.finish()

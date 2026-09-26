@@ -1,0 +1,2208 @@
+"""Tests for the `StepPersistence` capability.
+
+Exercises the public capability behavior through `Agent(...)`/`TestModel` and
+covers the helper / store branches that are awkward to reach through a real
+agent run (e.g. the path-traversal guard on `FileStepStore`).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, cast
+from uuid import UUID
+
+import pytest
+from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
+from pydantic_ai._agent_graph import GraphAgentState  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage
+
+from pydantic_ai_harness.step_persistence import (
+    ContinuableSnapshot,
+    FileStepStore,
+    InMemoryStepStore,
+    RunRecord,
+    SqliteStepStore,
+    StepEvent,
+    StepPersistence,
+    StepStore,
+    ToolEffectRecord,
+    annotate_tool_effect,
+    continue_run,
+    fork_run,
+    is_provider_valid,
+)
+from pydantic_ai_harness.step_persistence._context import current_run_id
+from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    """Restrict async tests to asyncio (Agent.run uses `asyncio.create_task`)."""
+    return 'asyncio'
+
+
+def build_run_context(
+    deps: object = None,
+    *,
+    run_id: str | None = None,
+    run_step: int = 0,
+    conversation_id: str | None = None,
+    messages: list[ModelMessage] | None = None,
+) -> RunContext[Any]:
+    """Fabricate a minimal `RunContext` for direct hook invocation."""
+    return RunContext[Any](
+        deps=deps,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        messages=messages if messages is not None else [],
+        run_step=run_step,
+        run_id=run_id,
+        conversation_id=conversation_id,
+    )
+
+
+def make_simple_agent(capabilities: list[Any]) -> Agent[object, str]:
+    agent: Agent[object, str] = Agent(TestModel(), capabilities=capabilities)
+
+    @agent.tool_plain
+    def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        return a + b
+
+    return agent
+
+
+class WorkerInterruptedError(RuntimeError):
+    """Simulate a worker stopping before its second model request."""
+
+
+@dataclass
+class InterruptBeforeSecondModelRequest(AbstractCapability[object]):
+    requests: int = 0
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[object],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        del ctx
+        self.requests += 1
+        if self.requests == 2:
+            raise WorkerInterruptedError('worker stopped after the completed tool call')
+        return request_context
+
+
+async def first_run_id(store: StepStore) -> str:
+    runs = await store.list_runs()
+    assert len(runs) >= 1
+    return runs[0].run_id
+
+
+# ---------------------------------------------------------------------------
+# is_provider_valid
+# ---------------------------------------------------------------------------
+
+
+class TestIsProviderValid:
+    def test_empty_history_is_valid(self) -> None:
+        assert is_provider_valid([]) is True
+
+    def test_matched_tool_call_is_valid(self) -> None:
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=3, tool_call_id='c1')]),
+        ]
+        assert is_provider_valid(messages) is True
+
+    def test_unmatched_tool_call_is_invalid(self) -> None:
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')])
+        ]
+        assert is_provider_valid(messages) is False
+
+    def test_retry_prompt_resolves_a_tool_call(self) -> None:
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[RetryPromptPart(content='try again', tool_name='add', tool_call_id='c1')]),
+        ]
+        assert is_provider_valid(messages) is True
+
+    def test_request_only_history_is_valid(self) -> None:
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
+        assert is_provider_valid(messages) is True
+
+    def test_text_only_response_is_valid(self) -> None:
+        messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='hi')])]
+        assert is_provider_valid(messages) is True
+
+    def test_orphan_tool_return_is_invalid(self) -> None:
+        """Return whose `tool_call_id` was never opened by any prior call -> reject."""
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=1, tool_call_id='ghost')]),
+        ]
+        assert is_provider_valid(messages) is False
+
+    def test_duplicate_tool_return_is_invalid(self) -> None:
+        """Two returns for the same `tool_call_id` -> the second has no open call."""
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=1, tool_call_id='c1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=2, tool_call_id='c1')]),
+        ]
+        assert is_provider_valid(messages) is False
+
+    def test_out_of_order_tool_return_is_invalid(self) -> None:
+        """Return appearing before its call in a later response -> reject."""
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=1, tool_call_id='c1')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+        ]
+        assert is_provider_valid(messages) is False
+
+    def test_orphan_retry_prompt_is_invalid(self) -> None:
+        """`RetryPromptPart` with no matching open call is also rejected."""
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[RetryPromptPart(content='retry', tool_name='add', tool_call_id='ghost')]),
+        ]
+        assert is_provider_valid(messages) is False
+
+
+# ---------------------------------------------------------------------------
+# continue_run / fork_run
+# ---------------------------------------------------------------------------
+
+
+class TestContinueAndForkRun:
+    async def test_continue_run_returns_snapshot_messages(self) -> None:
+        store = InMemoryStepStore()
+        msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=msgs))
+
+        loaded = await continue_run(store, run_id='r1')
+        assert len(loaded) == 1
+        assert loaded is not msgs  # caller gets an independent list
+
+    async def test_continue_run_raises_when_no_snapshot(self) -> None:
+        store = InMemoryStepStore()
+        with pytest.raises(LookupError, match="no continuable snapshot for run_id 'missing'"):
+            await continue_run(store, run_id='missing')
+
+    async def test_fork_run_delegates_to_continue_run(self) -> None:
+        store = InMemoryStepStore()
+        msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=msgs))
+
+        forked = await fork_run(store, run_id='r1')
+        assert len(forked) == 1
+
+
+# ---------------------------------------------------------------------------
+# _validate_id
+# ---------------------------------------------------------------------------
+
+
+class TestValidateId:
+    @pytest.mark.parametrize('bad', ['../evil', 'a/b', '', 'a..b', '..', 'has space', 'x' * 201])
+    def test_rejects_bad_ids(self, bad: str) -> None:
+        with pytest.raises(ValueError, match='invalid run_id'):
+            _validate_id(bad, field='run_id')
+
+    @pytest.mark.parametrize('good', ['good', 'a.b-c_d', 'A1', 'x' * 200])
+    def test_accepts_safe_ids(self, good: str) -> None:
+        _validate_id(good, field='run_id')
+
+
+# ---------------------------------------------------------------------------
+# InMemoryStepStore
+# ---------------------------------------------------------------------------
+
+
+class TestInMemoryStepStore:
+    async def test_register_and_get_run(self) -> None:
+        store = InMemoryStepStore()
+        await store.register_run(RunRecord(run_id='r1', agent_name='a'))
+
+        record = await store.get_run(run_id='r1')
+        assert record is not None
+        assert record.agent_name == 'a'
+        assert await store.get_run(run_id='missing') is None
+
+    async def test_list_runs_with_and_without_parent_filter(self) -> None:
+        store = InMemoryStepStore()
+        await store.register_run(RunRecord(run_id='r1', parent_run_id=None))
+        await store.register_run(RunRecord(run_id='r2', parent_run_id='r1'))
+        await store.register_run(RunRecord(run_id='r3', parent_run_id='r1'))
+        await store.register_run(RunRecord(run_id='r4', parent_run_id='other'))
+
+        assert {r.run_id for r in await store.list_runs()} == {'r1', 'r2', 'r3', 'r4'}
+        children = await store.list_runs(parent_run_id='r1')
+        assert {r.run_id for r in children} == {'r2', 'r3'}
+
+    async def test_list_runs_filters_by_conversation_id(self) -> None:
+        store = InMemoryStepStore()
+        await store.register_run(RunRecord(run_id='r1', conversation_id='conv-A'))
+        await store.register_run(RunRecord(run_id='r2', conversation_id='conv-A'))
+        await store.register_run(RunRecord(run_id='r3', conversation_id='conv-B'))
+
+        a_runs = await store.list_runs(conversation_id='conv-A')
+        assert {r.run_id for r in a_runs} == {'r1', 'r2'}
+
+    async def test_list_runs_combines_parent_and_conversation_filters(self) -> None:
+        store = InMemoryStepStore()
+        await store.register_run(RunRecord(run_id='r1', parent_run_id='p', conversation_id='conv-A'))
+        await store.register_run(RunRecord(run_id='r2', parent_run_id='p', conversation_id='conv-B'))
+        await store.register_run(RunRecord(run_id='r3', parent_run_id='other', conversation_id='conv-A'))
+
+        narrowed = await store.list_runs(parent_run_id='p', conversation_id='conv-A')
+        assert [r.run_id for r in narrowed] == ['r1']
+
+    async def test_append_and_list_events(self) -> None:
+        store = InMemoryStepStore()
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
+        await store.append_event(StepEvent(run_id='r1', kind='run_completed', step_index=1))
+
+        events = await store.list_events(run_id='r1')
+        assert [e.kind for e in events] == ['run_started', 'run_completed']
+        assert await store.list_events(run_id='missing') == []
+
+    async def test_latest_snapshot_returns_last_appended(self) -> None:
+        store = InMemoryStepStore()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=2, messages=[]))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=[]))
+
+        latest = await store.latest_snapshot(run_id='r1')
+        assert latest is not None
+        # InMemoryStepStore returns the last *appended* snapshot.
+        assert latest.step_index == 1
+        assert await store.latest_snapshot(run_id='missing') is None
+
+    async def test_tool_effects_started_then_completed(self) -> None:
+        store = InMemoryStepStore()
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c1', tool_name='add', run_id='r1', status='started')
+        )
+        unresolved = await store.list_unresolved_tool_effects(run_id='r1')
+        assert [r.tool_call_id for r in unresolved] == ['c1']
+
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c1', tool_name='add', run_id='r1', status='completed')
+        )
+        assert await store.list_unresolved_tool_effects(run_id='r1') == []
+
+        # mix completed and another started; only the started one is unresolved.
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c2', tool_name='add', run_id='r1', status='started')
+        )
+        unresolved = await store.list_unresolved_tool_effects(run_id='r1')
+        assert [r.tool_call_id for r in unresolved] == ['c2']
+
+    async def test_get_tool_effect_returns_latest_or_none(self) -> None:
+        store = InMemoryStepStore()
+        assert await store.get_tool_effect(run_id='r1', tool_call_id='missing') is None
+
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c1', tool_name='add', run_id='r1', status='started')
+        )
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c1', tool_name='add', run_id='r1', status='completed')
+        )
+
+        record = await store.get_tool_effect(run_id='r1', tool_call_id='c1')
+        assert record is not None
+        assert record.status == 'completed'
+
+
+# ---------------------------------------------------------------------------
+# FileStepStore
+# ---------------------------------------------------------------------------
+
+
+class TestFileStepStore:
+    async def test_keyed_writes_are_idempotent_after_snapshot_pruning(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path, max_snapshots_per_run=1)
+        event = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
+        older = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
+        newer = ContinuableSnapshot(run_id='r1', step_index=2, messages=[], idempotency_key='1:2:complete')
+
+        await store.append_event(event)
+        await store.append_event(event)
+        await store.save_snapshot(older)
+        await store.save_snapshot(newer)
+        await store.save_snapshot(older)
+
+        assert await store.list_events(run_id='r1') == [event]
+        assert await store.latest_snapshot(run_id='r1') == newer
+
+    async def test_snapshot_record_suppresses_retry_if_key_ledger_write_was_interrupted(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        snapshot = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
+        snapshot_dir = tmp_path / 'r1' / 'snapshots'
+        snapshot_dir.mkdir(parents=True)
+        (snapshot_dir / 'broken.json').write_text('{', encoding='utf-8')
+        await store.save_snapshot(snapshot)
+        (tmp_path / 'r1' / 'snapshot-keys.jsonl').unlink()
+
+        await store.save_snapshot(snapshot)
+
+        assert await store.list_snapshots(run_id='r1') == [snapshot]
+
+    async def test_snapshot_scan_skips_a_partially_written_snapshot_file(self, tmp_path: Path) -> None:
+        # The corrupt file is the only one in the directory on purpose: the key scan returns as soon as
+        # it reads a snapshot carrying the same key, so a directory that also held a good one would only
+        # reach the corrupt file when `glob` happened to yield it first, which is filesystem order.
+        store = FileStepStore(tmp_path)
+        snapshot = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
+        snap_dir = tmp_path / 'r1' / 'snapshots'
+        snap_dir.mkdir(parents=True)
+        (snap_dir / 'broken.json').write_text('{', encoding='utf-8')
+
+        await store.save_snapshot(snapshot)
+
+        assert await store.list_snapshots(run_id='r1') == [snapshot]
+
+    async def test_snapshot_key_line_separator_does_not_suppress_distinct_key(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        first = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='first\nsecond')
+        second = ContinuableSnapshot(run_id='r1', step_index=2, messages=[], idempotency_key='second')
+
+        await store.save_snapshot(first)
+        await store.save_snapshot(second)
+
+        assert await store.list_snapshots(run_id='r1') == [first, second]
+
+    async def test_runs_round_trip(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.register_run(RunRecord(run_id='r1', parent_run_id='p1', agent_name='a', metadata={'k': 'v'}))
+
+        record = await store.get_run(run_id='r1')
+        assert record is not None
+        assert record.parent_run_id == 'p1'
+        assert record.agent_name == 'a'
+        assert record.metadata == {'k': 'v'}
+        assert await store.get_run(run_id='missing') is None
+
+    async def test_list_runs_returns_empty_when_root_missing(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path / 'does-not-exist')
+        assert await store.list_runs() == []
+
+    async def test_list_runs_skips_directories_without_run_json(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        (tmp_path / 'orphan').mkdir()
+        await store.register_run(RunRecord(run_id='real', agent_name='a'))
+
+        runs = await store.list_runs()
+        assert [r.run_id for r in runs] == ['real']
+
+    async def test_list_runs_filters_by_parent(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.register_run(RunRecord(run_id='r1', parent_run_id=None))
+        await store.register_run(RunRecord(run_id='r2', parent_run_id='r1'))
+
+        children = await store.list_runs(parent_run_id='r1')
+        assert [r.run_id for r in children] == ['r2']
+
+    async def test_list_runs_filters_by_conversation_id(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.register_run(RunRecord(run_id='r1', conversation_id='conv-A'))
+        await store.register_run(RunRecord(run_id='r2', conversation_id='conv-B'))
+
+        assert [r.run_id for r in await store.list_runs(conversation_id='conv-A')] == ['r1']
+
+    async def test_events_round_trip_skips_blank_lines(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
+        await store.append_event(
+            StepEvent(
+                run_id='r1',
+                kind='tool_call_started',
+                step_index=1,
+                tool_call_id='c1',
+                tool_name='add',
+                metadata={'k': 'v'},
+            )
+        )
+
+        # Inject a blank line to exercise the strip() branch on read.
+        events_file = tmp_path / 'r1' / 'events.jsonl'
+        events_file.write_text(events_file.read_text(encoding='utf-8') + '\n', encoding='utf-8')
+
+        events = await store.list_events(run_id='r1')
+        assert [e.kind for e in events] == ['run_started', 'tool_call_started']
+        assert events[1].metadata == {'k': 'v'}
+        assert events[1].tool_call_id == 'c1'
+
+    async def test_list_events_empty_when_file_missing(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        assert await store.list_events(run_id='nonexistent') == []
+
+    async def test_snapshot_round_trip(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='hi')]),
+            ModelResponse(parts=[TextPart(content='ok')]),
+        ]
+        await store.save_snapshot(
+            ContinuableSnapshot(
+                run_id='r1',
+                step_index=0,
+                messages=messages,
+                conversation_id='c1',
+                parent_run_id='p1',
+                agent_name='a',
+            )
+        )
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.step_index == 0
+        assert snap.conversation_id == 'c1'
+        assert snap.parent_run_id == 'p1'
+        assert snap.agent_name == 'a'
+        assert len(snap.messages) == 2
+
+    async def test_latest_snapshot_picks_most_recent_seq(self, tmp_path: Path) -> None:
+        """Latest is by physical write order (filename seq), not by `step_index`."""
+        store = FileStepStore(tmp_path)
+        for step in (0, 2, 1):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=[]))
+
+        # Drop a non-integer filename to exercise the ValueError branch.
+        (tmp_path / 'r1' / 'snapshots' / 'not-a-number.json').write_text('{}', encoding='utf-8')
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        # The last save had step_index=1 and was written as the highest seq.
+        assert snap.step_index == 1
+
+    async def test_lower_step_index_save_supersedes_earlier(self, tmp_path: Path) -> None:
+        """A reused `run_id` whose later save has a LOWER `step_index` is still
+        treated as the latest -- the physical seq wins."""
+        store = FileStepStore(tmp_path)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=5, messages=[]))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=2, messages=[]))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.step_index == 2
+
+    async def test_snapshot_seq_counter_increments(self, tmp_path: Path) -> None:
+        """Three consecutive saves produce files `0.json`, `1.json`, `2.json`."""
+        store = FileStepStore(tmp_path)
+        for _ in range(3):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+
+        snap_dir = tmp_path / 'r1' / 'snapshots'
+        names = sorted(p.name for p in snap_dir.glob('*.json'))
+        assert names == ['0.json', '1.json', '2.json']
+
+    async def test_snapshot_seq_counter_skips_non_integer_filenames(self, tmp_path: Path) -> None:
+        """`_next_snapshot_seq` ignores `*.json` files whose stem is not an int."""
+        store = FileStepStore(tmp_path)
+        snap_dir = tmp_path / 'r1' / 'snapshots'
+        snap_dir.mkdir(parents=True)
+        (snap_dir / 'not-a-number.json').write_text('{}', encoding='utf-8')
+
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+
+        # Despite the foreign file, the new snapshot is written as `0.json`.
+        assert (snap_dir / '0.json').exists()
+
+    async def test_snapshot_seq_counter_keeps_max_across_unordered_iter(self, tmp_path: Path) -> None:
+        """`_next_snapshot_seq` keeps the highest seq even when `glob` yields lower ones later."""
+        store = FileStepStore(tmp_path)
+        snap_dir = tmp_path / 'r1' / 'snapshots'
+        snap_dir.mkdir(parents=True)
+        # Pre-populate multiple numeric files so `glob` iteration hits both
+        # the `seq > max_seq` true branch and its false branch (a lower seq
+        # seen after a higher one already set the max). Insertion order on
+        # APFS / ext4 is the directory iteration order: write the high stem
+        # first so the lower ones that follow hit the False branch.
+        # Lexicographic glob order puts `10.json` before `1.json`, so the
+        # iteration encounters a high seq first and then several lower seqs,
+        # forcing the `seq > max_seq` False branch.
+        for seq in (10, 1, 2, 9):
+            (snap_dir / f'{seq}.json').write_text('{}', encoding='utf-8')
+
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+
+        # Next seq must be 11 (one above the highest existing numeric stem).
+        assert (snap_dir / '11.json').exists()
+
+    async def test_latest_snapshot_returns_none_when_dir_missing(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        assert await store.latest_snapshot(run_id='nope') is None
+
+    async def test_latest_snapshot_returns_none_when_dir_empty(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.register_run(RunRecord(run_id='r1'))  # creates snapshots/ but no files
+        assert await store.latest_snapshot(run_id='r1') is None
+
+    async def test_tool_effects_round_trip(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c1', tool_name='add', run_id='r1', status='started')
+        )
+        await store.record_tool_effect(
+            ToolEffectRecord(
+                tool_call_id='c2',
+                tool_name='mul',
+                run_id='r1',
+                status='completed',
+                idempotency_key='k',
+                effect_summary='ok',
+            )
+        )
+
+        # Blank line to exercise the strip branch on read.
+        path = tmp_path / 'r1' / 'tool_effects.jsonl'
+        path.write_text(path.read_text(encoding='utf-8') + '\n', encoding='utf-8')
+
+        unresolved = await store.list_unresolved_tool_effects(run_id='r1')
+        assert [r.tool_call_id for r in unresolved] == ['c1']
+
+    async def test_list_unresolved_tool_effects_empty_when_file_missing(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        assert await store.list_unresolved_tool_effects(run_id='nonexistent') == []
+
+    async def test_get_tool_effect_returns_latest_for_run(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c1', tool_name='add', run_id='runA', status='started')
+        )
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c1', tool_name='add', run_id='runA', status='completed')
+        )
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='c2', tool_name='mul', run_id='runB', status='started')
+        )
+        # Blank line to exercise the strip branch on read.
+        (tmp_path / 'runA' / 'tool_effects.jsonl').write_text(
+            (tmp_path / 'runA' / 'tool_effects.jsonl').read_text(encoding='utf-8') + '\n',
+            encoding='utf-8',
+        )
+
+        record = await store.get_tool_effect(run_id='runA', tool_call_id='c1')
+        assert record is not None
+        assert record.status == 'completed'
+        assert record.run_id == 'runA'
+
+        other = await store.get_tool_effect(run_id='runB', tool_call_id='c2')
+        assert other is not None and other.status == 'started'
+
+        assert await store.get_tool_effect(run_id='runA', tool_call_id='missing') is None
+
+    async def test_get_tool_effect_returns_none_when_file_missing(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        assert await store.get_tool_effect(run_id='absent', tool_call_id='anything') is None
+
+    async def test_register_run_rejects_bad_run_id(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        with pytest.raises(ValueError, match='invalid run_id'):
+            await store.register_run(RunRecord(run_id='../evil'))
+
+    async def test_event_deserialization_rejects_unknown_kind(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        run_dir = tmp_path / 'r1'
+        run_dir.mkdir()
+        (run_dir / 'events.jsonl').write_text(
+            json.dumps(
+                {
+                    'run_id': 'r1',
+                    'kind': 'made_up',
+                    'step_index': 0,
+                    'timestamp': '2024-01-01T00:00:00+00:00',
+                }
+            )
+            + '\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match='unknown event kind'):
+            await store.list_events(run_id='r1')
+
+    async def test_event_deserialization_rejects_wrong_types(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        run_dir = tmp_path / 'r1'
+        run_dir.mkdir()
+        (run_dir / 'events.jsonl').write_text(
+            json.dumps(
+                {
+                    'run_id': 1,  # wrong type
+                    'kind': 'run_started',
+                    'step_index': 0,
+                    'timestamp': '2024-01-01T00:00:00+00:00',
+                }
+            )
+            + '\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match='event payload has wrong types'):
+            await store.list_events(run_id='r1')
+
+    async def test_event_deserialization_rejects_non_string_optional(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        run_dir = tmp_path / 'r1'
+        run_dir.mkdir()
+        (run_dir / 'events.jsonl').write_text(
+            json.dumps(
+                {
+                    'run_id': 'r1',
+                    'kind': 'run_started',
+                    'step_index': 0,
+                    'timestamp': '2024-01-01T00:00:00+00:00',
+                    'agent_name': 5,  # neither None nor str
+                }
+            )
+            + '\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match='expected str'):
+            await store.list_events(run_id='r1')
+
+    async def test_run_deserialization_rejects_wrong_types(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        run_dir = tmp_path / 'r1'
+        run_dir.mkdir()
+        (run_dir / 'run.json').write_text(json.dumps({'run_id': 1, 'started_at': 'x'}), encoding='utf-8')
+        with pytest.raises(ValueError, match='run record has wrong types'):
+            await store.get_run(run_id='r1')
+
+    async def test_tool_effect_deserialization_rejects_wrong_types(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        run_dir = tmp_path / 'r1'
+        run_dir.mkdir()
+        (run_dir / 'tool_effects.jsonl').write_text(
+            json.dumps({'tool_call_id': 1, 'tool_name': 'add', 'run_id': 'r1', 'status': 'started', 'started_at': 'x'})
+            + '\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match='tool effect record has wrong types'):
+            await store.list_unresolved_tool_effects(run_id='r1')
+
+    async def test_tool_effect_deserialization_rejects_unknown_status(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        run_dir = tmp_path / 'r1'
+        run_dir.mkdir()
+        (run_dir / 'tool_effects.jsonl').write_text(
+            json.dumps(
+                {
+                    'tool_call_id': 'c1',
+                    'tool_name': 'add',
+                    'run_id': 'r1',
+                    'status': 'pending',
+                    'started_at': '2024-01-01T00:00:00+00:00',
+                }
+            )
+            + '\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match='unknown tool effect status'):
+            await store.list_unresolved_tool_effects(run_id='r1')
+
+    async def test_snapshot_deserialization_rejects_wrong_types(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        snap_dir = tmp_path / 'r1' / 'snapshots'
+        snap_dir.mkdir(parents=True)
+        (snap_dir / '0.json').write_text(
+            json.dumps({'step_index': 'wrong', 'timestamp': 'x', 'messages': []}),
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match='snapshot has wrong types'):
+            await store.latest_snapshot(run_id='r1')
+
+
+# ---------------------------------------------------------------------------
+# Capability behavior via Agent + TestModel
+# ---------------------------------------------------------------------------
+
+
+class TestStepPersistenceCapability:
+    def test_store_remains_positional(self) -> None:
+        store = InMemoryStepStore()
+
+        persistence: StepPersistence[object] = StepPersistence(store)
+
+        assert persistence.store is store
+        assert persistence.id == 'step_persistence'
+
+    async def test_interrupted_run_resumes_from_completed_tool_boundary(self) -> None:
+        store = InMemoryStepStore()
+        interrupt = InterruptBeforeSecondModelRequest()
+        agent = make_simple_agent(
+            [
+                StepPersistence(store=store, run_id='interrupted-read'),
+                interrupt,
+            ]
+        )
+
+        with pytest.raises(WorkerInterruptedError, match='completed tool call'):
+            await agent.run('add 1 and 2')
+
+        history = await continue_run(store, run_id='interrupted-read')
+        effect = await store.get_tool_effect(
+            run_id='interrupted-read',
+            tool_call_id='pyd_ai_tool_call_id__add',
+        )
+
+        assert is_provider_valid(history) is True
+        assert any(
+            isinstance(part, ToolReturnPart)
+            for message in history
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        assert effect is not None
+        assert effect.status == 'completed'
+
+    async def test_run_stream_snapshot_keeps_the_final_response(self) -> None:
+        """A completed `run_stream` resumes from its final assistant turn, not the tool boundary.
+
+        `run_stream` ends through `SetFinalResult`, not a terminal
+        `CallToolsNode`, and its final response reaches the history only after
+        that boundary -- so no `after_node_run` save can carry it and the
+        `after_run` fallback is the only writer that sees the whole run.
+        """
+        store = InMemoryStepStore()
+        agent = make_simple_agent([StepPersistence(store=store, run_id='streamed')])
+
+        async with agent.run_stream('add 1 and 2') as result:
+            await result.get_output()
+
+        snapshot = await store.latest_snapshot(run_id='streamed')
+        assert snapshot is not None
+        assert is_provider_valid(snapshot.messages) is True
+        assert isinstance(snapshot.messages[-1], ModelResponse)
+        assert snapshot.messages == result.all_messages()
+
+    async def test_basic_run_records_lifecycle_and_snapshot(self) -> None:
+        store = InMemoryStepStore()
+        agent = make_simple_agent([StepPersistence(store=store, agent_name='librarian')])
+
+        result = await agent.run('add 1 and 2')
+
+        rid = await first_run_id(store)
+        events = await store.list_events(run_id=rid)
+        kinds = [e.kind for e in events]
+        assert kinds[0] == 'run_started'
+        assert kinds[-1] == 'run_completed'
+        assert 'tool_call_started' in kinds
+        assert 'tool_call_completed' in kinds
+
+        # RunRecord lineage was registered.
+        record = await store.get_run(run_id=rid)
+        assert record is not None
+        assert record.agent_name == 'librarian'
+        assert record.parent_run_id is None
+
+        # Snapshot is provider-valid and round-trips through `continue_run`.
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert is_provider_valid(snap.messages) is True
+        assert len(snap.messages) == len(result.all_messages())
+
+        # All events tagged with the same run_id and agent_name.
+        assert {e.run_id for e in events} == {rid}
+        assert {e.agent_name for e in events} == {'librarian'}
+
+    async def test_helper_based_continuation_replays_prior_messages(self) -> None:
+        """`continue_run(store, run_id=...) -> Agent.run(message_history=...)`."""
+        store = InMemoryStepStore()
+        agent1 = make_simple_agent([StepPersistence(store=store, agent_name='a')])
+        result1 = await agent1.run('add 1 and 2')
+        first_rid = await first_run_id(store)
+
+        history = await continue_run(store, run_id=first_rid)
+        assert len(history) == len(result1.all_messages())
+
+        # Second run uses a fresh capability instance + the helper-provided history.
+        agent2 = make_simple_agent([StepPersistence(store=store, agent_name='b')])
+        result2 = await agent2.run('add 3 and 4', message_history=history)
+
+        msgs = result2.all_messages()
+        assert len(msgs) > len(history)
+        # The prior messages appear at the head of the second run's history.
+        for prior_msg, replayed in zip(history, msgs[: len(history)]):
+            assert type(prior_msg) is type(replayed)
+
+    async def test_agent_name_derived_run_id_uses_whole_context_id_deterministically(self, tmp_path: Path) -> None:
+        """The same context run id derives the same untruncated store id on replay."""
+        capability: StepPersistence[object] = StepPersistence(agent_name='librarian')
+        context_run_id = 'tenant/caller-chosen-run-id-with-a-shared-suffix'
+
+        first = await capability.for_run(build_run_context(run_id=context_run_id))
+        replay = await capability.for_run(build_run_context(run_id=context_run_id))
+
+        assert isinstance(first, StepPersistence)
+        assert isinstance(replay, StepPersistence)
+        assert first.run_id is not None
+        assert first.run_id.startswith('sp-')
+        assert replay.run_id == first.run_id
+
+        distinct = await capability.for_run(build_run_context(run_id='different/' + context_run_id))
+        assert isinstance(distinct, StepPersistence)
+        assert distinct.run_id != first.run_id
+        file_store = FileStepStore(tmp_path)
+        await file_store.register_run(RunRecord(run_id=first.run_id))
+        assert await file_store.get_run(run_id=first.run_id) is not None
+
+        with pytest.raises(ValueError, match='200-character limit'):
+            await StepPersistence[object](agent_name='librarian').for_run(build_run_context(run_id='x' * 200))
+
+    async def test_single_capability_instance_reused_gets_fresh_ids(self) -> None:
+        """One `StepPersistence(agent_name=...)` reused for two runs -> two distinct ids."""
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store, agent_name='librarian')
+
+        agent1: Agent[object, str] = Agent(TestModel(), capabilities=[cap])
+
+        @agent1.tool_plain
+        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+            return a + b
+
+        await agent1.run('add 1 and 2')
+        await agent1.run('add 3 and 4')
+
+        runs = await store.list_runs()
+        assert len(runs) == 2
+        rids = {r.run_id for r in runs}
+        assert len(rids) == 2
+        for rid in rids:
+            assert rid.startswith('sp-')
+
+    async def test_parent_run_id_inferred_via_contextvar(self) -> None:
+        """Orchestrator tool calls a delegate `Agent.run` -> delegate's `parent_run_id`
+        is auto-set to the orchestrator's `run_id` without manual threading."""
+        store = InMemoryStepStore()
+
+        delegate: Agent[object, str] = Agent(
+            TestModel(),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @delegate.tool_plain
+        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+            return a + b
+
+        orchestrator: Agent[object, str] = Agent(
+            TestModel(),
+            capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
+        )
+
+        @orchestrator.tool_plain
+        async def delegate_work() -> str:  # pyright: ignore[reportUnusedFunction]
+            res = await delegate.run('add 1 and 2')
+            return res.output
+
+        await orchestrator.run('coordinate')
+
+        runs = await store.list_runs()
+        orch = next(r for r in runs if r.agent_name == 'orchestrator')
+        dele = next(r for r in runs if r.agent_name == 'delegate')
+
+        assert dele.parent_run_id == orch.run_id
+        # And the delegate's events also carry that parent_run_id.
+        dele_events = await store.list_events(run_id=dele.run_id)
+        assert {e.parent_run_id for e in dele_events} == {orch.run_id}
+
+    async def test_conversation_id_groups_two_runs(self) -> None:
+        """Passing the same `conversation_id` to two `Agent.run` calls -> store.list_runs
+        finds both."""
+        store = InMemoryStepStore()
+        agent = make_simple_agent([StepPersistence(store=store, agent_name='c')])
+
+        await agent.run('add 1 and 2', conversation_id='conv-1')
+        await agent.run('add 3 and 4', conversation_id='conv-1')
+
+        runs = await store.list_runs(conversation_id='conv-1')
+        assert len(runs) == 2
+        assert {r.conversation_id for r in runs} == {'conv-1'}
+
+    async def test_list_runs_parent_and_conversation_filters_combine(self) -> None:
+        store = InMemoryStepStore()
+
+        delegate: Agent[object, str] = Agent(
+            TestModel(),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @delegate.tool_plain
+        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+            return a + b
+
+        orchestrator: Agent[object, str] = Agent(
+            TestModel(),
+            capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
+        )
+
+        @orchestrator.tool_plain
+        async def delegate_work() -> str:  # pyright: ignore[reportUnusedFunction]
+            res = await delegate.run('add 1 and 2', conversation_id='target-conv')
+            return res.output
+
+        await orchestrator.run('coordinate', conversation_id='target-conv')
+        orch_rid = next(r.run_id for r in await store.list_runs() if r.agent_name == 'orchestrator')
+
+        # Sibling unrelated run under the same conversation but no parent.
+        unrelated = make_simple_agent([StepPersistence(store=store, agent_name='unrelated')])
+        await unrelated.run('add 5 and 6', conversation_id='target-conv')
+
+        narrowed = await store.list_runs(parent_run_id=orch_rid, conversation_id='target-conv')
+        assert [r.agent_name for r in narrowed] == ['delegate']
+
+    async def test_step_event_carries_conversation_id(self) -> None:
+        """`ctx.conversation_id` propagates onto each emitted `StepEvent`."""
+        store = InMemoryStepStore()
+        agent = make_simple_agent([StepPersistence(store=store, agent_name='c')])
+        await agent.run('add 1 and 2', conversation_id='conv-evt')
+
+        rid = await first_run_id(store)
+        events = await store.list_events(run_id=rid)
+        assert events  # sanity
+        assert {e.conversation_id for e in events} == {'conv-evt'}
+
+    async def test_tool_effect_is_scoped_per_run_in_memory(self) -> None:
+        """Same `tool_call_id` across two runs must NOT share the effect record."""
+        store = InMemoryStepStore()
+        agent = make_simple_agent([StepPersistence(store=store, agent_name='a')])
+
+        await agent.run('add 1 and 2')
+        await agent.run('add 3 and 4')
+
+        runs = await store.list_runs()
+        assert len(runs) == 2
+        run1_id, run2_id = runs[0].run_id, runs[1].run_id
+
+        e1 = await store.get_tool_effect(run_id=run1_id, tool_call_id='pyd_ai_tool_call_id__add')
+        e2 = await store.get_tool_effect(run_id=run2_id, tool_call_id='pyd_ai_tool_call_id__add')
+        assert e1 is not None and e2 is not None
+        assert e1.run_id == run1_id
+        assert e2.run_id == run2_id
+        # The second run's record is independent: its started_at is not inherited from run 1.
+        assert e2.started_at >= e1.started_at
+        assert e2.started_at != e1.started_at or e2 is not e1
+
+        # Cross-lookups return only the owning run's record.
+        cross = await store.get_tool_effect(run_id=run1_id, tool_call_id='pyd_ai_tool_call_id__add')
+        assert cross is not None
+        assert cross.run_id == run1_id
+
+    async def test_tool_effect_is_scoped_per_run_file_store(self, tmp_path: Path) -> None:
+        """Same correctness contract under `FileStepStore`."""
+        store = FileStepStore(tmp_path)
+        agent = make_simple_agent([StepPersistence(store=store, agent_name='a')])
+
+        await agent.run('add 1 and 2')
+        await agent.run('add 3 and 4')
+
+        runs = await store.list_runs()
+        assert len(runs) == 2
+        run1_id, run2_id = runs[0].run_id, runs[1].run_id
+
+        e1 = await store.get_tool_effect(run_id=run1_id, tool_call_id='pyd_ai_tool_call_id__add')
+        e2 = await store.get_tool_effect(run_id=run2_id, tool_call_id='pyd_ai_tool_call_id__add')
+        assert e1 is not None and e2 is not None
+        assert e1.run_id == run1_id
+        assert e2.run_id == run2_id
+        # The other run's directory does not leak into this run's lookup.
+        assert await store.get_tool_effect(run_id=run1_id, tool_call_id='missing') is None
+
+    async def test_tool_failure_records_failed_status_and_event(self) -> None:
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store)])
+
+        @agent.tool_plain
+        def boom() -> int:  # pyright: ignore[reportUnusedFunction]
+            raise ValueError('kaboom')
+
+        with pytest.raises(ValueError, match='kaboom'):
+            await agent.run('boom please')
+
+        rid = await first_run_id(store)
+        events = await store.list_events(run_id=rid)
+        kinds = [e.kind for e in events]
+        assert 'tool_call_started' in kinds
+        assert 'tool_call_failed' in kinds
+        assert 'run_failed' in kinds
+        # The failure event records the exception repr.
+        failed_event = next(e for e in events if e.kind == 'tool_call_failed')
+        assert failed_event.error is not None and 'kaboom' in failed_event.error
+
+        effect = await store.get_tool_effect(run_id=rid, tool_call_id='pyd_ai_tool_call_id__boom')
+        assert effect is not None
+        assert effect.status == 'failed'
+        assert effect.effect_summary is not None and 'kaboom' in effect.effect_summary
+
+    async def test_explicit_run_id_wins_over_ctx_run_id(self) -> None:
+        store = InMemoryStepStore()
+        agent = make_simple_agent(
+            [StepPersistence(store=store, run_id='librarian-001', agent_name='librarian')],
+        )
+
+        await agent.run('add 1 and 2')
+
+        # Caller-supplied run_id is the persisted identity, not the auto-generated ctx.run_id.
+        record = await store.get_run(run_id='librarian-001')
+        assert record is not None
+        assert record.agent_name == 'librarian'
+        events = await store.list_events(run_id='librarian-001')
+        assert {e.run_id for e in events} == {'librarian-001'}
+
+    async def test_explicit_parent_run_id_overrides_contextvar(self) -> None:
+        """Manual `parent_run_id=` wins over the auto-inferred contextvar value."""
+        store = InMemoryStepStore()
+        agent = make_simple_agent(
+            [StepPersistence(store=store, agent_name='delegate', parent_run_id='manual-parent')],
+        )
+
+        await agent.run('add 1 and 2')
+
+        runs = await store.list_runs(parent_run_id='manual-parent')
+        assert len(runs) == 1
+        assert runs[0].agent_name == 'delegate'
+
+    async def test_from_spec_memory_backend(self) -> None:
+        cap = StepPersistence.from_spec()
+        assert isinstance(cap.store, InMemoryStepStore)
+
+    async def test_from_spec_explicit_memory_backend_with_kwargs(self) -> None:
+        cap = StepPersistence.from_spec(backend='memory', agent_name='a')
+        assert isinstance(cap.store, InMemoryStepStore)
+        assert cap.agent_name == 'a'
+
+    async def test_from_spec_file_backend(self, tmp_path: Path) -> None:
+        cap = StepPersistence.from_spec(backend='file', directory=tmp_path)
+        assert isinstance(cap.store, FileStepStore)
+
+    async def test_from_spec_file_backend_default_directory(self) -> None:
+        cap = StepPersistence.from_spec(backend='file')
+        assert isinstance(cap.store, FileStepStore)
+
+
+# ---------------------------------------------------------------------------
+# Headline acceptance test
+# ---------------------------------------------------------------------------
+
+
+class TestCrashMidToolCallContract:
+    """The signature acceptance test from the PR comment.
+
+    A run killed after a tool starts but before its return is persisted must
+    leave a visible event trail without exposing the killed point as a
+    valid `message_history` continuation. The latest snapshot must be older
+    than the in-flight call, and that snapshot must be provider-valid.
+    """
+
+    async def test_visible_trail_no_false_continuation_point(self) -> None:
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store, agent_name='delegate')
+        agent: Agent[object, str] = Agent(TestModel(), capabilities=[cap])
+
+        @agent.tool_plain
+        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+            return a + b
+
+        # 1) Drive a full successful run so a provider-valid snapshot exists.
+        result = await agent.run('add 1 and 2')
+        rid = await first_run_id(store)
+        snap_before_crash = await store.latest_snapshot(run_id=rid)
+        assert snap_before_crash is not None
+        assert is_provider_valid(snap_before_crash.messages) is True
+        snap_step = snap_before_crash.step_index
+
+        # 2) Simulate a crash mid-tool-call by calling `before_tool_execute`
+        # directly with a synthesised ToolCallPart and never firing
+        # `after_tool_execute` / `on_tool_execute_error`. Use the resolved
+        # `cap.run_id` if set; otherwise rely on the discovered rid via ctx.
+        crash_ctx = build_run_context(deps=None, run_id=rid, run_step=snap_step + 1)
+        crash_call = ToolCallPart(tool_name='add', args={'a': 9, 'b': 9}, tool_call_id='crash-call-1')
+        tool_def = ToolDefinition(name='add', description='Add two numbers.')
+        await cap.before_tool_execute(crash_ctx, call=crash_call, tool_def=tool_def, args={'a': 9, 'b': 9})
+
+        # 3) Assert the event log shows the started call with no terminal update.
+        events = await store.list_events(run_id=rid)
+        started = [e for e in events if e.kind == 'tool_call_started' and e.tool_call_id == 'crash-call-1']
+        completed = [e for e in events if e.kind == 'tool_call_completed' and e.tool_call_id == 'crash-call-1']
+        failed = [e for e in events if e.kind == 'tool_call_failed' and e.tool_call_id == 'crash-call-1']
+        assert len(started) == 1
+        assert completed == []
+        assert failed == []
+
+        # 4) The unresolved-effect ledger surfaces the in-flight tool call.
+        unresolved = await store.list_unresolved_tool_effects(run_id=rid)
+        crash_records = [r for r in unresolved if r.tool_call_id == 'crash-call-1']
+        assert len(crash_records) == 1
+        assert crash_records[0].status == 'started'
+
+        # 5) Resume point is the snapshot from step 1 — older than the crash —
+        # and is still provider-valid.
+        snap_after_crash = await store.latest_snapshot(run_id=rid)
+        assert snap_after_crash is not None
+        assert snap_after_crash.step_index == snap_step
+        assert is_provider_valid(snap_after_crash.messages) is True
+        # And the snapshot is consistent with what the prior successful run produced.
+        assert len(snap_after_crash.messages) == len(result.all_messages())
+
+
+class TestOnRunErrorSnapshot:
+    """`on_run_error` persists the live at-failure history as the run's resume point (#253, #385).
+
+    The stash contextvar holds the live message list by reference, so the
+    single save site captures states no node snapshot records -- for instance
+    the `CallToolsNode` after a text response, where output validation raising
+    skips its own `after_node_run`. Histories with unsettled tool work are
+    saved too, classified `interrupted` and hidden from the default read path.
+
+    These run-level tests assert the resume point a failed run ends up with,
+    not which hook wrote it. Since `after_node_run` folds the pending request
+    into its `CallToolsNode` snapshot (#373), a resolved tool cycle is already
+    durable before any error path runs.
+    """
+
+    async def test_rescues_provider_valid_history_when_next_model_request_raises(self) -> None:
+        """Issue #253 acceptance test: request 1 tool call, request 2 raises.
+
+        The run must end with the resolved tool cycle
+        `[prompt, response, tool-return]` as its resume point -- provider-valid,
+        no open tool calls. Since #373 the `CallToolsNode` boundary already
+        saves that history, so this asserts the outcome rather than which hook
+        wrote it.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prior_responses = [m for m in messages if isinstance(m, ModelResponse)]
+            if not prior_responses:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup-1')])
+            raise RuntimeError('provider down on request 2')
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.tool_plain
+        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'ok'
+
+        with pytest.raises(RuntimeError, match='provider down on request 2'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        assert 'run_failed' in [e.kind for e in await store.list_events(run_id=rid)]
+
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert snap.state == 'complete'
+        assert is_provider_valid(snap.messages) is True
+        # The resolved tool cycle: the tool call has its return, no open calls.
+        assert any(
+            isinstance(part, ToolReturnPart) and part.tool_call_id == 'lookup-1'
+            for msg in snap.messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        )
+
+    async def test_rescues_text_response_when_output_validation_raises(self) -> None:
+        """Text response then a hard output-validation error: the clean tail is rescued.
+
+        The terminal `CallToolsNode` raises inside output validation before its
+        `after_node_run` fires; `on_run_error` captures the provider-valid
+        `[prompt, text-response]` history from the `after_node_run` boundary.
+        """
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(
+            TestModel(custom_output_text='final answer'),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.output_validator
+        def reject(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            raise RuntimeError('validator down')
+
+        with pytest.raises(RuntimeError, match='validator down'):
+            await agent.run('answer please')
+
+        rid = await first_run_id(store)
+        assert 'run_failed' in [e.kind for e in await store.list_events(run_id=rid)]
+
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert snap.state == 'complete'
+        assert is_provider_valid(snap.messages) is True
+        assert isinstance(snap.messages[-1], ModelResponse)
+        assert any(isinstance(part, TextPart) for part in snap.messages[-1].parts)
+
+    async def test_crash_leaving_dangling_tool_call_saves_only_an_interrupted_snapshot(self) -> None:
+        """A dangling-call history is rescued, but never as the default resume point."""
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('boom', {}, tool_call_id='boom-1')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.tool_plain
+        def boom() -> str:  # pyright: ignore[reportUnusedFunction]
+            raise ValueError('kaboom')
+
+        with pytest.raises(ValueError, match='kaboom'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        assert 'run_failed' in [e.kind for e in await store.list_events(run_id=rid)]
+        # The default read path never surfaces the dangling `boom` call.
+        assert await store.latest_snapshot(run_id=rid) is None
+        rescued = await store.latest_snapshot(run_id=rid, include_interrupted=True)
+        assert rescued is not None
+        assert rescued.state == 'interrupted'
+
+    async def test_single_save_site_persists_newest_history_not_boundary_copy(self) -> None:
+        """The rescue reflects the run's newest state, not an older completed-node copy.
+
+        req1 text -> output-validation `ModelRetry` (the run continues past a
+        boundary whose history was text-only). req2 tool call resolves cleanly.
+        req3 raises: the stashed live list contains the resolved tool cycle, so
+        the single `on_run_error` save persists it -- there is no older stash
+        copy left to overwrite it, and no count heuristic deciding which wins.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            n_resp = len([m for m in messages if isinstance(m, ModelResponse)])
+            if n_resp == 0:
+                return ModelResponse(parts=[TextPart('draft')])
+            if n_resp == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup-1')])
+            raise RuntimeError('provider down on request 3')
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+            output_type=str,
+        )
+
+        @agent.output_validator
+        def gate(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            raise ModelRetry('call a tool first')
+
+        @agent.tool_plain
+        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'ok'
+
+        with pytest.raises(RuntimeError, match='provider down on request 3'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert is_provider_valid(snap.messages) is True
+        # The newest safe resume point is the resolved tool cycle, not the older text history.
+        assert any(
+            isinstance(part, ToolReturnPart) and part.tool_call_id == 'lookup-1'
+            for msg in snap.messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        )
+
+    async def test_rescues_newest_text_history_over_earlier_saved_snapshot(self) -> None:
+        """`on_run_error`'s save supersedes an earlier boundary snapshot as `latest_snapshot`.
+
+        Two text responses each pass an output-validation `ModelRetry`, then the
+        second validator raises hard. The first cycle already saved a snapshot;
+        the live history at failure (including the newer text) supersedes it.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            n_resp = len([m for m in messages if isinstance(m, ModelResponse)])
+            return ModelResponse(parts=[TextPart('v1' if n_resp == 0 else 'v2')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+            output_type=str,
+        )
+        calls = {'n': 0}
+
+        @agent.output_validator
+        def gate(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise ModelRetry('retry once')
+            raise RuntimeError('validator down')
+
+        with pytest.raises(RuntimeError, match='validator down'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert is_provider_valid(snap.messages) is True
+        # The latest resume point is the newer history including `v2`, not the earlier `v1`-only snapshot.
+        assert any(
+            isinstance(part, TextPart) and part.content == 'v2'
+            for msg in snap.messages
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+        )
+
+    async def test_on_run_error_without_stashed_history_saves_nothing(self) -> None:
+        """Direct-hook: no node boundary reached -> no snapshot, `run_failed` still emitted.
+
+        Covers the `stashed is None` branch -- `on_run_error` invoked before any
+        `after_node_run` stashed the live history.
+        """
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store)
+        ctx = build_run_context(run_id='r1', run_step=1)
+
+        with pytest.raises(RuntimeError, match='boom'):
+            await cap.on_run_error(ctx, error=RuntimeError('boom'))
+
+        assert await store.latest_snapshot(run_id='r1') is None
+        assert [e.kind for e in await store.list_events(run_id='r1')] == ['run_failed']
+
+
+# ---------------------------------------------------------------------------
+# Hook-level branches awkward to reach through Agent
+# ---------------------------------------------------------------------------
+
+
+class TestCapabilityHookBranches:
+    async def test_effective_run_id_falls_back_to_capability_field(self) -> None:
+        """When `ctx.run_id` is missing, the capability uses its own `run_id`."""
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store, run_id='configured', agent_name='a')
+        ctx_no_run_id = build_run_context(deps=None, run_id=None)
+        await cap.before_run(ctx_no_run_id)
+
+        record = await store.get_run(run_id='configured')
+        assert record is not None
+        events = await store.list_events(run_id='configured')
+        assert [e.kind for e in events] == ['run_started']
+
+    async def test_after_node_run_skips_snapshot_when_appended_request_leaves_history_invalid(self) -> None:
+        """The `CallToolsNode` candidate is still filtered through `is_provider_valid`.
+
+        Folding in `result.request` is what makes the ordinary boundary
+        provider-valid, but it is not assumed to: a request that does not carry
+        the pending tool return leaves an orphan `ToolCallPart`, so no snapshot
+        is saved.
+        """
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store)
+        response = ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='orphan')])
+        unmatched: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')]), response]
+        ctx = build_run_context(deps=None, run_id='r1', messages=unmatched)
+        node_result = ModelRequestNode[Any, Any](ModelRequest(parts=[UserPromptPart(content='next')]))
+
+        assert await cap.after_node_run(ctx, node=CallToolsNode(response), result=node_result) is node_result
+
+        assert await store.latest_snapshot(run_id='r1') is None
+
+    async def test_after_run_skips_snapshot_when_history_not_provider_valid(self) -> None:
+        """`after_run` only persists a snapshot when the history is provider-valid."""
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store)
+        ctx = build_run_context(deps=None, run_id='r1')
+
+        unmatched: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='hi')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='orphan')]),
+        ]
+        result: AgentRunResult[str] = AgentRunResult(
+            output='out',
+            _state=GraphAgentState(message_history=unmatched, run_id='r1'),
+        )
+
+        await cap.after_run(ctx, result=result)
+
+        assert await store.latest_snapshot(run_id='r1') is None
+        events = await store.list_events(run_id='r1')
+        assert [e.kind for e in events] == ['run_completed']
+
+    async def test_after_run_saves_fallback_snapshot_when_no_node_snapshot(self) -> None:
+        """The fallback and its committed notification execute inside a real agent run."""
+
+        class FinalOnly(StepPersistence[None]):
+            async def after_node_run(
+                self, ctx: RunContext[None], *, node: AgentNode[None], result: NodeResult[None]
+            ) -> NodeResult[None]:
+                return result
+
+        store = InMemoryStepStore()
+        agent = Agent(TestModel(custom_output_text='done'), deps_type=type(None), capabilities=[FinalOnly(store=store)])
+        result = await agent.run('hi', run_id='r1')
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.messages == result.all_messages()
+        assert len(snap.messages) == 2
+
+    async def test_on_model_request_error_records_event_and_reraises(self) -> None:
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store)
+        ctx = build_run_context(deps=None, run_id='r1')
+        # `build_run_context` always sets a request-response `TestModel`; narrow the widened
+        # `RunContext.model` (an `AbstractModel`) back to `Model` for `ModelRequestContext`.
+        # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers `Model[Any]`.
+        ctx_model = ctx.model
+        assert isinstance(ctx_model, Model)
+        request_context = ModelRequestContext(
+            model=cast('Model[Any]', ctx_model),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+        boom = RuntimeError('nope')
+
+        with pytest.raises(RuntimeError, match='nope'):
+            await cap.on_model_request_error(ctx, request_context=request_context, error=boom)
+
+        events = await store.list_events(run_id='r1')
+        assert [e.kind for e in events] == ['model_request_failed']
+        assert events[0].error is not None and 'nope' in events[0].error
+        assert await store.latest_snapshot(run_id='r1') is None
+
+    async def test_for_run_creates_fresh_counter_owner_when_resolution_is_no_op(self) -> None:
+        """Each run gets a capability instance whose deterministic sequences start at zero."""
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store, run_id='fixed')
+        ctx = build_run_context(deps=None, run_id='ignored')
+
+        result = await cap.for_run(ctx)
+        assert isinstance(result, StepPersistence)
+        assert result is not cap
+        assert result.run_id == 'fixed'
+
+    async def test_run_record_load_with_missing_metadata(self, tmp_path: Path) -> None:
+        """`_str_str_dict(None)` returns `{}` when metadata is absent in storage."""
+        store = FileStepStore(tmp_path)
+        run_dir = tmp_path / 'r1'
+        run_dir.mkdir()
+        (run_dir / 'run.json').write_text(
+            json.dumps({'run_id': 'r1', 'started_at': '2024-01-01T00:00:00+00:00'}),
+            encoding='utf-8',
+        )
+
+        record = await store.get_run(run_id='r1')
+        assert record is not None
+        assert record.metadata == {}
+
+
+# ---------------------------------------------------------------------------
+# Round-2 review fixes (RetryPromptPart, list_runs ordering, effect metadata,
+# from_spec validation, annotate_tool_effect)
+# ---------------------------------------------------------------------------
+
+
+class TestNonToolRetryPrompt:
+    def test_non_tool_retry_prompt_is_valid(self) -> None:
+        """`RetryPromptPart(tool_name=None)` is an output-validation retry, not a tool result."""
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='hi')]),
+            ModelResponse(parts=[TextPart(content='wrong shape')]),
+            ModelRequest(parts=[RetryPromptPart(content='try again', tool_name=None)]),
+        ]
+        assert is_provider_valid(messages) is True
+
+    def test_tool_retry_prompt_still_needs_open_call(self) -> None:
+        """`RetryPromptPart(tool_name=...)` still requires a matching open `ToolCallPart`."""
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[RetryPromptPart(content='retry', tool_name='add', tool_call_id='ghost')]),
+        ]
+        assert is_provider_valid(messages) is False
+
+
+class TestListRunsChronologicalOrdering:
+    async def test_in_memory_returns_started_at_order(self) -> None:
+        """`InMemoryStepStore.list_runs` sorts by `started_at`, not insertion order."""
+
+        store = InMemoryStepStore()
+        await store.register_run(RunRecord(run_id='z-newer', started_at=datetime(2026, 5, 24, 12, tzinfo=timezone.utc)))
+        await store.register_run(RunRecord(run_id='a-older', started_at=datetime(2026, 5, 24, 10, tzinfo=timezone.utc)))
+        runs = await store.list_runs()
+        assert [r.run_id for r in runs] == ['a-older', 'z-newer']
+
+    async def test_file_store_returns_started_at_order(self, tmp_path: Path) -> None:
+        """`FileStepStore.list_runs` sorts by `started_at`, not by directory name."""
+
+        store = FileStepStore(tmp_path)
+        # `a-new` is lexicographically first but chronologically last.
+        await store.register_run(RunRecord(run_id='z-old', started_at=datetime(2026, 5, 24, 10, tzinfo=timezone.utc)))
+        await store.register_run(RunRecord(run_id='a-new', started_at=datetime(2026, 5, 24, 12, tzinfo=timezone.utc)))
+        runs = await store.list_runs()
+        assert [r.run_id for r in runs] == ['z-old', 'a-new']
+
+
+class TestToolEffectMetadataPreservation:
+    async def test_completed_preserves_idempotency_key_and_effect_summary(self) -> None:
+        """Metadata written during the tool call survives the terminal `completed` record."""
+
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
+
+        @agent.tool
+        async def write_label(ctx: RunContext[object], label: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            await annotate_tool_effect(
+                store,
+                ctx,
+                idempotency_key=f'label::{label}',
+                effect_summary=f'set label to {label}',
+            )
+            return f'wrote {label}'
+
+        await agent.run('apply a label please')
+
+        effect = await store.get_tool_effect(run_id='r1', tool_call_id='pyd_ai_tool_call_id__write_label')
+        assert effect is not None
+        assert effect.status == 'completed'
+        assert effect.idempotency_key is not None and effect.idempotency_key.startswith('label::')
+        assert effect.effect_summary is not None and 'set label to' in effect.effect_summary
+
+    async def test_failed_preserves_idempotency_key(self) -> None:
+        """Metadata written before a tool raises still appears on the `failed` record."""
+
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
+
+        @agent.tool
+        async def boom(ctx: RunContext[object]) -> int:  # pyright: ignore[reportUnusedFunction]
+            await annotate_tool_effect(store, ctx, idempotency_key='boom-key')
+            raise ValueError('kaboom')
+
+        with pytest.raises(ValueError, match='kaboom'):
+            await agent.run('please boom')
+
+        effect = await store.get_tool_effect(run_id='r1', tool_call_id='pyd_ai_tool_call_id__boom')
+        assert effect is not None
+        assert effect.status == 'failed'
+        assert effect.idempotency_key == 'boom-key'
+        # default summary still records the error when no summary was annotated:
+        assert effect.effect_summary is not None and 'kaboom' in effect.effect_summary
+
+    async def test_annotate_tool_effect_outside_step_persistence_is_a_noop(self) -> None:
+        """No `current_run_id` → `annotate_tool_effect` returns without writing."""
+
+        store = InMemoryStepStore()
+        ctx = build_run_context(deps=None, run_id='r1')
+        # No StepPersistence active and ctx.tool_call_id is None.
+        await annotate_tool_effect(store, ctx, idempotency_key='ignored')
+        assert await store.get_tool_effect(run_id='r1', tool_call_id='whatever') is None
+
+    async def test_annotate_tool_effect_noop_when_prior_record_missing(self) -> None:
+        """`current_run_id` set + ctx tool fields set, but no prior record → no-op."""
+
+        store = InMemoryStepStore()
+        ctx = RunContext[Any](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            prompt=None,
+            messages=[],
+            run_step=0,
+            run_id='r1',
+            tool_call_id='tc-1',
+            tool_name='write_label',
+        )
+        token = current_run_id.set('r1')
+        try:
+            await annotate_tool_effect(store, ctx, idempotency_key='label::x')
+        finally:
+            current_run_id.reset(token)
+        # `before_tool_execute` hasn't fired, so the prior record doesn't exist.
+        # The helper returns without inventing one.
+        assert await store.get_tool_effect(run_id='r1', tool_call_id='tc-1') is None
+
+
+class TestFromSpecBackendValidation:
+    def test_unknown_backend_raises(self) -> None:
+        """A typo like `backend='disk'` raises instead of silently using memory."""
+        with pytest.raises(ValueError, match='unknown backend'):
+            StepPersistence.from_spec(backend='disk')
+
+    def test_memory_backend_still_works(self) -> None:
+        cap: StepPersistence[Any] = StepPersistence.from_spec(backend='memory')
+        assert isinstance(cap.store, InMemoryStepStore)
+
+    def test_sqlite_backend(self, tmp_path: Path) -> None:
+        cap: StepPersistence[Any] = StepPersistence.from_spec(backend='sqlite', database=str(tmp_path / 'runs.db'))
+        assert isinstance(cap.store, SqliteStepStore)
+
+
+# ---------------------------------------------------------------------------
+# Identity model contract: run_id is per-call; conversation_id groups turns
+# ---------------------------------------------------------------------------
+
+
+class TestRunIdIsPerCall:
+    """`run_id` is one `Agent.run` invocation; `conversation_id` groups turns."""
+
+    async def test_multi_turn_orchestrator_uses_conversation_id(self) -> None:
+        """Recommended multi-turn pattern: shared `conversation_id`, distinct `run_id` per call."""
+        store = InMemoryStepStore()
+        agent = make_simple_agent([StepPersistence(store=store, agent_name='orchestrator')])
+
+        for prompt in ('first turn', 'second turn', 'third turn'):
+            await agent.run(prompt, conversation_id='orch-conv')
+
+        records = await store.list_runs(conversation_id='orch-conv')
+        assert len(records) == 3
+        # All distinct ids, all carrying the same conversation_id.
+        assert len({r.run_id for r in records}) == 3
+        assert all(r.conversation_id == 'orch-conv' for r in records)
+        assert all(r.run_id.startswith('sp-') for r in records)
+
+    async def test_explicit_run_id_reuse_raises(self) -> None:
+        """Reusing an explicit `run_id` across `.run()` calls raises ValueError.
+
+        The tool-effect ledger keys on `(run_id, tool_call_id)`, so a
+        silent second run would collide with the first. `before_run`
+        rejects the second run explicitly, pointing the caller to
+        `conversation_id` for multi-turn grouping.
+        """
+        store = InMemoryStepStore()
+        agent = make_simple_agent([StepPersistence(store=store, run_id='shared')])
+
+        await agent.run('first', run_id='shared')
+
+        with pytest.raises(ValueError, match=r"run_id 'shared' is already in the store"):
+            await agent.run('second', run_id='shared')
+
+        # First run's records remain untouched.
+        record = await store.get_run(run_id='shared')
+        assert record is not None
+        effect = await store.get_tool_effect(run_id='shared', tool_call_id='pyd_ai_tool_call_id__add')
+        assert effect is not None
+        assert effect.status == 'completed'
+
+    async def test_same_registration_identity_is_an_idempotent_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registration_id = UUID('00000000-0000-0000-0000-000000000001')
+        monkeypatch.setattr('pydantic_ai_harness.step_persistence._capability.uuid4', lambda: registration_id)
+        store = InMemoryStepStore()
+        original = RunRecord(run_id='shared', registration_id=str(registration_id))
+        await store.register_run(original)
+        agent = make_simple_agent([StepPersistence(store=store, run_id='shared')])
+
+        await agent.run('retry')
+
+        assert await store.get_run(run_id='shared') == original
+
+
+# ---------------------------------------------------------------------------
+# list_snapshots (read seam consumed by `conversation_search`)
+# ---------------------------------------------------------------------------
+
+
+class TestListSnapshots:
+    async def test_in_memory_returns_all_in_write_order(self) -> None:
+        store = InMemoryStepStore()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=[]))
+
+        snaps = await store.list_snapshots(run_id='r1')
+        assert [s.step_index for s in snaps] == [0, 1]
+        assert await store.list_snapshots(run_id='missing') == []
+
+    async def test_file_returns_all_in_write_order(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        first: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='first message')])]
+        second = first + [ModelResponse(parts=[TextPart(content='second message')])]
+        await store.save_snapshot(
+            ContinuableSnapshot(run_id='r1', step_index=0, messages=first, conversation_id='conv')
+        )
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second))
+
+        snaps = await store.list_snapshots(run_id='r1')
+        assert [s.step_index for s in snaps] == [0, 1]
+        assert snaps[0].conversation_id == 'conv'
+        assert len(snaps[1].messages) == 2
+        assert await store.list_snapshots(run_id='missing') == []
+
+    async def test_file_skips_corrupt_wrong_typed_and_unreadable(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store = FileStepStore(tmp_path, media_store=None)
+        await store.save_snapshot(
+            ContinuableSnapshot(
+                run_id='r1',
+                step_index=0,
+                messages=[ModelRequest(parts=[UserPromptPart(content='the good one')])],
+            )
+        )
+        snap_dir = tmp_path / 'r1' / 'snapshots'
+        (snap_dir / '5.json').write_text('{not valid json', encoding='utf-8')
+        (snap_dir / '7.json').write_text(
+            json.dumps({'step_index': 'not-an-int', 'timestamp': '2026-01-01T00:00:00+00:00', 'messages': []}),
+            encoding='utf-8',
+        )
+        # A directory with an int stem raises OSError on read_text.
+        (snap_dir / '9.json').mkdir()
+        # A non-int stem is not a snapshot file at all.
+        (snap_dir / 'notes.json').write_text('{}', encoding='utf-8')
+
+        with caplog.at_level(logging.WARNING):
+            snaps = await store.list_snapshots(run_id='r1')
+
+        assert [s.step_index for s in snaps] == [0]
+        messages = [record.message for record in caplog.records]
+        assert any('unreadable' in message for message in messages)
+        assert any('unparsable' in message for message in messages)
+
+    async def test_file_returns_empty_without_snapshot_dir(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        assert await store.list_snapshots(run_id='never-ran') == []
+
+    async def test_default_skips_interrupted_include_flag_returns_them(self, tmp_path: Path) -> None:
+        stores: list[InMemoryStepStore | FileStepStore] = [InMemoryStepStore(), FileStepStore(tmp_path)]
+        for store in stores:
+            await store.save_snapshot(_complete_snapshot('r1', 0, 'settled'))
+            await store.save_snapshot(_interrupted_snapshot('r1', 1, 'frontier'))
+
+            default = await store.list_snapshots(run_id='r1')
+            assert [(s.step_index, s.state) for s in default] == [(0, 'complete')]
+
+            everything = await store.list_snapshots(run_id='r1', include_interrupted=True)
+            assert [(s.step_index, s.state) for s in everything] == [(0, 'complete'), (1, 'interrupted')]
+
+
+# ---------------------------------------------------------------------------
+# Snapshot state: interrupted rescues and the read-path gate
+# ---------------------------------------------------------------------------
+
+
+def _complete_snapshot(run_id: str, step_index: int, marker: str) -> ContinuableSnapshot:
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content=marker)]),
+    ]
+    return ContinuableSnapshot(run_id=run_id, step_index=step_index, messages=messages)
+
+
+def _interrupted_snapshot(run_id: str, step_index: int, marker: str) -> ContinuableSnapshot:
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content=marker), ToolCallPart(tool_name='add', args={}, tool_call_id='open')]),
+    ]
+    return ContinuableSnapshot(run_id=run_id, step_index=step_index, messages=messages, state='interrupted')
+
+
+def _first_text(messages: list[ModelMessage]) -> str:
+    texts = [
+        part.content
+        for msg in messages
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, TextPart)
+    ]
+    return texts[0]
+
+
+class TestSnapshotStateReadPath:
+    """`latest_snapshot` hides `interrupted` snapshots unless `include_interrupted=True`."""
+
+    async def test_in_memory_default_skips_newer_interrupted(self) -> None:
+        store = InMemoryStepStore()
+        await store.save_snapshot(_complete_snapshot('r1', 0, 'settled'))
+        await store.save_snapshot(_interrupted_snapshot('r1', 1, 'frontier'))
+
+        default = await store.latest_snapshot(run_id='r1')
+        assert default is not None
+        assert default.state == 'complete'
+        assert _first_text(default.messages) == 'settled'
+
+        opted = await store.latest_snapshot(run_id='r1', include_interrupted=True)
+        assert opted is not None
+        assert opted.state == 'interrupted'
+        assert _first_text(opted.messages) == 'frontier'
+
+    async def test_in_memory_only_interrupted_defaults_to_none(self) -> None:
+        store = InMemoryStepStore()
+        await store.save_snapshot(_interrupted_snapshot('r1', 0, 'frontier'))
+
+        assert await store.latest_snapshot(run_id='r1') is None
+        opted = await store.latest_snapshot(run_id='r1', include_interrupted=True)
+        assert opted is not None
+
+    async def test_file_store_default_skips_newer_interrupted(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.save_snapshot(_complete_snapshot('r1', 0, 'settled'))
+        await store.save_snapshot(_interrupted_snapshot('r1', 1, 'frontier'))
+
+        default = await store.latest_snapshot(run_id='r1')
+        assert default is not None
+        assert default.state == 'complete'
+        assert _first_text(default.messages) == 'settled'
+
+        opted = await store.latest_snapshot(run_id='r1', include_interrupted=True)
+        assert opted is not None
+        assert opted.state == 'interrupted'
+        assert _first_text(opted.messages) == 'frontier'
+
+    async def test_file_store_only_interrupted_defaults_to_none(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.save_snapshot(_interrupted_snapshot('r1', 0, 'frontier'))
+
+        assert await store.latest_snapshot(run_id='r1') is None
+        assert await store.latest_snapshot(run_id='r1', include_interrupted=True) is not None
+
+    async def test_file_store_legacy_snapshot_without_state_reads_as_complete(self, tmp_path: Path) -> None:
+        """Snapshots written before the `state` field existed were all gate-checked, so `complete` is correct."""
+        store = FileStepStore(tmp_path)
+        await store.save_snapshot(_complete_snapshot('r1', 0, 'settled'))
+        legacy_path = tmp_path / 'r1' / 'snapshots' / '0.json'
+        payload = json.loads(legacy_path.read_text(encoding='utf-8'))
+        del payload['state']
+        legacy_path.write_text(json.dumps(payload), encoding='utf-8')
+
+        loaded = await store.latest_snapshot(run_id='r1')
+        assert loaded is not None
+        assert loaded.state == 'complete'
+
+    async def test_file_store_rejects_unknown_state_value(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        await store.save_snapshot(_complete_snapshot('r1', 0, 'settled'))
+        path = tmp_path / 'r1' / 'snapshots' / '0.json'
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        payload['state'] = 'weird'
+        path.write_text(json.dumps(payload), encoding='utf-8')
+
+        with pytest.raises(ValueError, match='unknown snapshot state'):
+            await store.latest_snapshot(run_id='r1')
+
+    async def test_continue_run_default_ignores_interrupted(self) -> None:
+        store = InMemoryStepStore()
+        await store.save_snapshot(_interrupted_snapshot('r1', 0, 'frontier'))
+
+        with pytest.raises(LookupError, match="no continuable snapshot for run_id 'r1'"):
+            await continue_run(store, run_id='r1')
+
+        opted = await continue_run(store, run_id='r1', include_interrupted=True)
+        assert _first_text(opted) == 'frontier'
+
+    async def test_fork_run_passes_include_interrupted_through(self) -> None:
+        store = InMemoryStepStore()
+        await store.save_snapshot(_complete_snapshot('r1', 0, 'settled'))
+        await store.save_snapshot(_interrupted_snapshot('r1', 1, 'frontier'))
+
+        assert _first_text(await fork_run(store, run_id='r1')) == 'settled'
+        assert _first_text(await fork_run(store, run_id='r1', include_interrupted=True)) == 'frontier'
+
+
+class TestInterruptedSnapshotRescue:
+    """The ungated error path persists the live at-failure history, classified by tool-work state (#385)."""
+
+    async def test_crash_mid_tool_cycle_rescues_completed_cycles_as_interrupted(self) -> None:
+        """Cycle 1 resolves cleanly, cycle 2's tool crashes: both read paths stay honest.
+
+        The at-failure history ends in the response whose `boom` call never got
+        a return, so the rescue classifies `interrupted` and stays off the
+        default read path. The default path is not empty, though: cycle 1's
+        `CallToolsNode` already saved a settled `complete` point (#373), which
+        is exactly the safe target a caller should resume from. Opting in
+        returns the interrupted frontier instead, `lookup` cycle preserved.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            n_resp = len([m for m in messages if isinstance(m, ModelResponse)])
+            if n_resp == 0:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup-1')])
+            return ModelResponse(parts=[ToolCallPart('boom', {}, tool_call_id='boom-1')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.tool_plain
+        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'ok'
+
+        @agent.tool_plain
+        def boom() -> str:  # pyright: ignore[reportUnusedFunction]
+            raise ValueError('kaboom')
+
+        with pytest.raises(ValueError, match='kaboom'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        # Default read path: the last settled boundary -- cycle 1, resolved,
+        # with no trace of the crashed `boom` call.
+        settled = await store.latest_snapshot(run_id=rid)
+        assert settled is not None
+        assert settled.state == 'complete'
+        assert is_provider_valid(settled.messages) is True
+        assert not any(
+            isinstance(part, ToolCallPart) and part.tool_call_id == 'boom-1'
+            for msg in settled.messages
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+        )
+
+        rescued = await store.latest_snapshot(run_id=rid, include_interrupted=True)
+        assert rescued is not None
+        assert rescued.state == 'interrupted'
+        assert is_provider_valid(rescued.messages) is False
+        assert any(
+            isinstance(part, ToolReturnPart) and part.tool_call_id == 'lookup-1'
+            for msg in rescued.messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        )
+        # The ledger, not the snapshot, carries the crashed call's side-effect
+        # status: an in-process raise resolves to `failed` (a process kill
+        # would leave it `started` -> unknown_after_crash).
+        effect = await store.get_tool_effect(run_id=rid, tool_call_id='boom-1')
+        assert effect is not None
+        assert effect.status == 'failed'
+
+    async def test_model_request_failure_rescue_classifies_complete(self) -> None:
+        """A request failing against a resolved tool cycle rescues a `complete` snapshot on the default path."""
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prior_responses = [m for m in messages if isinstance(m, ModelResponse)]
+            if not prior_responses:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup-1')])
+            raise RuntimeError('provider down on request 2')
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.tool_plain
+        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'ok'
+
+        with pytest.raises(RuntimeError, match='provider down on request 2'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert snap.state == 'complete'
+
+    async def test_fresh_run_first_request_failure_saves_nothing(self) -> None:
+        """A bare-prompt history equals restarting the run, so no snapshot is worth saving."""
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('provider down on request 1')
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        with pytest.raises(RuntimeError, match='provider down on request 1'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        assert 'run_failed' in [e.kind for e in await store.list_events(run_id=rid)]
+        assert await store.latest_snapshot(run_id=rid, include_interrupted=True) is None
+
+    async def test_resumed_run_first_request_failure_rescues_input_state(self) -> None:
+        """Failure before any post-`UserPromptNode` boundary saves the input history.
+
+        Model-request hooks are contextvar-isolated from `on_run_error`, so the
+        only stash available is the pre-rebind start-of-run list: the resumed
+        input history without the new prompt request. No model work is lost --
+        the caller still holds the prompt it just passed.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('provider down on request 1')
+
+        prior: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='earlier turn')]),
+            ModelResponse(parts=[TextPart(content='earlier answer')]),
+        ]
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        with pytest.raises(RuntimeError, match='provider down on request 1'):
+            await agent.run('new prompt', message_history=prior)
+
+        rid = await first_run_id(store)
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert snap.state == 'complete'
+        assert _first_text(snap.messages) == 'earlier answer'
+        assert not any(
+            isinstance(part, UserPromptPart) and part.content == 'new prompt'
+            for msg in snap.messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        )
+
+
+class TestLiveHistoryInvariant:
+    """The single-save-site design leans on a pydantic-ai core invariant.
+
+    `UserPromptNode.run` rebinds `ctx.state.message_history` exactly once; every
+    later mutation is in place (`append` / `[:]=`), which core commits to so
+    `capture_run_messages` keeps working. The stash in `after_node_run` holds
+    that list by reference and `on_run_error` reads it after the failure. These
+    tests fail if core ever rebinds the list mid-run again.
+    """
+
+    async def test_node_boundary_messages_are_one_live_list(self) -> None:
+        """All post-`UserPromptNode` boundaries expose the same list object, and it tracks the run."""
+
+        seen: list[list[ModelMessage]] = []
+
+        class SpyCapability(AbstractCapability[object]):
+            async def after_node_run(
+                self,
+                ctx: RunContext[object],
+                *,
+                node: AgentNode[object],
+                result: NodeResult[object],
+            ) -> NodeResult[object]:
+                seen.append(ctx.messages)
+                return result
+
+        agent = make_simple_agent([SpyCapability()])
+        result = await agent.run('add 1 and 2')
+
+        post_rebind = seen[1:]  # seen[0] is the UserPromptNode boundary: the pre-rebind start-of-run list
+        assert len(post_rebind) >= 2
+        assert all(lst is post_rebind[0] for lst in post_rebind)
+        # Mutations stay visible through the reference: at run end the stashed
+        # object holds the full final history.
+        assert post_rebind[0] == result.all_messages()
+
+    async def test_rescue_includes_history_appended_after_last_boundary(self) -> None:
+        """The rescued snapshot contains the failing request's payload.
+
+        The tool-return request enters the live list after the last completed
+        node boundary and before the failing model request -- if the stashed
+        reference went stale between boundary and failure, this content would
+        be missing from the snapshot.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prior_responses = [m for m in messages if isinstance(m, ModelResponse)]
+            if not prior_responses:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup-1')])
+            raise RuntimeError('provider down on request 2')
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.tool_plain
+        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'ok'
+
+        with pytest.raises(RuntimeError, match='provider down on request 2'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert isinstance(snap.messages[-1], ModelRequest)
+        assert any(
+            isinstance(part, ToolReturnPart) and part.tool_call_id == 'lookup-1' for part in snap.messages[-1].parts
+        )
+
+
+class TestAtomicFileWrites:
+    """`FileStepStore` swaps files into place so a concurrent reader never sees a partial one."""
+
+    @staticmethod
+    def _residue(root: Path) -> list[Path]:
+        return sorted(root.rglob('*.tmp'))
+
+    async def test_writes_leave_no_temporary_residue(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path, media_store=None)
+        await store.register_run(RunRecord(run_id='r1', conversation_id='conv'))
+        for step_index in range(3):
+            await store.save_snapshot(
+                ContinuableSnapshot(
+                    run_id='r1',
+                    step_index=step_index,
+                    messages=[ModelRequest(parts=[UserPromptPart(content=f'step {step_index}')])],
+                )
+            )
+
+        assert self._residue(tmp_path) == []
+        record = await store.get_run(run_id='r1')
+        assert record is not None and record.conversation_id == 'conv'
+        assert [s.step_index for s in await store.list_snapshots(run_id='r1')] == [0, 1, 2]
+
+    async def test_a_failed_swap_keeps_the_previous_file_and_cleans_up(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = FileStepStore(tmp_path, media_store=None)
+        await store.save_snapshot(
+            ContinuableSnapshot(
+                run_id='r1',
+                step_index=0,
+                messages=[ModelRequest(parts=[UserPromptPart(content='the durable one')])],
+            )
+        )
+
+        def boom(src: object, dst: object) -> None:
+            raise OSError('replace failed')
+
+        monkeypatch.setattr('pydantic_ai_harness.step_persistence._store.os.replace', boom)
+        with pytest.raises(OSError, match='replace failed'):
+            await store.save_snapshot(
+                ContinuableSnapshot(
+                    run_id='r1',
+                    step_index=1,
+                    messages=[ModelRequest(parts=[UserPromptPart(content='the lost one')])],
+                )
+            )
+
+        monkeypatch.undo()
+        assert self._residue(tmp_path) == []
+        snaps = await store.list_snapshots(run_id='r1')
+        assert [s.step_index for s in snaps] == [0]
+        surviving = snaps[0].messages[0]
+        assert isinstance(surviving, ModelRequest)
+        assert [getattr(part, 'content', None) for part in surviving.parts] == ['the durable one']
+
+    async def test_a_stray_temporary_does_not_enter_a_snapshot_scan(self, tmp_path: Path) -> None:
+        """A `.tmp` sibling is invisible to both the sequence counter and the reader."""
+        store = FileStepStore(tmp_path, media_store=None)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+        (tmp_path / 'r1' / 'snapshots' / '1.json.deadbeef.tmp').write_text('{half-writ', encoding='utf-8')
+
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=[]))
+
+        assert [s.step_index for s in await store.list_snapshots(run_id='r1')] == [0, 1]
+        assert (tmp_path / 'r1' / 'snapshots' / '1.json').exists()

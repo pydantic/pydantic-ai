@@ -1,0 +1,90 @@
+import inspect
+from pathlib import Path
+
+import pydantic_ai.models
+import pytest
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.test import TestModel
+
+import pydantic_ai_harness
+from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, Coder, FileSystem, Researcher, Shell
+
+
+def test_import():
+    assert pydantic_ai_harness.__doc__ is not None
+    assert isinstance(pydantic_ai_harness.__all__, list)
+
+
+@pytest.mark.parametrize(
+    'optional_dependency_error',
+    [
+        None,
+        ImportError("Install 'pydantic-ai-harness[example]'"),
+        UserError("Install 'pydantic-ai-slim[example]'"),
+    ],
+)
+def test_all_exports_are_importable(
+    monkeypatch: pytest.MonkeyPatch, optional_dependency_error: ImportError | UserError | None
+):
+    if optional_dependency_error is not None:
+        monkeypatch.setattr(pydantic_ai_harness, '__all__', ['optional_export'])
+
+        def raise_optional_dependency_error(name: str) -> None:
+            raise optional_dependency_error
+
+        monkeypatch.setattr(pydantic_ai_harness, '__getattr__', raise_optional_dependency_error)
+
+    for name in pydantic_ai_harness.__all__:
+        try:
+            export = getattr(pydantic_ai_harness, name)
+        except (ImportError, UserError) as exc:
+            assert 'pydantic-ai-harness[' in str(exc) or 'pydantic-ai-slim[' in str(exc)
+            continue
+        assert export is not None
+
+
+def test_lazy_import_filesystem():
+
+    assert inspect.isclass(FileSystem)
+    assert hasattr(FileSystem, 'get_toolset')
+
+
+def test_lazy_import_shell():
+
+    assert inspect.isclass(Shell)
+    assert hasattr(Shell, 'get_toolset')
+
+
+def test_lazy_import_presets():
+
+    assert inspect.isclass(Coder)
+    assert inspect.isclass(Researcher)
+
+
+def test_lazy_import_llm_api_key_env_patterns():
+
+    assert isinstance(LLM_API_KEY_ENV_PATTERNS, tuple)
+    assert 'OPENAI_*' in LLM_API_KEY_ENV_PATTERNS
+
+
+def test_lazy_import_unknown():
+    with pytest.raises(AttributeError, match='has no attribute'):
+        pydantic_ai_harness.__getattr__('Nonexistent')
+
+
+def test_test_model_fixture(test_model: TestModel):
+    assert isinstance(test_model, TestModel)
+
+
+def test_test_agent_fixture(test_agent: Agent[None, str]):
+    assert test_agent.name == 'test-agent'
+
+
+def test_tmp_dir_fixture(tmp_dir: Path):
+    assert tmp_dir.is_dir()
+
+
+async def test_allow_model_requests(allow_model_requests: None):
+
+    assert pydantic_ai.models.ALLOW_MODEL_REQUESTS is True

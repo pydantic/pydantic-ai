@@ -1,0 +1,61 @@
+# Harness Agent Docs
+
+Use these guides when building or reviewing `pydantic-ai-harness` changes.
+
+## Required Reads
+
+For any code change:
+
+1. `AGENTS.md`
+2. This file
+3. The guide below that matches the task
+4. The public Pydantic AI docs for the integration points you touch
+
+## Task Routing
+
+- New or changed capability API: `capability-authoring.md`
+- Working on (or refreshing) a capability that wraps an external service, image,
+  or CLI: `capability-authoring.md` "External-Service Assumptions And Refresh"
+- New or changed tests: `testing-capabilities.md`
+- Spawning tasks or subprocesses, task groups or cancel scopes, locks, events,
+  streams, async context managers or generators, thread or event-loop
+  boundaries, or testing any of those: `concurrency.md`
+- Unsure whether behavior belongs in harness or Pydantic AI core: `core-boundary.md`
+- Adding a retry, fallback or error-handling field to a capability that takes a
+  pluggable dependency: `capability-authoring.md` "Policy Lives In The Pluggable
+  Component"
+- Deciding what a capability emits to OpenTelemetry, or documenting that it
+  emits nothing: `capability-authoring.md` "Telemetry"
+- README, `docs/` pages, or capability READMEs: `docs-conventions.md`
+- Review, pre-PR check, or final self-check: `review-checklist.md`
+- Commands/parsers, processes/containers, network endpoints, resource cleanup,
+  output limits, or CI trust boundaries: `review-checklist.md` "Executable
+  Boundaries" before implementation and review
+- Adding a link to an open issue in a docs page, a README, or source:
+  `review-checklist.md` "Issue References"
+
+## Exemplar
+
+Use `pydantic_ai_harness.code_mode` as the current exemplar for capability
+shape:
+
+- public re-export from `pydantic_ai_harness/__init__.py`
+- package-level re-export from `pydantic_ai_harness/code_mode/__init__.py`
+- public capability class in `_capability.py`
+- implementation toolset in `_toolset.py`
+- capability README next to implementation
+- mirrored tests under `tests/code_mode/`
+
+Do not copy `CodeMode` mechanically. Use it to understand package shape,
+testing depth, docs placement, and how a harness capability composes with
+Pydantic AI toolsets.
+
+## Pydantic AI References
+
+- Capabilities: <https://pydantic.dev/docs/ai/capabilities/overview/>
+- Hooks: <https://pydantic.dev/docs/ai/core-concepts/hooks/>
+- Toolsets: <https://pydantic.dev/docs/ai/tools-toolsets/toolsets/>
+- Advanced tools: <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/>
+- Agents: <https://pydantic.dev/docs/ai/core-concepts/agent/>
+- Testing: <https://pydantic.dev/docs/ai/guides/testing/>
+- Extensibility: <https://pydantic.dev/docs/ai/guides/extensibility/>
