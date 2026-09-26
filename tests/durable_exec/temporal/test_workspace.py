@@ -132,6 +132,7 @@ def test_temporal_runner_passes_installed_harness_through(monkeypatch: pytest.Mo
     configured = _workflow_runner(runner)
     assert isinstance(configured, SandboxedWorkflowRunner)
     assert 'pydantic_ai_harness' in configured.restrictions.passthrough_modules
+    assert 'opentelemetry' in configured.restrictions.passthrough_modules
 
     def absent(module: str) -> ModuleSpec | None:
         return None
@@ -140,6 +141,7 @@ def test_temporal_runner_passes_installed_harness_through(monkeypatch: pytest.Mo
     configured = _workflow_runner(runner)
     assert isinstance(configured, SandboxedWorkflowRunner)
     assert 'pydantic_ai_harness' not in configured.restrictions.passthrough_modules
+    assert 'opentelemetry' not in configured.restrictions.passthrough_modules
 
 
 def test_workspace_failures_do_not_retry_temporal_activities() -> None:

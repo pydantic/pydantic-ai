@@ -117,7 +117,9 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
 
     # Harness file-tool orchestration runs workflow-side for pre-write vetoes; importing it
     # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
-    harness_modules = ('pydantic_ai_harness',) if find_spec('pydantic_ai_harness') is not None else ()
+    # Harness CodeMode imports `opentelemetry.context` via `_monty_exec` on first use; passing
+    # harness through alone leaves that dependency sandbox-local and triggers a late-import error.
+    harness_modules = ('pydantic_ai_harness', 'opentelemetry') if find_spec('pydantic_ai_harness') is not None else ()
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
