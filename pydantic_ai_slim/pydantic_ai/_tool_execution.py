@@ -1073,9 +1073,6 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 if call.tool_call_id in handler_tool_call_results
             ]
 
-            # Approved calls execute below, so they count against the limit like any other call.
-            self._check_tool_calls_limit(resolved_calls, results=handler_tool_call_results)
-
             handler_validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
             for call in resolved_calls:
                 handler_result = handler_tool_call_results[call.tool_call_id]
@@ -1092,6 +1089,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # validation path above; naturally triggered there, not here.
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
+
+            # Approved calls whose args validated execute below, so they count against the limit; approved
+            # calls with invalid `override_args` only produce a retry prompt.
+            self._check_tool_calls_limit(
+                [validated.call for validated in handler_validated_calls.values() if validated.args_valid],
+                results=handler_tool_call_results,
+            )
 
             new_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(
                 list

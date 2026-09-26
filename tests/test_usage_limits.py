@@ -26,6 +26,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     TextPart,
+    ToolApproved,
     ToolCallPart,
     ToolDenied,
     ToolReturnPart,
@@ -1299,6 +1300,36 @@ async def test_tool_calls_limit_counts_inline_approved_deferred_calls() -> None:
     ):
         await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=1))
     assert executed == []
+
+
+async def test_tool_calls_limit_ignores_inline_approved_calls_with_invalid_args() -> None:
+    """An inline-approved call whose `override_args` fail validation gets a retry prompt, not a limit error.
+
+    Uses `FunctionModel`: the behavior under test is the handler's approval, not the provider response.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('guarded', {'i': 1}, 'call_1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def approve_with_invalid_args(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={'call_1': ToolApproved(override_args={'i': 'not a number'})})
+
+    agent = Agent(
+        FunctionModel(model_function), capabilities=[HandleDeferredToolCalls(handler=approve_with_invalid_args)]
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def guarded(i: int) -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
+    assert result.output == 'done'
+    assert result.usage.tool_calls == 0
+    request = result.all_messages()[2]
+    assert isinstance(request, ModelRequest)
+    assert [type(part) for part in request.parts] == [RetryPromptPart]
 
 
 async def test_tool_calls_limit_ignores_denied_deferred_results() -> None:
