@@ -13,8 +13,9 @@ shows while a step runs and has no harness equivalent, so it's dropped (the
 headless shim renders nothing live anyway).
 """
 
-from pydantic_ai_harness.planning import PlanItem, TaskStatus, render_plan
 from typing_extensions import TypedDict
+
+from pydantic_ai_harness.planning import PlanItem, TaskStatus, render_plan
 
 
 class TodoItem(TypedDict):

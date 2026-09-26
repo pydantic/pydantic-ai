@@ -468,12 +468,12 @@ class TestGetPage:
 class TestRecoverableErrors:
     async def test_transport_failure_becomes_model_retry(self) -> None:
         client = _FakeYouClient(error=httpx.ConnectError('connection refused'))
-        with pytest.raises(ModelRetry, match='You.com request failed: connection refused'):
+        with pytest.raises(ModelRetry, match=r'You\.com request failed: connection refused'):
             await _search_toolset(client).web_search('q')
 
     async def test_rate_limit_becomes_model_retry(self) -> None:
         client = _FakeYouClient(error=_you_error(429))
-        with pytest.raises(ModelRetry, match='You.com request failed'):
+        with pytest.raises(ModelRetry, match=r'You\.com request failed'):
             await _search_toolset(client).web_search('q')
 
     @pytest.mark.parametrize('status', [401, 402, 403])
@@ -484,7 +484,7 @@ class TestRecoverableErrors:
 
     async def test_you_error_without_status_becomes_model_retry(self) -> None:
         client = _FakeYouClient(error=_NoStatusYouError())
-        with pytest.raises(ModelRetry, match='You.com request failed'):
+        with pytest.raises(ModelRetry, match=r'You\.com request failed'):
             await _search_toolset(client).web_search('q')
 
     @pytest.mark.parametrize('status', [401, 402, 403])
@@ -495,7 +495,7 @@ class TestRecoverableErrors:
 
     async def test_http_status_error_server_error_becomes_model_retry(self) -> None:
         client = _FakeYouClient(error=_http_status_error(500))
-        with pytest.raises(ModelRetry, match='You.com request failed'):
+        with pytest.raises(ModelRetry, match=r'You\.com request failed'):
             await _search_toolset(client).web_search('q')
 
 

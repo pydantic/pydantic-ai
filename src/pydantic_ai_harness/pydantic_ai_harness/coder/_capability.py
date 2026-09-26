@@ -7,7 +7,6 @@ from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS
 from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
 from pydantic_ai_harness.filesystem import FileSystem

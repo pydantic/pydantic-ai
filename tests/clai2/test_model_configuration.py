@@ -5,9 +5,9 @@ from pathlib import Path
 import httpx2 as httpx
 import pytest
 from pydantic import JsonValue, TypeAdapter
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models import override_allow_model_requests

@@ -189,7 +189,7 @@ class TestExaAgentToolset:
 
     async def test_non_2xx_becomes_model_retry(self) -> None:
         runs = _FakeRuns(error=ValueError('Request failed with status code 429: rate limited'))
-        with pytest.raises(ModelRetry, match='Exa request failed: .*429'):
+        with pytest.raises(ModelRetry, match=r'Exa request failed: .*429'):
             await ExaAgent[None](runs=runs).get_toolset().exa_agent('q')
 
     async def test_auth_failure_propagates(self) -> None:

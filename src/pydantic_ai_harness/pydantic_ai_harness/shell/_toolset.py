@@ -15,11 +15,11 @@ from typing import Any
 
 import anyio
 import anyio.abc
+
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
-
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.shell._limits import file_limit_status, limited_command, validate_file_limit
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
@@ -65,7 +65,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     The opt-in `shell` tool instead starts commands that outlive the run and
     returns handles to their output and exit status.
 
-    Optionally tracks the working directory across calls so ``cd`` persists.
+    Optionally tracks the working directory across calls so `cd` persists.
     """
 
     def __init__(

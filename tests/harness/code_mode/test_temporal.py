@@ -57,7 +57,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode
-from tests.harness.code_mode.conftest import websocket_relay_server  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.code_mode.conftest import websocket_relay_server
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal')]
 

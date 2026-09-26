@@ -13,6 +13,8 @@ from json import dumps
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import ReferenceType, ref
 
+from typing_extensions import Self, assert_never
+
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.messages import (
     CompactionPart,
@@ -36,8 +38,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import RunContext
-from typing_extensions import Self, assert_never
-
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -130,7 +130,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # reveal was free.
     elif isinstance(part, ToolAvailabilityDeltaPart):
         return []
-    elif isinstance(part, SpeechPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+    elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
         # words the provider bills against the window -- not the binary audio, which has no
         # character-count meaning (as with `FilePart`).
@@ -222,7 +222,7 @@ def estimate_token_count(
     Args:
         messages: Messages to count tokens for.
         tokenizer: Optional callable that returns the token count for a string.
-            When ``None``, falls back to a ~4 characters-per-token heuristic.
+            When `None`, falls back to a ~4 characters-per-token heuristic.
     """
     segments = _collect_text(messages)
     if tokenizer is not None:
@@ -595,8 +595,8 @@ def _is_safe_cutoff(
 ) -> bool:
     """Return True if cutting at *cutoff* does not orphan any tool-call pair.
 
-    A tool-call pair is a ``ToolCallPart`` in a ``ModelResponse`` together with
-    the corresponding ``ToolReturnPart`` in a subsequent ``ModelRequest``.  Both
+    A tool-call pair is a `ToolCallPart` in a `ModelResponse` together with
+    the corresponding `ToolReturnPart` in a subsequent `ModelRequest`.  Both
     sides must end up on the same side of the cut.
     """
     if cutoff >= len(messages):
@@ -654,7 +654,7 @@ def find_token_cutoff(
     target_tokens: int,
     tokenizer: Callable[[str], int] | None = None,
 ) -> int:
-    """Binary-search for a cutoff such that ``messages[cutoff:]`` fits in *target_tokens*.
+    """Binary-search for a cutoff such that `messages[cutoff:]` fits in *target_tokens*.
 
     Adjusts the result so that no tool-call pairs are orphaned.
     """
@@ -693,7 +693,7 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
 
 
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
-    """Return the first ``ModelRequest`` that contains a ``UserPromptPart``, or ``None``."""
+    """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
     for msg in messages:
         if isinstance(msg, ModelRequest) and any(
             isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in msg.parts
@@ -709,7 +709,7 @@ def prepend_first_user_message(
 ) -> list[ModelMessage]:
     """Ensure the first user message from *original* appears in *trimmed*.
 
-    If the first ``ModelRequest`` containing a ``UserPromptPart`` in *original*
+    If the first `ModelRequest` containing a `UserPromptPart` in *original*
     was discarded (its index is before *cutoff*) and is not already in *trimmed*,
     prepend it.
     """
@@ -729,7 +729,7 @@ def prepend_first_user_message(
 _CLEARED_TOOL_ARGS = '{}'
 """Replacement for cleared tool-call arguments.
 
-Kept JSON-valid: ``ToolCallPart.args_as_json_str()`` returns a ``str`` arg verbatim, so a
+Kept JSON-valid: `ToolCallPart.args_as_json_str()` returns a `str` arg verbatim, so a
 non-JSON placeholder would reach the provider as malformed function arguments.
 """
 
@@ -773,7 +773,7 @@ def rebuild_with_cleared(
 ) -> list[ModelMessage]:
     """Return *messages* with selected tool results (and optionally inputs) blanked.
 
-    The ``ToolReturnPart`` / ``ToolCallPart`` are kept in place with placeholder content,
+    The `ToolReturnPart` / `ToolCallPart` are kept in place with placeholder content,
     so tool-call pairing is never broken.  Already-blanked parts are left untouched.
     """
     out: list[ModelMessage] = []

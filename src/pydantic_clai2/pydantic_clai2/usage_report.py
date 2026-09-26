@@ -11,10 +11,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
-from pydantic_ai.usage import RunUsage
 from rich.console import Console
 from rich.table import Table
+
+from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
+from pydantic_ai.usage import RunUsage
 
 from . import theme
 

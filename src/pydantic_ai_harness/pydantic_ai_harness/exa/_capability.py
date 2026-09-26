@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.exa._toolset import (
     EXA_MAX_NUM_RESULTS,
     EXA_MAX_PAGE_TEXT_CHARS,

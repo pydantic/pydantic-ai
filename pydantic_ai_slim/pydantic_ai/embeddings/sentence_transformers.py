@@ -144,7 +144,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             device=device,
             normalize_embeddings=normalize,
             truncate_dim=dimensions,
-            **{'batch_size': batch_size} if batch_size is not None else {},  # type: ignore[reportArgumentType]
+            **{'batch_size': batch_size} if batch_size is not None else {},
         )
         embeddings = np_embeddings.tolist()
 

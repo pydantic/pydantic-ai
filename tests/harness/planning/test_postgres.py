@@ -18,7 +18,7 @@ from pydantic_ai_harness.planning import (
     PostgresPool,
     TaskStatus,
 )
-from pydantic_ai_harness.planning._postgres import _deleted_count
+from pydantic_ai_harness.planning._postgres import _deleted_count  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = [
     pytest.mark.anyio,

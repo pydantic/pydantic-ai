@@ -46,7 +46,7 @@ from pydantic_ai_harness.memory import (
     MemoryToolset,
     SqliteMemoryStore,
 )
-from tests.harness._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness._recording_durability import RecordingDurability
 
 pytestmark = pytest.mark.anyio
 

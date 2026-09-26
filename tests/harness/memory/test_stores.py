@@ -617,9 +617,9 @@ async def test_file_store_bounded_listing_recovers_prepared_write_before_page_bo
 async def test_file_store_bounded_listing_leaves_irrelevant_pending_path_prepared(tmp_path: Path) -> None:
     store = FileStore(tmp_path)
     await store.write('a.md', 'a', expected_version=None)
-    connection = store._connect()
+    connection = store._connect()  # pyright: ignore[reportPrivateUsage]
     try:
-        result_version = str(store._next_generation(connection))
+        result_version = str(store._next_generation(connection))  # pyright: ignore[reportPrivateUsage]
         connection.execute(
             'INSERT INTO memory_operations '
             '(id, fingerprint, status, kind, path, expected_version, new_content, result_version, existed) '
@@ -636,9 +636,9 @@ async def test_file_store_bounded_listing_leaves_irrelevant_pending_path_prepare
 
 async def test_file_store_scoped_listing_recovers_write_that_creates_scope_directory(tmp_path: Path) -> None:
     store = FileStore(tmp_path)
-    connection = store._connect()
+    connection = store._connect()  # pyright: ignore[reportPrivateUsage]
     try:
-        result_version = str(store._next_generation(connection))
+        result_version = str(store._next_generation(connection))  # pyright: ignore[reportPrivateUsage]
         connection.execute(
             'INSERT INTO memory_operations '
             '(id, fingerprint, status, kind, path, expected_version, new_content, result_version, existed) '
@@ -693,7 +693,7 @@ async def test_file_store_search_skips_a_file_that_disappears_after_listing(
     store = FileStore(tmp_path)
     await store.write('a.md', 'alpha', expected_version=None)
     await store.write('b.md', 'alpha', expected_version=None)
-    original_resolve = store._resolve
+    original_resolve = store._resolve  # pyright: ignore[reportPrivateUsage]
 
     def disappearing_resolve(path: str) -> Path:
         target = original_resolve(path)

@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness.ask_user._toolset import TOOL_NAME, AskUserToolset
 from pydantic_ai_harness.ask_user._types import Answerer
 

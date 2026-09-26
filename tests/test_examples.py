@@ -583,7 +583,7 @@ def test_docs_examples(
         isort=True,
         upgrade=True,
         quotes='single',
-        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph'],
+        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph', 'pydantic_ai_harness', 'pydantic_clai2'],
         known_local_folder=known_local_folder,
     )
     eval_example.print_callback = print_callback

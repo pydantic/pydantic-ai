@@ -2,8 +2,8 @@
 
 from enum import Enum
 
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu
 
 from ._rendering import markdown_style
 from .command_context import CommandContext
@@ -57,7 +57,7 @@ async def model_command(context: CommandContext, args: list[str], *, runners: Ru
         if result.cancelled or result.item is None:
             return 'No changes.'
         if result.item.value is ModelPickerAction.ADD:
-            from .model_menu import open_add_model_menu  # noqa: PLC0415
+            from .model_menu import open_add_model_menu
 
             return await open_add_model_menu(context, runners=runners)
         if not isinstance(result.item.value, str):

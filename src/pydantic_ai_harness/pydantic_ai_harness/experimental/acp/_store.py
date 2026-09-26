@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from pydantic_ai.messages import ModelMessage
-
 from pydantic_ai_harness.experimental.acp._session import SessionUpdate
 
 

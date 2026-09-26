@@ -113,8 +113,8 @@ class TestSkills:
         agent = Agent(TestModel(), capabilities=[Skills(first), Skills(second)])
         loadable = {
             leaf.id
-            for leaf in leaf_capabilities(agent._root_capability)
-            if leaf.defer_loading  # pyright: ignore[reportPrivateUsage]
+            for leaf in leaf_capabilities(agent._root_capability)  # pyright: ignore[reportPrivateUsage]
+            if leaf.defer_loading
         }
         assert {'alpha', 'beta'} <= loadable
 
@@ -466,7 +466,7 @@ class TestSkillValidation:
         library = tmp_path / 'skills'
         _write_skill(library, 'alpha')
 
-        with pytest.raises(ValueError, match='points to a skill package.*Pass its parent directory'):
+        with pytest.raises(ValueError, match=r'points to a skill package.*Pass its parent directory'):
             Skills(library / 'alpha')
 
     def test_missing_root_is_rejected(self, tmp_path: Path) -> None:

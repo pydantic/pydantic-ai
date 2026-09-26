@@ -16,7 +16,6 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.exceptions import UserError
-
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import SEPARATOR, delimited
 from pydantic_ai_harness.spend._snapshot import Spent, money_precision

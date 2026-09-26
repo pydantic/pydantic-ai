@@ -3,9 +3,9 @@
 from collections.abc import Iterator
 from pathlib import Path
 
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInput, TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.field_menu import Runners

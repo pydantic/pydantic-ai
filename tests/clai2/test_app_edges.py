@@ -12,8 +12,8 @@ from prompt_toolkit.styles import BaseStyle
 from rich.color import Color
 from rich.console import Console
 from rich.text import Text
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability

@@ -6,6 +6,21 @@ import re
 from collections.abc import Callable, Sequence
 from typing import IO
 
+from rich.console import Console, RenderableType
+from rich.style import Style
+from rich.syntax import Syntax
+from rich.text import Text
+from termflow import Parser, Renderer
+from termflow.parser.events import (
+    CodeBlockEndEvent,
+    CodeBlockLineEvent,
+    CodeBlockStartEvent,
+    ParseEvent,
+)
+from termflow.render.style import RenderFeatures, RenderStyle
+from termflow.stream import SmoothWriter
+from termflow.syntax import LANGUAGE_ALIASES
+
 from pydantic_ai import (
     AgentStreamEvent,
     CapabilityEvent,
@@ -19,20 +34,6 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
 )
-from rich.console import Console, RenderableType
-from rich.style import Style
-from rich.syntax import Syntax
-from rich.text import Text
-from termflow import Parser, Renderer  # pyright: ignore[reportMissingTypeStubs]
-from termflow.parser.events import (  # pyright: ignore[reportMissingTypeStubs]
-    CodeBlockEndEvent,
-    CodeBlockLineEvent,
-    CodeBlockStartEvent,
-    ParseEvent,
-)
-from termflow.render.style import RenderFeatures, RenderStyle  # pyright: ignore[reportMissingTypeStubs]
-from termflow.stream import SmoothWriter  # pyright: ignore[reportMissingTypeStubs]
-from termflow.syntax import LANGUAGE_ALIASES  # pyright: ignore[reportMissingTypeStubs]
 
 from . import theme
 from .grep_output import GrepOutput

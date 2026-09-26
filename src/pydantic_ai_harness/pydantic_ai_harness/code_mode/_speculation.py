@@ -33,6 +33,8 @@ from typing import Annotated, Any, Generic, Literal
 
 import anyio
 from pydantic import Strict, TypeAdapter, ValidationError
+from typing_extensions import TypedDict
+
 from pydantic_ai.messages import (
     AgentStreamEvent,
     PartDeltaEvent,
@@ -44,8 +46,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from typing_extensions import TypedDict
-
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -838,9 +838,9 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         """Run-end cleanup: cancel every launch no snippet ever claimed.
 
         Shielded: a run cancelled through an anyio scope is level-triggered, so without the
-        shield the first ``_cancel_watch`` await below would be re-cancelled and every later
-        watch's launches would keep running past the run's end. Each ``_cancel_watch`` await is
-        bounded by ``CANCEL_TIMEOUT_SECONDS``, so the shield cannot hold the unwind hostage.
+        shield the first `_cancel_watch` await below would be re-cancelled and every later
+        watch's launches would keep running past the run's end. Each `_cancel_watch` await is
+        bounded by `CANCEL_TIMEOUT_SECONDS`, so the shield cannot hold the unwind hostage.
         """
         parts, self._parts = self._parts, {}
         self._index_to_part.clear()

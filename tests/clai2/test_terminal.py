@@ -16,7 +16,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.text import Text
-from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import CompleteEvent, Document
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks

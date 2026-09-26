@@ -48,11 +48,11 @@ import anyio
 import pytest
 from bson.errors import InvalidDocument
 from pydantic import TypeAdapter
-from pydantic_ai.messages import ModelResponse, TextPart
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DocumentTooLarge, DuplicateKeyError, PyMongoError, WriteError
 
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai_harness.media import MongoMediaStore, parse_media_uri
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,

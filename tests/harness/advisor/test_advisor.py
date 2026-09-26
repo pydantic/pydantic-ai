@@ -25,7 +25,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.advisor import Advisor
-from tests.harness.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -468,19 +468,19 @@ class TestAdvisor:
 
     def test_rejects_invalid_options(self) -> None:
         model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')]))
-        with pytest.raises(ValueError, match='Advisor.mode'):
+        with pytest.raises(ValueError, match=r'Advisor\.mode'):
             Advisor(model, mode='invalid')  # pyright: ignore[reportArgumentType]
-        with pytest.raises(ValueError, match='Advisor.max_uses must be at least 1'):
+        with pytest.raises(ValueError, match=r'Advisor\.max_uses must be at least 1'):
             Advisor(model, max_uses=0)
-        with pytest.raises(ValueError, match='Advisor.max_tokens must be at least 1024'):
+        with pytest.raises(ValueError, match=r'Advisor\.max_tokens must be at least 1024'):
             Advisor(model, max_tokens=1023)
-        with pytest.raises(ValueError, match="mode='native'.*model name"):
+        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor(model, mode='native')
-        with pytest.raises(ValueError, match="mode='native'.*model name"):
+        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor('test', mode='native')
-        with pytest.raises(ValueError, match="mode='native'.*model name"):
+        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor('openai:gpt-5.4', mode='native')
-        with pytest.raises(ValueError, match="mode='native'.*model name"):
+        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor('anthropic:', mode='native')
         with pytest.raises(ValueError, match='not supported by OpenRouter'):
             Advisor('openrouter:anthropic/claude-opus-4.8', mode='native', max_uses=1)

@@ -97,7 +97,7 @@ def test_mixed_and_non_image_paths(image_path: Path) -> None:
     text.write_text('not an image')
     assert pasted_paths(str(text)) == []
     assert pasted_paths(f'"{image_path}" "{text}"') == []
-    image_path.write_text('not really a PNG')
+    image_path.write_text('not really a PNG', encoding='utf-8')
     with pytest.raises(OSError):
         read_image(image_path)
 
@@ -161,7 +161,7 @@ async def test_editor_bindings(image_path: Path, monkeypatch: pytest.MonkeyPatch
     elif key == 'text':
         typed = '\x1b[200~ordinary\r\ntext\x1b[201~'
     elif key == 'invalid':
-        image_path.write_text('invalid PNG')
+        image_path.write_text('invalid PNG', encoding='utf-8')
         typed = f'\x1b[200~{image_path}\x1b[201~'
     else:
         typed = '\x16' if key == 'error' else key

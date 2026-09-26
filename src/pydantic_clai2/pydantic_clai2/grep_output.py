@@ -1,9 +1,10 @@
 """Grep invocation and bounded result previews from native tool events."""
 
 from pydantic import BaseModel, ValidationError
+from rich.console import Console
+
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolReturnPart
-from rich.console import Console
 
 from . import theme
 from .tool_output import print_tool_header, terminal_text

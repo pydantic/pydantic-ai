@@ -379,7 +379,7 @@ class TestFileSystemEvents:
         assert len(read_events) == 1
         assert read_events[0].path == 'code.py'
         assert read_events[0].root_dir == _root(project)
-        assert Path(read_events[0].root_dir, read_events[0].path).read_text() == 'x = 1\n'
+        assert Path(read_events[0].root_dir, read_events[0].path).read_text(encoding='utf-8') == 'x = 1\n'
 
     async def test_read_rejected_for_out_of_range_offset_emits_no_event(self, tmp_path: Path) -> None:
         (tmp_path / 'short.txt').write_text('one\ntwo\n')

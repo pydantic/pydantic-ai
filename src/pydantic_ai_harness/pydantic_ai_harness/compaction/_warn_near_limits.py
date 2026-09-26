@@ -9,7 +9,6 @@ from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, UserPromptPart
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
     estimate_context_tokens,
@@ -40,8 +39,8 @@ class _Warning:
 class WarnNearLimits(AbstractCapability[AgentDepsT]):
     """Injects a warning message when the agent approaches configured limits.
 
-    The warning is appended as a trailing ``ModelRequest`` with a
-    ``UserPromptPart`` so that the model treats it as a distinct user turn
+    The warning is appended as a trailing `ModelRequest` with a
+    `UserPromptPart` so that the model treats it as a distinct user turn
     (models tend to pay more attention to user messages than system messages).
 
     Previous warnings injected by this capability are stripped before deciding

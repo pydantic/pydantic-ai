@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from typing import Generic, Literal, Protocol, TypeVar, get_args, overload
 
 from pydantic import BaseModel, JsonValue
+from rich.console import Console, RenderableType
+from typing_extensions import Never, TypeVar as DefaultTypeVar
+
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability, Hooks
@@ -47,9 +50,6 @@ from pydantic_ai.capabilities.hooks import (
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai_harness.step_persistence import StepStore
-from rich.console import Console, RenderableType
-from typing_extensions import Never
-from typing_extensions import TypeVar as DefaultTypeVar
 
 from .commands import Commands
 from .config import Settings

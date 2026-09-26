@@ -13,9 +13,9 @@ from PIL import Image
 from prompt_toolkit.application.current import get_app_session
 from prompt_toolkit.history import History
 from rich.console import Console
-from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.completion import CompleteEvent, Completion, Document  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.layout import truncate  # pyright: ignore[reportMissingTypeStubs]
+from termflow.ansi.utils import visible_length
+from termflow.tui.completion import CompleteEvent, Completion, Document
+from termflow.tui.layout import truncate
 
 from . import theme
 from .commands import Commands, expand_bare_command, is_command_input
@@ -358,7 +358,7 @@ class LivePrompt:
                                 )
                             ),
                         )
-                    except Exception as exc:  # noqa: BLE001 -- optional suggestions must not end a session.
+                    except Exception as exc:
                         error = f'Completion unavailable: {exc}'
                     finally:
                         self._completion_scope = None

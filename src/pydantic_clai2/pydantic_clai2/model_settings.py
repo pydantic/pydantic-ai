@@ -10,6 +10,7 @@ from anthropic.types.beta import (
     BetaThinkingConfigParam,
 )
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 from pydantic_ai.settings import ModelSettings

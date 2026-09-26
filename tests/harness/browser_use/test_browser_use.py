@@ -18,7 +18,7 @@ import pytest
 # tests execution environment, while submodule imports resolve correctly.
 from browser_use.agent.service import (
     Agent as BrowserUseAgent,
-    Tools,  # pyright: ignore[reportPrivateImportUsage]
+    Tools,
 )
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.browser.events import NavigateToUrlEvent
@@ -735,8 +735,8 @@ class TestBrowserAgentSettings:
         )
 
         assert seen['tools'] is custom_tools
-        assert 'read_file' not in custom_tools.registry.registry.actions  # pyright: ignore[reportUnknownMemberType]
-        assert 'upload_file' not in custom_tools.registry.registry.actions  # pyright: ignore[reportUnknownMemberType]
+        assert 'read_file' not in custom_tools.registry.registry.actions
+        assert 'upload_file' not in custom_tools.registry.registry.actions
 
 
 def _distinctly_valued_settings() -> BrowserAgentSettings:
@@ -788,7 +788,7 @@ class TestTeardownFailure:
                 raise RuntimeError('the browser agent itself failed')
 
         def factory(request: BrowserTask) -> BrowserAgent:
-            return _Boom()  # type: ignore[return-value]
+            return _Boom()
 
         toolset = BrowserUse[None](browser_agent=factory, session_scope='agent').get_toolset()
         assert isinstance(toolset, BrowserUseToolset)

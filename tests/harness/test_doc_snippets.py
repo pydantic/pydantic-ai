@@ -44,7 +44,7 @@ from pathlib import Path
 import pytest
 from _pytest.mark import ParameterSet
 from pytest_examples import CodeExample, find_examples
-from ruff.__main__ import find_ruff_bin  # pyright: ignore[reportMissingTypeStubs]
+from ruff.__main__ import find_ruff_bin
 
 _ROOT = Path(__file__).parents[2]
 _HARNESS = 'pydantic_ai_harness'

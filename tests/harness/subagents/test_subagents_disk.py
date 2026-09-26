@@ -176,7 +176,7 @@ class TestDiskLoading:
         # conventional folder and the default `SubAgents()` picks it up with no config.
         _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', '---\nname: planner\n---\nPlan.')
         cap: SubAgents[object] = SubAgents()
-        assert 'planner' in cap._by_name
+        assert 'planner' in cap._by_name  # pyright: ignore[reportPrivateUsage]
 
     def test_cwd_equal_home_loads_once_without_shadow_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # When the project root equals the home root, the project and home convention
@@ -192,29 +192,29 @@ class TestDiskLoading:
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             cap: SubAgents[object] = SubAgents()
-        assert 'planner' in cap._by_name
+        assert 'planner' in cap._by_name  # pyright: ignore[reportPrivateUsage]
 
     def test_none_disables_loading(self) -> None:
         cap: SubAgents[object] = SubAgents(agent_folders=None)
-        assert cap._by_name == {}
+        assert cap._by_name == {}  # pyright: ignore[reportPrivateUsage]
         assert cap.get_toolset() is None
 
     def test_loads_agents_from_folder(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'researcher.md', '---\nname: researcher\ndescription: Researches\n---\nResearch well.')
         cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
-        assert 'researcher' in cap._by_name
-        agent = cap._by_name['researcher'].agent
+        assert 'researcher' in cap._by_name  # pyright: ignore[reportPrivateUsage]
+        agent = cap._by_name['researcher'].agent  # pyright: ignore[reportPrivateUsage]
         assert agent.name == 'researcher'
         assert agent.model is None  # inherits the parent model at delegation
 
     def test_name_falls_back_to_filename_stem(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'planner.md', 'No frontmatter, just a body.')
         cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
-        assert 'planner' in cap._by_name
+        assert 'planner' in cap._by_name  # pyright: ignore[reportPrivateUsage]
 
     def test_missing_folder_is_skipped(self, tmp_path: Path) -> None:
         cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path / 'does-not-exist'])
-        assert cap._by_name == {}
+        assert cap._by_name == {}  # pyright: ignore[reportPrivateUsage]
 
     def test_undecodable_file_is_skipped_with_warning(self, tmp_path: Path) -> None:
         # A non-UTF-8 `.md` file must not abort loading: it is skipped with a warning
@@ -224,8 +224,8 @@ class TestDiskLoading:
         _write_agent(tmp_path, 'valid.md', '---\nname: valid\n---\nWork.')
         with pytest.warns(UserWarning, match='Skipping unreadable disk sub-agent file'):
             cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
-        assert 'valid' in cap._by_name
-        assert 'broken' not in cap._by_name
+        assert 'valid' in cap._by_name  # pyright: ignore[reportPrivateUsage]
+        assert 'broken' not in cap._by_name  # pyright: ignore[reportPrivateUsage]
 
     def test_listing_uses_description(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'r.md', '---\nname: r\ndescription: Researches\n---\nB')
@@ -241,7 +241,7 @@ class TestPrecedence:
         explicit = Agent(TestModel(), name='worker', description='from code')
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed"):
             cap: SubAgents[object] = SubAgents(agents=[SubAgent(explicit)], agent_folders=[tmp_path])
-        assert cap._by_name['worker'].agent is explicit
+        assert cap._by_name['worker'].agent is explicit  # pyright: ignore[reportPrivateUsage]
 
     def test_earlier_folder_shadows_later(self, tmp_path: Path) -> None:
         project = tmp_path / 'project'
@@ -264,14 +264,14 @@ class TestOverrides:
             agent_folders=[tmp_path],
             agent_overrides={'w': AgentOverride(model=model, effort='high')},
         )
-        agent = cap._by_name['w'].agent
+        agent = cap._by_name['w'].agent  # pyright: ignore[reportPrivateUsage]
         assert agent.model is model
 
     def test_effort_floored_without_override(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'w.md', '---\nname: w\n---\nB')
         cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
         # No override -> effort defaults to the floor on the built agent's settings.
-        agent = cap._by_name['w'].agent
+        agent = cap._by_name['w'].agent  # pyright: ignore[reportPrivateUsage]
         assert isinstance(agent, Agent)
         settings = agent.model_settings
         assert isinstance(settings, dict)
@@ -289,7 +289,7 @@ class TestToolResolver:
 
         cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path], tool_resolver=resolver)
         # The resolved toolset is attached to the built agent.
-        assert toolset in cap._by_name['w'].agent.toolsets
+        assert toolset in cap._by_name['w'].agent.toolsets  # pyright: ignore[reportPrivateUsage]
 
     def test_unknown_tool_warns_and_skips(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'w.md', '---\nname: w\ntools: mystery\n---\nB')
@@ -304,14 +304,14 @@ class TestToolResolver:
         _write_agent(tmp_path, 'w.md', '---\nname: w\ntools: Read, Edit\n---\nB')
         # Without a resolver, no warning and no own tools -- inheritance is the path.
         cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
-        assert 'w' in cap._by_name
+        assert 'w' in cap._by_name  # pyright: ignore[reportPrivateUsage]
 
 
 class TestModelInheritance:
     async def test_disk_agent_inherits_parent_model(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'worker.md', '---\nname: worker\n---\nDo the work.')
         cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
-        disk_agent = cap._by_name['worker'].agent
+        disk_agent = cap._by_name['worker'].agent  # pyright: ignore[reportPrivateUsage]
         assert isinstance(disk_agent, Agent)
 
         # `RunContext.model` is an `AbstractModel`; the inherited model captured here is the
@@ -319,7 +319,7 @@ class TestModelInheritance:
         captured: dict[str, AbstractModel] = {}
 
         @disk_agent.instructions
-        def _capture(ctx: RunContext[object]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _capture(ctx: RunContext[object]) -> str:
             captured['model'] = ctx.model
             return ''
 

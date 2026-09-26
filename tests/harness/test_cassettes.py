@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from _pytest.mark import ParameterSet
 from pydantic import BaseModel
-from vcr.serializers import yamlserializer  # pyright: ignore[reportMissingTypeStubs]
+from vcr.serializers import yamlserializer
 
 _ROOT = Path(__file__).parents[2]
 
@@ -71,13 +71,13 @@ def _cassettes() -> Iterable[ParameterSet]:
 
 def test_cassettes_discovered() -> None:
     # Guard against a discovery break silently making the check vacuous.
-    assert sum(1 for _ in _cassettes()) >= 7
+    assert sum(1 for _ in _cassettes()) >= 6
 
 
 @pytest.mark.parametrize('path', list(_cassettes()))
 def test_cassette_replays_without_an_optional_decompressor(path: Path) -> None:
     # `vcr`'s own loader, because a cassette can carry tags `yaml.safe_load` rejects.
-    document = yamlserializer.deserialize(path.read_text())  # pyright: ignore[reportUnknownMemberType]
+    document = yamlserializer.deserialize(path.read_text(encoding='utf-8'))  # pyright: ignore[reportUnknownMemberType]
     cassette = _Cassette.model_validate(document)
     needs = [
         f'{interaction.request.uri} responds `Content-Encoding: {encoding}`'

@@ -8,7 +8,7 @@ import anyio
 import pytest
 from pydantic import ValidationError
 from rich.console import Console
-from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import CompleteEvent, Document
 
 from pydantic_ai import (
     Agent,

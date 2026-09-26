@@ -5,8 +5,9 @@ from contextlib import contextmanager
 from dataclasses import replace
 from typing import Generic, TypeVar
 
-from pydantic_ai.usage import UsageLimits
 from rich.console import Console
+
+from pydantic_ai.usage import UsageLimits
 
 from . import theme
 from ._session import Session

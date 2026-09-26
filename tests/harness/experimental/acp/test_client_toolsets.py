@@ -26,7 +26,7 @@ from pydantic_ai_harness.experimental.acp import (
     acp_filesystem,
     acp_terminal,
 )
-from tests.harness.experimental.acp._acp_clients import RecordingClient  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.experimental.acp._acp_clients import RecordingClient
 
 pytestmark = pytest.mark.anyio
 

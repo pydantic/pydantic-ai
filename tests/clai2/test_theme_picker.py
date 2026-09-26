@@ -11,9 +11,9 @@ from prompt_toolkit.output import DummyOutput
 from pydantic import ValidationError
 from rich.console import Console
 from rich.text import Text
-from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.themes import PALETTES
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel

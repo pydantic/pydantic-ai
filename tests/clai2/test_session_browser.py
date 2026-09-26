@@ -6,8 +6,8 @@ from io import StringIO
 from itertools import chain, repeat
 
 import pytest
-from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.keys import Key  # pyright: ignore[reportMissingTypeStubs]
+from termflow.ansi.utils import visible_length
+from termflow.tui.keys import Key
 
 import pydantic_clai2.session_browser as module
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary

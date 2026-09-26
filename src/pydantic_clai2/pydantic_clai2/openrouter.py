@@ -7,12 +7,13 @@ from typing import Annotated
 import httpx
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, SecretStr, ValidationError
+from rich.console import Console
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.providers.openrouter import OpenRouterProvider
-from rich.console import Console
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
 
 from ._rendering import markdown_style
 from .api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection

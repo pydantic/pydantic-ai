@@ -10,12 +10,12 @@ from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, ValidationError
+
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-
 from pydantic_ai_harness.exa._toolset import (
     _AUTH_STATUS_RE,  # pyright: ignore[reportPrivateUsage]
     _recoverable,  # pyright: ignore[reportPrivateUsage]

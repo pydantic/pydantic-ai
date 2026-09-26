@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from keyring.errors import KeyringError
+from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
+from termflow.tui.menu import Menu, MenuResult
+
 from pydantic_ai.exceptions import UserError
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
 from . import api_keys
 from ._rendering import markdown_style

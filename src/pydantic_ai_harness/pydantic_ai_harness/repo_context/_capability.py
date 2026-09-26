@@ -12,7 +12,6 @@ from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.repo_context._loader import (

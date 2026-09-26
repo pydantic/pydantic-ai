@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import CompleteEvent, Document
 
 from pydantic_clai2.commands import (
     Command,

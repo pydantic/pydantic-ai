@@ -51,7 +51,7 @@ def _make_store(kind: str, tmp_path: Path, keep: int | None) -> tuple[StepStore,
     """Build a bounded store plus a callable that counts a run's stored snapshots."""
     if kind == 'memory':
         mem = InMemoryStepStore(max_snapshots_per_run=keep)
-        return mem, lambda run_id: len(mem._snapshots.get(run_id, []))
+        return mem, lambda run_id: len(mem._snapshots.get(run_id, []))  # pyright: ignore[reportPrivateUsage]
     if kind == 'file':
         root = tmp_path / 'runs'
         return FileStepStore(root, max_snapshots_per_run=keep), lambda run_id: len(
@@ -390,17 +390,17 @@ class TestFromSpecForwarding:
     async def test_memory_backend_forwards_bound(self) -> None:
         cap = StepPersistence.from_spec(max_snapshots_per_run=3)
         assert isinstance(cap.store, InMemoryStepStore)
-        assert cap.store._max_snapshots_per_run == 3
+        assert cap.store._max_snapshots_per_run == 3  # pyright: ignore[reportPrivateUsage]
 
     async def test_file_backend_forwards_bound(self, tmp_path: Path) -> None:
         cap = StepPersistence.from_spec(backend='file', directory=tmp_path, max_snapshots_per_run=4)
         assert isinstance(cap.store, FileStepStore)
-        assert cap.store._max_snapshots_per_run == 4
+        assert cap.store._max_snapshots_per_run == 4  # pyright: ignore[reportPrivateUsage]
 
     async def test_sqlite_backend_forwards_bound(self, tmp_path: Path) -> None:
         cap = StepPersistence.from_spec(backend='sqlite', database=str(tmp_path / 'runs.db'), max_snapshots_per_run=5)
         assert isinstance(cap.store, SqliteStepStore)
-        assert cap.store._max_snapshots_per_run == 5
+        assert cap.store._max_snapshots_per_run == 5  # pyright: ignore[reportPrivateUsage]
 
 
 class TestBoundedAgentRun:
@@ -425,7 +425,7 @@ class TestBoundedAgentRun:
         )
 
         @agent.tool_plain
-        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+        def lookup() -> str:
             return 'ok'
 
         result = await agent.run('go')
@@ -434,6 +434,6 @@ class TestBoundedAgentRun:
         run_id = (await store.list_runs())[-1].run_id
         # Three settled CallToolsNode boundaries produced multiple complete
         # snapshots; the bound collapses them to the newest.
-        assert len(store._snapshots[run_id]) == 1
+        assert len(store._snapshots[run_id]) == 1  # pyright: ignore[reportPrivateUsage]
         history = await continue_run(store, run_id=run_id)
         assert history

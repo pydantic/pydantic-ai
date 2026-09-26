@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.experimental.acp import InMemorySessionStore, PydanticAIACPAgent, StoredSession
-from tests.harness.experimental.acp._acp_clients import RecordingClient  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.experimental.acp._acp_clients import RecordingClient
 
 pytestmark = pytest.mark.anyio
 

@@ -7,7 +7,7 @@ from threading import Event, Thread, current_thread
 import anyio
 import pytest
 from anyio.to_thread import run_sync
-from termflow.tui.completion import Completion  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import Completion
 
 from pydantic_clai2.prompt_completion import CompletionWorker
 

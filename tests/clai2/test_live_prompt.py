@@ -19,7 +19,7 @@ from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.text import Text
-from termflow.tui.completion import Completion  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import Completion
 
 from pydantic_ai import PartStartEvent, TextPart, ThinkingPart
 from pydantic_ai.messages import BinaryContent

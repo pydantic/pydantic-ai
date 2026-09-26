@@ -35,12 +35,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import anyio
+from typing_extensions import assert_never
+
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
-from typing_extensions import assert_never
-
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,

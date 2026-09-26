@@ -879,7 +879,7 @@ class TestLimitWarnerFraction:
 
     def test_a_fraction_alone_satisfies_the_limit_requirement(self):
         capability: WarnNearLimits[None] = WarnNearLimits(max_context_fraction=0.9)
-        assert 'context_window' in capability._active_kinds
+        assert 'context_window' in capability._active_kinds  # pyright: ignore[reportPrivateUsage]
 
     def test_rejects_both_context_limits(self):
         with pytest.raises(ValueError, match='Set at most one of max_context_tokens or max_context_fraction'):
@@ -887,7 +887,7 @@ class TestLimitWarnerFraction:
 
     def test_warn_on_accepts_a_fraction_configured_kind(self):
         capability: WarnNearLimits[None] = WarnNearLimits(max_context_fraction=0.9, warn_on=['context_window'])
-        assert capability._active_kinds == ('context_window',)
+        assert capability._active_kinds == ('context_window',)  # pyright: ignore[reportPrivateUsage]
 
     def test_requires_at_least_one_limit(self):
         with pytest.raises(ValueError, match='At least one of max_iterations, max_context_tokens'):
@@ -1131,7 +1131,7 @@ class TestCompactNow:
         strategy = _RecordingStrategy()
         messages = _history(3)
 
-        result = await compact_now(strategy, messages, model=TestModel())  # type: ignore[arg-type]
+        result = await compact_now(strategy, messages, model=TestModel())
 
         assert len(result) == 1
         assert isinstance(strategy.seen_model, TestModel)
@@ -1139,7 +1139,7 @@ class TestCompactNow:
     async def test_resolves_a_model_name(self):
         strategy = _RecordingStrategy()
 
-        await compact_now(strategy, _history(1), model='test')  # type: ignore[arg-type]
+        await compact_now(strategy, _history(1), model='test')
 
         assert strategy.seen_model is not None
 
@@ -1147,7 +1147,7 @@ class TestCompactNow:
         strategy = _RecordingStrategy()
         usage = RunUsage(requests=3)
 
-        await compact_now(strategy, _history(1), model=TestModel(), deps='my-deps', usage=usage)  # type: ignore[arg-type]
+        await compact_now(strategy, _history(1), model=TestModel(), deps='my-deps', usage=usage)
 
         assert strategy.seen_deps == 'my-deps'
         assert strategy.seen_usage is usage
@@ -1155,7 +1155,7 @@ class TestCompactNow:
     async def test_focus_is_ignored_by_a_strategy_that_cannot_honour_it(self):
         strategy = _RecordingStrategy()
 
-        result = await compact_now(strategy, _history(2), model=TestModel(), focus='auth')  # type: ignore[arg-type]
+        result = await compact_now(strategy, _history(2), model=TestModel(), focus='auth')
 
         assert len(result) == 1
 
@@ -1167,7 +1167,7 @@ class TestCompactNow:
                 seen.append(focus)
                 return self
 
-        await compact_now(_Focusable(), _history(1), model=TestModel(), focus='the auth refactor')  # type: ignore[arg-type]
+        await compact_now(_Focusable(), _history(1), model=TestModel(), focus='the auth refactor')
 
         assert seen == ['the auth refactor']
 

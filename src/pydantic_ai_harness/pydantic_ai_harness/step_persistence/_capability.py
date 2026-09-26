@@ -16,7 +16,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-
 from pydantic_ai_harness.step_persistence._context import (
     current_run_id,
     live_run_history,

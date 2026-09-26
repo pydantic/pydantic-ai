@@ -16,7 +16,7 @@ from pydantic_ai_harness.modal_sandbox import (
     ModalSandboxUnavailableError,
 )
 
-from .fake_modal import FakeModal, FileInfo, _AioCallable
+from .fake_modal import FakeModal, FileInfo, _AioCallable  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.anyio
 
@@ -183,7 +183,7 @@ class TestErrors:
 
         monkeypatch.delitem(sys.modules, 'modal', raising=False)
         monkeypatch.setattr(builtins, '__import__', fake_import)
-        with pytest.raises(ModalSandboxError, match='modal.*package is required'):
+        with pytest.raises(ModalSandboxError, match=r'modal.*package is required'):
             async with ModalSandboxSession():
                 pass  # pragma: no cover
 
@@ -247,7 +247,7 @@ class TestErrors:
         # A wedged control plane must not make enter uncancellable: the bounded, shielded
         # create gives up after its deadline and fails instead of hanging forever.
         monkeypatch.setattr('pydantic_ai_harness.modal_sandbox._session._CREATE_TIMEOUT', 0.05)
-        fake_modal.module.Sandbox.create = _HangingCall()  # type: ignore[attr-defined]
+        fake_modal.module.Sandbox.create = _HangingCall()
         with anyio.fail_after(5):
             with pytest.raises(ModalSandboxError, match='did not complete within'):
                 async with ModalSandboxSession():

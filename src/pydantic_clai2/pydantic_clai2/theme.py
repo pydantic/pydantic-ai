@@ -1,7 +1,5 @@
 """CLAI's existing brand colours, with opt-in Termflow palettes."""
 
-# ruff: noqa: PLC0415 -- the splash must not import Termflow at startup.
-
 from __future__ import annotations
 
 import os
@@ -12,14 +10,14 @@ from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rich.syntax import SyntaxTheme
-    from termflow.themes import TerminalPalette  # pyright: ignore[reportMissingTypeStubs]
+    from termflow.themes import TerminalPalette
 
 _ACTIVE: ContextVar[Callable[[], str]] = ContextVar('clai_theme', default=lambda: 'default')
 
 
 def names() -> tuple[str, ...]:
     """Offer the unchanged default appearance and Termflow's bundled palettes."""
-    from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
+    from termflow.themes import PALETTES
 
     return ('default', *PALETTES)
 
@@ -29,7 +27,7 @@ def current() -> TerminalPalette | None:
     name = _ACTIVE.get()()
     if name == 'default':
         return None
-    from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
+    from termflow.themes import PALETTES
 
     return PALETTES[name]
 
@@ -61,7 +59,7 @@ def syntax_theme() -> SyntaxTheme:
 
 def apply(name: str, *, output: IO[str]) -> None:
     """Apply a validated choice, or restore terminal defaults after a palette."""
-    from termflow.themes import (  # pyright: ignore[reportMissingTypeStubs]
+    from termflow.themes import (
         PALETTES,
         apply_palette,  # pyright: ignore[reportUnknownVariableType] -- upstream also accepts an untyped dict.
         reset_palette,

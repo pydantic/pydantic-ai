@@ -26,7 +26,6 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
@@ -127,7 +126,7 @@ def _model_name(model: str | AbstractModel | None) -> str | None:
 
 
 def _history_model_name(messages: Sequence[ModelMessage]) -> str | None:
-    """Return the most recent response's ``model_name`` -- the family that produced the history."""
+    """Return the most recent response's `model_name` -- the family that produced the history."""
     for msg in reversed(messages):
         if isinstance(msg, ModelResponse) and msg.model_name:
             return msg.model_name
@@ -140,10 +139,10 @@ def _is_receipt_message(msg: ModelMessage) -> bool:
 
 
 def _model_family(model: str | AbstractModel | None) -> str | None:
-    """Reduce a model name to a coarse family token (e.g. ``openai:gpt-4o`` -> ``gpt``).
+    """Reduce a model name to a coarse family token (e.g. `openai:gpt-4o` -> `gpt`).
 
-    A neutral structural heuristic: drop any ``provider:`` prefix, then take the leading token
-    before the first ``-`` or ``/``.  Good enough to tell ``gpt`` from ``claude``; the exact
+    A neutral structural heuristic: drop any `provider:` prefix, then take the leading token
+    before the first `-` or `/`.  Good enough to tell `gpt` from `claude`; the exact
     family taxonomy is left to the eval-rig pass.
     """
     if isinstance(model, FallbackModel):
@@ -248,7 +247,7 @@ def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPa
 def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     """Extract the most recent compaction summary from the message history.
 
-    Looks for a ``SystemPromptPart`` whose content starts with the summary prefix,
+    Looks for a `SystemPromptPart` whose content starts with the summary prefix,
     which indicates it was produced by a prior compaction pass.
     """
     for msg in reversed(messages):
@@ -382,13 +381,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     keep_tokens: int | None = None
     """Target token budget to preserve after compaction (token-count trigger).
 
-    When ``None``, falls back to ``keep_messages``.
+    When `None`, falls back to `keep_messages`.
     """
 
     summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
     """Prompt template for generating summaries.
 
-    Must contain a ``{messages}`` placeholder.
+    Must contain a `{messages}` placeholder.
     """
 
     instructions: str = field(default=_DEFAULT_INSTRUCTIONS, kw_only=True)
@@ -403,37 +402,37 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When ``None``, uses a ~4 characters-per-token heuristic.
+    When `None`, uses a ~4 characters-per-token heuristic.
     """
 
     preserve_first_user_message: bool = True
-    """When ``True``, the first ``ModelRequest`` containing a ``UserPromptPart``
+    """When `True`, the first `ModelRequest` containing a `UserPromptPart`
     is always kept after compaction, in addition to system prompts.
     """
 
     incremental: bool = True
-    """When ``True``, feed any existing summary from a prior compaction back as an anchored
-    ``<previous-summary>`` block with an update instruction (preserve still-true, remove stale,
+    """When `True`, feed any existing summary from a prior compaction back as an anchored
+    `<previous-summary>` block with an update instruction (preserve still-true, remove stale,
     merge new) so it is updated in place rather than re-summarized -- avoiding
     summary-of-summary decay.
     """
 
     bridge_prefix: bool = False
-    """When ``True`` and the summarizer's model family differs from the family that produced
+    """When `True` and the summarizer's model family differs from the family that produced
     the history, prepend a neutral one-line note marking the summary as a cross-model handoff
     (Codex prior art, anti-confabulation).  Only fires on a genuine family mismatch, so it is
     cheap and off in the common same-model case; the note's wording is flagged pending eval-rig.
     """
 
     keep_user_messages: bool = False
-    """When ``True``, preserve recent summarized user messages (each truncated to
-    ``keep_user_messages_max_chars``) alongside the summary. Retained messages consume the
-    ``keep_messages`` tail budget, keeping compaction bounded. Supersedes
-    ``preserve_first_user_message``.
+    """When `True`, preserve recent summarized user messages (each truncated to
+    `keep_user_messages_max_chars`) alongside the summary. Retained messages consume the
+    `keep_messages` tail budget, keeping compaction bounded. Supersedes
+    `preserve_first_user_message`.
     """
 
     keep_user_messages_max_chars: int = 20_000
-    """Per-message character cap for ``keep_user_messages``; oversized messages are truncated
+    """Per-message character cap for `keep_user_messages`; oversized messages are truncated
     with an explicit marker (the shared truncation-marker convention)."""
 
     tool_return_max_chars: int | None = field(default=500, kw_only=True)
@@ -441,9 +440,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     them whole."""
 
     receipts: bool = False
-    """When ``True``, append a deterministic compaction receipt after the summary noting how
+    """When `True`, append a deterministic compaction receipt after the summary noting how
     much history was summarized, that the summary is secondhand, and -- when a
-    ``TranscriptHandleProvider`` capability is attached -- a persisted-run handle.
+    `TranscriptHandleProvider` capability is attached -- a persisted-run handle.
 
     Opt-in for now: the receipt text is content, so defaulting it on is deferred to the
     benchmark eval-rig pass.  The mechanism itself is structural.

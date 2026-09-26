@@ -10,7 +10,6 @@ from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
@@ -34,12 +33,12 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
     """Escalation orchestrator over a sequence of compaction strategies.
 
     Runs each tier in order, re-measuring the token count after each, and stops as soon as
-    the conversation fits ``target_tokens``.  Order tiers cheap-to-expensive (e.g. clear
+    the conversation fits `target_tokens`.  Order tiers cheap-to-expensive (e.g. clear
     tool results, deduplicate reads, then summarize) so the expensive summarization tier is
     only reached when the cheap passes cannot reclaim enough.
 
     Each tier's own trigger is bypassed -- `TieredCompaction` drives the tiers directly via
-    their ``compact`` method and decides when to stop.
+    their `compact` method and decides when to stop.
 
     Example:
         ```python
@@ -97,7 +96,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When ``None``, uses a ~4 characters-per-token heuristic.
+    When `None`, uses a ~4 characters-per-token heuristic.
     """
 
     def __post_init__(self) -> None:

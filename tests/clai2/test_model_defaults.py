@@ -3,8 +3,8 @@
 from pathlib import Path
 
 import pytest
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
 
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.config import Settings

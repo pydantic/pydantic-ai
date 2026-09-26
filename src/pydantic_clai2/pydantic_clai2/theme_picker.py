@@ -7,10 +7,10 @@ from rich.padding import Padding
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
-from termflow import Parser, Renderer  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.terminal import terminal_size  # pyright: ignore[reportMissingTypeStubs]
+from termflow import Parser, Renderer
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu
+from termflow.tui.terminal import terminal_size
 
 from . import theme
 from ._rendering import markdown_style

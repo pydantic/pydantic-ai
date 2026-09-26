@@ -47,7 +47,7 @@ from pydantic_ai_harness.planning._toolset import (
     status_icon,
     validate_hierarchy,
 )
-from tests.harness._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness._recording_durability import RecordingDurability
 
 pytestmark = [
     pytest.mark.anyio,
@@ -145,7 +145,7 @@ class TestEventEmitter:
             emitter.on_deleted,
         ):
             register(cb.append)
-        assert all(len(v) == 1 for v in emitter._listeners.values())
+        assert all(len(v) == 1 for v in emitter._listeners.values())  # pyright: ignore[reportPrivateUsage]
 
     def test_off(self) -> None:
         emitter = PlanEventEmitter()

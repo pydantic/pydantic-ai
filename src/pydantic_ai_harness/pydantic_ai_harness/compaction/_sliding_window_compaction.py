@@ -10,7 +10,6 @@ from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -46,7 +45,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     estimated token count), the oldest messages are discarded while preserving
     tool-call / tool-return pairs.  No LLM calls are made.
 
-    Trimming happens in ``before_model_request`` so it is transparent to the
+    Trimming happens in `before_model_request` so it is transparent to the
     rest of the agent run.
 
     Example:
@@ -62,10 +61,10 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     """
 
     max_messages: int | None = None
-    """Trigger trimming when message count exceeds this value. ``None`` disables."""
+    """Trigger trimming when message count exceeds this value. `None` disables."""
 
     max_tokens: int | None = None
-    """Trigger trimming when estimated token count exceeds this value. ``None`` disables."""
+    """Trigger trimming when estimated token count exceeds this value. `None` disables."""
 
     max_fraction: float | None = field(default=None, kw_only=True)
     """Trigger when estimated tokens exceed this fraction of the model's context window.
@@ -93,24 +92,24 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     keep_tokens: int | None = None
     """Target token budget after trimming (token-count trigger).
 
-    When ``None``, falls back to ``keep_messages``.
+    When `None`, falls back to `keep_messages`.
     """
 
     tokenizer: Callable[[str], int] | None = None
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When ``None``, uses a ~4 characters-per-token heuristic.
+    When `None`, uses a ~4 characters-per-token heuristic.
     """
 
     preserve_first_user_message: bool = True
-    """When ``True``, the first ``ModelRequest`` containing a ``UserPromptPart``
+    """When `True`, the first `ModelRequest` containing a `UserPromptPart`
     is always kept after trimming, in addition to system prompts.
     """
 
     receipts: bool = False
-    """When ``True``, prepend a deterministic compaction receipt recording how much history
-    was dropped, with a transcript handle when a ``TranscriptHandleProvider`` capability is attached.
+    """When `True`, prepend a deterministic compaction receipt recording how much history
+    was dropped, with a transcript handle when a `TranscriptHandleProvider` capability is attached.
 
     Opt-in for now: the receipt text is content, so defaulting it on is deferred to the
     benchmark eval-rig pass.  The mechanism itself is structural.

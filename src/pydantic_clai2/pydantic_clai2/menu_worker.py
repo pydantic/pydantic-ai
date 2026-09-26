@@ -8,7 +8,7 @@ from threading import Event
 from typing import TypeVar
 
 import anyio
-from termflow.tui.keys import read_key  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.keys import read_key
 
 ResultT = TypeVar('ResultT')
 _STOP: ContextVar[Event | None] = ContextVar('menu_stop', default=None)

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel

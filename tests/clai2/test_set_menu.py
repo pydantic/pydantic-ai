@@ -3,9 +3,9 @@
 from pathlib import Path
 
 import pytest
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInputResult
 
 from pydantic_clai2.field_menu import FieldMenu, run_flow
 from pydantic_clai2.project_settings import ProjectSettings

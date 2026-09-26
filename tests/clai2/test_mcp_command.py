@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from pydantic import HttpUrl
 from rich.console import Console
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInputResult
 
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.mcp import (
@@ -66,7 +66,7 @@ async def test_help_errors_and_usage(tmp_path: Path) -> None:
         await command(['install', 'github'])
     with pytest.raises(ValueError, match='Usage: /mcp start NAME'):
         await command(['start'])
-    with pytest.raises(ValueError, match='Unknown MCP server: ghost. Known: none'):
+    with pytest.raises(ValueError, match=r'Unknown MCP server: ghost\. Known: none'):
         await command(['status', 'ghost'])
     assert await command(['status']) == await command([])
     assert await command(['start-all']) == 'No MCP servers to start.'
@@ -290,7 +290,7 @@ async def test_project_file_trust(tmp_path: Path) -> None:
 
     project.write_text('{"servers": {"bad_name": {}}}')
     store.trust(project)
-    with pytest.raises(ValueError, match='mcp_servers.json'):
+    with pytest.raises(ValueError, match=r'mcp_servers\.json'):
         await command([])
     project.unlink()
     project.mkdir()

@@ -33,7 +33,6 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-
 from pydantic_ai_harness.subagents._events import (
     DelegationEndEvent,
     DelegationOutcome,

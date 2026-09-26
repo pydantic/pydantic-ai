@@ -42,7 +42,9 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
-from pydantic_ai_harness.compaction._summarizing_compaction import _SUMMARY_PREFIX
+from pydantic_ai_harness.compaction._summarizing_compaction import (
+    _SUMMARY_PREFIX,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
     ConversationSearchToolset,
@@ -271,7 +273,7 @@ class TestSnapshotHistorySource:
             )
 
             @agent.tool_plain
-            def lookup(q: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            def lookup(q: str) -> str:
                 return f'result-{q}'
 
             result = await agent.run('hi', conversation_id='c1')

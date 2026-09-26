@@ -3,8 +3,8 @@
 import keyring
 import pytest
 from keyring.errors import KeyringError, NoKeyringError
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import api_keys, key_menu

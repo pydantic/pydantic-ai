@@ -8,11 +8,11 @@ import re
 from typing import TYPE_CHECKING, Literal
 
 from opentelemetry.trace import Span
+from typing_extensions import TypedDict
+
 from pydantic_ai import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from typing_extensions import TypedDict
-
 from pydantic_ai_harness.memory._store import (
     MemoryConflictError,
     MemoryMutation,

@@ -18,6 +18,9 @@ from functools import partial
 from typing import Annotated, Any, Generic, Literal, cast
 
 from pydantic import Field, TypeAdapter
+from pydantic_core import to_jsonable_python
+from typing_extensions import Self, TypedDict
+
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
@@ -27,8 +30,6 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
-from pydantic_core import to_jsonable_python
-from typing_extensions import Self, TypedDict
 
 try:
     from pydantic_monty import (

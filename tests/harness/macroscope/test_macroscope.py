@@ -51,7 +51,7 @@ def _fake_cli(directory: Path, lines: Sequence[str], *, name: str = 'macroscope'
 
 def _recorded_args(command: str) -> list[str]:
     """Return the argv the fake CLI was invoked with (without the leading program name)."""
-    return Path(f'{command}.args').read_text().split()
+    return Path(f'{command}.args').read_text(encoding='utf-8').split()
 
 
 def _toolset(command: str, cwd: Path, *, base: str | None = 'main', timeout: float = 30.0) -> MacroscopeToolset[None]:

@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic
 
+import anyio
+
 from pydantic_ai import AbstractToolset, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, PartDeltaEvent, PartStartEvent, ToolCallPart, ToolCallPartDelta
@@ -53,7 +55,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
     calls: dict[str, StreamedCodeCall] = field(default_factory=dict[str, StreamedCodeCall], init=False)
     call_ids_by_part_index: dict[int, str] = field(default_factory=dict[int, str], init=False)
     pumps: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]], init=False)
-    feed_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    feed_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     run_step: int | None = field(default=None, init=False)
     first_tool_part_index: int | None = field(default=None, init=False)
 

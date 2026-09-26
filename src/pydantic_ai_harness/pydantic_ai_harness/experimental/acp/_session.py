@@ -7,7 +7,9 @@ from collections.abc import Awaitable, Hashable, Sequence
 from dataclasses import dataclass, field
 from typing import Generic, Protocol, TypeAlias
 
+import anyio
 from acp import Client, schema
+
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT
@@ -110,7 +112,7 @@ class SessionState(Generic[AgentDepsT]):
     # The model the client selected for this session via the `model` config option, or `None` to
     # use the agent's own model. Applied as a per-run override so the shared agent is never mutated.
     model: str | None = None
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    lock: anyio.Lock = field(default_factory=anyio.Lock)
     active_turn: asyncio.Task[schema.PromptResponse] | None = None
     cancel_requested: bool = False
     always_allow: set[Hashable] = field(default_factory=set[Hashable])

@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import get_args
 
 from pydantic import HttpUrl, JsonValue, TypeAdapter, ValidationError
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInput  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
+from termflow.tui.menu import Menu
+from termflow.tui.textinput import TextInput
 
 from .._rendering import markdown_style
 from ..field_menu import TERMINAL, Runners, first_error
@@ -380,7 +380,7 @@ def edit_in_editor(initial: str) -> str | None:
         print('\x1b[2J\x1b[H', end='', flush=True, file=sys.__stdout__)
         if subprocess.call([*editor, name]) != 0:
             return None
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
     except (OSError, ValueError):  # ValueError: an unparsable $EDITOR; the one-line input takes over.
         return None
     finally:

@@ -44,13 +44,13 @@ from pydantic_ai_harness.tool_output_limits import (
 )
 from pydantic_ai_harness.tool_output_limits._capability import (
     READ_TOOL_NAME,
-    _build_spill_preview,
-    _handle_key,
-    _head_tail_preview,
-    _read_slice,
-    _select_action,
-    _Unit,
-    _with_handles,
+    _build_spill_preview,  # pyright: ignore[reportPrivateUsage]
+    _handle_key,  # pyright: ignore[reportPrivateUsage]
+    _head_tail_preview,  # pyright: ignore[reportPrivateUsage]
+    _read_slice,  # pyright: ignore[reportPrivateUsage]
+    _select_action,  # pyright: ignore[reportPrivateUsage]
+    _Unit,  # pyright: ignore[reportPrivateUsage]
+    _with_handles,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.tool_output_limits._payload import (
     is_binary,
@@ -60,9 +60,9 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_bytes,
     to_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import _safe_segment
-from tests.harness._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
-from tests.harness.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from pydantic_ai_harness.tool_output_limits._store import _safe_segment  # pyright: ignore[reportPrivateUsage]
+from tests.harness._recording_durability import RecordingDurability
+from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -222,7 +222,7 @@ class TestStore:
 
     def test_default_root(self):
         store = LocalFileStore()
-        assert store._root.name == 'pyai_harness_overflow'
+        assert store._root.name == 'pyai_harness_overflow'  # pyright: ignore[reportPrivateUsage]
 
     async def test_write_read_roundtrip(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path / 'store')
@@ -281,7 +281,7 @@ class TestCleanup:
         past = time.time() - 100
         os.utime(old, (past, past))
 
-        store._prune_sync()
+        store._prune_sync()  # pyright: ignore[reportPrivateUsage]
 
         assert not old.exists()
         assert new.exists()
@@ -294,16 +294,16 @@ class TestCleanup:
 
         monkeypatch.setattr(store, '_prune_sync', boom)
         with pytest.warns(UserWarning, match='cleanup failed'):
-            store._run_prune()
+            store._run_prune()  # pyright: ignore[reportPrivateUsage]
 
     def test_schedule_none_when_disabled(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        assert store._schedule_cleanup() is None
+        assert store._schedule_cleanup() is None  # pyright: ignore[reportPrivateUsage]
 
     def test_schedule_starts_thread(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
         (tmp_path / 'f.bin').write_bytes(b'z')
-        thread = store._schedule_cleanup()
+        thread = store._schedule_cleanup()  # pyright: ignore[reportPrivateUsage]
         assert thread is not None
         thread.join(timeout=5)
         assert not thread.is_alive()
@@ -324,8 +324,8 @@ class TestCleanup:
 class TestConstruction:
     def test_default_band_is_spill_then_truncate(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits()
-        assert len(cap._bands) == 1
-        action = cap._bands[0].action
+        assert len(cap._bands) == 1  # pyright: ignore[reportPrivateUsage]
+        action = cap._bands[0].action  # pyright: ignore[reportPrivateUsage]
         assert isinstance(action, Spill)
         assert isinstance(action.then, Truncate)
 
@@ -333,7 +333,7 @@ class TestConstruction:
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=10, action=Truncate()), Band(over=100, action=Spill())]
         )
-        assert [b.over for b in cap._bands] == [100, 10]
+        assert [b.over for b in cap._bands] == [100, 10]  # pyright: ignore[reportPrivateUsage]
 
     def test_negative_threshold_rejected(self):
         with pytest.raises(ValueError, match='non-negative'):
@@ -342,11 +342,11 @@ class TestConstruction:
     def test_provided_store_used(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(store=store)
-        assert cap._store is store
+        assert cap._store is store  # pyright: ignore[reportPrivateUsage]
 
     def test_per_tool_prepared(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(per_tool={'read_file': [Band(over=5, action=Truncate())]})
-        assert 'read_file' in cap._per_tool
+        assert 'read_file' in cap._per_tool  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +640,7 @@ class TestSpill:
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Spill())], store=store)
         out0 = await _run(cap, 'a' * 100, ctx=_make_ctx(retry=0))
         out1 = await _run(cap, 'b' * 100, ctx=_make_ctx(retry=1))
-        assert out0.metadata['overflow_handle'] != out1.metadata['overflow_handle']  # type: ignore[union-attr]
+        assert out0.metadata['overflow_handle'] != out1.metadata['overflow_handle']
 
     async def test_spill_merges_existing_metadata(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)

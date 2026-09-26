@@ -276,7 +276,7 @@ class _FakeBrowserContext:
             self.opened.append(self.page)
             return self.page
         page = _FakePage(url='about:blank', title='')
-        page._context = self
+        page._context = self  # pyright: ignore[reportPrivateUsage]
         self.opened.append(page)
         return page
 
@@ -629,7 +629,7 @@ class _FakePlaywrightBrowser:
             service_workers=service_workers,
             accept_downloads=accept_downloads,
         )
-        self._page._context = context
+        self._page._context = context  # pyright: ignore[reportPrivateUsage]
         self.contexts.append(context)
         return context
 
@@ -1106,14 +1106,14 @@ class TestPlaywrightBrowserTools:
         assert image.data == b'PNG-BYTES'
 
     async def test_screenshot_over_size_limit_returns_error_not_image(self) -> None:
-        png = b'x' * (toolset_module._MAX_SCREENSHOT_BYTES + 1)
+        png = b'x' * (toolset_module._MAX_SCREENSHOT_BYTES + 1)  # pyright: ignore[reportPrivateUsage]
         result = await _toolset(_FakePage(screenshot_bytes=png)).screenshot(full_page=True)
         assert isinstance(result, str)
         assert result.startswith(f'Error: screenshot is {len(png)} bytes')
         assert 'full_page=False' in result
 
     async def test_navigate_omits_oversized_screenshot_attachment(self) -> None:
-        png = b'x' * (toolset_module._MAX_SCREENSHOT_BYTES + 1)
+        png = b'x' * (toolset_module._MAX_SCREENSHOT_BYTES + 1)  # pyright: ignore[reportPrivateUsage]
         toolset = _toolset(_FakePage(screenshot_bytes=png), screenshot_on_navigate=True)
         result = await toolset.navigate('https://example.com/')
         assert isinstance(result, str)  # no ToolReturn: the image is dropped, the text result survives
@@ -1124,7 +1124,7 @@ class TestPlaywrightBrowserTools:
         # The page result is already budgeted, so the note has to be given room
         # rather than appended: re-truncating a full result would drop it and
         # leave ordinary page text with no sign the screenshot went missing.
-        png = b'x' * (toolset_module._MAX_SCREENSHOT_BYTES + 1)
+        png = b'x' * (toolset_module._MAX_SCREENSHOT_BYTES + 1)  # pyright: ignore[reportPrivateUsage]
         page = _FakePage(body='b' * 5_000, screenshot_bytes=png)
         toolset = _toolset(page, screenshot_on_navigate=True, max_content_tokens=100)
         result = await toolset.navigate('https://example.com/')
@@ -1134,7 +1134,7 @@ class TestPlaywrightBrowserTools:
         assert len(result) <= 100 * 4
 
     async def test_oversized_note_takes_the_whole_budget_when_it_cannot_fit(self) -> None:
-        png = b'x' * (toolset_module._MAX_SCREENSHOT_BYTES + 1)
+        png = b'x' * (toolset_module._MAX_SCREENSHOT_BYTES + 1)  # pyright: ignore[reportPrivateUsage]
         toolset = _toolset(_FakePage(screenshot_bytes=png), screenshot_on_navigate=True, max_content_tokens=5)
         result = await toolset.navigate('https://example.com/')
         assert result == 'Error: screenshot is'
@@ -1275,10 +1275,10 @@ class TestPlaywrightBrowserTools:
         assert await toolset.execute_js('largeResult') == prefix
 
     def test_truncation_marker_fits_inside_budget(self) -> None:
-        result = toolset_module._truncate('X' * 200, 80)
+        result = toolset_module._truncate('X' * 200, 80)  # pyright: ignore[reportPrivateUsage]
         assert len(result) == 80
         assert result.endswith('[... tool output truncated at 80 characters]')
-        assert toolset_module._truncate('content', 0) == ''
+        assert toolset_module._truncate('content', 0) == ''  # pyright: ignore[reportPrivateUsage]
 
     async def test_execute_js_null_result(self) -> None:
         toolset = _toolset(_FakePage(evaluate_result=None))
@@ -1554,7 +1554,7 @@ class TestResolutionCaching:
     """The lookup is a duplicate of one Chromium already makes, so it is cached briefly."""
 
     async def test_a_repeated_host_is_looked_up_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        looked_up = TestNameResolutionBlocking._pointing_at(monkeypatch, '93.184.216.34')
+        looked_up = TestNameResolutionBlocking._pointing_at(monkeypatch, '93.184.216.34')  # pyright: ignore[reportPrivateUsage]
         toolset = _toolset(_FakePage())
         await toolset.navigate('https://example.com/one')
         await toolset.navigate('https://example.com/two')
@@ -1562,7 +1562,7 @@ class TestResolutionCaching:
 
     async def test_a_full_cache_is_emptied_rather_than_grown(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(toolset_module, '_RESOLUTION_CACHE_MAX', 1)
-        looked_up = TestNameResolutionBlocking._pointing_at(monkeypatch, '93.184.216.34')
+        looked_up = TestNameResolutionBlocking._pointing_at(monkeypatch, '93.184.216.34')  # pyright: ignore[reportPrivateUsage]
         toolset = _toolset(_FakePage())
         await toolset.navigate('https://one.example/')
         await toolset.navigate('https://two.example/')
@@ -1850,15 +1850,15 @@ class TestSnapshot:
 class TestPlaywrightBrowserSession:
     def test_toolset_validates_max_content_tokens(self) -> None:
         session = PlaywrightBrowserSession()
-        with pytest.raises(ValueError, match='^max_content_tokens must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^max_content_tokens must be greater than or equal to 0$'):
             PlaywrightBrowserToolset[None](session=session, max_content_tokens=-1)
         PlaywrightBrowserToolset[None](session=session, max_content_tokens=0)
 
     def test_toolset_validates_timeouts(self) -> None:
         session = PlaywrightBrowserSession()
-        with pytest.raises(ValueError, match='^action_timeout_ms must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^action_timeout_ms must be greater than or equal to 0$'):
             PlaywrightBrowserToolset[None](session=session, action_timeout_ms=-1)
-        with pytest.raises(ValueError, match='^navigation_timeout_ms must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^navigation_timeout_ms must be greater than or equal to 0$'):
             PlaywrightBrowserToolset[None](session=session, navigation_timeout_ms=-1)
         # 0 = no deadline, accepted as a developer-set default
         PlaywrightBrowserToolset[None](session=session, action_timeout_ms=0, navigation_timeout_ms=0)
@@ -1917,14 +1917,14 @@ class TestPlaywrightBrowserSession:
 
 class TestPlaywrightBrowserHooks:
     def test_capability_validates_max_content_tokens(self) -> None:
-        with pytest.raises(ValueError, match='^max_content_tokens must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^max_content_tokens must be greater than or equal to 0$'):
             PlaywrightBrowser[None](max_content_tokens=-1)
         PlaywrightBrowser[None](max_content_tokens=0)
 
     def test_capability_validates_timeouts(self) -> None:
-        with pytest.raises(ValueError, match='^action_timeout_ms must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^action_timeout_ms must be greater than or equal to 0$'):
             PlaywrightBrowser[None](action_timeout_ms=-1)
-        with pytest.raises(ValueError, match='^navigation_timeout_ms must be greater than or equal to 0$'):
+        with pytest.raises(ValueError, match=r'^navigation_timeout_ms must be greater than or equal to 0$'):
             PlaywrightBrowser[None](navigation_timeout_ms=-1)
         PlaywrightBrowser[None](action_timeout_ms=0, navigation_timeout_ms=0)
 
@@ -1973,7 +1973,7 @@ class TestPlaywrightBrowserHooks:
         # The model is told what is missing and can install it, which it cannot do
         # if the tools disappear the moment a launch fails.
         browser = PlaywrightBrowser[None]()
-        browser._session.launch_error = 'boom'
+        browser._session.launch_error = 'boom'  # pyright: ignore[reportPrivateUsage]
         defs = [
             ToolDefinition(
                 name='navigate', parameters_json_schema={'type': 'object'}, kind='function', toolset_id='playwright'
@@ -1996,8 +1996,8 @@ class TestPlaywrightBrowserHooks:
         browser = PlaywrightBrowser[None]()
         first = await browser.for_run(_ctx())
         second = await browser.for_run(_ctx())
-        assert first._session is not second._session
-        assert first._session is not browser._session
+        assert first._session is not second._session  # pyright: ignore[reportPrivateUsage]
+        assert first._session is not browser._session  # pyright: ignore[reportPrivateUsage]
 
     def test_from_spec_round_trips_fields(self) -> None:
         browser = PlaywrightBrowser[None].from_spec(
@@ -2094,14 +2094,14 @@ class TestChromiumAutoInstall:
     ) -> None:
         process = _FakeInstallerProcess(returncode=returncode, output=output)
         _install_fake_installer_process(monkeypatch, process)
-        assert await toolset_module._auto_install_chromium() == expected
+        assert await toolset_module._auto_install_chromium() == expected  # pyright: ignore[reportPrivateUsage]
         assert process.terminated is False
         assert process.waited is False
 
     async def test_cancellation_terminates_and_waits_for_installer(self, monkeypatch: pytest.MonkeyPatch) -> None:
         process = _FakeInstallerProcess(returncode=-15, output=b'', hang=True)
         _install_fake_installer_process(monkeypatch, process)
-        task = asyncio.create_task(toolset_module._auto_install_chromium())
+        task = asyncio.create_task(toolset_module._auto_install_chromium())  # pyright: ignore[reportPrivateUsage]
         await process.communicate_started.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -2119,7 +2119,7 @@ class TestPlaywrightBrowserLifecycle:
         cm = _install_fake_driver(monkeypatch, page)
         agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser()])
         await agent.run('use the browser')
-        chromium = cm._driver.chromium
+        chromium = cm._driver.chromium  # pyright: ignore[reportPrivateUsage]
         assert chromium.launched == [True]
         assert page.popup_events == ['popup']
         assert page.context.routes == ['**/*']  # the default private-address block installs the route guard
@@ -2134,7 +2134,7 @@ class TestPlaywrightBrowserLifecycle:
         # first one is closed on the way into the retry or it outlives the session.
         page = _FakePage()
         cm = _install_fake_driver(monkeypatch, page)
-        chromium = cm._driver.chromium
+        chromium = cm._driver.chromium  # pyright: ignore[reportPrivateUsage]
         working_context = _FakePlaywrightBrowser.new_context
 
         async def failing_context(
@@ -2166,7 +2166,7 @@ class TestPlaywrightBrowserLifecycle:
             capabilities=[PlaywrightBrowser(storage_state=_STORAGE_STATE)],
         )
         await agent.run('screenshot the page')
-        browser = cm._driver.chromium.browser
+        browser = cm._driver.chromium.browser  # pyright: ignore[reportPrivateUsage]
         assert browser is not None
         assert [c.storage_state for c in browser.contexts] == [_STORAGE_STATE]
 
@@ -2178,7 +2178,7 @@ class TestPlaywrightBrowserLifecycle:
             capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222')],
         )
         await agent.run('screenshot the page')
-        chromium = cm._driver.chromium
+        chromium = cm._driver.chromium  # pyright: ignore[reportPrivateUsage]
         assert chromium.connected == ['http://localhost:9222']
         assert chromium.launched == []
         assert chromium.browser is not None and chromium.browser.closed is True
@@ -2193,7 +2193,7 @@ class TestPlaywrightBrowserLifecycle:
             capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', auto_install_chromium=True)],
         )
         await agent.run('screenshot the page')
-        chromium = cm._driver.chromium
+        chromium = cm._driver.chromium  # pyright: ignore[reportPrivateUsage]
         assert chromium.connected == ['http://localhost:9222']
         assert chromium.launched == []  # no local binary consulted, so no install hint and no download
 
@@ -2207,7 +2207,7 @@ class TestPlaywrightBrowserLifecycle:
             capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', storage_state=_STORAGE_STATE)],
         )
         await agent.run('screenshot the page')
-        browser = cm._driver.chromium.browser
+        browser = cm._driver.chromium.browser  # pyright: ignore[reportPrivateUsage]
         assert browser is not None
         assert [c.storage_state for c in browser.contexts] == [_STORAGE_STATE]
         assert [c.service_workers for c in browser.contexts] == ['block']
@@ -2218,7 +2218,7 @@ class TestPlaywrightBrowserLifecycle:
         cm = _install_fake_driver(monkeypatch, page)
         agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser()])
         await agent.run('screenshot the page')
-        browser = cm._driver.chromium.browser
+        browser = cm._driver.chromium.browser  # pyright: ignore[reportPrivateUsage]
         assert browser is not None
         assert [c.storage_state for c in browser.contexts] == [None]
 
@@ -2227,7 +2227,7 @@ class TestPlaywrightBrowserLifecycle:
         cm = _install_fake_driver(monkeypatch, page)
         agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser()])
         await agent.run('screenshot the page')
-        browser = cm._driver.chromium.browser
+        browser = cm._driver.chromium.browser  # pyright: ignore[reportPrivateUsage]
         assert browser is not None
         # Service-worker traffic bypasses context routes, so workers are blocked
         # to keep the route guard authoritative for all requests.
@@ -2238,7 +2238,7 @@ class TestPlaywrightBrowserLifecycle:
         cm = _install_fake_driver(monkeypatch, page)
         agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser()])
         await agent.run('screenshot the page')
-        browser = cm._driver.chromium.browser
+        browser = cm._driver.chromium.browser  # pyright: ignore[reportPrivateUsage]
         assert browser is not None
         # No tool exposes downloads, so accepting them would only let a page write
         # to the host's temporary storage.
@@ -2292,7 +2292,7 @@ class TestPlaywrightBrowserLifecycle:
         run.cancel()
         with pytest.raises(asyncio.CancelledError):
             await run
-        chromium = cm._driver.chromium
+        chromium = cm._driver.chromium  # pyright: ignore[reportPrivateUsage]
         assert chromium.browser is not None and chromium.browser.closed is True
         assert cm.exited is True
 
@@ -2415,7 +2415,7 @@ class TestPlaywrightBrowserLifecycle:
     async def test_popup_is_kept_as_a_tab_without_taking_over_the_page(self, monkeypatch: pytest.MonkeyPatch) -> None:
         popup = _FakePage(url='https://example.com/popup')
         page = _FakePage()
-        page._popup_on_screenshot = popup
+        page._popup_on_screenshot = popup  # pyright: ignore[reportPrivateUsage]
         _install_fake_driver(monkeypatch, page)
         session = PlaywrightBrowserSession()
         async with session:
@@ -2434,21 +2434,21 @@ class TestPlaywrightBrowserLifecycle:
         session = PlaywrightBrowserSession()
         async with session:
             await session.ensure_page()
-            session.pages.extend(_FakePage() for _ in range(toolset_module._MAX_TABS - 1))
+            session.pages.extend(_FakePage() for _ in range(toolset_module._MAX_TABS - 1))  # pyright: ignore[reportPrivateUsage]
             page.emit('popup', refused)
-            await asyncio.gather(*session._event_tasks, return_exceptions=True)
+            await asyncio.gather(*session._event_tasks, return_exceptions=True)  # pyright: ignore[reportPrivateUsage]
             assert refused.closed is True
-            assert len(session.pages) == toolset_module._MAX_TABS
+            assert len(session.pages) == toolset_module._MAX_TABS  # pyright: ignore[reportPrivateUsage]
             assert [event.kind for event in session.events] == ['popup_closed']
 
     async def test_cancelled_event_task_is_discarded(self) -> None:
         browser = PlaywrightBrowser[None]()
         task = asyncio.create_task(asyncio.sleep(1))
-        browser._session._event_tasks.add(task)
+        browser._session._event_tasks.add(task)  # pyright: ignore[reportPrivateUsage]
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        browser._session._event_task_done(task)
-        assert browser._session._event_tasks == set()
+        browser._session._event_task_done(task)  # pyright: ignore[reportPrivateUsage]
+        assert browser._session._event_tasks == set()  # pyright: ignore[reportPrivateUsage]
 
     async def test_run_without_browser_tool_skips_launch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()
@@ -2466,7 +2466,7 @@ class TestPlaywrightBrowserLifecycle:
         agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser()])
         with pytest.warns(toolset_module.BrowserUnavailableWarning, match='playwright install chromium'):
             result = await agent.run('screenshot the page')
-        assert cm._driver.chromium.launched == []  # never attempted launch on a missing binary
+        assert cm._driver.chromium.launched == []  # pyright: ignore[reportPrivateUsage] # never attempted launch on a missing binary
         assert cm.exited is True  # Playwright driver still cleaned up
         assert 'playwright install chromium' in _tool_results(result)
 
@@ -2601,7 +2601,7 @@ class TestPlaywrightBrowserLifecycle:
             pass
 
         async def _handler() -> AgentRunResult[None]:
-            await browser._session.ensure_page()
+            await browser._session.ensure_page()  # pyright: ignore[reportPrivateUsage]
             raise _RunFailure('run failed')
 
         # The run's own exception wins; the close error raised during teardown is dropped.
@@ -2621,11 +2621,11 @@ class TestPlaywrightBrowserLifecycle:
 
         monkeypatch.setattr(PlaywrightBrowser, 'for_run', _same_instance)
         pending = asyncio.ensure_future(asyncio.sleep(3600))
-        browser._session._event_tasks.add(pending)
+        browser._session._event_tasks.add(pending)  # pyright: ignore[reportPrivateUsage]
         agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[browser])
         await agent.run('screenshot the page')
         assert pending.cancelled()
-        assert browser._session._event_tasks == set()
+        assert browser._session._event_tasks == set()  # pyright: ignore[reportPrivateUsage]
 
 
 # --- Package surface --------------------------------------------------------
@@ -2804,8 +2804,8 @@ class TestBrowserEvents:
             _FakeConsoleMessage('warning', 'deprecated call'),
             _FakeConsoleMessage('error', 'boom'),
         ):
-            session._on_console(message)
-        session._on_page_error(RuntimeError('uncaught TypeError'))
+            session._on_console(message)  # pyright: ignore[reportPrivateUsage]
+        session._on_page_error(RuntimeError('uncaught TypeError'))  # pyright: ignore[reportPrivateUsage]
         assert await toolset.console_messages() == (
             '[info] console log: starting\n'
             '[warning] console warning: deprecated call\n'
@@ -2820,9 +2820,9 @@ class TestBrowserEvents:
         page = _FakePage()
         session = self._session(page)
         toolset = _toolset(page, session=session)
-        session._on_response(_FakeResponse(url='https://example.com/api/sessions', status=200))
-        session._on_response(_FakeResponse(url='https://example.com/missing', status=404))
-        session._on_request_failed(
+        session._on_response(_FakeResponse(url='https://example.com/api/sessions', status=200))  # pyright: ignore[reportPrivateUsage]
+        session._on_response(_FakeResponse(url='https://example.com/missing', status=404))  # pyright: ignore[reportPrivateUsage]
+        session._on_request_failed(  # pyright: ignore[reportPrivateUsage]
             _FakeNetworkRequest(url='https://cdn.example.com/app.js', failure='net::ERR_CONNECTION_REFUSED')
         )
         assert await toolset.network_requests() == (
@@ -2837,7 +2837,7 @@ class TestBrowserEvents:
     async def test_request_failed_without_a_reason_still_records(self) -> None:
         page = _FakePage()
         session = self._session(page)
-        session._on_request_failed(_FakeNetworkRequest(url='https://example.com/x', failure=None))
+        session._on_request_failed(_FakeNetworkRequest(url='https://example.com/x', failure=None))  # pyright: ignore[reportPrivateUsage]
         assert await _toolset(page, session=session).network_requests() == (
             '[error] request_failed GET https://example.com/x failed'
         )
@@ -2854,7 +2854,7 @@ class TestBrowserEvents:
             )
             # Chromium reports the abort as a failed request too; the guard's entry
             # already names the reason, so the bare failure is dropped.
-            session._on_request_failed(_FakeNetworkRequest(url='https://evil.com/', failure='net::ERR_FAILED'))
+            session._on_request_failed(_FakeNetworkRequest(url='https://evil.com/', failure='net::ERR_FAILED'))  # pyright: ignore[reportPrivateUsage]
         assert [event.describe() for event in session.events] == [
             '[warning] request_blocked https://evil.com/ domain not in allowed_domains'
         ]
@@ -2885,7 +2885,7 @@ class TestBrowserEvents:
 
         class _EmittingPage(_FakePage):
             async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
-                session._on_console(_FakeConsoleMessage('error', 'boom'))
+                session._on_console(_FakeConsoleMessage('error', 'boom'))  # pyright: ignore[reportPrivateUsage]
                 return await super().inner_text(selector, timeout=timeout)
 
         session.page = _EmittingPage()
@@ -2911,7 +2911,7 @@ class TestBrowserEvents:
 
         class _RequestingPage(_FakePage):
             async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
-                session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))
+                session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))  # pyright: ignore[reportPrivateUsage]
                 return await super().inner_text(selector, timeout=timeout)
 
         session.page = _RequestingPage()
@@ -2942,15 +2942,15 @@ class TestBrowserEvents:
     async def test_events_outside_an_operation_are_still_logged(self) -> None:
         page = _FakePage()
         session = self._session(page)
-        session._on_console(_FakeConsoleMessage('log', 'between tool calls'))
+        session._on_console(_FakeConsoleMessage('log', 'between tool calls'))  # pyright: ignore[reportPrivateUsage]
         assert [event.kind for event in session.events] == ['console']
 
     async def test_the_log_is_bounded(self) -> None:
         page = _FakePage()
         session = self._session(page)
-        for index in range(toolset_module._EVENT_LOG_LIMIT + 10):
-            session._on_console(_FakeConsoleMessage('log', str(index)))
-        assert len(session.events) == toolset_module._EVENT_LOG_LIMIT
+        for index in range(toolset_module._EVENT_LOG_LIMIT + 10):  # pyright: ignore[reportPrivateUsage]
+            session._on_console(_FakeConsoleMessage('log', str(index)))  # pyright: ignore[reportPrivateUsage]
+        assert len(session.events) == toolset_module._EVENT_LOG_LIMIT  # pyright: ignore[reportPrivateUsage]
 
     async def test_a_run_reports_browser_spans_to_the_agents_instrumentation(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3020,10 +3020,10 @@ class TestDeadlinesCoverEveryAwait:
         toolset = _toolset(page)
         # The sweep is capped by the caller's deadline when that is the shorter of
         # the two, and by the sweep budget when it is not.
-        assert toolset._frame_budget(50) == 50
-        assert toolset._frame_budget(30_000) == toolset_module._FRAME_TEXT_BUDGET_MS
-        assert toolset._frame_budget(None) == toolset_module._FRAME_TEXT_BUDGET_MS
-        assert toolset._frame_budget(0) == toolset_module._FRAME_TEXT_BUDGET_MS
+        assert toolset._frame_budget(50) == 50  # pyright: ignore[reportPrivateUsage]
+        assert toolset._frame_budget(30_000) == toolset_module._FRAME_TEXT_BUDGET_MS  # pyright: ignore[reportPrivateUsage]
+        assert toolset._frame_budget(None) == toolset_module._FRAME_TEXT_BUDGET_MS  # pyright: ignore[reportPrivateUsage]
+        assert toolset._frame_budget(0) == toolset_module._FRAME_TEXT_BUDGET_MS  # pyright: ignore[reportPrivateUsage]
         assert await toolset.get_text(timeout_ms=50) == 'Hello body'
 
     async def test_coordinate_scroll_runs_under_the_deadline(self) -> None:
@@ -3038,7 +3038,7 @@ class TestCredentialsStayOutOfTelemetry:
         page = _FakePage()
         session = PlaywrightBrowserSession()
         session.page = page
-        session._on_response(_FakeResponse(url='https://user:secret@example.com/api?q=1'))
+        session._on_response(_FakeResponse(url='https://user:secret@example.com/api?q=1'))  # pyright: ignore[reportPrivateUsage]
         assert await _toolset(page, session=session).network_requests() == (
             '[info] response GET 200 https://example.com/api?q=1'
         )
@@ -3058,7 +3058,7 @@ class TestCredentialsStayOutOfTelemetry:
         page = _FakePage()
         session = PlaywrightBrowserSession()
         session.page = page
-        session._on_response(_FakeResponse(url='https://example.com/dl?id=7&token=secret&sig=abc'))
+        session._on_response(_FakeResponse(url='https://example.com/dl?id=7&token=secret&sig=abc'))  # pyright: ignore[reportPrivateUsage]
         # The endpoint and the parameter names survive -- they are what makes a
         # recorded request findable -- and only the credential values go.
         assert await _toolset(page, session=session).network_requests() == (
@@ -3067,22 +3067,22 @@ class TestCredentialsStayOutOfTelemetry:
 
     def test_credentials_go_from_the_fragment_too(self) -> None:
         # An OAuth implicit grant returns its token in the fragment.
-        assert toolset_module._without_credentials('https://app.example.com/cb#access_token=abc&state=x') == (
+        assert toolset_module._without_credentials('https://app.example.com/cb#access_token=abc&state=x') == (  # pyright: ignore[reportPrivateUsage]
             'https://app.example.com/cb#access_token=REDACTED&state=x'
         )
 
     def test_the_prefixed_oauth_parameters_are_redacted_too(self) -> None:
         # The pattern anchors a name at `?`, `&` or `#`, so the bare `secret` and
         # `token` entries never match these spellings.
-        assert toolset_module._without_credentials('https://id.example.com/t?client_secret=a&oauth_token=b&x=1') == (
+        assert toolset_module._without_credentials('https://id.example.com/t?client_secret=a&oauth_token=b&x=1') == (  # pyright: ignore[reportPrivateUsage]
             'https://id.example.com/t?client_secret=REDACTED&oauth_token=REDACTED&x=1'
         )
 
     def test_a_url_urlsplit_rejects_is_still_cleaned(self) -> None:
         # Chromium accepts hosts the stdlib parser raises on, so the strip cannot
         # depend on parsing succeeding.
-        assert toolset_module._without_credentials('http://user:pw@[::1/x') == 'http://[::1/x'
-        assert toolset_module._without_credentials('https://example.com/a@b') == 'https://example.com/a@b'
+        assert toolset_module._without_credentials('http://user:pw@[::1/x') == 'http://[::1/x'  # pyright: ignore[reportPrivateUsage]
+        assert toolset_module._without_credentials('https://example.com/a@b') == 'https://example.com/a@b'  # pyright: ignore[reportPrivateUsage]
 
 
 class TestErrorMessagesLoseTheirCredentials:
@@ -3175,7 +3175,7 @@ class TestMessageRedaction:
         page = _FakePage()
         session = PlaywrightBrowserSession()
         session.page = page
-        session._on_console(_FakeConsoleMessage('error', 'failed: https://api.example.com/v1?access_token=secret'))
+        session._on_console(_FakeConsoleMessage('error', 'failed: https://api.example.com/v1?access_token=secret'))  # pyright: ignore[reportPrivateUsage]
         assert await _toolset(page, session=session).console_messages() == (
             '[error] console error: failed: https://api.example.com/v1?access_token=REDACTED'
         )
@@ -3601,9 +3601,9 @@ class TestEventLogBounds:
     async def test_a_long_console_message_is_clipped_when_recorded(self) -> None:
         page = _FakePage()
         session = self._session(page)
-        session._on_console(_FakeConsoleMessage('log', 'x' * 5000))
+        session._on_console(_FakeConsoleMessage('log', 'x' * 5000))  # pyright: ignore[reportPrivateUsage]
         (event,) = session.events
-        assert len(event.message) == toolset_module._MAX_EVENT_CHARS + len('...')
+        assert len(event.message) == toolset_module._MAX_EVENT_CHARS + len('...')  # pyright: ignore[reportPrivateUsage]
 
     async def test_the_oldest_requests_are_dropped_not_the_newest(self) -> None:
         page = _FakePage()
@@ -3636,8 +3636,8 @@ class TestEventLogBounds:
     async def test_errors_only_drops_the_successful_requests(self) -> None:
         page = _FakePage()
         session = self._session(page)
-        session._on_response(_FakeResponse(url='https://example.com/ok', status=200))
-        session._on_response(_FakeResponse(url='https://example.com/gone', status=404))
+        session._on_response(_FakeResponse(url='https://example.com/ok', status=200))  # pyright: ignore[reportPrivateUsage]
+        session._on_response(_FakeResponse(url='https://example.com/gone', status=404))  # pyright: ignore[reportPrivateUsage]
         result = await _toolset(page, session=session).network_requests(errors_only=True)
         assert 'https://example.com/gone' in result
         assert 'https://example.com/ok' not in result
@@ -3777,10 +3777,10 @@ class TestTabs:
         session = PlaywrightBrowserSession()
         async with session:
             await session.ensure_page()
-            session.pages.extend(_FakePage() for _ in range(toolset_module._MAX_TABS - 1))
+            session.pages.extend(_FakePage() for _ in range(toolset_module._MAX_TABS - 1))  # pyright: ignore[reportPrivateUsage]
             result = await _toolset(page, session=session).tabs('new')
-            assert result == f'Error: the tab limit of {toolset_module._MAX_TABS} is reached. Close one first.'
-            assert len(session.pages) == toolset_module._MAX_TABS
+            assert result == f'Error: the tab limit of {toolset_module._MAX_TABS} is reached. Close one first.'  # pyright: ignore[reportPrivateUsage]
+            assert len(session.pages) == toolset_module._MAX_TABS  # pyright: ignore[reportPrivateUsage]
 
     async def test_an_active_tab_with_nothing_behind_it_is_reported(self) -> None:
         page = _FakePage()
@@ -3842,7 +3842,7 @@ class TestDialogs:
 
     async def _open(self, session: PlaywrightBrowserSession, page: _FakePage, dialog: _FakeDialog) -> None:
         page.emit('dialog', dialog)
-        await asyncio.gather(*session._event_tasks, return_exceptions=True)
+        await asyncio.gather(*session._event_tasks, return_exceptions=True)  # pyright: ignore[reportPrivateUsage]
 
     async def test_an_unarmed_dialog_is_dismissed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()
@@ -3896,7 +3896,7 @@ class TestDialogs:
         page = _FakePage()
         async with self._launched(monkeypatch, page) as session:
             await self._open(session, page, _FakeUnanswerableDialog())
-            assert session._event_tasks == set()
+            assert session._event_tasks == set()  # pyright: ignore[reportPrivateUsage]
 
 
 class TestReviewFollowUps:
@@ -3906,14 +3906,14 @@ class TestReviewFollowUps:
         page = _FakePage()
         cm = _install_fake_driver(monkeypatch, page)
         await Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser()]).run('shot')
-        assert cm._driver.chromium.sandboxed == [True]
+        assert cm._driver.chromium.sandboxed == [True]  # pyright: ignore[reportPrivateUsage]
 
     async def test_the_renderer_sandbox_can_be_turned_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()
         cm = _install_fake_driver(monkeypatch, page)
         capability = PlaywrightBrowser[object](chromium_sandbox=False)
         await Agent(TestModel(call_tools=['screenshot']), capabilities=[capability]).run('shot')
-        assert cm._driver.chromium.sandboxed == [False]
+        assert cm._driver.chromium.sandboxed == [False]  # pyright: ignore[reportPrivateUsage]
 
     async def test_a_session_entered_again_retries_a_failed_launch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()
@@ -3935,7 +3935,7 @@ class TestReviewFollowUps:
         page = _FakePage()
         session = PlaywrightBrowserSession()
         session.page = page
-        session._on_console(_FakeConsoleMessage('error', 'failed https://user:secret@example.com/api'))
+        session._on_console(_FakeConsoleMessage('error', 'failed https://user:secret@example.com/api'))  # pyright: ignore[reportPrivateUsage]
         assert await _toolset(page, session=session).console_messages() == (
             '[error] console error: failed https://example.com/api'
         )
@@ -3944,7 +3944,7 @@ class TestReviewFollowUps:
         page = _FakePage()
         session = PlaywrightBrowserSession()
         session.page = page
-        session._on_console(_FakeConsoleMessage('log', 'see http://example.com/ then mail me@example.com'))
+        session._on_console(_FakeConsoleMessage('log', 'see http://example.com/ then mail me@example.com'))  # pyright: ignore[reportPrivateUsage]
         assert await _toolset(page, session=session).console_messages() == (
             '[info] console log: see http://example.com/ then mail me@example.com'
         )
@@ -3960,7 +3960,7 @@ class TestReviewFollowUps:
             with pytest.warns(BrowserUnavailableWarning):
                 assert 'playwright install chromium' in await toolset.get_text()
             # What an agent with a shell does between the two calls.
-            chromium._executable_path = sys.executable
+            chromium._executable_path = sys.executable  # pyright: ignore[reportPrivateUsage]
             assert await toolset.get_text() == 'Hello body'
 
     async def test_retrying_a_failed_launch_reuses_the_one_driver(self, monkeypatch: pytest.MonkeyPatch) -> None:

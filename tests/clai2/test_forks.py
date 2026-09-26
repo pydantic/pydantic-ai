@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Generic, TypeVar
 
+import anyio
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
@@ -353,8 +354,10 @@ async def test_live_rows_follow_each_fork(tmp_path: Path) -> None:
         assert first.endswith('starting')
         assert second.startswith(' FORK #2  agent default  \u2713 00:0')
         assert second.endswith('done, prints after this turn')
-    await asyncio.sleep(0)
-    assert finished.announced
+    # Announcing takes the terminal lock, and acquiring it is a checkpoint.
+    with anyio.fail_after(5):
+        while not finished.announced:
+            await asyncio.sleep(0)
     assert [Text.from_ansi(row).plain[:9] for row in forks.rows('*')] == [' FORK #1 ']
     for activity in ('thinking', 'tool: grep', 'running: grep', 'responding', 'working'):
         running.progress.activity = activity

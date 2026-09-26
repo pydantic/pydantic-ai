@@ -10,7 +10,6 @@ from typing import overload
 
 from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.skills._loader import SkillDefinition, load_skill_libraries
 
 _MAX_DESCRIPTION_LENGTH = 1024

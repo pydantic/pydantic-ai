@@ -1,10 +1,15 @@
 """The built-in `ask_user` plugin: inline questions that keep the transcript visible."""
 
-import asyncio
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from functools import partial
+
+import anyio
+from rich.console import Console, RenderableType
+from rich.text import Text
+from termflow.tui.layout import truncate
+from termflow.tui.terminal import raw_mode
 
 from pydantic_ai_harness.ask_user import (
     AskUser,
@@ -14,10 +19,6 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
     Question,
 )
-from rich.console import Console, RenderableType
-from rich.text import Text
-from termflow.tui.layout import truncate  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.terminal import raw_mode  # pyright: ignore[reportMissingTypeStubs]
 
 from . import theme
 from .menu_worker import run_worker
@@ -160,7 +161,7 @@ class TerminalAnswerer:
         self._full_screen = full_screen
         self._console = console if console is not None else Console()
         self._runner = runner
-        self._terminal = asyncio.Lock()
+        self._terminal = anyio.Lock()
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""

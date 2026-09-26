@@ -19,7 +19,7 @@ from acp import RequestError, schema
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.experimental.acp import InMemorySessionStore, PydanticAIACPAgent
-from tests.harness.experimental.acp._wire import WireClient, wire_agent  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.experimental.acp._wire import WireClient, wire_agent
 
 pytestmark = pytest.mark.anyio
 

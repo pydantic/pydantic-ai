@@ -3,12 +3,12 @@
 These pin two failure classes the suite's behavioral tests do not reach:
 
 1. A run cancelled through an anyio scope leaked speculative launches. The scope's
-   level-triggered re-cancellation interrupted ``close()`` at its first cleanup await,
+   level-triggered re-cancellation interrupted `close()` at its first cleanup await,
    abandoning every later watch; the abandoned launches kept running past the run's end.
    A failed step keeps its launches for the retry, which is what lets two watches hold
    unclaimed launches at the same time.
-2. Raw surrogate code points in streamed ``run_code`` arguments made pydantic-core's JSON
-   decoder raise ``TypeError`` inside the speculative watcher. The watcher is a robustness
+2. Raw surrogate code points in streamed `run_code` arguments made pydantic-core's JSON
+   decoder raise `TypeError` inside the speculative watcher. The watcher is a robustness
    feature: an undecodable prefix must mean no speculation, never a crashed run.
 """
 
@@ -57,7 +57,7 @@ class TestRunCancellation:
 
         Step one fails into a retry before dispatching anything, so its two branch launches
         stay queued. Step two (the retry) streams two more. When the run is cancelled,
-        cleanup must cancel all four; the pre-fix ``close()`` aborted after the first
+        cleanup must cancel all four; the pre-fix `close()` aborted after the first
         watch's wait and leaked the rest, so this test used to end with tools still
         sleeping. The scope's cancellation is swallowed by the scope itself, so the run
         simply ends without a result.
@@ -126,7 +126,7 @@ class TestMalformedStreamArgs:
         """Raw surrogate code points in streamed args degrade to no speculation, not a crash.
 
         A lone high surrogate in the JSON text is legal Python and legal UTF-16-in-progress,
-        but pydantic-core's decoder rejects it with ``TypeError`` instead of a parse error.
+        but pydantic-core's decoder rejects it with `TypeError` instead of a parse error.
         The watcher must treat that like any other undecodable prefix.
         """
 
@@ -153,8 +153,8 @@ class TestMalformedStreamArgs:
                 ],
             )
             assert run_capability.speculation_stats.launched == 0
-            assert ctx._event_stream_buffer is not None
-            launches = [e for e in ctx._event_stream_buffer if isinstance(e, SpeculativeCallLaunchedEvent)]
+            assert ctx._event_stream_buffer is not None  # pyright: ignore[reportPrivateUsage]
+            launches = [e for e in ctx._event_stream_buffer if isinstance(e, SpeculativeCallLaunchedEvent)]  # pyright: ignore[reportPrivateUsage]
             assert not launches
 
 

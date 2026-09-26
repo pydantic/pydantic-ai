@@ -7,10 +7,11 @@ import httpx2
 from anyio import to_thread
 from openai import APIError
 from pydantic import BaseModel, Field, ValidationError
+from rich.console import Console
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.github_copilot import GitHubCopilotModel
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials, GitHubCopilotOAuthFlow, GitHubCopilotProvider
-from rich.console import Console
 
 from .credential_store import credentials_path, load_codex_credentials, save_codex_credentials
 

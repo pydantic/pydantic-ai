@@ -360,7 +360,7 @@ class TestReadFile:
     async def test_read_limit_formats_megabytes(self, fake_modal: FakeModal) -> None:
         async with _toolset(max_read_bytes=1000) as ts:
             fake_modal.sandboxes[0].stat_sizes['/big.log'] = 3 * 1024 * 1024
-            with pytest.raises(ModelRetry, match='File is 3.0MB'):
+            with pytest.raises(ModelRetry, match=r'File is 3\.0MB'):
                 await ts.read_file('/big.log')
 
     async def test_line_cap_is_configurable(self, fake_modal: FakeModal) -> None:

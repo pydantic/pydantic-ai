@@ -140,8 +140,8 @@ async def _record(
         return recorded
 
     run_ctx = ctx if ctx is not None else _run_ctx()
-    run_ctx._event_stream_buffer = []
-    run_ctx._capability = guard
+    run_ctx._event_stream_buffer = []  # pyright: ignore[reportPrivateUsage]
+    run_ctx._capability = guard  # pyright: ignore[reportPrivateUsage]
     run_ctx.capabilities = {'spend_limits': guard}
     return await guard.wrap_model_request(
         run_ctx,
@@ -402,7 +402,7 @@ class TestScope:
     async def test_a_scope_that_returns_a_non_string_is_refused(self):
         """A tenant id is often an int or a UUID, and the annotation alone does not stop one."""
         guard = SpendLimits(
-            budgets=[Budget(usd=Decimal('1'), scope=lambda ctx: ctx.deps)],  # pyright: ignore[reportArgumentType, reportUnknownLambdaType, reportUnknownArgumentType, reportUnknownMemberType]
+            budgets=[Budget(usd=Decimal('1'), scope=lambda ctx: ctx.deps)],  # pyright: ignore[reportArgumentType]
             price=lambda r: Decimal('0.4'),
         )
 

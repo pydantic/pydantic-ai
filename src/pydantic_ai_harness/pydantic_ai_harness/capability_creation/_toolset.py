@@ -5,7 +5,6 @@ from __future__ import annotations
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-
 from pydantic_ai_harness.capability_creation._store import CapabilityStore
 
 

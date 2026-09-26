@@ -5,7 +5,7 @@ from pathlib import Path
 import keyring
 import pytest
 from keyring.errors import NoKeyringError
-from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import api_keys, openrouter, set_menu, vllm

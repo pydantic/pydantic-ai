@@ -7,14 +7,15 @@ import os
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
-from typing import Concatenate, Literal, ParamSpec, Protocol, TypedDict, TypeVar
+from typing import Concatenate, Literal, ParamSpec, Protocol, TypeVar
 
 import httpx
+from typing_extensions import TypedDict
+
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-
 from pydantic_ai_harness._output import truncate_head
 
 try:

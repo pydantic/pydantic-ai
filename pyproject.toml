@@ -186,6 +186,9 @@ override-dependencies = [
     "anthropic>=1.8.0",
     "google-auth>=2.56.0",
     "google-genai>=2.25.0",
+    # browser-use pins `groq==1.0.0`, but `pydantic_ai.models.groq` is written against the 0.x SDK
+    # (1.0 replaced the `NotGiven` sentinel with `Omit`); keep the workspace on the 0.x line.
+    "groq>=0.25.0,<1",
     "openai>=3.19.0",
 ]
 build-constraint-dependencies = [

@@ -53,12 +53,14 @@ class SpendCompositionWarning(UserWarning):
     ordering is the durable property and the one you control. List `SpendLimits` last
     among the innermost capabilities to remove it.
 
-    Silence it with::
+    Silence it with:
 
-        import warnings
-        from pydantic_ai_harness.spend import SpendCompositionWarning
+    ```python
+    import warnings
+    from pydantic_ai_harness.spend import SpendCompositionWarning
 
-        warnings.filterwarnings('ignore', category=SpendCompositionWarning)
+    warnings.filterwarnings('ignore', category=SpendCompositionWarning)
+    ```
     """
 
 

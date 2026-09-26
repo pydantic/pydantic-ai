@@ -8,8 +8,8 @@ from tempfile import SpooledTemporaryFile
 from threading import RLock
 from typing import IO
 
-from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.layout import truncate  # pyright: ignore[reportMissingTypeStubs]
+from termflow.ansi.utils import visible_length
+from termflow.tui.layout import truncate
 
 from .prompt_transcript import TranscriptBuffer
 

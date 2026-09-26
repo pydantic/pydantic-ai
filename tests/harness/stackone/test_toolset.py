@@ -127,7 +127,7 @@ class TestStackOneToolset:
     def test_custom_url_conflicting_tool_mode_is_rejected(self, tool_mode: ToolMode, client: str):
         with pytest.raises(
             UserError,
-            match='conflicts with the configured `tool_mode`.*rewriting would invalidate signed URLs',
+            match=r'conflicts with the configured `tool_mode`.*rewriting would invalidate signed URLs',
         ):
             StackOneToolset(account_id='1', api_key='key', tool_mode=tool_mode, client=client)
 

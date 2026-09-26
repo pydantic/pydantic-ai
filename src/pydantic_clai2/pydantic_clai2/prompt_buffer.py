@@ -3,7 +3,7 @@
 from contextlib import suppress
 from dataclasses import dataclass, field
 
-from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
+from termflow.ansi.utils import visible_length
 
 
 @dataclass(kw_only=True)

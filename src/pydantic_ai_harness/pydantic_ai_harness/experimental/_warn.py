@@ -9,12 +9,14 @@ class HarnessExperimentalWarning(UserWarning):
     """Signals that a pydantic-ai-harness feature is experimental.
 
     Experimental features may change or be removed in any release, without a deprecation
-    period.  Silence every experimental-harness warning at once with::
+    period.  Silence every experimental-harness warning at once with:
 
-        import warnings
-        from pydantic_ai_harness.experimental import HarnessExperimentalWarning
+    ```python
+    import warnings
+    from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 
-        warnings.filterwarnings('ignore', category=HarnessExperimentalWarning)
+    warnings.filterwarnings('ignore', category=HarnessExperimentalWarning)
+    ```
     """
 
 

@@ -1,8 +1,9 @@
 """Who has to step aside when a plugin takes the whole terminal mid-run."""
 
-import asyncio
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
+
+import anyio
 
 from .plugins import FullScreen, bare_screen
 
@@ -21,7 +22,7 @@ class Screen:
     def __init__(self) -> None:
         """Start without a stream or editor to suspend."""
         self._take: FullScreen = bare_screen
-        self._owner = asyncio.Lock()
+        self._owner = anyio.Lock()
         self.editor: FullScreen | None = None
 
     @contextmanager

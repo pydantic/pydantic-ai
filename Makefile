@@ -92,15 +92,15 @@ testcov: ## Run tests with coverage and generate an HTML report
 
 .PHONY: integration-localstack
 integration-localstack: ## Run the harness LocalStack tests (needs Docker and LOCALSTACK_AUTH_TOKEN)
-	uv run --package pydantic-ai-harness --all-extras pytest src/pydantic_ai_harness/integration_tests/localstack
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/localstack
 
 .PHONY: integration-mongodb
 integration-mongodb: ## Run the harness MongoDB tests (`docker run -d -p 27017:27017 mongo:8`, or set MONGODB_TEST_URL)
-	uv run --package pydantic-ai-harness --extra mongodb pytest src/pydantic_ai_harness/integration_tests/mongodb
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/mongodb
 
 .PHONY: integration-redis
 integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
-	uv run --package pydantic-ai-harness pytest src/pydantic_ai_harness/integration_tests/redis
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples
