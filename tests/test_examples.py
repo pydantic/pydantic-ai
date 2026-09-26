@@ -697,6 +697,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     # docs/workspace.md
     'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
     'Now add a test for it.': 'Added test_fizzbuzz.py.',
+    'Ask the reviewer to check fizzbuzz.py.': ToolCallPart(
+        tool_name='ask_reviewer', args={'request': 'Check fizzbuzz.py for bugs.'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'Check fizzbuzz.py for bugs.': ToolCallPart(
+        tool_name='read_file', args={'path': 'fizzbuzz.py'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     # docs/models/decision.md
     'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
     'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
@@ -1516,6 +1522,11 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
             return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'read_file' and 'fizz' in str(m.content):
+        # docs/workspace.md: the reviewer read the file the coding agent wrote in the shared workspace
+        return ModelResponse(parts=[TextPart('fizzbuzz.py is correct.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'ask_reviewer':
+        return ModelResponse(parts=[TextPart(f'The reviewer says {m.content}')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'execute':
         prompts = [
             part.content

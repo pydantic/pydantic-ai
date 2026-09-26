@@ -1,10 +1,10 @@
 # Workspaces
 
-A workspace is where an agent does its work: an environment in which it can run commands and read
-and write files. Tools, and hooks that receive a [`RunContext`][pydantic_ai.tools.RunContext], use it
-through [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace].
+A workspace is a computer your agent can use: it runs commands and reads and writes files there.
+It can be a directory on your machine or a sandbox in the cloud, and your tools don't need to know
+which, because they all use it through [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace].
 
-Here is an agent that can run commands in the current directory:
+## Give an agent a computer
 
 ```python {title="workspace_agent.py"}
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -31,31 +31,138 @@ async def main() -> None:
     await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
 ```
 
-- `LocalWorkspace('.')` gives every run of the agent the current directory as its workspace.
-  Commands start there, and relative file paths resolve against it.
-- `ctx.workspace.run(...)` runs a command and returns its `exit_code`, `stdout` and `stderr`. A command
-  that fails is a normal result, so the tool can show the model what went wrong.
-- `timeout=60` stops a command that runs too long with a
-  [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]. The tool turns it, like any
-  [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError], into a `ModelRetry`, so the model can try
-  something else instead of the run ending.
+- `LocalWorkspace('.')` gives every run the current directory. Commands start there, and relative
+  paths resolve against it.
+- `ctx.workspace.run(...)` returns the command's `exit_code`, `stdout` and `stderr`. A failing command
+  is a normal result, so the model sees what went wrong and can fix it.
+- `timeout=60` stops a stuck command with a
+  [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]. Turning any
+  [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] into `ModelRetry` lets the model try
+  something else instead of ending the run.
 
-You rarely need to write these tools yourself: the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)
-capabilities, such as `Coder`, `FileSystem` and `Shell`, give the model file, search and shell tools
-that all work in the run's workspace.
+You rarely need to write these tools yourself. The [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)
+capabilities `Coder`, `FileSystem` and `Shell` give the model file, search and shell tools that work in
+whatever workspace the run has.
+
+## Move it into a sandbox
+
+`LocalWorkspace` runs the model's commands on your machine, as you. To run them somewhere isolated,
+swap it for a sandbox from the harness. Nothing else changes: the same tools now run in the sandbox.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
+```
+
+The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites. A
+sandbox is created the first time a tool uses it, and keeps running after the run until you or its
+provider stop it; see [Cleaning up](#cleaning-up).
+
+## Pick up where you left off {#continuing-in-the-same-workspace}
+
+Pass the message history to the next run, and it continues in the same workspace. With a sandbox,
+the files and installed packages from the first run are still there:
+
+```python {requires="workspace_agent.py"}
+from workspace_agent import agent
+
+
+async def main() -> None:
+    first = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
+    await agent.run('Now add a test for it.', message_history=first.all_messages())
+```
+
+This works because each model response records the workspace it ran in, as a
+[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] on
+[`workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref]. The next run finds it on the
+latest response and attaches to that workspace. The reference is part of the messages, so it survives
+however you store them:
+
+```python {requires="workspace_agent.py"}
+from pydantic_ai import ModelMessagesTypeAdapter
+
+from workspace_agent import agent
+
+
+async def main() -> None:
+    first = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
+    print(first.response.workspace_ref == first.workspace.ref)
+    #> True
+    saved = first.all_messages_json()  # store it in your database
+
+    history = ModelMessagesTypeAdapter.validate_json(saved)
+    await agent.run('Now add a test for it.', message_history=history)
+```
+
+To continue without the history, for example in a new conversation about the same project, save the
+reference the run used and pass it as `workspace=`:
+
+```python {requires="workspace_agent.py"}
+from workspace_agent import agent
+
+
+async def main() -> None:
+    first = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
+    ref = first.workspace.ref  # a small dataclass: `provider` and `id`
+
+    await agent.run('Explain what fizzbuzz.py does.', workspace=ref)
+```
+
+- A sandbox's `ref` is `None` until a tool first uses it, so a run whose tools never touched the
+  workspace records no reference. A later turn that doesn't use it keeps the earlier reference.
+- If the sandbox a reference names has been deleted or has expired, the run raises
+  [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] instead of quietly
+  starting over in an empty one. Pass `workspace='new'` to start over on purpose.
+- [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] and the [UI adapters](ui/overview.md)
+  strip references from history a client sends you, so a client can't choose the environment your
+  agent works in. Save the reference on your server and pass it as `workspace=` instead.
+
+## Hand the workspace to another agent
+
+`workspace=` also takes a live workspace. Here the coding agent asks a second agent to review its
+work. The reviewer reads the same files, and
+[`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] stops it from changing them:
+
+```python {title="reviewer.py" requires="workspace_agent.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.workspaces import ReadOnlyWorkspace
+
+from workspace_agent import agent
+
+reviewer = Agent('anthropic:claude-opus-5-5', instructions='Review code. Be brief.')
+
+
+@reviewer.tool
+async def read_file(ctx: RunContext, path: str) -> str:
+    return await ctx.workspace.read_text(path)
+
+
+@agent.tool
+async def ask_reviewer(ctx: RunContext, request: str) -> str:
+    """Ask a reviewer to check files in this workspace."""
+    review = await reviewer.run(request, workspace=ReadOnlyWorkspace(ctx.workspace), usage=ctx.usage)
+    return review.output
+
+
+async def main() -> None:
+    result = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
+    result = await agent.run('Ask the reviewer to check fizzbuzz.py.', message_history=result.all_messages())
+    print(result.output)
+    #> The reviewer says fizzbuzz.py is correct.
+```
+
+The reviewer has no workspace capability of its own: it works wherever it is told to. The same
+agent can review a local checkout in one run and a sandbox in the next.
 
 ## Your machine or a sandbox
 
-`LocalWorkspace` runs commands on your own machine, as your user. It is not a sandbox: a command can
-read and change anything you can, and the directory you pass only sets where commands start. The
-directory must already exist. Use it for your own, trusted work.
-
-To run code the model writes in isolation, attach a sandbox capability from the
-[harness](https://pydantic.dev/docs/ai/harness/) instead, such as Modal, E2B, Daytona or Sprites.
-Nothing else about the agent changes: tools keep using `ctx.workspace`.
-
-A second `LocalWorkspace` replaces the first. To use a different workspace for one run, pass it to
-the run as `workspace=`, as shown [below](#choosing-a-runs-workspace).
+`LocalWorkspace` is not a sandbox: a command can read and change anything you can, and the directory
+you pass only sets where commands start. The directory must already exist. Use it for your own,
+trusted work, and a sandbox for code you don't trust.
 
 Commands in a `LocalWorkspace` get your `PATH` and `HOME`, so they find your tools and your git and
 package-manager configuration. Nothing else from your environment reaches them. Pass other variables
@@ -115,13 +222,11 @@ boundary: `..` and absolute paths reach the rest of the environment.
 
 A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Catch it and
 raise `ModelRetry` so the model can try again; uncaught, it ends the run. An environment that is gone,
-such as a deleted sandbox, raises
-[`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] and ends the run.
+such as a deleted sandbox, raises `WorkspaceUnavailableError` and ends the run.
 
 ## Read-only access
 
-Pass `read_only=True` to let tools read and list files while refusing commands and changes, for
-example for an agent that reviews the code without touching it:
+Pass `read_only=True` to let tools read and list files while refusing commands and changes:
 
 ```python
 from pydantic_ai import Agent
@@ -134,84 +239,10 @@ A refused change raises [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.Worksp
 Commands are refused too, because a command could change files. A capability can check
 [`ctx.workspace.read_only`][pydantic_ai.workspaces.Workspace.read_only] to leave its write tools out.
 
-To make a single run read-only, wrap its workspace in
-[`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] and pass it to the run (not under
-[durable execution](#durable-execution)):
-
-```python
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
-
-reader = Agent('anthropic:claude-opus-5-5')
-
-
-@reader.tool
-async def read_file(ctx: RunContext, path: str) -> str:
-    return await ctx.workspace.read_text(path)
-
-
-async def main() -> None:
-    workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))
-    await reader.run('Explain what fizzbuzz.py does.', workspace=workspace)
-```
-
-`LocalWorkspaceBackend('.')` is the [backend](#writing-a-backend) behind `LocalWorkspace('.')`: the
-object that talks to one environment. `Workspace(...)` gives it the `ctx.workspace` methods.
-
-To write your own policy, subclass [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace],
-override the operations you want to change, and call `self.wrapped` for the rest.
-
-## Continuing in the same workspace
-
-With `LocalWorkspace`, every run uses the same directory. With a sandbox, each run would otherwise
-start an empty one. Pass the message history to a later run, and it continues in the same sandbox, so
-the files the agent made are still there:
-
-```python {requires="workspace_agent.py"}
-from workspace_agent import agent
-
-
-async def main() -> None:
-    first = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
-    await agent.run('Now add a test for it.', message_history=first.all_messages())
-```
-
-Each response records the workspace it ran in as a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef],
-on `workspace_ref`, and the next run attaches to it. To come back from another process, such as a web
-app reopening a conversation after a restart, save the reference and pass it as `workspace=`:
-
-```python {requires="workspace_agent.py"}
-from workspace_agent import agent
-
-
-async def main() -> None:
-    first = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
-    ref = first.workspace.ref  # save it, for example next to the conversation
-
-    await agent.run('Explain what fizzbuzz.py does.', workspace=ref)
-```
-
-A sandbox capability creates its sandbox the first time a tool uses it. Until then `ref` is `None`,
-so a run whose tools never touched the workspace records no reference. Passing `workspace=None` is the
-same as not passing it. If the sandbox a reference names has been deleted or has expired, the run
-raises [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] instead of
-starting over in an empty one. Pass `workspace='new'` to start over on purpose.
-
-A capability only attaches to references it recognizes. `LocalWorkspace` accepts a reference to its
-own directory and no other, so message history can't point the agent at another directory on your
-machine. If no capability recognizes the reference in the history, for example after you switch
-providers or when `LocalWorkspace('.')` starts in a different directory, the run raises `UserError`.
-Pass `workspace='new'` to continue in a fresh workspace, or keep the old capability on the agent (see
-below).
-
-[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] and the [UI adapters](ui/overview.md)
-strip references from client-supplied history by default, so a client can't choose the environment
-the agent works in.
-
-A sandbox keeps running after the run until its provider's lifetime settings stop it. A successful run
-returns `result.workspace` and its ref, so you can continue in it later; a failed run returns no result,
-so there is no ref to store. To remove a failed run's environment, clean it up in an `on_run_error`
-hook: `after_run` doesn't run when a run fails.
+For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `workspace=`, as the
+[reviewer above](#hand-the-workspace-to-another-agent) does. To write your own policy, subclass
+[`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace], override the operations you want to
+change, and call `self.wrapped` for the rest.
 
 ## Choosing a run's workspace
 
@@ -222,10 +253,19 @@ A run picks its workspace from the first of these that applies:
 3. The agent's workspace capabilities: its directory for `LocalWorkspace`, a new sandbox for a sandbox
    provider.
 
-An agent can have several workspace capabilities, asked in order. With a reference, the first that
-recognizes it supplies the workspace; without one, the first that returns a workspace does. This is
-how you move to a new provider without breaking old conversations: list the new capability first, so
-new conversations use it, and keep the old one, so conversations that started there continue in it.
+`workspace=` takes:
+
+- `'new'`, to start a fresh environment and ignore the one in the history.
+- A [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], such as a saved `result.workspace.ref`, for
+  the agent's capabilities to attach to.
+- A workspace or backend, used as is: `result.workspace`, `ctx.workspace`, or a backend such as
+  `LocalWorkspaceBackend('/tmp/scratch')`.
+
+An agent can have several workspace capabilities. Those passed to the run are asked before the
+agent's own, each in order. With a reference, the first that recognizes it supplies the workspace;
+without one, the first that returns a workspace does. This is how you move to a new provider without
+breaking old conversations: list the new capability first, so new conversations use it, and keep the
+old one, so conversations that started there continue in it.
 
 ```python {title="two_workspaces.py"}
 from pydantic_ai import Agent
@@ -240,22 +280,18 @@ agent = Agent(
 )
 ```
 
+A capability only attaches to references it recognizes. `LocalWorkspace` accepts a reference to its
+own directory and no other, so message history can't point the agent at another directory on your
+machine.
+
 When no capability supplies a workspace:
 
 - A reference from `message_history` raises `UserError` if the agent has workspace capabilities and
-  none recognizes it. An agent with none, such as one that summarizes the conversation, ignores it.
-- A `WorkspaceRef` passed as `workspace=` raises `UserError`.
-- `workspace='new'` raises `UserError`.
+  none recognizes it, for example after you switch providers. Pass `workspace='new'`, or keep the old
+  capability. An agent with no workspace capability, such as one that summarizes the conversation,
+  ignores the reference.
+- A `WorkspaceRef` passed as `workspace=` raises `UserError`, and so does `workspace='new'`.
 - Without a reference, the run has no workspace, and tools that use it raise `UserError`.
-
-`workspace=` takes:
-
-- `'new'`, to start a fresh environment and ignore the one in the history.
-- A [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], such as a saved `result.workspace.ref`, for
-  the agent's capabilities to attach to.
-- A workspace or backend, used as is: `result.workspace` to keep working where an earlier run did,
-  `ctx.workspace` to have a subagent work where its parent does, or a backend such as
-  `LocalWorkspaceBackend('/tmp/scratch')`.
 
 To answer a question without letting tools touch files, pass an
 [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace]. Every workspace operation then
@@ -271,6 +307,15 @@ async def main() -> None:
     no_files = UnavailableWorkspace(reason='This run has no file access.')
     await agent.run('Explain what fizzbuzz.py does.', workspace=no_files)
 ```
+
+## Cleaning up
+
+Pydantic AI never deletes an environment: a sandbox keeps running after the run until you delete it
+or its provider's lifetime settings stop it. Each sandbox page shows how to delete one.
+
+A successful run returns `result.workspace.ref`, so you can continue in the sandbox or delete it
+later. A failed run returns no result, so delete its sandbox in an `on_run_error` hook, where
+`ctx.workspace.ref` names it. `after_run` doesn't run when a run fails.
 
 ## Durable execution
 
@@ -292,14 +337,14 @@ agent = Agent(
 
 Tools use `ctx.workspace` as they would in a plain run.
 
-- Unlike a plain run, every run creates or attaches its environment at its start, even if no tool
-  uses it. Retries, replays and recovery then reattach to that same environment.
+- Every run creates or attaches its environment at its start, even if no tool uses it. Retries,
+  replays and recovery then reattach to that same environment.
 - Workspace calls retry like tools do, so a command or write may run again if a worker dies mid-call,
   and a `run(timeout=...)` must fit within the call's own timeout (Temporal's `start_to_close_timeout`).
-- `workspace=` passes on only a reference. The run uses the capability's own workspace for it, so a
-  wrapper such as `ReadOnlyWorkspace(...)` is silently dropped, and a backend whose reference no
-  capability recognizes raises `UserError`. Put policy on the capability instead, such as
-  `LocalWorkspace(..., read_only=True)`.
+- `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
+  capabilities. A wrapper such as `ReadOnlyWorkspace(...)` passed to the run is dropped, and a
+  capability passed to the run that changes the workspace raises `UserError`. Put policy on the
+  agent's capability instead, such as `LocalWorkspace(..., read_only=True)`.
 - `workspace.backend` is not available in workflow code. Reach the provider's own API from a tool.
 - The deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers refuse a workspace.
 
@@ -338,6 +383,8 @@ the user. This separates where users start; like `LocalWorkspace`, it isolates n
 - With a `ref` you recognize, return a backend that attaches to it. Return `None` for any other.
 - Don't do I/O or keep state in `get_workspace`: it can be called more than once per run. Connect on
   the backend's first operation.
+- A capability that supplies a workspace can't use `defer_loading=True`: the workspace is chosen when
+  the run starts.
 
 A capability that needs a workspace can check
 [`ctx.workspace.attached`][pydantic_ai.workspaces.Workspace.attached] in `before_run`. It is `False`
@@ -358,8 +405,9 @@ class ProjectNotes(AbstractCapability):
 
 ## Writing a backend
 
-A [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] implements `ref` and `working_dir`,
-then adds [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
+A backend is the object that talks to one environment; `Workspace` wraps it to give tools the
+`ctx.workspace` methods. A [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] implements
+`ref` and `working_dir`, then adds [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both. With commands only,
 `ctx.workspace` derives the file operations through the shell. With a filesystem only, file tools work
 and `ctx.workspace.run` raises `UserError`. With both, they must reach the same environment.
@@ -434,9 +482,10 @@ class HostWorkspaceBackend(WorkspaceBackend):
   any operation has completed.
 - A `ref` whose environment is gone raises `WorkspaceUnavailableError`. The backend never creates a
   replacement for it.
-- A non-zero exit is a result, not an exception. A path-level failure raises the builtin file error,
-  and a timeout raises `WorkspaceTimeoutError`. Let a provider SDK's own transient errors propagate,
-  so a durable engine can retry them.
+- A non-zero exit is a result, not an exception. A program that can't start is exit 127 (not found)
+  or 126 (not executable), as in `sh`. A path-level failure raises the builtin file error, and a
+  timeout raises `WorkspaceTimeoutError`. Let a provider SDK's own transient errors propagate, so a
+  durable engine can retry them.
 
 A capability's `get_workspace` returns this backend, and users reach its provider-specific methods
 through `ctx.workspace.backend`.

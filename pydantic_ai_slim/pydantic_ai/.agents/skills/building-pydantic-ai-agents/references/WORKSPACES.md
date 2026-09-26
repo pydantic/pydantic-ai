@@ -80,7 +80,7 @@ in it; after `workspace='new'` nothing is carried forward.
 The core does not create or destroy environments at run boundaries; the application owns
 SDK retries (outside durable execution), cleanup, TTL and pause/stop through the provider's SDK or run hooks. `Workspace.backend` reaches
 the concrete backend for provider-specific methods (not from workflow code under durable
-execution). Sandbox providers (Modal, E2B, Daytona, Sprites) ship as capabilities in the
+execution). Sandbox providers (Modal, E2B, Sprites) ship as capabilities in the
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). Check a custom backend by
 subclassing `pydantic_ai.workspaces.testing.WorkspaceBackendSuite` and providing its `backend`
 fixture.
