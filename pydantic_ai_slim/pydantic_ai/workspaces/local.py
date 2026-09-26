@@ -111,7 +111,9 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._working_dir = absolute
         # Resolved on first use, not here, because capabilities build backends inside the event loop.
         self._resolved_working_dir: Path | None = None
-        self._ref = WorkspaceRef(provider='local', id=absolute.as_posix())
+        # The ref has a stable lexical spelling, but the live directory retains the original
+        # path: a symlink followed by `..` has different kernel and lexical meanings.
+        self._ref = WorkspaceRef(provider='local', id=os.path.normpath(absolute))
         self._env = {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ} | dict(env or {})
 
     @property

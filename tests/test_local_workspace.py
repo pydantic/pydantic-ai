@@ -88,6 +88,15 @@ def test_non_posix_platforms_are_rejected_at_construction(tmp_path: Path, monkey
         LocalWorkspaceBackend(tmp_path)
 
 
+def test_ref_normalizes_dot_segments_without_resolving_symlinks(tmp_path: Path) -> None:
+    (tmp_path / 'actual').mkdir()
+    (tmp_path / 'link').symlink_to(tmp_path / 'actual')
+    spelled = tmp_path / 'link' / '.' / 'folder' / '..'
+    ref = LocalWorkspaceBackend(spelled).ref
+    assert ref == WorkspaceRef(provider='local', id=str(tmp_path / 'link'))
+    assert ref != LocalWorkspaceBackend(tmp_path / 'actual').ref
+
+
 async def test_ref_names_the_configured_working_dir_without_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The ref is the `~`-expanded spelling the backend was given, available before any operation.
 
