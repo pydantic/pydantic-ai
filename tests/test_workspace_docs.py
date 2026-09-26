@@ -14,6 +14,11 @@ def test_post_run_unused_workspace_access_warning() -> None:
     assert 'accessing `result.workspace` after a run with `ref=None`' in page
 
 
+def test_sandbox_paths_are_portable() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    assert 'Prefer relative paths' in page
+
+
 def test_timeout_security_and_platform_guidance() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert '## Timeouts and clocks' in page

@@ -218,7 +218,9 @@ async def save_notes(ctx: RunContext, notes: str) -> str:
 ```
 
 Relative paths resolve against the workspace's working directory. That is a starting point, not a
-boundary: `..` and absolute paths reach the rest of the environment.
+boundary: `..` and absolute paths reach the rest of the environment. Prefer relative paths or
+set `working_dir=` for portable commands: sandbox providers use different default users and
+working directories.
 
 A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Catch it and
 raise `ModelRetry` so the model can try again; uncaught, it ends the run. An environment that is gone,
