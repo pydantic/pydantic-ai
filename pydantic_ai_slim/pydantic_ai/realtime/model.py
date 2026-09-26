@@ -302,7 +302,9 @@ class RealtimeModel(AbstractModel):
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
-          4. The user's `profile=` argument — a partial dict merged on top, OR a callable
+          4. The model class's adjustments for what this instance supports beyond its name, such as
+             the API surface its client talks to (e.g. a flag verified on one surface only).
+          5. The user's `profile=` argument — a partial dict merged on top, OR a callable
              `(resolved) -> profile` for full control.
 
         Then `supported_native_tools` is intersected with what this model class actually implements, so

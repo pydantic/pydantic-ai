@@ -2261,10 +2261,9 @@ class RealtimeSession:
             # abnormal finish reason explaining why. That isn't a response — it's one logical response
             # arriving in two frames. Vertex's `gemini-live-2.5-flash` closes the turn when the tool-call
             # generation ends and again when it has finished speaking, and the first boundary carries only
-            # usage; recording it
-            # would make one tool round five messages there and four everywhere else. Carry the metadata
-            # onto the response that does say something, so a tool round has one shape on every
-            # provider. A response truncated by `length` (or any other abnormal reason) is real
+            # usage; recording it would make one tool round five messages there and four everywhere else.
+            # Carry the metadata onto the response that does say something, so a tool round has one shape
+            # on every provider. A response truncated by `length` (or any other abnormal reason) is real
             # information about what happened and stays, empty or not; so does anything left pending
             # when the session ends, which the flush in `__aexit__` records rather than lose.
             self._pending_provider_response_id = provider_response_id or self._pending_provider_response_id
