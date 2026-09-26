@@ -28,8 +28,8 @@ Each capability package should normally have:
 - `README.md` with focused usage docs (serves GitHub and PyPI)
 - a unified-docs page at `docs/<capability>.md` (the `docs/` folder is flat --
   no `capabilities/` or `experimental/` subdirectories). It mirrors the README
-  for the docs site, drops badges, links other harness pages with relative `.md`
-  links and Pydantic AI docs with root-relative `/ai/...` links, links its
+  for the docs site, drops badges, links other harness pages and Pydantic AI
+  docs with relative `.md` links (`../toolsets.md`), links its
   source module, and -- where the capability exposes a public class -- may end
   with a `::: pydantic_ai_harness.<Class>` autodoc block. The README and this
   page are kept in sync (see `review-checklist.md` "Docs").

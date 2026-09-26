@@ -948,7 +948,8 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           H=src/pydantic_ai_harness
-          shared=(pyproject.toml uv.lock "$H/pyproject.toml" .github/workflows/ci.yml)
+          # `Makefile` because the jobs below run its `integration-*` targets.
+          shared=(pyproject.toml uv.lock Makefile "$H/pyproject.toml" .github/workflows/ci.yml)
           detect() {
             local name=$1; shift
             if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- "$@" "${shared[@]}"; then
