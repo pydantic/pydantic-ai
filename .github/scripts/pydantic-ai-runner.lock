@@ -13,26 +13,30 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-openai = "2026-09-23T00:08:49Z"
-listentome = false
-logfire = false
-pydantic-settings = false
+pydantic-monty-runtime = false
 pydantic-handlebars = false
-genai-prices = false
-google-genai = "2026-09-22T17:23:02Z"
-anthropic = "2026-09-22T16:25:39Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
 pydantic-ai-harness = false
 logfire-api = false
+listentome = false
+logfire = false
+pydantic-settings = false
+pydantic-monty-client = false
+genai-prices = false
+pydantic-monty = false
+termflow-md = "2026-09-24T16:36:46Z"
+anthropic = "2026-09-22T16:25:39Z"
+openai = "2026-09-23T00:08:49Z"
+google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
 requirements = [
     { name = "logfire" },
     { name = "opentelemetry-instrumentation-httpx" },
-    { name = "pydantic-ai-harness", specifier = "==0.34.0" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "mcp"], directory = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-harness", editable = "../../src/pydantic_ai_harness" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "mcp"], editable = "../../pydantic_ai_slim" },
 ]
 
 [[package]]
@@ -1118,22 +1122,65 @@ email = [
 
 [[package]]
 name = "pydantic-ai-harness"
-version = "0.34.0"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../../src/pydantic_ai_harness" }
 dependencies = [
     { name = "genai-prices" },
     { name = "httpx" },
     { name = "json-repair" },
     { name = "pydantic-ai-slim" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/16/32/e0759986b8bce033e17dac91e616e096f5ab99c41a6b55588609b29c9560/pydantic_ai_harness-0.34.0.tar.gz", hash = "sha256:049ce17739b8e69067e9cdc8120fbbcc5f3c6c6bfb9cf2457a5c0b3ca8f046bf", size = 2991435, upload-time = "2026-09-23T02:50:57.536Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/18/e6/227553f3cc9b2b2d1350fd85ceba1e17a2bae6cfff2c6407f4bd4ef6e97e/pydantic_ai_harness-0.34.0-py3-none-any.whl", hash = "sha256:df6ca8dc6b115d75c6236ed2c9f8b708ede02efbe2de8b0b21a7ec57a47b9393", size = 928236, upload-time = "2026-09-23T02:50:55.879Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
+    { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<2" },
+    { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
+    { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
+    { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },
+    { name = "genai-prices", specifier = ">=0.0.71" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
+    { name = "json-repair", specifier = ">=0.58.0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
+    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.0" },
+    { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
+    { name = "pydantic-ai-slim", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["cli"], marker = "extra == 'cli'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'code-mode'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'codemode'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["duckduckgo", "web-fetch"], marker = "extra == 'researcher'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'day-ai'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'github'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'google-workspace'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'grain'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'linear'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'logfire-mcp'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'notion'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'ordinal'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'posthog'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'pylon'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'slack'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'stackone'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'logfire'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-handlebars", marker = "extra == 'logfire'", specifier = ">=0.2.1" },
+    { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=1.0.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.0.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.0.0,<2" },
+    { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
+    { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
+    { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
+    { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
+    { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
+    { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
+provides-extras = ["acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
-source = { directory = "../../pydantic_ai_slim" }
+source = { editable = "../../pydantic_ai_slim" }
 dependencies = [
     { name = "anyio" },
     { name = "genai-prices" },
