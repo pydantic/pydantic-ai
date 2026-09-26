@@ -31,6 +31,23 @@ sys.modules.update({'pydantic_ai': ai, 'pydantic_ai.capabilities': cap, 'pydanti
     assert (tmp_path / 'fizzbuzz.py').read_text() == 'created'
 
 
+def test_backend_author_checklist_covers_conformance_rules() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    checklist = page.split('### Checking a backend', 1)[1].split('## Timeouts and clocks', 1)[0]
+    for rule in (
+        'Concurrent first use',
+        'stdin at EOF',
+        'partial output',
+        'process group',
+        'symlinks',
+        'containment',
+        'destroy_environment',
+        'attach_backend',
+        'during a command',
+    ):
+        assert rule in checklist
+
+
 def test_host_backend_serializes_first_use() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     example = page.split('```python {title="host_workspace.py"}', 1)[1].split('```', 1)[0]
