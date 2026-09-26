@@ -171,6 +171,7 @@ class SupportsCommands(Protocol):
     ) -> WorkspaceResult:
         """Execute a command with stdin at EOF, returning complete output or raising an error.
 
+        Undecodable stdout/stderr bytes are replaced with U+FFFD, never dropped.
         A missing argv program exits 127. A missing `cwd` raises `FileNotFoundError`.
         On timeout or cancellation, stop the foreground process tree on a best-effort basis;
         background jobs may continue if they detach.

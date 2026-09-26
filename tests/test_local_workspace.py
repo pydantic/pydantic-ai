@@ -274,6 +274,12 @@ async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
     assert error.stderr == 'stderr\n'
 
 
+async def test_local_command_replaces_undecodable_output_bytes(tmp_path: Path):
+    result = await LocalWorkspaceBackend(tmp_path).run(['sh', '-c', "printf '\\377' ; printf '\\376' >&2"])
+    assert result.stdout == '\ufffd'
+    assert result.stderr == '\ufffd'
+
+
 async def test_stdin_is_devnull(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
     result = await workspace.run(

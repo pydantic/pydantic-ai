@@ -86,6 +86,14 @@ class WorkspaceBackendSuite:
         with pytest.raises(ValueError):
             await _commands(backend).run(['true'], cwd='relative')
 
+    async def test_undecodable_command_bytes_are_replaced(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('fake has no command byte stream')
+        result = await _commands(backend).run(['sh', '-c', "printf '\\377'; printf '\\376' >&2"])
+        assert (result.stdout, result.stderr) == ('\ufffd', '\ufffd')
+
     async def test_command_output_is_complete(self, backend: WorkspaceBackend) -> None:
         """If output cannot be collected in full, the backend must raise rather than return a truncated success."""
         output = 'workspace' * 1024
