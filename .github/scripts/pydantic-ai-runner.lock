@@ -1165,6 +1165,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'stackone'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'logfire'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-handlebars", marker = "extra == 'logfire'", specifier = ">=0.2.1" },
     { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=1.0.0,<2" },
     { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.0.0,<2" },
     { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.0.0,<2" },
