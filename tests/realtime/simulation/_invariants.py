@@ -386,7 +386,8 @@ class Checker:
             for key, input_ in inputs
             if input_ is None or not self._input_resolved(input_, returned, set())
         ]
-        # ...or a response it could see was under way when the wait began.
+        # ...or a response it could see was under way when the wait began (unless the client cut it off).
+        interrupted = [operation.issued for operation in sim.operations if operation.name.startswith('interrupt_')]
         violations += [
             (
                 f'wait_for_reply() #{waiter.index} returned while {response.key} '
@@ -396,6 +397,7 @@ class Checker:
             for response in truth.responses.values()
             if response.started_read is not None
             and response.started_read < waiter.started
+            and not any(issued > response.seq_start for issued in interrupted)
             and not self._exchange_resolved(response, waiter.started, set())
             and not self._exchange_resolved(response, returned, set())
         ]

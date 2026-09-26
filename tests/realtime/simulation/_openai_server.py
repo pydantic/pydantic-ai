@@ -125,6 +125,8 @@ class OpenAIServer:
         self._refusals: dict[str, list[str]] = {}
         self._next_error = 1
         self._next_event = 1
+        self.late_terminals = 0
+        """How many `response.done`s were held back until after the next response had started."""
         self.late_cancels = 0
         """How many `response.cancel`s arrived with no response left to cancel (it had already finished)."""
         # Client input index (from `event_id`) -> the input's ground-truth key. The connection numbers its
@@ -632,6 +634,8 @@ class OpenAIServer:
         session = self.session
         assert session is not None and session.late_done is not None
         done, session.late_done = session.late_done, None
+        if done['response']['id'] != self.truth.responses_by_number[self.truth.next_response_number - 1].key:
+            self.late_terminals += 1
         self._emit(session, done)
 
     def repeat_done(self) -> None:

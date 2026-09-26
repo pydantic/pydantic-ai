@@ -139,6 +139,7 @@ REPEATED_TERMINAL = Finding(
         {
             'codec.content_after_terminal',
             'codec.duplicate_terminal',
+            'history.order',
             'response.duplicated',
             'response.mixed',
             'response.truncated',
@@ -149,7 +150,9 @@ REPEATED_TERMINAL = Finding(
         }
     ),
     providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: sim.truth.repeated_terminals_read > 0,
+    matches=lambda sim, violation: (
+        sim.truth.repeated_terminals_read > 0 or getattr(getattr(sim, 'server', None), 'late_terminals', 0) > 0
+    ),
 )
 
 LOST_RESPONSE_RESERVATION = Finding(
