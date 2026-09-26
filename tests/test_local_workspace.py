@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import shlex
 import signal
@@ -445,6 +446,12 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
         await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=5)
     assert isinstance(exc_info.value.__cause__, PermissionError)
     await _assert_process_gone(int(pid_file.read_text()))
+
+
+@pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
+async def test_local_rejects_invalid_command_timeout(tmp_path: Path, timeout: Any):
+    with pytest.raises(ValueError, match='timeout must be a positive finite number or None'):
+        await LocalWorkspaceBackend(tmp_path).run(['true'], timeout=timeout)
 
 
 async def test_removed_workspace_cannot_be_recreated_or_removed(tmp_path: Path):

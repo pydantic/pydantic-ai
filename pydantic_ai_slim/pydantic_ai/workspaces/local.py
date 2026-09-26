@@ -34,6 +34,7 @@ from .protocol import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    validate_timeout,
 )
 
 __all__ = ('LocalWorkspaceBackend',)
@@ -248,6 +249,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        validate_timeout(timeout)
         absolute_deadline = None if timeout is None else anyio.current_time() + timeout
         if cwd is not None and not Path(cwd).is_absolute():
             raise ValueError(

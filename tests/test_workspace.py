@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import math
 import os
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -63,6 +64,12 @@ from .workspace_fakes import (
 )
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
+async def test_facade_rejects_invalid_timeout_before_backend(timeout: Any) -> None:
+    with pytest.raises(ValueError, match='timeout must be a positive finite number or None'):
+        await Workspace(FakeWorkspace('invalid-timeout')).run(['true'], timeout=timeout)
 
 
 async def test_wrapper_overrides_apply_to_text_reads():

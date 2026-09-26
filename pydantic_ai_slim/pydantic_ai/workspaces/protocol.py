@@ -18,6 +18,7 @@ A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBacken
 
 from __future__ import annotations as _annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, runtime_checkable
@@ -44,6 +45,12 @@ __all__ = (
     'SupportsFilesystem',
     'SupportsRealpath',
 )
+
+
+def validate_timeout(timeout: float | None) -> None:
+    if timeout is not None and (not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError('timeout must be a positive finite number or None')
+
 
 WorkspaceCommand: TypeAlias = str | Sequence[str]
 """An argv sequence (`['python', '-c', 'print(1)']`), or a shell string with `shell=True`."""
@@ -162,8 +169,9 @@ class SupportsCommands(Protocol):
             shell: Whether to interpret `command` with the workspace's shell.
             cwd: Absolute working directory, defaulting to `working_dir()`; a relative one raises `ValueError`.
             env: Extra environment variables, layered over the backend's own.
-            timeout: Seconds before [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError];
-                no timeout by default.
+            timeout: A positive finite number of seconds before
+                [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]; no timeout by default.
+                Invalid values raise `ValueError`.
         """
         ...
 

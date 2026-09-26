@@ -24,6 +24,7 @@ from .protocol import (
     WorkspaceFileEntry,
     WorkspaceRef,
     WorkspaceResult,
+    validate_timeout,
 )
 from .unavailable import UnavailableWorkspace
 
@@ -378,6 +379,7 @@ class Workspace(WorkspaceBackend):
 
         There is no default `timeout`. Raises `UserError` if the backend can't run commands.
         """
+        validate_timeout(timeout)
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
