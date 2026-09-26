@@ -138,6 +138,31 @@ class WorkspaceBackendSuite:
         with pytest.raises(WorkspaceTimeoutError):
             await _commands(backend).run(['sh', '-c', 'sleep 30'], timeout=1.0)
 
+    async def test_cancellation_stops_foreground_work(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('fake has no foreground process to cancel')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            started = posixpath.join(root, 'started')
+            leaked = posixpath.join(root, 'leaked')
+
+            async def command() -> None:
+                await _commands(backend).run(
+                    ['sh', '-c', 'printf ready > "$1"; sleep 2; printf leaked > "$2"', 'sh', started, leaked]
+                )
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(command)
+                with anyio.fail_after(30):
+                    while not await workspace.exists(started):
+                        await anyio.sleep(0.05)
+                tg.cancel_scope.cancel()
+            # A cancelled foreground command must not continue the rest of its script.
+            await anyio.sleep(2.1)
+            assert not await workspace.exists(leaked)
+
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         result = await _commands(backend).run(['sh', '-c', 'printf %s "$CONFORMANCE"'], env={'CONFORMANCE': 'value'})
         assert result.stdout == 'value'
