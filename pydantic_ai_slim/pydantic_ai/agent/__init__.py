@@ -82,12 +82,12 @@ from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import (
-    _combination_roots,  # pyright: ignore[reportPrivateUsage]
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
     _reject_class_crossing_id,  # pyright: ignore[reportPrivateUsage]
     _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
+    select_workspace,
 )
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
@@ -133,6 +133,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from ..workspaces.workspace import workspace_layers
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -1731,7 +1732,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if explicit is not None:
             selected = explicit if isinstance(explicit, Workspace) else Workspace(explicit)
         else:
-            selected = _select_workspace(
+            selected = select_workspace(
                 pre_run_root,
                 initial_ctx,
                 ref=offered_ref,
@@ -1798,7 +1799,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # One selected before `for_run` is final: `for_run` may have used it.
         initial_ctx.root_capability = run_capability
         if explicit is None and not model_layers_unchanged:
-            candidate = _select_workspace(
+            candidate = select_workspace(
                 run_capability, initial_ctx, ref=offered_ref, run_layer=resolved_caps.run_layer
             )
             if selected is None:
@@ -1807,7 +1808,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     initial_ctx.workspace = run_capability._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
                         initial_ctx, selected, explicit=False
                     )
-            elif candidate is None or _workspace_identity(candidate) != _workspace_identity(selected):
+            elif candidate is None or (workspace_layers(candidate), candidate.ref) != (
+                workspace_layers(selected),
+                selected.ref,
+            ):
                 raise exceptions.UserError(
                     "A capability's `for_run` changed the workspace this run selected before `for_run`. The "
                     'workspace is selected first so that `for_run` can use it; configure it on the capability the '
@@ -4497,37 +4501,6 @@ def _compose_layers(layers: list[AbstractCapability[AgentDepsT]]) -> AbstractCap
     if len(layers) == 1:
         return layers[0]
     return _combine_duplicate_capabilities(CombinedCapability(layers), [[layer] for layer in layers])
-
-
-def _select_workspace(
-    capability: AbstractCapability[AgentDepsT],
-    ctx: RunContext[AgentDepsT],
-    *,
-    ref: WorkspaceRef | None,
-    run_layer: AbstractCapability[AgentDepsT] | None = None,
-) -> Workspace | None:
-    """The workspace the capabilities supply for `ref`, as a `Workspace`, or `None` if none does.
-
-    The capabilities passed to the run (`run_layer`, part of `capability`) are asked before the agent's,
-    like every other run argument overrides the agent's; within each, the first to return one wins.
-    """
-    if run_layer is None:
-        selected = capability.get_workspace(ctx, ref=ref)
-    else:
-        run_leaves = {id(leaf) for leaf in leaf_capabilities(run_layer)}
-        branches = _combination_roots(capability)
-        from_run = [branch for branch in branches if any(id(leaf) in run_leaves for leaf in leaf_capabilities(branch))]
-        ordered = [*from_run, *(branch for branch in branches if all(branch is not run for run in from_run))]
-        selected = next(
-            (workspace for branch in ordered if (workspace := branch.get_workspace(ctx, ref=ref)) is not None),
-            None,
-        )
-    return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
-
-
-def _workspace_identity(workspace: Workspace) -> tuple[object, ...]:
-    """What must match for two selections to be the same workspace: its layers' types and its ref."""
-    return type(workspace), type(workspace.backend), workspace.ref
 
 
 def _raise_for_unresolved_workspace(

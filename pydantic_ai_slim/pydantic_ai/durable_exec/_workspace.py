@@ -24,7 +24,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Never, assert_never
 
 from pydantic_ai._run_context import get_current_run_context
-from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler, select_workspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -208,14 +208,6 @@ async def execute_call(workspace: Workspace, call: WorkspaceCall) -> WorkspaceCa
         return WorkspaceCallResult(error=data)
 
 
-def select_workspace(
-    capability: AbstractCapability[Any], ctx: RunContext[Any], ref: WorkspaceRef | None
-) -> Workspace | None:
-    """The workspace the capabilities supply for `ref`, the way the agent selects it, policy wrappers included."""
-    selected = capability.get_workspace(ctx, ref=ref)
-    return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
-
-
 class DurableWorkspace(WrapperWorkspace):
     """The run's workspace inside a durable container: each call from workflow code is a durable operation.
 
@@ -353,7 +345,7 @@ class DurableWorkspace(WrapperWorkspace):
                 # the unit created instead of creating another on first use.
                 ctx = self._run_context()
                 assert ctx.root_capability is not None
-                rebuilt = select_workspace(ctx.root_capability, ctx, result.ref)
+                rebuilt = select_workspace(ctx.root_capability, ctx, ref=result.ref)
                 if rebuilt is None:
                     raise UserError(
                         f'No capability can supply workspace {result.ref.id!r} from provider '

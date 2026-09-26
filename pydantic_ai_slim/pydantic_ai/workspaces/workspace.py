@@ -404,3 +404,12 @@ class WrapperWorkspace(Workspace):
     @property
     def read_only(self) -> bool:
         return self.wrapped.read_only
+
+
+def workspace_layers(workspace: Workspace) -> list[type[object]]:
+    """The policy wrappers around a workspace and its backend type, outermost first."""
+    layers: list[type[object]] = []
+    while isinstance(workspace, WrapperWorkspace):
+        layers.append(type(workspace))
+        workspace = workspace.wrapped
+    return [*layers, type(workspace), type(workspace.backend)]

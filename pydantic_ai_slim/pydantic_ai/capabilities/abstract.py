@@ -1362,6 +1362,32 @@ def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[A
     return capability.capabilities if isinstance(capability, CombinedCapability) else [capability]
 
 
+def select_workspace(
+    capability: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    *,
+    ref: WorkspaceRef | None,
+    run_layer: AbstractCapability[AgentDepsT] | None = None,
+) -> Workspace | None:
+    """The workspace the capabilities supply for `ref`, as a `Workspace`, or `None` if none does.
+
+    The capabilities passed to the run (`run_layer`, part of `capability`) are asked before the agent's,
+    like every other run argument overrides the agent's; within each, the first to return one wins.
+    """
+    if run_layer is None:
+        selected = capability.get_workspace(ctx, ref=ref)
+    else:
+        run_leaves = {id(leaf) for leaf in leaf_capabilities(run_layer)}
+        branches = _combination_roots(capability)
+        from_run = [branch for branch in branches if any(id(leaf) in run_leaves for leaf in leaf_capabilities(branch))]
+        ordered = [*from_run, *(branch for branch in branches if all(branch is not run for run in from_run))]
+        selected = next(
+            (workspace for branch in ordered if (workspace := branch.get_workspace(ctx, ref=ref)) is not None),
+            None,
+        )
+    return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
+
+
 @dataclass(frozen=True)
 class _CapabilityOccurrence(Generic[AgentDepsT]):
     capability: AbstractCapability[AgentDepsT]

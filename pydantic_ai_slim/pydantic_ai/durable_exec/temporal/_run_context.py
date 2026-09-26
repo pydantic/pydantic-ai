@@ -6,8 +6,8 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
+from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
-from pydantic_ai.durable_exec._workspace import select_workspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
@@ -315,7 +315,7 @@ def _restore_workspace(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> 
         return
     if not isinstance(ref, WorkspaceRef):
         return
-    restored = select_workspace(agent.root_capability, ctx, ref)
+    restored = select_workspace(agent.root_capability, ctx, ref=ref)
     if restored is None:
         restored = Workspace(
             _UnattachedWorkspace(

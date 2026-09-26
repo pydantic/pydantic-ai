@@ -35,6 +35,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
     leaf_capabilities,
+    select_workspace,
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
@@ -55,7 +56,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.workspaces import Workspace, WrapperWorkspace
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -138,7 +140,6 @@ from ._workspace import (
     WorkspaceCallResult,
     WorkspaceEnsurer,
     execute_call,
-    select_workspace,
 )
 
 _T = TypeVar('_T')
@@ -406,7 +407,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if workspace.attached:
             return workspace
         assert ctx.root_capability is not None
-        resolved = select_workspace(ctx.root_capability, ctx, params.ref)
+        resolved = select_workspace(ctx.root_capability, ctx, ref=params.ref)
         if resolved is None:
             ref = params.ref
             named = f' {ref.id!r} from provider {ref.provider!r}' if ref is not None else ''
@@ -449,8 +450,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         only a run-level capability adds (say `read_only=True`) would be silently lost inside them.
         """
         assert self._agent is not None
-        construction = select_workspace(self._agent.root_capability, ctx, workspace.ref)
-        if construction is None or _workspace_layers(construction) != _workspace_layers(workspace):
+        construction = select_workspace(self._agent.root_capability, ctx, ref=workspace.ref)
+        if construction is None or workspace_layers(construction) != workspace_layers(workspace):
             raise UserError(
                 f'Under {self.engine_name}, the workspace comes from the capabilities the agent is built with, '
                 'because each durable unit rebuilds it from them. This run selected a different workspace; '
@@ -472,7 +473,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # A `DurableWorkspace` without a ref never dispatched a unit; asking the capabilities for a
         # fresh environment is the same as passing `workspace=None`.
         rebuilt = (
-            select_workspace(run_capability, ctx, ref)
+            select_workspace(run_capability, ctx, ref=ref)
             if ref is not None or isinstance(workspace, DurableWorkspace)
             else None
         )
@@ -1996,12 +1997,3 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             '(or pass the registered instance), or pass a model-name string and build the instance '
             'from it with a `ResolveModelId` capability.'
         )
-
-
-def _workspace_layers(workspace: Workspace) -> list[type[object]]:
-    """The policy wrappers around a workspace and its backend type, outermost first."""
-    layers: list[type[object]] = []
-    while isinstance(workspace, WrapperWorkspace):
-        layers.append(type(workspace))
-        workspace = workspace.wrapped
-    return [*layers, type(workspace), type(workspace.backend)]
