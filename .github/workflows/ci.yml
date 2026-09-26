@@ -982,8 +982,10 @@ jobs:
     needs: [harness-integration-changes]
     # Also skipped where `LOCALSTACK_AUTH_TOKEN` is unreadable (fork and Dependabot pull requests):
     # `LOCALSTACK_REQUIRE_AUTH_TOKEN` turns a missing token into a failure, not a skip.
+    # Disabled until the secret is set: https://github.com/pydantic/pydantic-ai/issues/8824
     if: >-
-      ${{ always()
+      ${{ false
+          && always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.localstack == 'true')
           && (github.event_name != 'pull_request'
               || (github.event.pull_request.head.repo.full_name == github.repository
