@@ -19,7 +19,6 @@ from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.text import Text
-from surface_terminal import SurfaceTerminal
 from termflow.tui.completion import Completion
 
 from pydantic_ai import PartStartEvent, TextPart, ThinkingPart
@@ -30,6 +29,9 @@ from pydantic_clai2.image_input import ImageInput
 from pydantic_clai2.interrupts import Interrupts
 from pydantic_clai2.live_prompt import LivePrompt
 from pydantic_clai2.prompt_completion import CompletionWorker
+from tests.clai2.surface_terminal import SurfaceTerminal
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

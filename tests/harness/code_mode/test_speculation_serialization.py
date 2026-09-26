@@ -9,6 +9,8 @@ from pydantic_ai_harness.code_mode import CodeMode
 
 from .test_speculation import ToolLog, build_agent, padded
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

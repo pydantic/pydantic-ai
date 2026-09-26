@@ -32,6 +32,8 @@ from pydantic_clai2.sandbox_calls import SandboxCallOrder, SandboxCallStartedEve
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.speculation import Speculation, SpeculationCounters
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

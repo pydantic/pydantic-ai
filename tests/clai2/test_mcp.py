@@ -34,6 +34,8 @@ from pydantic_clai2.plugin_loader import PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart
 from pydantic_clai2.settings_store import SettingsStore
 
+pytestmark = pytest.mark.anyio
+
 
 def make_host(settings: dict[str, JsonValue], store: MCPStore | None = None) -> PluginHost[None]:
     host: PluginHost[None] = PluginHost(name='mcp', console=Console(file=io.StringIO()), settings=settings)
@@ -107,7 +109,7 @@ def test_store_round_trip_is_private_and_fails_loudly(tmp_path: Path) -> None:
     assert '"enabled"' not in store.path.read_text(), 'defaults are not written'
     assert store.delete('local')
     store.path.write_text('{"servers": {"bad_name": {"type": "stdio", "command": "x"}}}')
-    with pytest.raises(ValueError, match=r'mcp.json'):
+    with pytest.raises(ValueError, match=r'mcp\.json'):
         store.load()
 
 
@@ -332,6 +334,15 @@ async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
         store.put(
             'web', HTTPServer(type='http', url=url) if kind == 'http' else SSEServer(type='sse', url=url, timeout=10)
         )
+        # Wait for the port before the first MCP connection: an SSE client that fails to connect
+        # leaves its memory streams unclosed, which `filterwarnings = error` reports.
+        with anyio.fail_after(10):
+            while True:
+                try:
+                    await (await anyio.connect_tcp('127.0.0.1', port)).aclose()
+                    break
+                except OSError:
+                    await anyio.sleep(0.05)
         message = ''
         for _ in range(100):
             message = await run('/mcp restart web')

@@ -239,7 +239,7 @@ class TestArgumentGuard:
     async def test_retry_without_a_message_uses_the_default(self):
         guard = ToolGuardrail[object](guard=lambda call: GuardrailResult(action='retry', message=''))
 
-        with pytest.raises(ModelRetry, match=r'Tool call rejected by tool guardrail.'):
+        with pytest.raises(ModelRetry, match=r'Tool call rejected by tool guardrail\.'):
             await _guard_args(guard, {})
 
     async def test_approve_defers_the_call(self):
@@ -573,12 +573,12 @@ class TestConfigurationShape:
 
     def test_a_bare_string_for_hidden_is_refused(self):
         """`set('danger')` holds six letters, so the tool it names would stay on the wire."""
-        with pytest.raises(UserError, match=r'ToolGuardrail.hidden takes a collection'):
+        with pytest.raises(UserError, match=r'ToolGuardrail\.hidden takes a collection'):
             ToolGuardrail[object](hidden='danger')
 
     def test_a_bare_string_for_tools_is_refused(self):
         """Substring membership would make it match any tool whose name it contains."""
-        with pytest.raises(UserError, match=r'ToolGuardrail.tools takes a collection'):
+        with pytest.raises(UserError, match=r'ToolGuardrail\.tools takes a collection'):
             ToolGuardrail[object](tools='delete_all')
 
 

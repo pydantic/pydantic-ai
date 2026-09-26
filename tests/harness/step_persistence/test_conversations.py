@@ -30,6 +30,8 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 
+pytestmark = pytest.mark.anyio
+
 
 async def test_roundtrip_search_paging_and_media(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')

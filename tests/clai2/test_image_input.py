@@ -33,6 +33,8 @@ from pydantic_clai2.image_input import (
 from pydantic_clai2.prompt_surface import PromptSurface
 from pydantic_clai2.settings_store import SettingsStore
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

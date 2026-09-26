@@ -12,13 +12,15 @@ from urllib.parse import parse_qs, urlparse
 import anyio
 import httpx
 import pytest
-from menu_script import make_context
 from pydantic import SecretStr, TypeAdapter
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
+from tests.clai2.menu_script import make_context
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

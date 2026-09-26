@@ -5,7 +5,6 @@ from pathlib import Path
 
 import anyio
 import pytest
-from menu_script import Script, make_context, pick
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -25,6 +24,9 @@ from pydantic_clai2.field_menu import FieldMenu
 from pydantic_clai2.set_menu import open_settings_menu
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.theme_picker import build_theme_picker, theme_command
+from tests.clai2.menu_script import Script, make_context, pick
+
+pytestmark = pytest.mark.anyio
 
 
 async def test_picker_and_settings_share_registry_and_persistence(tmp_path: Path) -> None:

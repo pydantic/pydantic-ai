@@ -20,6 +20,7 @@ from typing import Any
 from uuid import uuid4
 
 import acp
+import anyio
 import pytest
 from acp import RequestError, schema
 from pydantic import BaseModel
@@ -1492,11 +1493,12 @@ class TestCancellation:
         session_id = await _start(adapter, client)
 
         prompt_task = asyncio.ensure_future(adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id))
-        # One tick suffices: prompt() sets active_turn before its first suspension point (an
-        # uncontended lock acquire does not yield).
-        await asyncio.sleep(0)
-        turn = adapter._sessions[session_id].active_turn  # pyright: ignore[reportPrivateUsage]
-        assert turn is not None, 'the prompt never started its turn'
+        # prompt() sets active_turn once it holds the session lock; acquiring it is a checkpoint.
+        session = adapter._sessions[session_id]  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(5):
+            while session.active_turn is None:
+                await asyncio.sleep(0)
+        turn = session.active_turn
         # Tear the prompt handler down in the same tick the dismissed dialog ends the turn: the
         # turn's internal rollback signal must not escape (or replace) the handler's cancellation.
         turn.add_done_callback(lambda _turn: prompt_task.cancel())

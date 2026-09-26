@@ -23,8 +23,9 @@ FIRST_USE_MODULES = (
 
 
 def start(modules: Sequence[str] = FIRST_USE_MODULES) -> Thread:
-    """Import `modules` on a daemon thread. A failure is logged; first use imports it again and raises."""
-    thread = Thread(target=_import_all, args=(tuple(modules),), name='clai-warm-imports', daemon=True)
+    """Import `modules` on a background thread. A failure is logged; first use imports it again and raises."""
+    # Not a daemon: finalizing the interpreter mid-import of a native extension aborts the process.
+    thread = Thread(target=_import_all, args=(tuple(modules),), name='clai-warm-imports')
     thread.start()
     return thread
 

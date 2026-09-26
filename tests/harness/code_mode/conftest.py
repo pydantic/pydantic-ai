@@ -32,7 +32,11 @@ async def websocket_relay_server(port: int = 0) -> AsyncGenerator[str, None]:
         yield url_line.decode().strip()
     finally:
         process.terminate()
-        await process.wait()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=10)
+        except asyncio.TimeoutError:  # pragma: lax no cover -- only when the relay ignores SIGTERM
+            process.kill()
+            await process.wait()
 
 
 @pytest.fixture

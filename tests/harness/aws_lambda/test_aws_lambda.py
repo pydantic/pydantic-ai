@@ -970,6 +970,7 @@ class TestBridgeFailureModes:
         shutdown(replacement, owner=replacement_thread)
         gc.collect()
 
+    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_an_unwind_that_finishes_within_the_cancel_timeout_keeps_the_loop_warm(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1011,6 +1012,7 @@ class TestBridgeFailureModes:
         shutdown(warm, owner=thread)
         gc.collect()
 
+    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_retirement_drains_cleanup_scheduled_when_the_main_task_finishes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

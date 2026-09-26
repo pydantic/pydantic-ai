@@ -13,6 +13,8 @@ from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, 
 from pydantic_clai2 import StreamRenderer, theme
 from pydantic_clai2.config import Settings, resolve_settings
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

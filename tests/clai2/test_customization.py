@@ -17,6 +17,8 @@ from pydantic_clai2 import Session
 from pydantic_clai2._app import create_agent
 from pydantic_clai2.customization import customization_guide, read_clai_customization_guide
 
+pytestmark = pytest.mark.anyio
+
 
 async def test_default_agent_does_not_read_guide_for_normal_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     def unexpected_read(*args: object, **kwargs: object) -> str:

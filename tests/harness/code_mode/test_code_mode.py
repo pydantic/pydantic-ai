@@ -637,7 +637,7 @@ class TestCodeMode:
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
-        docs = (Path(__file__).parents[2] / 'docs' / 'code-mode.md').read_text()
+        docs = (Path(__file__).parents[3] / 'docs' / 'harness' / 'code-mode.md').read_text()
         documented = re.search(r'Allowed stdlib modules: (.*?) \(', docs)
         assert advertised is not None and documented is not None
         modules = re.findall(r'`(\w+)`', advertised.group(1))
@@ -4140,7 +4140,7 @@ class TestCodeModeOSAccessInTemporal:
         def handler(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
             return NOT_HANDLED
 
-        with pytest.raises(ModelRetry, match=r"'os.getenv' is not supported in this environment"):
+        with pytest.raises(ModelRetry, match=r"'os\.getenv' is not supported in this environment"):
             await self._run('import os\nos.getenv("HOME")', handler)
 
     async def test_handler_error_is_raised_in_the_sandbox(self) -> None:

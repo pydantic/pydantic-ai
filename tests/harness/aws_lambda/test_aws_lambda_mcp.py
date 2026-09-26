@@ -14,8 +14,6 @@ pytest.importorskip('pydantic_ai.mcp')
 
 from typing import Any
 
-import anyio
-
 from pydantic_ai import Agent, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
@@ -245,14 +243,12 @@ class TestMultipleServers:
 
 
 class TestFakeServerFidelity:
-    def test_the_fake_opens_an_implicit_session_when_not_entered(self) -> None:
+    @pytest.mark.anyio
+    async def test_the_fake_opens_an_implicit_session_when_not_entered(self) -> None:
         """Without this the `implicit_sessions == 0` assertion above would be vacuous."""
         server = FakeMCPToolset(id='calc')
 
-        async def call_without_entering() -> None:
-            await server._require_session()  # pyright: ignore[reportPrivateUsage]
-
-        anyio.run(call_without_entering)
+        await server._require_session()  # pyright: ignore[reportPrivateUsage]
 
         assert server.implicit_sessions == 1
 

@@ -11,6 +11,8 @@ from termflow.tui.completion import Completion
 
 from pydantic_clai2.prompt_completion import CompletionWorker
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

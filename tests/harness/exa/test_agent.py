@@ -40,6 +40,8 @@ from pydantic_ai_harness.exa import (
     agent_run_result,
 )
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
-from menu_script import Script, pick, typed
 from prompt_toolkit.styles import BaseStyle
 from rich.color import Color
 from rich.console import Console
@@ -27,6 +26,9 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.field_menu import FieldMenu, Runners
 from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.menu_script import Script, pick, typed
+
+pytestmark = pytest.mark.anyio
 
 PromptT = TypeVar('PromptT')
 

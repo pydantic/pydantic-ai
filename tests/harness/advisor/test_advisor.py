@@ -468,11 +468,11 @@ class TestAdvisor:
 
     def test_rejects_invalid_options(self) -> None:
         model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')]))
-        with pytest.raises(ValueError, match=r'Advisor.mode'):
+        with pytest.raises(ValueError, match=r'Advisor\.mode'):
             Advisor(model, mode='invalid')  # pyright: ignore[reportArgumentType]
-        with pytest.raises(ValueError, match=r'Advisor.max_uses must be at least 1'):
+        with pytest.raises(ValueError, match=r'Advisor\.max_uses must be at least 1'):
             Advisor(model, max_uses=0)
-        with pytest.raises(ValueError, match=r'Advisor.max_tokens must be at least 1024'):
+        with pytest.raises(ValueError, match=r'Advisor\.max_tokens must be at least 1024'):
             Advisor(model, max_tokens=1023)
         with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor(model, mode='native')

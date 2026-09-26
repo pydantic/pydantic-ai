@@ -173,7 +173,7 @@ class TestInputGuardrail:
             TestModel(custom_output_text='ok'),
             capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.retry('redo'))],
         )
-        with pytest.raises(UserError, match=r'cannot return GuardrailResult.retry'):
+        with pytest.raises(UserError, match=r'cannot return GuardrailResult\.retry'):
             await agent.run('hello')
 
     async def test_runs_once_across_tool_loop(self):
@@ -486,7 +486,7 @@ class TestInputGuardrailParallel:
             return ModelResponse(parts=[TextPart(content='from handler')])
 
         ig = InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'), parallel=True)
-        with pytest.raises(UserError, match=r'incompatible with GuardrailResult.replace'):
+        with pytest.raises(UserError, match=r'incompatible with GuardrailResult\.replace'):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=handler)
 
     async def test_no_dangling_tasks_when_handler_raises(self):

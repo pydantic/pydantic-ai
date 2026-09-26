@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
-from test_app_edges import inputs
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -14,6 +13,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.shell_passthrough import shell_command
+from tests.clai2.test_app_edges import inputs
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize(

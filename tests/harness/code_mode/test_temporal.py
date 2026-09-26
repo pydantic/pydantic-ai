@@ -59,7 +59,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode
 from tests.harness.code_mode.conftest import websocket_relay_server
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal')]
 
 TEMPORAL_PORT = 7244  # avoid conflict with other test suites
 # Fixed because the agent below is built at import time, before any fixture runs.

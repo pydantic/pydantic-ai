@@ -22,6 +22,8 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.grain import Grain
 
+pytestmark = pytest.mark.anyio
+
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
 # combinations. Rebuild it before warnings are escalated by the test suite.
 Settings.model_rebuild()

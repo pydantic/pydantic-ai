@@ -16,6 +16,8 @@ from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
 
+pytestmark = pytest.mark.anyio
+
 
 async def test_answer_resume_and_no_ask_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

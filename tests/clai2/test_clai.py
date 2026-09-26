@@ -31,6 +31,8 @@ from pydantic_clai2.commands import Command, Commands, config_command, config_co
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:
