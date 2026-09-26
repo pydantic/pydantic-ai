@@ -36,6 +36,14 @@ def test_response_ref_timing_and_local_absolute_root_guidance() -> None:
     assert 'Create the configured local root before use, including absolute file writes beneath it' in docs
 
 
+def test_limits_explain_durable_run_start_creation_and_caller_cleanup() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    limits = page.split('## Limits', 1)[1]
+    assert 'Non-durable runs do not create or delete sandboxes solely at run boundaries' in limits
+    assert 'durable runs eagerly create or attach an environment at their start' in limits
+    assert "deletion remains the caller's job" in limits
+
+
 def test_wrapper_policy_documents_command_and_symlink_escape() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert '`run()` bypasses file-method policies' in page

@@ -588,5 +588,5 @@ works without shell support, but cannot run commands.
   (macOS and Linux). Its ref normalizes `.` and `..` without resolving symlinks, so differently
   spelled symlink roots have distinct refs even if they point to the same directory.
 - A run has one workspace.
-- Pydantic AI never creates or deletes a sandbox at run boundaries: cleanup is yours.
+- Non-durable runs do not create or delete sandboxes solely at run boundaries; durable runs eagerly create or attach an environment at their start, even without tool use. In either case, deletion remains the caller's job.
 - How a timed-out command is stopped depends on the provider.
