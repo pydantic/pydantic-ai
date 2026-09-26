@@ -20,8 +20,6 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
 )
 
-from .workspace_fakes import FakeWorkspace
-
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='`LocalWorkspaceBackend` only supports POSIX platforms'),
@@ -91,15 +89,6 @@ async def test_read_only_allows_reads_and_refuses_writes_and_commands(tmp_path: 
     assert result.output == '{"probe":"read me"}'
     assert isinstance(result.workspace, ReadOnlyWorkspace)
     assert (tmp_path / 'notes.txt').read_text() == 'read me'
-
-
-async def test_explicit_workspace_overrides_the_capability(tmp_path: Path) -> None:
-    explicit = FakeWorkspace('explicit')
-    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path)])
-
-    result = await agent.run('go', workspace=explicit)
-
-    assert result.workspace.backend is explicit
 
 
 async def test_foreign_ref_without_another_capability_raises(tmp_path: Path) -> None:

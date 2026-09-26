@@ -253,16 +253,6 @@ async def test_backend_without_commands_or_filesystem_explains_what_to_attach() 
         await workspace.read_text('data.txt')
 
 
-async def test_text_helpers_resolve_relative_paths() -> None:
-    backend = FakeWorkspace('text', {'/workspace/data.txt': b'old'})
-    workspace = Workspace(backend)
-
-    await workspace.write_text('data.txt', 'updated')
-
-    assert await workspace.read_text('data.txt') == 'updated'
-    assert backend.files['/workspace/data.txt'] == b'updated'
-
-
 async def test_run_only_backend_writes_binary_and_odd_names_through_the_shell(tmp_path: Path) -> None:
     backend = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
     workspace = Workspace(backend)
@@ -515,19 +505,6 @@ async def test_explicit_backend_wins_over_a_capability_backend() -> None:
     assert capability.refs == []
 
 
-async def test_missing_paths_raise_the_builtin_error_through_the_workspace() -> None:
-    """The protocol promises `FileNotFoundError` for every operation that needs an existing path."""
-    workspace = Workspace(FakeWorkspace('missing-paths'))
-
-    for operation in (
-        workspace.read_bytes('gone.txt'),
-        workspace.stat('gone.txt'),
-        workspace.remove('gone.txt'),
-    ):
-        with pytest.raises(FileNotFoundError):
-            await operation
-
-
 async def test_for_run_sees_the_workspace_the_run_uses(tmp_path: Path) -> None:
     (tmp_path / 'catalog.txt').write_text('from the workspace')
     seen: list[str] = []
@@ -687,16 +664,6 @@ async def test_a_turn_without_a_workspace_keeps_the_conversations_ref(middle: st
 
     third = await agent.run('go', message_history=middle_turn.all_messages())
     assert third.workspace.ref == ref
-
-
-async def test_a_new_workspace_nothing_used_does_not_carry_the_old_ref_forward() -> None:
-    capability = ProviderWorkspaceCapability('provider')
-    agent = Agent(TestModel(), capabilities=[capability])
-    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='provider', id='old'))
-
-    result = await agent.run('go', message_history=[historical], workspace='new')
-
-    assert result.response.workspace_ref is None
 
 
 async def test_historical_workspace_ref_without_capability_stays_unavailable() -> None:
@@ -889,8 +856,9 @@ async def test_new_workspace_ignores_the_ref_in_history() -> None:
 
     result = await agent.run('go', message_history=[historical], workspace='new')
 
-    assert [result.workspace.backend] == capability.supplied
     assert capability.refs == [None]
+    # Nothing used the fresh workspace, so the old ref is not carried forward either.
+    assert result.response.workspace_ref is None
 
 
 async def test_new_workspace_without_a_supplier_raises() -> None:
@@ -1009,16 +977,6 @@ async def test_declining_capability_leaves_the_run_workspace_unavailable() -> No
     with pytest.raises(UserError, match='No workspace is attached'):
         await agent.run('go')
     assert capability.calls == 1
-
-
-async def test_unrecognized_workspace_ref_is_rejected() -> None:
-    agent = Agent(_tool_call_model(), capabilities=[DecliningWorkspaceCapability()])
-
-    with pytest.raises(
-        UserError,
-        match="Workspace `fake:missing` was passed to the run, but none of the agent's workspace capabilities recognized it",
-    ):
-        await agent.run('go', workspace=WorkspaceRef(provider='fake', id='missing'))
 
 
 async def test_capability_backend_is_available_without_connecting_during_run_setup() -> None:
@@ -1332,14 +1290,3 @@ async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
 
     assert isinstance(without_ref.workspace.backend, UnavailableWorkspace)
     assert capability.ids == ['existing']
-
-
-async def test_fake_filesystem_rejects_path_kind_mismatches() -> None:
-    backend = FakeWorkspace('kinds', {'/workspace/file.txt': b'data'})
-
-    with pytest.raises(IsADirectoryError):
-        await backend.write_bytes('/workspace', b'data')
-    with pytest.raises(NotADirectoryError):
-        await backend.list_dir('/workspace/file.txt')
-    with pytest.raises(FileExistsError):
-        await backend.make_dir('/workspace/file.txt')

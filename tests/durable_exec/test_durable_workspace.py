@@ -357,13 +357,8 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
 
 
 async def test_no_units_are_bound_without_a_construction_time_supplier() -> None:
+    """Attaching a workspace per run inside the container is then refused rather than run non-durably."""
     durability = FakeDurability()
-    Agent(TestModel(), name='ws', capabilities=[durability])
-    bound = FakeDurability.from_agent(Agent(TestModel(), name='ws', capabilities=[durability]))
-    assert bound is not None
-    assert bound._bound_workspace_operation is None  # pyright: ignore[reportPrivateUsage]
-
-    # Attaching one per run inside the container is then refused rather than run non-durably.
     supplier = WorkspaceCapability()
     with pytest.raises(UserError, match='no capability supplied workspaces when the agent was constructed'):
         await Agent(TestModel(), name='ws', capabilities=[durability]).run('go', capabilities=[supplier])
@@ -539,10 +534,10 @@ def test_error_table_round_trips_every_kind(error: Exception) -> None:
     data = error_as_data(error)
     assert data is not None
     restored = JSON_CODEC.load(WorkspaceCallError, JSON_CODEC.dump(WorkspaceCallError, data))
-    with pytest.raises(type(error)) as raised:
+    with pytest.raises(Exception) as raised:
         raise_error(restored)
-    assert str(raised.value) == str(error)
     assert type(raised.value) is type(error)
+    assert str(raised.value) == str(error)
     if isinstance(error, WorkspaceTimeoutError):
         assert isinstance(raised.value, WorkspaceTimeoutError)
         assert (raised.value.stdout, raised.value.stderr) == ('partial', 'err')

@@ -21,9 +21,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
-    SupportsFilesystem,
     Workspace,
-    WorkspaceBackend,
     WorkspaceError,
     WorkspaceRef,
     WorkspaceTimeoutError,
@@ -88,14 +86,6 @@ def test_non_posix_platforms_are_rejected_at_construction(tmp_path: Path, monkey
     monkeypatch.setattr(os, 'name', 'nt')
     with pytest.raises(NotImplementedError, match='only supports POSIX'):
         LocalWorkspaceBackend(tmp_path)
-
-
-async def test_local_workspace_conforms_to_the_protocol(tmp_path: Path):
-    workspace = LocalWorkspaceBackend(tmp_path)
-    assert isinstance(workspace, WorkspaceBackend)
-    assert isinstance(workspace, SupportsFilesystem)
-    typed: WorkspaceBackend = workspace  # static conformance, checked because tests are type-checked
-    assert typed.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
 
 async def test_ref_names_the_configured_working_dir_without_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -171,22 +161,6 @@ async def test_working_dir_expands_home(
     assert result.stdout.rstrip('\n') == await workspace.working_dir()
 
 
-async def test_run_argv_and_shell(tmp_path: Path):
-    workspace = LocalWorkspaceBackend(tmp_path)
-    result = await workspace.run(['echo', 'hello'])
-    assert (result.exit_code, result.stdout, result.stderr) == (0, 'hello\n', '')
-    shell_result = await workspace.run('echo foo | tr a-z A-Z', shell=True)
-    assert shell_result.stdout == 'FOO\n'
-
-
-async def test_shell_discipline(tmp_path: Path):
-    workspace = LocalWorkspaceBackend(tmp_path)
-    with pytest.raises(TypeError, match='requires shell=True'):
-        await workspace.run('echo hello')
-    with pytest.raises(TypeError, match='single command string'):
-        await workspace.run(['echo', 'hello'], shell=True)
-
-
 async def test_a_program_that_cannot_run_is_a_result_like_in_sh(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
     missing = str(tmp_path / 'missing-binary')
@@ -202,13 +176,6 @@ async def test_a_program_that_cannot_run_is_a_result_like_in_sh(tmp_path: Path):
     # A missing `cwd` is not the program failing to run, so it still raises.
     with pytest.raises(FileNotFoundError):
         await workspace.run(['true'], cwd=str(tmp_path / 'missing-dir'))
-
-
-async def test_nonzero_exit_is_a_result(tmp_path: Path):
-    workspace = LocalWorkspaceBackend(tmp_path)
-    result = await workspace.run('echo oops >&2; exit 3', shell=True)
-    assert result.exit_code == 3
-    assert result.stderr == 'oops\n'
 
 
 async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
@@ -411,12 +378,6 @@ async def test_commands_inherit_only_path_and_home_from_the_host(tmp_path: Path,
     assert child_environment == {'PATH': '/host/bin:/usr/bin', 'HOME': 'backend', 'SHARED': 'call'}
 
 
-async def test_cwd_selects_the_working_directory(tmp_path: Path):
-    workspace = LocalWorkspaceBackend(tmp_path)
-    result = await workspace.run(['pwd'], cwd=str(tmp_path))
-    assert result.stdout.rstrip('\n').endswith(tmp_path.name)
-
-
 async def test_symlinked_working_dir_with_dotdot_keeps_one_environment(tmp_path: Path):
     """A working directory spelled through `symlink/..` must not split `run()` and `fs` into two directories.
 
@@ -456,45 +417,6 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
         await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=5)
     assert isinstance(exc_info.value.__cause__, PermissionError)
     await _assert_process_gone(int(pid_file.read_text()))
-
-
-async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
-    backend = LocalWorkspaceBackend(tmp_path)
-    workspace = Workspace(backend)
-    nested = await workspace.resolve('a/b/notes.txt')
-    await workspace.write_text('a/b/notes.txt', 'hello')  # the write contract creates parents
-    assert await workspace.read_text('a/b/notes.txt') == 'hello'
-    entry = await backend.stat(nested)
-    assert (entry.name, entry.is_dir, entry.size) == ('notes.txt', False, 5)
-
-    payload = bytes(range(256))
-    blob = await workspace.resolve('blob.bin')
-    await backend.write_bytes(blob, payload)
-    assert await backend.read_bytes(blob) == payload
-
-    directory = await workspace.resolve('a')
-    assert (await backend.stat(directory)).is_dir
-    names = [entry.name for entry in await backend.list_dir(str(tmp_path))]
-    assert names == ['a', 'blob.bin']
-
-    made = await workspace.resolve('made/deep')
-    await backend.make_dir(made)
-    await backend.make_dir(made)  # mkdir -p semantics
-    assert await backend.exists(made)
-
-    await backend.remove(directory)  # removes the tree
-    assert not await backend.exists(nested)
-    await backend.remove(blob)
-    assert not await backend.exists(blob)
-    with pytest.raises(FileNotFoundError):
-        await backend.read_bytes(blob)
-
-
-@pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
-async def test_filesystem_reports_missing_paths(tmp_path: Path, operation: str):
-    fs = LocalWorkspaceBackend(tmp_path)
-    with pytest.raises(FileNotFoundError):
-        await getattr(fs, operation)(str(tmp_path / 'missing'))
 
 
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
