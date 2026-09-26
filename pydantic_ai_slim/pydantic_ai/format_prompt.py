@@ -77,6 +77,37 @@ def format_as_xml(
         return ElementTree.tostring(el, encoding='unicode')
 
 
+def _materialize_iterators(value: Any) -> Any:
+    """Recursively replace single-pass iterators (e.g. generators) with lists.
+
+    `_ToXml` walks its data from the root twice: once to build the XML, once (for
+    dataclass/BaseModel items) to collect class names and field metadata. An iterator reachable
+    from both walks would be exhausted by whichever runs first, so every one is materialised
+    here, at any depth reachable through a root value, a `Mapping`'s values, or a `list`/`tuple`'s
+    items, before either walk starts.
+
+    Returns the original object, untouched, whenever none of its children needed materialising
+    and it isn't itself an iterator -- so a `NamedTuple`, `OrderedDict`, or other `list`/`tuple`/
+    `Mapping` subclass whose constructor doesn't accept a single iterable passes through as-is
+    rather than being rebuilt (and breaking).
+    """
+    if isinstance(value, Iterator):
+        return [_materialize_iterators(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, Mapping):
+        materialized_mapping = {k: _materialize_iterators(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+        if any(materialized_mapping[k] is not v for k, v in value.items()):  # pyright: ignore[reportUnknownVariableType]
+            return materialized_mapping  # pyright: ignore[reportUnknownVariableType]
+        return value  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, (list, tuple)):
+        materialized_items = [_materialize_iterators(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
+        if any(new is not old for new, old in zip(materialized_items, value)):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+            # Nothing downstream needs the original list/tuple (sub)type -- `_to_xml` and
+            # `_parse_data_structures` only iterate it -- so a plain `list` covers both.
+            return materialized_items
+        return value  # pyright: ignore[reportUnknownVariableType]
+    return value
+
+
 @dataclass
 class _ToXml:
     data: Any
@@ -95,6 +126,9 @@ class _ToXml:
     # flag for parsing dataclasses and Pydantic models once
     _is_info_extracted: bool = False
     _FIELD_ATTRIBUTES = ('title', 'description')
+
+    def __post_init__(self) -> None:
+        self.data = _materialize_iterators(self.data)
 
     def to_xml(self, tag: str | None = None) -> ElementTree.Element:
         return self._to_xml(value=self.data, path='', tag=tag)
