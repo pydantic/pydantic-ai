@@ -916,6 +916,7 @@ class OpenRouterModel(OpenAIChatModel):
     def _supports_tool_forcing(
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
+        thinking = self._request_thinks(model_settings, model_request_parameters)
         # Where forcing isn't supported while thinking, OpenRouter doesn't reject the request: it drops `reasoning`
         # and answers without any, so a resolved forced choice falls back to `'auto'` rather than losing it.
         return support_tool_forcing(
@@ -923,12 +924,13 @@ class OpenRouterModel(OpenAIChatModel):
             model_settings,
             tool_forcing_unavailable_reason(
                 self._resolved_profile,
-                thinking=self._request_thinks(model_settings, model_request_parameters),
+                thinking=thinking,
                 thinking_remedy=(
                     'OpenRouter would silently drop reasoning. Disable thinking with `thinking=False` or '
                     "`openrouter_reasoning={'enabled': False}`"
                 ),
             ),
+            disables_thinking=thinking and self._resolved_profile.get('forced_tool_choice_disables_thinking', False),
         )
 
     @override

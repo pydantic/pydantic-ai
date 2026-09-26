@@ -39,6 +39,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
+from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles import ModelProfile
 
 from .._inline_snapshot import snapshot
@@ -1575,6 +1576,41 @@ async def test_openrouter_forced_tool_choice_on_anthropic_model_that_rejects_it(
             model_settings=OpenRouterModelSettings(tool_choice='required'),
             model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
         )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expects_native_output'),
+    [
+        pytest.param('anthropic/claude-opus-5', True, id='thinks-by-default'),
+        pytest.param('anthropic/claude-sonnet-4.6', False, id='thinks-when-asked'),
+        pytest.param('openai/gpt-5.5', False, id='forcing-keeps-thinking'),
+    ],
+)
+async def test_openrouter_structured_output_mode_follows_whether_forcing_stops_thinking(
+    allow_model_requests: None, model_name: str, expects_native_output: bool
+) -> None:
+    """A bare structured `output_type` uses Native Output where forcing the output tool would stop the model from
+    thinking: a Claude model that thinks by default, on any route. Models that keep thinking when forced, and Claude
+    models that don't think unless asked, keep forced Tool Output."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('{"city": "Zurich"}'))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+    schema = {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema=schema, kind='output')],
+        output_object=OutputObjectDefinition(json_schema=schema),
+        output_mode='auto',
+    )
+
+    await model_request(
+        model, [ModelRequest.user_text_prompt('Which Swiss city is the largest?')], model_request_parameters=params
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    if expects_native_output:
+        assert kwargs['response_format']['type'] == 'json_schema'
+        assert 'tools' not in kwargs
+    else:
+        assert kwargs['tool_choice'] == 'required'
 
 
 async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_api_key: str) -> None:

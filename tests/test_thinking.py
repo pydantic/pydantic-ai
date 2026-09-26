@@ -7,7 +7,6 @@ the Thinking capability, and end-to-end integration via FunctionModel.
 # pyright: reportPrivateUsage=false, reportArgumentType=false
 from __future__ import annotations
 
-import re
 from dataclasses import replace
 from typing import Any, Literal
 from unittest.mock import MagicMock
@@ -234,6 +233,18 @@ class TestAnthropicThinkingTranslation:
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
         assert result is anthropic_omit
+
+    def test_thinking_false_disables_thinking_on_by_default(self):
+        """thinking=False -> {'type': 'disabled'} on a model that thinks when `thinking` is omitted."""
+        model = FunctionModel(
+            _echo,
+            profile=AnthropicModelProfile(
+                supports_thinking=True, anthropic_supports_adaptive_thinking=True, thinking_enabled_by_default=True
+            ),
+        )
+        params = ModelRequestParameters(thinking=False)
+        result = AnthropicModel._translate_thinking(model, {}, params)
+        assert result == snapshot({'type': 'disabled'})
 
     def test_thinking_none_returns_omit(self, adaptive_model: FunctionModel):
         """thinking=None -> OMIT (not sent to API)."""
@@ -811,14 +822,11 @@ def _thinking_settings(anthropic_thinking: BetaThinkingConfigParam | None) -> Mo
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 class TestAnthropicThinkingOutputToolsConflict:
-    """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
-    thinking but accepts alongside adaptive thinking, so only the former switches the output mode.
+    """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended thinking and
+    answers without thinking alongside adaptive thinking, so a bare structured `output_type` switches to Native
+    Output whenever the request thinks, including on models that think without a thinking setting.
 
-    The exception is a model that rejects forcing outright (`claude-fable-5-1`, `claude-mythos-5-1`,
-    `claude-opus-5-5`): there, Tool Output could only fall back to a soft `tool_choice='auto'` the
-    model may ignore, so adaptive thinking keeps switching away from it too.
-
-    These are pre-request guards, so no request is ever made and there is nothing to record. Real
+    These are pre-request decisions, so no request is ever made and there is nothing to record. Real
     model names are used so the shipped profile flags — not hand-built ones — decide each case.
     """
 
@@ -836,8 +844,8 @@ class TestAnthropicThinkingOutputToolsConflict:
             pytest.param(
                 'claude-opus-4-6',
                 None,
-                'tool',
-                id='unified_thinking_on_adaptive_profile_keeps_tool_output',
+                'native',
+                id='unified_thinking_on_adaptive_profile_switches_to_native',
             ),
             pytest.param(
                 'claude-sonnet-4-5',
@@ -854,8 +862,8 @@ class TestAnthropicThinkingOutputToolsConflict:
             pytest.param(
                 'claude-opus-4-6',
                 {'type': 'adaptive'},
-                'tool',
-                id='explicit_adaptive_keeps_tool_output',
+                'native',
+                id='explicit_adaptive_switches_to_native',
             ),
             pytest.param(
                 'claude-opus-4-6',
@@ -880,40 +888,52 @@ class TestAnthropicThinkingOutputToolsConflict:
         assert resolved_params.output_mode == expected_output_mode
 
     @pytest.mark.parametrize(
-        'model_name,anthropic_thinking,expected_message',
+        'model_name,thinking,expected_output_mode',
         [
-            pytest.param(
-                'claude-fable-5-1',
-                None,
-                "'claude-fable-5-1' does not support output tools when a thinking setting is configured, "
-                'because it rejects the forced tool choice they require. '
-                'Use `output_type=NativeOutput(...)` instead.',
-                id='adaptive_profile_that_cannot_force_names_the_model',
-            ),
-            pytest.param(
-                'claude-opus-4-6',
-                {'type': 'enabled', 'budget_tokens': 1024},
-                'Anthropic does not support extended thinking and output tools at the same time. '
-                'Use `output_type=NativeOutput(...)` instead. Alternatively, '
-                "`anthropic_thinking={'type': 'adaptive'}` supports output tools.",
-                id='extended_thinking_on_adaptive_profile_suggests_adaptive',
-            ),
+            pytest.param('claude-opus-4-6', None, 'tool', id='opus_4_6_thinks_only_when_asked'),
+            pytest.param('claude-opus-5', None, 'native', id='opus_5_thinks_by_default'),
+            pytest.param('claude-sonnet-5', False, 'tool', id='sonnet_5_thinking_turned_off'),
+            pytest.param('claude-opus-5-5', False, 'native', id='opus_5_5_cannot_turn_thinking_off'),
         ],
     )
-    def test_explicit_tool_output_raises(
+    def test_auto_output_mode_follows_the_model_default(
+        self,
+        anthropic_api_key: str,
+        output_tool_params: ModelRequestParameters,
+        model_name: str,
+        thinking: bool | None,
+        expected_output_mode: str,
+    ):
+        model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+        settings = ModelSettings() if thinking is None else ModelSettings(thinking=thinking)
+
+        _, resolved_params = model.prepare_request(settings, output_tool_params)
+
+        assert resolved_params.output_mode == expected_output_mode
+
+    @pytest.mark.parametrize(
+        'model_name,anthropic_thinking',
+        [
+            pytest.param('claude-fable-5-1', None, id='model_that_cannot_force'),
+            pytest.param('claude-opus-4-6', {'type': 'enabled', 'budget_tokens': 1024}, id='extended_thinking'),
+        ],
+    )
+    def test_explicit_tool_output_is_kept(
         self,
         anthropic_api_key: str,
         output_tool_params: ModelRequestParameters,
         model_name: str,
         anthropic_thinking: BetaThinkingConfigParam | None,
-        expected_message: str,
     ):
+        """An explicit `ToolOutput` keeps Tool Output where forcing isn't available; the output tool is then
+        offered with `tool_choice='auto'`, and a text response is retried."""
         settings = _thinking_settings(anthropic_thinking)
         model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
         params = replace(output_tool_params, output_mode='tool', allow_text_output=False)
 
-        with pytest.raises(UserError, match=re.escape(expected_message)):
-            model.prepare_request(settings, params)
+        _, resolved_params = model.prepare_request(settings, params)
+
+        assert resolved_params.output_mode == 'tool'
 
 
 def _bedrock_model(profile: ModelProfile) -> BedrockConverseModel:
@@ -1109,6 +1129,21 @@ class TestBedrockThinkingTranslation:
             BedrockModelSettings(), ModelRequestParameters(thinking=False)
         )
         assert result is None
+
+    def test_anthropic_variant_adaptive_thinking_false_disables_thinking_on_by_default(self):
+        """thinking=False on a model that thinks by default sends `disabled`, since omitting it leaves thinking on."""
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='anthropic',
+                bedrock_supports_adaptive_thinking=True,
+                supports_thinking=True,
+                thinking_enabled_by_default=True,
+            )
+        )
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking=False)
+        )
+        assert result == {'thinking': {'type': 'disabled'}}
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')

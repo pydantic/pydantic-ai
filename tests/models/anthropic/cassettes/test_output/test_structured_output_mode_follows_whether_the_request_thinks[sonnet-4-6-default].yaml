@@ -1,0 +1,232 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '588'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Take the country that borders both France and Austria and whose capital is not its largest city. Give me information
+            about its largest city.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+            population:
+              type: integer
+          required:
+          - city
+          - country
+          - population
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '618'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-bf7de2918a8c9b7fa12e5ec4699071fa-6e6267f71ccb00a0-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - caller:
+          type: direct
+        id: toolu_01UACTAAKHwjP615H425yKkU
+        input: {}
+        name: final_result
+        type: tool_use
+      diagnostics: null
+      id: msg_011CfR2TJzHBPz6uxuu62XHd
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 700
+        output_tokens: 21
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1338'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Take the country that borders both France and Austria and whose capital is not its largest city. Give me information
+            about its largest city.
+          type: text
+        role: user
+      - content:
+        - id: toolu_01UACTAAKHwjP615H425yKkU
+          input: {}
+          name: final_result
+          type: tool_use
+        role: assistant
+      - content:
+        - content: |-
+            3 validation errors:
+            ```json
+            [
+              {
+                "type": "missing",
+                "loc": [
+                  "city"
+                ],
+                "msg": "Field required",
+                "input": {}
+              },
+              {
+                "type": "missing",
+                "loc": [
+                  "country"
+                ],
+                "msg": "Field required",
+                "input": {}
+              },
+              {
+                "type": "missing",
+                "loc": [
+                  "population"
+                ],
+                "msg": "Field required",
+                "input": {}
+              }
+            ]
+            ```
+
+            Fix the errors and try again.
+          is_error: true
+          tool_use_id: toolu_01UACTAAKHwjP615H425yKkU
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+            population:
+              type: integer
+          required:
+          - city
+          - country
+          - population
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '682'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ce5b11960e72742ec57f3f87ee2d40b5-d358cc50267cc8a7-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - caller:
+          type: direct
+        id: toolu_01TssCn4UuTWNppv4Rv4xYbh
+        input:
+          city: Zurich
+          country: Switzerland
+          population: 434008
+        name: final_result
+        type: tool_use
+      diagnostics: null
+      id: msg_011CfR2TPvSmo1xX38ScpBNT
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 906
+        output_tokens: 75
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

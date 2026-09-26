@@ -145,7 +145,7 @@ class ModelProfile(TypedDict, total=False):
     thinking_enabled_by_default: bool
     """Whether the model thinks when the request doesn't configure thinking. Default: `False`.
 
-    True for models that think unless told not to, such as DeepSeek V4 and the OpenAI o-series. Pydantic AI
+    True for models that think unless told not to, such as Claude Opus 5, DeepSeek V4 and the OpenAI o-series. Pydantic AI
     uses it to tell whether a request without a thinking setting will think, for example to decide whether a
     tool call can be forced. Unlike `thinking_always_enabled`, it doesn't mean thinking can't be turned off.
     """
@@ -166,6 +166,16 @@ class ModelProfile(TypedDict, total=False):
     DeepSeek's V4 models, for example, only accept forcing while thinking is off. When False and the request
     thinks, a forced tool choice is handled as if `supports_forced_tool_choice` were False. Whether the request
     thinks accounts for `thinking_enabled_by_default`.
+    """
+
+    forced_tool_choice_disables_thinking: bool
+    """Whether the model answers a forced tool choice without thinking. Default: `False`.
+
+    Claude models accept a forced tool choice alongside adaptive thinking, but return no thinking for that
+    request. When True and the request thinks, Pydantic AI doesn't force a tool choice it resolved itself (such
+    as an output tool's): it falls back to `'auto'`, and a structured `output_type` defaults to
+    [Native Output](../output.md#native-output) where the model supports it. An explicit forcing
+    [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] is still sent.
     """
 
     thinking_tags: tuple[str, str]
@@ -303,6 +313,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_enabled_by_default': False,
     'supports_forced_tool_choice': True,
     'supports_forced_tool_choice_with_thinking': True,
+    'forced_tool_choice_disables_thinking': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,

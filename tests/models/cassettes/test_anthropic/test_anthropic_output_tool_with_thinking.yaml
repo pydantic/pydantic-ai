@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '495'
+      - '459'
       content-type:
       - application/json
       host:
@@ -21,15 +21,116 @@ interactions:
         - text: What is 3 + 3?
           type: text
         role: user
-      model: claude-sonnet-4-0
+      model: claude-sonnet-4-5
       stream: false
-      system: |2
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: The final response which ends this conversation
+        input_schema:
+          properties:
+            response:
+              type: integer
+          required:
+          - response
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1487'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-3e8cd3a191f85164e649abb15ed136da-a02004613e97edce-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - signature: EqMDCpsBCBIYAipAY/HZ32QPRhpUrtbaqIy6f4hQGdWE3CQJ8F0CMJo4GE0OOLj0fWPrGGuwcf/VvkmcO+XklY6EuZ77gZQ+yXQdvDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBv4jc1QYSDIBLMaOjbU85x2gYcBoMno6RvQtsOzsrGnrCIjDU1xrLeGbsfAnRGJp/PnqctQ+Ro5FNgxfZvFOPlhOGk7xt2fKIRhfQUGetXCrZw40qtAFrf+zWEP0BNE5x0Ew7YQXUEY+n6ZmkFzRUjCC90wdU6ADNSw8nsKC2PGZXucoAaL5rr0XEvlF5u9cpej8yTmcDWEZM1KqUr45qJ7H3xyKeGqM9zT5/Cf3lttzb61cpnTWi0Xn0iMUQjebp/JDrq9UJv/ogYztFgALJ1UALYIxoSXLzmv89LK5PtDc770vrgle6FshlObykGuK1czHnlf47GIWyhl7SFL7+4FuR/r5qJU1PQE0YAQ==
+        thinking: |-
+          The user is asking me to calculate 3 + 3, which equals 6.
 
-        Always respond with a JSON object that's compatible with this schema:
-
-        {"properties": {"response": {"type": "integer"}}, "required": ["response"], "type": "object", "title": "int"}
-
-        Don't include any text or Markdown fencing before or after.
+          I need to use the final_result function to provide this answer. The function expects an integer response.
+        type: thinking
+      - caller:
+          type: direct
+        id: toolu_0177tPGXP4R73VZot3gWRm3n
+        input:
+          response: 6
+        name: final_result
+        type: tool_use
+      diagnostics: null
+      id: msg_011CfR2e4Q15YfukjzbqaYxg
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 597
+        output_tokens: 102
+        output_tokens_details:
+          thinking_tokens: 46
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '402'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is 3 + 3?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      output_config:
+        format:
+          schema:
+            additionalProperties: false
+            properties:
+              response:
+                type: integer
+            required:
+            - response
+            type: object
+          type: json_schema
+      stream: false
       thinking:
         budget_tokens: 3000
         type: enabled
@@ -39,30 +140,43 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1256'
+      - '2074'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-f41397dc15da252ddce4430dbb0155db-e037c1ee81b229c6-01
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
+      container: null
       content:
-      - signature: EvQCCkYICxgCKkAFV41lligOZH9tn6FZ3mHxjygCz2LlOjUJSwx0ud6E8iB23CRwk28pJlQqLx2tPVXC/aFwrk+nXGWB9yGtH2CZEgyR4giHA5Qtj0k2jfQaDJXiKKr8ahm/GuJYLCIw50P6MBSOFrmWCQ3SOXz9n42rME7hVN+aWLAQUPQNtECEA4nv8i6DYnW9iHF3RyBIKtsB+Kw+A1vCVlo/kmCgAGwxstcandOpePzZKVm6LrHL/wvO0N4HqgATViXG4zBdQIhQaUFoikq8YTJP4m7ptZ515+2Nt+Bu/1MSEUTusc/mO1FiuyBkP9fteurAYVL6JCy7I+MTLe+3Lgs3rEECIXfc/HJ5tsv1PdjXzqdt+fxVUW/s3R7GcatF6d1Vvmb1EJla6L5EVsT69oIT5eZbsDf0myvBjGUN3jAKuDp1JBQWoEPqRO4TjbLoaVFjXa2HhtDxjb/Oi2LPE5lTBACC5TSWFLvrqCndkDqUAjlWGAE=
+      - signature: EsAFCpsBCBIYAipAOfgyWVTuZ3AUw8HM+UaZr5G/xLjlnNCReIxEVL+E5nuVWda6jmW8zG/VdzAkfbTSz3++8UQuuYdx4Nre5BMvxzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBw4jc1QYSDAN32J3t6H8vsML4qhoMYKMnY32IE3AIhvo1IjAzl3pzQn0nWKIKQV9BxOWJ/TuGu3TezRC4nr0PA0/toZacPgOSmL4td98BNvGTC6Iq0QNRaRD39dUt93qjuQJ36gUzg3/qPZs3rMUSS57dOs0gtafttY+4QLh5v6+6bWVwSKyWwhhiWSCGIFT/fV3WzXmy8Q/zVqIiTWcz+ytXUgmGYWq55x4zf+Qmm3v+GlaykhGh+1/TuMEa1NqGKBvpUv7b8Anks/vClwtIQpUqVyxvoDRMMLOFpFiY05MKEZAcbPr3mBlggQMUBIPhRCdiXk6zNGsHojg3Tr0DpThuIG1BemqLMU3VuE0IxZhk42Rzc2bOoD0pui3fAaVhV5l7L6dt0KqlEoHOxDywGes0k858UKpM5WXvUkNoguFXrGvWnl0dUTj6Sk36pEFkym3RnoCW66f06+TrTlwnlzENEDqZqQkrPwkWypU8MBDAzCFPPnWBI2NixLh9AdbJwtSgXn9gVDDoGlRbs0hYaQ4kIGWjt8bswhGbnoCM1HSnpFWYGxbDy4GG8pJ9JC3RheTkpb+W0dyQ+L81OgHCX0P0q/M/ulFLxMi09qbgSEgQ12FeHYZ6QBvUTWbV/2c+5NQN5TYUTTZHd3rSuQ5bxHZpEKKU7YbGA7bOD+Rzw0Hra1dztV2aPIFDVM3pvGs8GNb6HadEWJdoUFnfG5/gUPYaTnYophkYAQ==
         thinking: |-
-          The user is asking me to calculate 3 + 3. This is a simple arithmetic problem.
+          The user is asking me to calculate 3 + 3, which equals 6.
 
-          3 + 3 = 6
+          I need to respond with valid JSON that matches the schema provided. The schema requires:
+          - An object with a property called "response"
+          - The "response" property must be an integer
+          - No additional properties are allowed
+          - The "response" property is required
 
-          I need to respond with a JSON object that has a "response" field containing an integer value, which should be 6.
+          So I need to return: {"response": 6}
+
+          I must not include any markdown, backticks, or anything else - just the JSON on a single line.
         type: thinking
       - text: '{"response": 6}'
         type: text
-      id: msg_01Ne9UEdkLhBdVXJ1z2K1HRv
-      model: claude-sonnet-4-20250514
+      diagnostics: null
+      id: msg_011CfR2eBsDPGAwS3P3qPDAr
+      model: claude-sonnet-4-5-20250929
       role: assistant
+      stop_details: null
       stop_reason: end_turn
       stop_sequence: null
       type: message
@@ -73,8 +187,10 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 107
-        output_tokens: 75
+        input_tokens: 187
+        output_tokens: 129
+        output_tokens_details:
+          thinking_tokens: 117
         service_tier: standard
     status:
       code: 200
