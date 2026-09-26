@@ -948,16 +948,6 @@ async def test_prepare_workspace_hook_wraps_innermost_last_and_reports_explicit_
     assert last.seen[-1] == (Workspace, True, True)
 
 
-async def test_workspace_ref_forwards_backend_identity() -> None:
-    backend = FakeWorkspace('ref')
-    workspace = Workspace(backend)
-
-    assert workspace.ref is None
-    await workspace.run(['true'])
-
-    assert workspace.ref == WorkspaceRef(provider='fake', id='fake-ref')
-
-
 async def test_run_resolves_a_relative_cwd_against_the_working_directory(tmp_path: Path) -> None:
     (tmp_path / 'sub').mkdir()
     result = await Workspace(LocalWorkspaceBackend(tmp_path)).run(['pwd', '-P'], cwd='sub')

@@ -548,7 +548,7 @@ def test_unexpected_errors_fail_the_unit() -> None:
     assert error_as_data(OSError('other')) is None
 
 
-async def test_run_never_ensures_without_an_attached_workspace() -> None:
+async def test_known_workspace_ref_is_ensured_once() -> None:
     durability = FakeDurability()
     agent = Agent(TestModel(), name='ws', capabilities=[FreshWorkspaces(), durability])
 
