@@ -290,12 +290,12 @@ class Simulation(ABC):
         self.loop.run_until_idle()
         return self
 
-    def _build_agent(self) -> Agent[None, str]:
-        agent: Agent[None, str] = Agent(instructions='You are a simulated voice assistant.')
+    def _build_agent(self) -> Agent[object, str]:
+        agent: Agent[object, str] = Agent(instructions='You are a simulated voice assistant.')
         gates = self.tools
 
         @agent.tool
-        async def lookup(ctx: RunContext[None]) -> str:
+        async def lookup(ctx: RunContext[object]) -> str:
             """Look something up."""
             assert ctx.tool_call_id is not None
             return await gates.run(ctx.tool_call_id)
