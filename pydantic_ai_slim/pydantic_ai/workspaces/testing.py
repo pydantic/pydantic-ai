@@ -442,6 +442,38 @@ class WorkspaceBackendSuite:
             assert backend.ref is not None
             assert await Workspace(attach_backend(backend.ref)).read_bytes(path) == b'reattached'
 
+    async def test_destroying_environment_during_command_raises_unavailable(
+        self,
+        destructive_backend: Callable[[], WorkspaceBackend] | None,
+        destroy_environment: Callable[[WorkspaceBackend], Awaitable[None]] | None,
+        has_real_posix_shell: bool,
+    ) -> None:
+        if destructive_backend is None or destroy_environment is None:
+            pytest.skip('provide `destructive_backend` and `destroy_environment` to enable this rule')
+        if not has_real_posix_shell:
+            pytest.skip('backend has no running POSIX command to interrupt')
+        backend = destructive_backend()
+        commands = _commands(backend)
+        workspace = Workspace(backend)
+        root = await backend.working_dir()
+        started = posixpath.join(root, f'.pydantic-ai-started-{uuid.uuid4().hex}')
+
+        async def run_command() -> None:
+            with pytest.raises(WorkspaceUnavailableError):
+                # A local directory deletion does not kill a process already inside it; exit when
+                # the directory disappears so the rule also checks the result classification.
+                await commands.run(
+                    ['sh', '-c', 'printf ready > "$1"; while [ -d "$2" ]; do sleep 0.1; done', 'sh', started, root],
+                    timeout=30,
+                )
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run_command)
+            with anyio.fail_after(30):
+                while not await workspace.exists(started):
+                    await anyio.sleep(0.05)
+            await destroy_environment(backend)
+
     async def test_attaching_to_a_destroyed_environment_raises_unavailable(
         self,
         destructive_backend: Callable[[], WorkspaceBackend] | None,

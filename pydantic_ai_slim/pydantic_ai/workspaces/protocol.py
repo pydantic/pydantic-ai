@@ -10,7 +10,8 @@ A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBacken
 - create an environment on its first operation when built without a ref, and report its ref from
   then on; when built with a ref, attach to it, raising
   [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is gone;
-- raise `WorkspaceUnavailableError` for a dead environment,
+- raise `WorkspaceUnavailableError` for a dead environment, including when it is destroyed
+  during a command; a command killed by a signal in a live environment instead returns its exit code,
   [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] for a timeout, the builtin
   file errors for path-level failures, and `TypeError`/`ValueError` for invalid arguments, and let
   anything else (a provider SDK's transient errors) propagate so durable engines retry it.
@@ -173,6 +174,8 @@ class SupportsCommands(Protocol):
 
         Undecodable stdout/stderr bytes are replaced with U+FFFD, never dropped.
         A missing argv program exits 127. A missing `cwd` raises `FileNotFoundError`.
+        If the environment is destroyed while the command runs, raise `WorkspaceUnavailableError`;
+        a command killed by a signal in a live environment returns its exit code.
         On timeout or cancellation, stop the foreground process tree on a best-effort basis;
         background jobs may continue if they detach. Return when the direct command exits,
         after at most a short output-drain grace even if a background child keeps stdout open.

@@ -265,6 +265,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def realpath(self, path: str) -> str:
         return await run_in_executor(os.path.realpath, self._path(path))
 
+    async def _check_environment_alive(self) -> None:
+        if not await run_in_executor((self._resolved_working_dir or self._working_dir).is_dir):
+            raise WorkspaceUnavailableError(f'local workspace directory {self._working_dir!s} does not exist')
+
     async def run(
         self,
         command: WorkspaceCommand,
@@ -368,6 +372,9 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     stderr=stderr,
                 ) from error
             raise
+        # A process can still finish after its working directory is deleted; don't report
+        # that as an ordinary exit from a live workspace.
+        await self._check_environment_alive()
         return CommandResult(
             exit_code=exit_code,
             stdout=stdout_buffer.decode('utf-8', errors='replace'),
