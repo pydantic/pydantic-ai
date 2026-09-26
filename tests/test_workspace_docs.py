@@ -9,6 +9,11 @@ def test_no_unavailable_no_file_access_recipe() -> None:
     assert 'no-file-tools agent' in page
 
 
+def test_post_run_unused_workspace_access_warning() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    assert 'accessing `result.workspace` after a run with `ref=None`' in page
+
+
 def test_deleted_sandbox_history_restarts_with_new_workspace() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert "delete the sandbox after each run, pass `workspace='new'`" in page

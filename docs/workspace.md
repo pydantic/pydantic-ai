@@ -60,7 +60,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run i
 
 The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites. A
 sandbox is created the first time a tool uses it, and keeps running after the run until you or its
-provider stop it; see [Cleaning up](#cleaning-up).
+provider stop it; see [Cleaning up](#cleaning-up). If no tool used it, accessing `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
 
 ## Pick up where you left off {#continuing-in-the-same-workspace}
 
