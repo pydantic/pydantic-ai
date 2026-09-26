@@ -1726,7 +1726,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # `'new'` asks for a fresh environment, so the ref in history is not offered.
         # The automatic unattached placeholder is not an explicit refusal: a child can
         # choose its own capability. A caller-built `UnavailableWorkspace` remains explicit.
-        is_unattached = isinstance(workspace, Workspace) and isinstance(workspace.backend, _UnattachedWorkspace)
+        # Do not inspect `.backend` on `DurableWorkspace`: workflow-side backend access is forbidden.
+        is_unattached = type(workspace) is Workspace and isinstance(workspace.backend, _UnattachedWorkspace)
         offered_ref = historical_workspace_ref if workspace is None or is_unattached else requested_ref
         explicit = (
             None
