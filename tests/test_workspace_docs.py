@@ -37,6 +37,12 @@ def test_timeout_security_and_platform_guidance() -> None:
     assert 'durable history' in page
 
 
+def test_temporal_command_retry_requires_explicit_policy() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    assert 'workspace_activity_config' in page
+    assert 'command retries' in page
+
+
 def test_deleted_sandbox_history_restarts_with_new_workspace() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert "delete the sandbox after each run, pass `workspace='new'`" in page
