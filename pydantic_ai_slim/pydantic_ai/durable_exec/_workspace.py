@@ -71,6 +71,10 @@ class WorkspaceCallError:
     message: str
     stdout: str = ''
     stderr: str = ''
+    errno: int | None = None
+    strerror: str | None = None
+    filename: str | None = None
+    filename2: str | None = None
 
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
@@ -169,6 +173,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     IsADirectoryError,
     PermissionError,
     FileExistsError,
+    OSError,
     NotImplementedError,
     UserError,
     TypeError,
@@ -181,8 +186,20 @@ _EXPECTED_ERRORS_BY_NAME = {error_type.__name__: error_type for error_type in _E
 def error_as_data(error: Exception) -> WorkspaceCallError | None:
     """The data form of an error a workspace is expected to raise, or `None` for anything else."""
     error_type = next((error_type for error_type in _EXPECTED_ERRORS if isinstance(error, error_type)), None)
-    if error_type is None:
+    if error_type is None or (
+        error_type is OSError and isinstance(error, (ConnectionError, TimeoutError, InterruptedError, BlockingIOError))
+    ):
+        # Transient OS failures belong to the engine's retry path, not the journaled result.
         return None
+    if isinstance(error, OSError) and not isinstance(error, WorkspaceError):
+        return WorkspaceCallError(
+            type=error_type.__name__,
+            message=str(error),
+            errno=error.errno,
+            strerror=error.strerror,
+            filename=error.filename,
+            filename2=error.filename2,
+        )
     if isinstance(error, WorkspaceTimeoutError):
         return WorkspaceCallError(
             type=error_type.__name__, message=str(error), stdout=error.stdout, stderr=error.stderr
@@ -195,6 +212,11 @@ def raise_error(error: WorkspaceCallError) -> Never:
     error_type = _EXPECTED_ERRORS_BY_NAME[error.type]
     if error_type is WorkspaceTimeoutError:
         raise WorkspaceTimeoutError(error.message, stdout=error.stdout, stderr=error.stderr)
+    if issubclass(error_type, OSError) and not issubclass(error_type, WorkspaceError):
+        if error.errno is None:
+            # Some backends raise FileNotFoundError(path), without OS error fields.
+            raise error_type(error.message)
+        raise error_type(error.errno, error.strerror, error.filename, None, error.filename2)
     raise error_type(error.message)
 
 

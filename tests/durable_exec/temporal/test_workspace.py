@@ -8,6 +8,7 @@ sandboxed workflow can construct a backend for one but only an activity can touc
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import sys
@@ -53,7 +54,7 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall
+    from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall, execute_call, raise_error
     from pydantic_ai.durable_exec.prefect import PrefectDurability
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -510,6 +511,22 @@ async def test_binary_content_and_expected_errors_cross_the_activity_boundary(cl
         }
     )
     assert _ENVIRONMENTS['env-1']['/remote/blob.bin'] == _BINARY
+
+
+async def test_deterministic_os_error_crosses_workspace_boundary_without_retry() -> None:
+    class LongNameBackend(RemoteBackend):
+        async def working_dir(self) -> str:
+            return '/remote'
+
+        async def read_bytes(self, path: str) -> bytes:
+            raise OSError(errno.ENAMETOOLONG, 'File name too long', path)
+
+    result = await execute_call(Workspace(LongNameBackend(None)), WorkspaceCall(method='read_bytes', path='long-name'))
+    assert result.error is not None
+    with pytest.raises(OSError) as exc_info:
+        raise_error(result.error)
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    assert exc_info.value.filename == '/remote/long-name'
 
 
 # --- An uncaught workspace error fails the workflow instead of hanging it ----------------------

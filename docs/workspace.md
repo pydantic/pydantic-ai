@@ -334,7 +334,8 @@ run as durable activities.
 - Every run creates or attaches its environment at its start, even if no tool uses it. Retries,
   replays and recovery then reattach to that same environment.
 - Workspace calls retry like tools do, so a command or write may run again if a worker dies mid-call,
-  A timed-out or unavailable workspace is not retried automatically. Temporal gives command activities
+  A timed-out or unavailable workspace and deterministic file errors (including OS path errors) are not
+  retried automatically; transient OS and provider failures can retry. Temporal gives command activities
   their requested timeout plus time for startup and stopping; `timeout=None` uses a one-hour activity
   ceiling, not an unlimited Temporal activity.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
