@@ -25,6 +25,8 @@ from ..tools import (
     ToolFuncPlain,
     ToolParams,
     ToolPrepareFunc,
+    _validate_max_retries,  # pyright: ignore[reportPrivateUsage]
+    _validate_timeout,  # pyright: ignore[reportPrivateUsage]
 )
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -124,6 +126,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], a function (sync or async, with
                 or without `RunContext`), or a sequence of these.
         """
+        _validate_max_retries(max_retries)
+        _validate_timeout(timeout)
         self.max_retries = max_retries
         self.timeout = timeout
         self._id = id

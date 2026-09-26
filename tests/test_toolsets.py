@@ -3243,3 +3243,24 @@ async def test_dynamic_toolset_delegates_get_tool_for_tool_def():
     tool = await resolved.get_tool_for_tool_def(tool_def, ctx)
     assert rebuilt == ['echo']
     assert await resolved.call_tool('echo', {'text': 'hi'}, ctx, tool) == 'hi'
+
+
+@pytest.mark.parametrize('timeout', [0, -1.5])
+def test_function_toolset_rejects_non_positive_timeout(timeout: float):
+    """https://github.com/pydantic/pydantic-ai/issues/8815"""
+    with pytest.raises(UserError, match=re.escape(f'timeout must be > 0, got {timeout}')):
+        FunctionToolset(timeout=timeout)
+
+
+@pytest.mark.parametrize('max_retries', [-1, -5])
+def test_function_toolset_rejects_negative_max_retries(max_retries: int):
+    """https://github.com/pydantic/pydantic-ai/issues/8815"""
+    with pytest.raises(UserError, match=re.escape(f'max_retries must be >= 0, got {max_retries}')):
+        FunctionToolset(max_retries=max_retries)
+
+
+def test_function_toolset_accepts_valid_timeout_and_max_retries():
+    """https://github.com/pydantic/pydantic-ai/issues/8815"""
+    toolset = FunctionToolset(timeout=5.0, max_retries=2)
+    assert toolset.timeout == 5.0
+    assert toolset.max_retries == 2
