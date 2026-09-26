@@ -513,6 +513,33 @@ async def test_binary_content_and_expected_errors_cross_the_activity_boundary(cl
     assert _ENVIRONMENTS['env-1']['/remote/blob.bin'] == _BINARY
 
 
+@workflow.defn
+class LargeWriteWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await binary_agent.run('Nothing to do.')
+        try:
+            await result.workspace.write_bytes('big.bin', b'x' * 2_000_000)
+        except UserError as error:
+            return str(error)
+        return 'unexpected success'
+
+
+async def test_large_workflow_write_fails_before_scheduling_activity(client: Client) -> None:
+    _reset_provider()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[LargeWriteWorkflow], plugins=[AgentPlugin(binary_agent)]
+    ):
+        message = await client.execute_workflow(
+            LargeWriteWorkflow.run,
+            id=f'{LargeWriteWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=10),
+        )
+    assert 'too large for Temporal' in message
+    assert 'big.bin' not in _ENVIRONMENTS['env-1']
+
+
 async def test_deterministic_os_error_crosses_workspace_boundary_without_retry() -> None:
     class LongNameBackend(RemoteBackend):
         async def working_dir(self) -> str:

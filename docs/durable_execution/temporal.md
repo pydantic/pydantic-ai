@@ -246,7 +246,7 @@ Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, wh
 
 - Construct every worker's agent with the same workspace capabilities as the workflow's.
 - In a custom [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace], read only `deps` and the [run context fields listed above](#agent-run-context-and-dependencies).
-- Move large files inside a tool: a workflow-side call carries the file in the activity payload, which counts against the [payload size limit](#large-payloads).
+- Move large files inside a tool: a workflow-side call carries the file in the activity payload, which counts against the [payload size limit](#large-payloads). Workspace writes above the default 2MB encoded limit raise `UserError` before scheduling the activity; servers with a smaller custom limit may still reject writes.
 
 Temporal stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
 Keep secrets in the workspace capability's `env=` or use them inside a tool rather than passing
