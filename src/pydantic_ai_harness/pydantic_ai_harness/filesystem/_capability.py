@@ -1,0 +1,135 @@
+"""Filesystem capability that provides sandboxed file system access."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.toolsets import FilteredToolset
+
+from pydantic_ai_harness.filesystem._toolset import DEFAULT_TOOL_NAMES, READ_ONLY_TOOL_NAMES, FileSystemToolset
+
+_DEFAULT_PROTECTED: list[str] = [
+    '.git/*',
+    '.env',
+    '.env.*',
+    '*.pem',
+    '*.key',
+    '**/secrets*',
+]
+
+
+@dataclass
+class FileSystem(AbstractCapability[AgentDepsT]):
+    """File system access scoped to a root directory.
+
+    Relative paths are resolved from `cwd` (by default `root_dir` itself).
+    Traversal above the root is rejected. Symlinks are resolved before
+    authorization.
+    """
+
+    root_dir: str | Path = '.'
+    """Root directory for all file operations. Defaults to the current directory."""
+
+    cwd: str | Path | None = None
+    """Directory that relative paths resolve from; must be inside `root_dir`.
+
+    Defaults to `root_dir`. Set it to hand the model a project directory while
+    `root_dir` grants access to more (a parent directory, or the filesystem
+    root) without the model having to spell out absolute paths.
+    """
+
+    allowed_patterns: Sequence[str] = field(default_factory=list[str])
+    """If non-empty, only paths matching at least one glob pattern are accessible."""
+
+    denied_patterns: Sequence[str] = field(default_factory=list[str])
+    """Paths matching any of these glob patterns are rejected."""
+
+    protected_patterns: Sequence[str] = field(default_factory=lambda: list(_DEFAULT_PROTECTED))
+    """Paths matching these patterns are read-only (writes are rejected).
+
+    Defaults to protecting `.git/`, `.env`, key files, and secrets.
+    Set to an empty list to disable protection.
+    """
+
+    max_read_lines: int = 2000
+    """Maximum number of lines returned by a single `read_file` call."""
+
+    max_read_chars: int | None = None
+    """Maximum characters in a single `read_file` result, header and hint included.
+
+    The window ends on the last complete line that fits, and the continuation
+    hint names the first line not shown, so a caller paging by `offset` cannot
+    skip content. Set this at or below any downstream tool-output cap; a cap
+    applied after the fact cuts mid-line and drops or strands the hint. `None`
+    leaves only `max_read_lines` in force.
+    """
+
+    max_list_results: int = 1000
+    """Maximum number of entries returned by `list_directory`."""
+
+    max_search_results: int = 1000
+    """Maximum number of matches returned by `search_files`."""
+
+    max_find_results: int = 1000
+    """Maximum number of matches returned by `find_files`."""
+
+    read_only: bool = False
+    """Whether to expose only the tools in `READ_ONLY_TOOL_NAMES`."""
+
+    content_hashes: bool = True
+    """Whether tool results report content hashes and `write_file`/`edit_file` accept `expected_hash`.
+
+    The hashes give a model optimistic concurrency control over a workspace
+    that something else may also be editing. Turn them off for a single-writer
+    coding agent, where they only add tokens to every read and write.
+    """
+
+    tools: Sequence[str] = DEFAULT_TOOL_NAMES
+    """Which tools to register, from `FILE_SYSTEM_TOOL_NAMES`.
+
+    The default is every pure-Python tool. Name `list_files` and `grep` to add
+    the ripgrep-backed listing and search tools, which need the `rg` executable
+    on `PATH` (the `coder` extra installs it) and respect `.gitignore`.
+    `read_only` further narrows the selection to `READ_ONLY_TOOL_NAMES`.
+    """
+
+    def __post_init__(self) -> None:
+        # Runtime validation: dataclass field annotations are advisory, not enforced.
+        # A config-driven caller could pass a string that would otherwise propagate.
+        values: dict[str, Any] = {
+            'max_read_lines': self.max_read_lines,
+            'max_list_results': self.max_list_results,
+            'max_search_results': self.max_search_results,
+            'max_find_results': self.max_find_results,
+        }
+        if self.max_read_chars is not None:
+            values['max_read_chars'] = self.max_read_chars
+        for name, value in values.items():
+            if not isinstance(value, int) or value <= 0:
+                raise ValueError(f'{name} must be a positive integer, got {value!r}')
+
+    def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
+        """Build and return the filesystem toolset."""
+        toolset = FileSystemToolset[AgentDepsT](
+            root_dir=Path(self.root_dir),
+            allowed_patterns=self.allowed_patterns,
+            denied_patterns=self.denied_patterns,
+            protected_patterns=self.protected_patterns,
+            max_read_lines=self.max_read_lines,
+            max_read_chars=self.max_read_chars,
+            max_list_results=self.max_list_results,
+            max_search_results=self.max_search_results,
+            max_find_results=self.max_find_results,
+            id=self.id or 'file_system',
+            cwd=None if self.cwd is None else Path(self.cwd),
+            content_hashes=self.content_hashes,
+            tools=self.tools,
+        )
+        if self.read_only:
+            return FilteredToolset(toolset, lambda ctx, tool: tool.name in READ_ONLY_TOOL_NAMES)
+        return toolset
