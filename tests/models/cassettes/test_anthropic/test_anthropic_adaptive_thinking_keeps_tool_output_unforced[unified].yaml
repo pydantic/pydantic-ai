@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '483'
+      - '521'
       content-type:
       - application/json
       host:
@@ -22,11 +22,13 @@ interactions:
           type: text
         role: user
       model: claude-opus-4-6
+      output_config:
+        effort: high
       stream: false
       thinking:
         type: adaptive
       tool_choice:
-        type: any
+        type: auto
       tools:
       - description: The final response which ends this conversation
         input_schema:
@@ -46,32 +48,35 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '661'
+      - '1164'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      server-timing:
-      - x-originResponse;dur=2474
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-bf8afa7089c3e53419ffe7d3636f0c63-cd30beb25696d2e9-01
+      - 00-8f2bfd95a07aa6ed21fffb48e9b9df6e-239cce1a1d183b69-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
+      container: null
       content:
+      - signature: EpMCCpABCBIYAipAawvOquBeb+hGZnhr5jAgmc9LcHFBHnUjp4Y0wB5YngR8DCqTRgeYtvl9Sb9NUIjEeLyKSgtk6ugeYww87+T3qzIPY2xhdWRlLW9wdXMtNC02OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAeyH3NUGEgw548HZCuZAAIyn0FAaDLG4j/cTPTHZBZXBwyIwpiVzX8pUSPEitOMPVICii7IE17masM/KTbVStA4GapyLLG8ly8s1Np1mlRS9rU9WKjDAvdPwyFtWOmkqYHxuNYYrrZ2TPohKOnX9FiDr/o4tlmgMwkcjfjGI6vNrndWVSgMYAQ==
+        thinking: The capital of France is Paris.
+        type: thinking
       - caller:
           type: direct
-        id: toolu_01BSJtCi3w4Ke7QAbf9o6KP1
+        id: toolu_01YUd5vK72aARPbbD8bZiBcP
         input:
           city: Paris
           country: France
         name: final_result
         type: tool_use
-      id: msg_011Cdof17ibZX3HkNVjoLaKX
+      diagnostics: null
+      id: msg_011CfR2XtRZUpJx7xobSXFus
       model: claude-opus-4-6
       role: assistant
       stop_details: null
@@ -85,10 +90,10 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 671
-        output_tokens: 55
+        input_tokens: 579
+        output_tokens: 93
         output_tokens_details:
-          thinking_tokens: 0
+          thinking_tokens: 19
         service_tier: standard
     status:
       code: 200

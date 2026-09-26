@@ -63,9 +63,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     When True, unified `thinking` translates to `{'type': 'adaptive'}`.
     When False, it translates to `{'type': 'enabled', 'budget_tokens': N}`.
 
-    Because adaptive thinking — unlike extended thinking — is compatible with a forced `tool_choice`,
-    this also decides whether unified `thinking` blocks tool forcing and switches Tool Output to
-    Native or Prompted Output.
+    Adaptive thinking, unlike extended thinking, accepts a forced `tool_choice`, so this also decides whether
+    an explicit forcing `tool_choice` raises alongside unified `thinking`.
     """
 
     anthropic_supports_effort: bool
@@ -213,6 +212,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         (
             'claude-fable-5',
             'claude-mythos-5',
+            'claude-mythos-preview',
             'claude-sonnet-4-6',
             'claude-sonnet-5',
             'claude-opus-4-6',
@@ -255,6 +255,18 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     supports_task_budgets = model_name.startswith(
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
+    )
+
+    # Anthropic documents these models as thinking when the request omits `thinking`; Fable 5, Fable 5.1, Opus 5,
+    # Opus 5.5 and Sonnet 5 return thinking tokens live with no thinking parameter, where Opus 4.8 and Sonnet 4.6
+    # return none.
+    thinking_enabled_by_default = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5', 'claude-sonnet-5')
+    )
+    # Of those, all but Opus 5 and Sonnet 5 reject `thinking={'type': 'disabled'}` with a 400, so thinking
+    # can't be turned off.
+    thinking_always_enabled = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5-5')
     )
 
     # The 5.1 generation and Opus 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
@@ -331,6 +343,12 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=supports_json_schema_output,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,
+        thinking_always_enabled=thinking_always_enabled,
+        thinking_enabled_by_default=thinking_enabled_by_default,
+        # A forced `tool_choice` prefills the tool call, so the model answers it without thinking: Opus 5, Sonnet
+        # 4.6 and Sonnet 5 return a thinking block for `auto` but none for `any` or `tool`, with adaptive thinking
+        # on. Extended thinking rejects forcing outright, which `AnthropicModel` handles itself.
+        forced_tool_choice_disables_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
         anthropic_supports_effort=supports_effort,
         anthropic_supports_dynamic_filtering=supports_dynamic_filtering,

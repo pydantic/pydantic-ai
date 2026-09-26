@@ -619,8 +619,9 @@ def test_support_tool_forcing_thinking_detection(settings: Any, params_thinking:
     ],
 )
 def test_support_tool_forcing_adaptive_profile_mapping(supports_adaptive_thinking: bool, expected: bool):
-    """Unified thinking maps to adaptive (compatible with forcing) on adaptive-capable profiles and
-    to extended thinking (incompatible) otherwise."""
+    """Unified thinking maps to adaptive thinking, which accepts forcing, on adaptive-capable profiles and to
+    extended thinking, which rejects it, otherwise. The hand-built profile doesn't set
+    `forced_tool_choice_disables_thinking`, so this pins the extended-thinking rule on its own."""
     settings: AnthropicModelSettings = {'thinking': 'high'}
     profile = AnthropicModelProfile(anthropic_supports_adaptive_thinking=supports_adaptive_thinking)
     result = anthropic_support_tool_forcing('test-model', profile, settings, ModelRequestParameters())
@@ -942,12 +943,7 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
 @pytest.mark.parametrize(
     'model_name,expected_tool_choice,expected_tool_names',
     [
-        pytest.param(
-            'claude-opus-4-6',
-            {'type': 'tool', 'name': 'tool_a'},
-            {'tool_a', 'tool_b'},
-            id='adaptive_profile_keeps_forcing',
-        ),
+        pytest.param('claude-opus-4-6', {'type': 'auto'}, {'tool_a'}, id='adaptive_profile_keeps_thinking'),
         pytest.param('claude-sonnet-4-5', {'type': 'auto'}, {'tool_a'}, id='non_adaptive_profile_falls_back'),
     ],
 )
@@ -957,11 +953,11 @@ async def test_anthropic_single_tool_forcing_under_unified_thinking(
     expected_tool_choice: BetaToolChoiceParam,
     expected_tool_names: set[str],
 ):
-    """Unified thinking decides the single-tool branch through the profile's adaptive flag.
+    """A resolved single-tool forcing softens to `auto` with filtered tools whenever the request thinks.
 
-    `Model.prepare_request` strips a unified `thinking` into `params.thinking` (simulated here). It
-    maps to adaptive thinking — which accepts forcing — on an adaptive-capable profile, and to
-    extended thinking on the rest, where the resolved choice softens to `auto` with filtered tools.
+    `Model.prepare_request` strips a unified `thinking` into `params.thinking` (simulated here). It maps to
+    adaptive thinking on an adaptive-capable profile, which accepts forcing but answers it without thinking, and
+    to extended thinking on the rest, which rejects forcing.
     """
     m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
     settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}

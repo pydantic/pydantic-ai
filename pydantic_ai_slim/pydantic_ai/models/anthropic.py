@@ -69,6 +69,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
+from ..output import StructuredOutputMode
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
@@ -1013,6 +1014,22 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings)
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        # Extended thinking rejects the forced tool choice Tool Output relies on.
+        if (
+            model_request_parameters.output_tools
+            and _request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
+        ):
+            return 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
+        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
@@ -1030,49 +1047,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
             )
 
-        supports_adaptive_thinking = profile.get('anthropic_supports_adaptive_thinking', False)
-        supports_forced_tool_choice = profile.get('supports_forced_tool_choice', True)
-        thinking_type = _effective_thinking_type(
-            merged.get('anthropic_thinking'),
-            merged.get('thinking'),
-            supports_adaptive_thinking=supports_adaptive_thinking,
-        )
-        # Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
-        # thinking. Adaptive thinking is accepted — but only on models that accept forcing at all;
-        # on the rest, Tool Output could only degrade to a soft `tool_choice='auto'` the model may
-        # ignore, so they keep switching away from it whenever a thinking setting is configured.
-        thinking_blocks_output_tools = thinking_type == 'enabled' or (
-            thinking_type == 'adaptive' and not supports_forced_tool_choice
-        )
-
-        if model_request_parameters.output_tools and thinking_blocks_output_tools:
-            supports_json_schema_output = profile.get('supports_json_schema_output', False)
-            model_request_parameters = model_request_parameters.with_default_output_mode(
-                'native' if supports_json_schema_output else 'prompted'
-            )
-            if (
-                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
-            ):  # pragma: no branch
-                # This would result in `tool_choice=required`, which isn't available here.
-                suggested_output_type = 'NativeOutput' if supports_json_schema_output else 'PromptedOutput'
-                remedy = f'Use `output_type={suggested_output_type}(...)` instead.'
-                if thinking_type == 'adaptive':
-                    raise UserError(
-                        f'{self.model_name!r} does not support output tools when a thinking setting is '
-                        f'configured, because it rejects the forced tool choice they require. {remedy}'
-                    )
-                if supports_adaptive_thinking:
-                    remedy += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports output tools."
-                raise UserError(
-                    f'Anthropic does not support extended thinking and output tools at the same time. {remedy}'
-                )
-
-        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
-        # strict-forcing check below also applies when native mode is reached via the profile default
-        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
-        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
+        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
+        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
         model_request_parameters = model_request_parameters.with_default_output_mode(
-            self.profile.get('default_structured_output_mode', 'tool')
+            self._default_structured_output_mode(merged, model_request_parameters)
         )
 
         if model_request_parameters.output_mode == 'native':
@@ -1121,6 +1100,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
+        if thinking is False and self.profile.get('thinking_enabled_by_default', False):
+            # Omitting `thinking` leaves it on for these models. `Model.prepare_request` has already dropped
+            # `False` for models that can't turn thinking off.
+            return {'type': 'disabled'}
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
@@ -2936,7 +2919,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         if effort is not None:
-            self._validate_effort_vs_disabled_thinking(effort, model_settings)
+            # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
+            self._validate_effort_vs_disabled_thinking(
+                effort,
+                _effective_thinking(model_settings, self._translate_thinking(model_settings, model_request_parameters)),
+            )
 
         task_budget = self._get_task_budget(model_settings)
 
@@ -2953,7 +2940,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return config
 
     def _validate_effort_vs_disabled_thinking(
-        self, effort: AnthropicEffort, model_settings: AnthropicModelSettings
+        self, effort: AnthropicEffort, thinking: dict[str, object] | Omit
     ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
@@ -2965,12 +2952,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        thinking = model_settings.get('anthropic_thinking')
-        if thinking is None or thinking.get('type') != 'disabled':
+        if isinstance(thinking, Omit) or thinking.get('type') != 'disabled':
             return
         raise UserError(
-            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while '
-            "`anthropic_thinking={'type': 'disabled'}`. Use an effort of 'high' or below, or enable thinking."
+            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while thinking is '
+            "disabled (`thinking=False` or `anthropic_thinking={'type': 'disabled'}`). "
+            "Use an effort of 'high' or below, or enable thinking."
         )
 
     def _get_task_budget(self, model_settings: AnthropicModelSettings) -> AnthropicTaskBudget | None:
@@ -4123,22 +4110,41 @@ def _map_mcp_server_result_block(
 def _effective_thinking_type(
     anthropic_thinking: BetaThinkingConfigParam | None,
     unified_thinking: ThinkingLevel | None,
-    *,
-    supports_adaptive_thinking: bool,
+    profile: AnthropicModelProfile,
 ) -> Literal['enabled', 'adaptive'] | None:
-    """Resolve the effective Anthropic thinking type for the output-tool and tool-forcing guards.
+    """Resolve whether a request will think, and how, for the output-mode and tool-forcing decisions.
 
-    Extended thinking (`{'type': 'enabled'}`) is incompatible with forced tool use and Tool Output;
-    adaptive thinking is compatible with both. Unified thinking maps to `adaptive` when the profile
-    advertises it and to `enabled` otherwise — the same mapping `_translate_thinking` uses to build
-    the wire payload. Returns `'enabled'`, `'adaptive'`, or `None` when thinking is off.
+    Extended thinking (`{'type': 'enabled'}`) rejects a forced `tool_choice`; adaptive thinking accepts it, but
+    the model then answers without thinking. Unified thinking maps to `adaptive` when the profile advertises it
+    and to `enabled` otherwise, the same mapping `_translate_thinking` uses to build the wire payload. With no
+    thinking setting, models that think by default resolve to `adaptive`, as does `thinking=False` on a model
+    that can't turn thinking off. Returns `None` when the request won't think.
     """
     if anthropic_thinking:
         thinking_type = anthropic_thinking.get('type')
         return thinking_type if thinking_type in ('enabled', 'adaptive') else None
     if unified_thinking:
-        return 'adaptive' if supports_adaptive_thinking else 'enabled'
-    return None
+        return 'adaptive' if profile.get('anthropic_supports_adaptive_thinking', False) else 'enabled'
+    if unified_thinking is False and not profile.get('thinking_always_enabled', False):
+        return None
+    return 'adaptive' if profile.get('thinking_enabled_by_default', False) else None
+
+
+def _request_thinking_type(
+    profile: AnthropicModelProfile,
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+) -> Literal['enabled', 'adaptive'] | None:
+    """`_effective_thinking_type` for a request, before or after `Model.prepare_request` runs.
+
+    `params.thinking` is checked first since `Model.prepare_request` moves unified `thinking` from `model_settings`
+    into it, but `AnthropicModel.prepare_request` also asks before that happens.
+    """
+    anthropic_settings = cast(AnthropicModelSettings, model_settings or {})
+    unified_thinking = model_request_parameters.thinking
+    if unified_thinking is None:
+        unified_thinking = anthropic_settings.get('thinking')
+    return _effective_thinking_type(anthropic_settings.get('anthropic_thinking'), unified_thinking, profile)
 
 
 def _support_tool_forcing(
@@ -4149,17 +4155,11 @@ def _support_tool_forcing(
 ) -> bool:
     """Whether to send a forced `tool_choice` ('any'/specific tool), raising if explicitly requested but unavailable.
 
-    Extended thinking rejects forcing (adaptive thinking does not), on top of the profile's forcing flags.
+    On top of the profile's forcing flags, extended thinking rejects forcing, and adaptive thinking accepts it
+    but answers without thinking, so only an explicit forcing `tool_choice` is sent then.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
-    supports_adaptive_thinking = profile.get('anthropic_supports_adaptive_thinking', False)
-    # `params.thinking` is checked too since Model.prepare_request strips unified `thinking` from
-    # model_settings into params.thinking before the tool-choice helpers run.
-    thinking_type = _effective_thinking_type(
-        model_settings.get('anthropic_thinking'),
-        model_request_parameters.thinking or model_settings.get('thinking'),
-        supports_adaptive_thinking=supports_adaptive_thinking,
-    )
+    thinking_type = _request_thinking_type(profile, model_settings, model_request_parameters)
     unavailable_reason = tool_forcing_unavailable_reason(
         profile,
         thinking=thinking_type is not None,
@@ -4169,6 +4169,11 @@ def _support_tool_forcing(
         unavailable_reason = (
             "Extended thinking doesn't support forcing tool use. Disable thinking or use `tool_choice='auto'`."
         )
-        if supports_adaptive_thinking:
+        if profile.get('anthropic_supports_adaptive_thinking', False):
             unavailable_reason += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports forcing."
-    return support_tool_forcing(model_name, model_settings, unavailable_reason)
+    return support_tool_forcing(
+        model_name,
+        model_settings,
+        unavailable_reason,
+        disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
+    )

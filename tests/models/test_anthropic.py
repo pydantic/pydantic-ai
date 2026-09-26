@@ -1665,15 +1665,17 @@ async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_reque
         await agent.run('Hello')
 
 
+@pytest.mark.parametrize('unified', [False, True], ids=['anthropic_thinking', 'unified_thinking'])
 @pytest.mark.parametrize('effort', ['xhigh', 'max'])
 async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
-    allow_model_requests: None, effort: Literal['xhigh', 'max']
+    allow_model_requests: None, effort: Literal['xhigh', 'max'], unified: bool
 ):
     """Claude Opus 5 caps effort at `high` once thinking is explicitly disabled.
 
     Verified live: `claude-opus-5` returns a 400 (`output_config.effort 'xhigh' is not supported
     when thinking is disabled on this model`) for `xhigh` and `max`, while `claude-opus-4-8`
     accepts the same combination. We surface it as a `UserError` before sending the request.
+    Unified `thinking=False` sends the same `{'type': 'disabled'}` on Opus 5, which thinks by default.
     """
     c = completion_message(
         [BetaTextBlock(text='Hello!', type='text')],
@@ -1681,14 +1683,23 @@ async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
     )
     mock_client = MockAnthropic.create_mock(c)
 
-    settings = AnthropicModelSettings(
-        anthropic_thinking={'type': 'disabled'},
-        anthropic_effort=effort,
+    settings = (
+        AnthropicModelSettings(thinking=False, anthropic_effort=effort)
+        if unified
+        else AnthropicModelSettings(anthropic_thinking={'type': 'disabled'}, anthropic_effort=effort)
     )
     model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
 
     with pytest.raises(UserError, match='does not support `anthropic_effort='):
         await Agent(model).run('Hello')
+
+    # A caller's `extra_body` thinking is what reaches the wire, so it decides.
+    overridden = AnthropicModel(
+        'claude-opus-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings={**settings, 'extra_body': {'thinking': {'type': 'adaptive'}}},
+    )
+    assert (await Agent(overridden).run('Hello')).output == 'Hello!'
 
     # Opus 4.8 has the flag off, so the same settings go through untouched.
     allowed = AnthropicModel(
@@ -4817,28 +4828,25 @@ async def test_anthropic_explicit_extra_body_overrides_the_sampling_setting(allo
     'provider_specific_thinking',
     [pytest.param(True, id='provider_specific'), pytest.param(False, id='unified')],
 )
-async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
+async def test_anthropic_adaptive_thinking_keeps_tool_output_unforced(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
     request_capture: RequestCapture,
     provider_specific_thinking: bool,
 ):
-    """Adaptive thinking is compatible with Tool Output, so the request keeps `output_mode='tool'`.
+    """An explicit `ToolOutput` with adaptive thinking offers the output tool without forcing it.
 
-    Tool Output without a text fallback resolves to `tool_choice={'type': 'any'}`, i.e. forced tool
-    use, so this exchange proves both halves of the compatibility claim at once. Only extended
-    thinking conflicts: the same request with `{'type': 'enabled'}` is rejected by the API with
-    `Thinking may not be enabled when tool_choice forces tool use.`, which is why that mode still
-    switches away from Tool Output.
+    Anthropic accepts a forced `tool_choice` alongside adaptive thinking, but answers it without thinking, so
+    the output tool goes out with `tool_choice={'type': 'auto'}` and the model calls it anyway.
 
-    Both ways of asking for thinking are exercised, because they reach the compatibility guards
-    differently: the provider-specific setting carries the type itself, while a unified `thinking`
-    only resolves to `adaptive` via the profile's `anthropic_supports_adaptive_thinking` flag.
+    Both ways of asking for thinking are exercised, because they reach the decision differently: the
+    provider-specific setting carries the type itself, while a unified `thinking` only resolves to `adaptive`
+    via the profile's `anthropic_supports_adaptive_thinking` flag.
 
     The outbound `thinking`/`tool_choice` pair is asserted via an httpx event hook so it runs against
     what the client actually sent, not what the cassette happens to hold.
 
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/7195.
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/8772.
     """
     model_settings: ModelSettings = (
         AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
@@ -4856,7 +4864,7 @@ async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
     assert [(body['thinking'], body['tool_choice']) for body in request_capture.bodies()] == snapshot(
-        [({'type': 'adaptive'}, {'type': 'any'})]
+        [({'type': 'adaptive'}, {'type': 'auto'})]
     )
 
 
@@ -9582,43 +9590,42 @@ Don't include any text or Markdown fencing before or after.
     )
 
 
+@pytest.mark.moves_cache_prefix(reason='two separate runs, with and without an output tool, share one cassette')
 async def test_anthropic_output_tool_with_thinking(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
+    """Extended thinking rejects a forced `tool_choice`, which Tool Output relies on.
+
+    An explicit `ToolOutput` offers the output tool unforced, and a bare structured `output_type` defaults
+    to Native Output instead (or Prompted Output on models without JSON schema output).
+    """
     m = AnthropicModel(
-        'claude-sonnet-4-0',
+        'claude-sonnet-4-5',
         provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
         settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            'Anthropic does not support extended thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
-        ),
-    ):
-        await agent.run('What is 3 + 3?')
-
-    # Will default to prompted output
-    agent = Agent(m, output_type=int)
-
     result = await agent.run('What is 3 + 3?')
-    assert request_capture.body()['system'] == snapshot(
-        [
-            {
-                'type': 'text',
-                'text': """\
+    assert result.output == snapshot(6)
+    assert request_capture.body()['tool_choice'] == snapshot({'type': 'auto'})
 
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"response": {"type": "integer"}}, "required": ["response"], "type": "object", "title": "int"}
-
-Don't include any text or Markdown fencing before or after.
-""",
+    agent = Agent(m, output_type=int)
+    result = await agent.run('What is 3 + 3?')
+    body = request_capture.bodies()[-1]
+    assert 'tool_choice' not in body
+    assert body.get('output_config') == snapshot(
+        {
+            'format': {
+                'type': 'json_schema',
+                'schema': {
+                    'type': 'object',
+                    'properties': {'response': {'type': 'integer'}},
+                    'additionalProperties': False,
+                    'required': ['response'],
+                },
             }
-        ]
+        }
     )
     assert result.output == snapshot(6)
 
@@ -12690,15 +12697,13 @@ async def test_anthropic_count_tokens_keeps_memory_tool(allow_model_requests: No
 async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    """`/v1/messages/count_tokens` accepts the forced `tool_choice` that adaptive thinking now keeps.
+    """`/v1/messages/count_tokens` gets the same unforced `tool_choice` as the request it counts.
 
     `count_tokens` builds its payload from the same `prepare_request` result as the real request, so
-    adaptive thinking + Tool Output reaches this endpoint with `tool_choice={'type': 'any'}` too. The
-    endpoint rejects that pair under extended thinking, which would turn a token pre-check into a hard
-    run failure; the recording pins that it does not reject it under adaptive thinking.
+    adaptive thinking + Tool Output reaches this endpoint with `tool_choice={'type': 'auto'}` too.
 
-    The pair is read off an httpx event hook rather than the cassette, so a regression that stops
-    sending it fails here instead of replaying a recording that still holds the old payload.
+    The pair is read off an httpx event hook rather than the cassette, so a regression that changes it
+    fails here instead of replaying a recording that still holds the old payload.
     """
     m = anthropic_model('claude-opus-4-6', capture=True)
 
@@ -12718,7 +12723,7 @@ async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
     count_tokens_body = request_capture.body('/v1/messages/count_tokens')
     assert (count_tokens_body['thinking'], count_tokens_body['tool_choice']) == snapshot(
-        ({'type': 'adaptive'}, {'type': 'any'})
+        ({'type': 'adaptive'}, {'type': 'auto'})
     )
 
 

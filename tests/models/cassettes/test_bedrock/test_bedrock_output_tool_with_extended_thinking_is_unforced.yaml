@@ -1,0 +1,62 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 3 + 3?"}]}], "system": [], "inferenceConfig": {},
+      "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"response": {"type":
+      "integer"}}, "required": ["response"], "type": "object"}}, "description": "The final response which ends this conversation"}}],
+      "toolChoice": {"auto": {}}}, "additionalModelRequestFields": {"thinking": {"type": "enabled", "budget_tokens": 1024}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZTFjMjc5ZTktNjhkZC00OGU5LThhMmQtYmYwZjQ0Y2NjMGNi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '481'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1123'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2326
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                signature: EtkCCn4IEhABGAIqQIrTcIul9XjxmDAFyz2loX5V+fMH3EWLvOryClSq/0eJmSaQQSzfK0CIoQxhsMlQn/FowlTuhBGXddwq5Tjx7fEyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDObo8GrZCE9vftienBoM/JdkuoQzJMqs0IsFIjCeW4ipbiX4eF0pT2xAF1SuBqwUZRE73ca3RR4z6eA1PA+oxx0MViH2LzNv/9j16YIqiAG3EtvuWOQfXPjH/uzqJ8C8WyYj+VPd5FS5hfVgX7AbXmNHz57zFc+L+UVIgn7+JJgn8TT6RJAteB01tXBUcNmnuM9iUdAejuu0ECB4SO4N6ZSVxAv3eXA2SI/FhJYrHG3vCArXXg/D/sCiJFmKiLy766PhBwscezKJOwPode23LCjhO8K40yiMGAE=
+                text: |-
+                  The user is asking me to calculate 3 + 3, which equals 6.
+
+                  I should use the final_result function to provide the answer.
+          - toolUse:
+              input:
+                response: 6
+              name: final_result
+              toolUseId: tooluse_bSiQZRFeaDMAwPM4m1T6UO
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 597
+        outputTokens: 94
+        serverToolUsage: {}
+        totalTokens: 691
+    status:
+      code: 200
+      message: OK
+version: 1

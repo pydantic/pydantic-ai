@@ -5137,6 +5137,7 @@ def _support_tool_forcing(
             thinking=thinking,
             thinking_remedy="Disable thinking with `thinking=False` or `openai_reasoning_effort='none'`",
         ),
+        disables_thinking=thinking and openai_profile.get('forced_tool_choice_disables_thinking', False),
     )
 
 

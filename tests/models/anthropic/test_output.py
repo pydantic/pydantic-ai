@@ -13,14 +13,17 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Any
 
 import pytest
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelResponse, ThinkingPart
 from pydantic_ai.output import NativeOutput
+from pydantic_ai.settings import ModelSettings
 
 from ..._inline_snapshot import snapshot
 from ...conftest import RequestCapture, try_import
@@ -598,44 +601,78 @@ def test_unsupported_native_output_raises(
 
 
 # =============================================================================
-# Models That Reject Forcing
+# Output Mode And Thinking
 # =============================================================================
 
 
-@pytest.mark.vcr
-def test_opus_5_5_basemodel_output_falls_back_to_auto(
+@dataclass
+class ThinkingOutputCase:
+    model_name: str
+    model_settings: ModelSettings
+    expected_request: dict[str, Any]
+    thinks: bool
+
+
+THINKING_OUTPUT_CASES = {
+    # Thinks by default, so Tool Output's forced choice would stop it from thinking.
+    'opus-5-default': ThinkingOutputCase(
+        'claude-opus-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+    # Turning thinking off keeps Tool Output, forced as before.
+    'sonnet-5-thinking-off': ThinkingOutputCase(
+        'claude-sonnet-5',
+        {'thinking': False},
+        {'thinking': {'type': 'disabled'}, 'tool_choice': {'type': 'any'}, 'output_format': False},
+        thinks=False,
+    ),
+    # Doesn't think by default, so forcing costs nothing.
+    'sonnet-4-6-default': ThinkingOutputCase(
+        'claude-sonnet-4-6',
+        {},
+        {'thinking': None, 'tool_choice': {'type': 'any'}, 'output_format': False},
+        thinks=False,
+    ),
+    'sonnet-4-6-thinking': ThinkingOutputCase(
+        'claude-sonnet-4-6',
+        {'thinking': 'high'},
+        {'thinking': {'type': 'adaptive'}, 'tool_choice': None, 'output_format': True},
+        thinks=True,
+    ),
+    # Rejects a forced choice outright, and can't turn thinking off.
+    'opus-5-5-default': ThinkingOutputCase(
+        'claude-opus-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+}
+
+
+@pytest.mark.parametrize('case', THINKING_OUTPUT_CASES.values(), ids=THINKING_OUTPUT_CASES.keys())
+def test_structured_output_mode_follows_whether_the_request_thinks(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
     request_capture: RequestCapture,
+    case: ThinkingOutputCase,
 ) -> None:
-    """Claude Opus 5.5 rejects a forced `tool_choice`, so a bare structured `output_type` still completes.
+    """A bare structured `output_type` uses Native Output when the request thinks, and Tool Output otherwise.
 
-    Tool Output resolves to a forced choice of the output tool, which Opus 5.5 answers with a 400
-    (`tool_choice: type "tool" and "any" are not supported for this model`). The profile's
-    `supports_forced_tool_choice=False` makes it fall back to `auto` with the tools filtered
-    to the output tool, and the model calls it anyway.
+    Anthropic accepts a forced `tool_choice` alongside adaptive thinking, but the forced response comes back
+    without a thinking block, and Tool Output forces the output tool on every request that can't end with text.
+    Whether the request thinks depends on the model as well as the settings: Claude Opus 5 and later think
+    unless thinking is turned off, where Claude Sonnet 4.6 only thinks when asked.
     """
-    model = anthropic_model('claude-opus-5-5', capture=True)
-    agent = Agent(model, output_type=CityInfo)
-    result = agent.run_sync('Give me information about Tokyo')
-
-    assert result.output == snapshot(CityInfo(city='Tokyo', country='Japan', population=14000000))
-    body = request_capture.bodies('/v1/messages')[0]
-    assert body.get('tool_choice') == snapshot({'type': 'auto'})
-    assert body['tools'] == snapshot(
-        [
-            {
-                'name': 'final_result',
-                'description': 'Information about a city.',
-                'input_schema': {
-                    'properties': {
-                        'city': {'type': 'string'},
-                        'country': {'type': 'string'},
-                        'population': {'type': 'integer'},
-                    },
-                    'required': ['city', 'country', 'population'],
-                    'type': 'object',
-                },
-            }
-        ]
+    agent = Agent(anthropic_model(case.model_name, capture=True), output_type=CityInfo)
+    result = agent.run_sync(
+        'Take the country that borders both France and Austria and whose capital is not its largest city. '
+        'Give me information about its largest city.',
+        model_settings=case.model_settings,
     )
+
+    assert result.output.city == 'Zurich'
+    body = request_capture.bodies('/v1/messages')[0]
+    assert {
+        'thinking': body.get('thinking'),
+        'tool_choice': body.get('tool_choice'),
+        'output_format': isinstance(output_config := body.get('output_config'), dict) and 'format' in output_config,
+    } == case.expected_request
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts) is case.thinks

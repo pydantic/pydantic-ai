@@ -3,16 +3,16 @@ interactions:
     body: '{"messages": [{"role": "user", "content": [{"text": "Return the number 42."}]}], "system": [], "inferenceConfig":
       {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"response":
       {"type": "integer"}}, "required": ["response"], "type": "object"}}, "description": "The final response which ends this
-      conversation"}}], "toolChoice": {"any": {}}}, "additionalModelRequestFields": {"thinking": {"type": "adaptive"}}}'
+      conversation"}}], "toolChoice": {"auto": {}}}, "additionalModelRequestFields": {"thinking": {"type": "adaptive"}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ODZlY2VkNTgtMDVjNi00M2MyLWFkZDItNzJjN2MyYzg3ZGI5
+        ZDRkZDY3YTAtODQzMy00ODg3LWI0YjItOGVlY2Q0NTYzZWZm
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '465'
+      - '466'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -23,12 +23,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '402'
+      - '462'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1989
+        latencyMs: 1832
       output:
         message:
           content:
@@ -36,17 +36,19 @@ interactions:
               input:
                 response: 42
               name: final_result
-              toolUseId: tooluse_11BNB69smpRoKfUAHXImtp
+              toolUseId: tooluse_D2Wm2bIjzbLlnzEpXGafEN
               type: tool_use
           role: assistant
       stopReason: tool_use
       usage:
         cacheReadInputTokenCount: 0
         cacheReadInputTokens: 0
-        inputTokens: 559
-        outputTokens: 37
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 439
+        outputTokens: 47
         serverToolUsage: {}
-        totalTokens: 596
+        totalTokens: 486
     status:
       code: 200
       message: OK

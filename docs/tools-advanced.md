@@ -528,7 +528,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking is compatible |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
@@ -536,8 +536,8 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
 | xAI | ✓ | ✓ | |
 
-With adaptive thinking, a forced tool response may contain only the tool call and no visible thinking block. Enabling
-adaptive thinking does not guarantee that the model will return visible reasoning.
+With adaptive thinking, Claude answers a forced tool choice with only the tool call and no thinking, so Pydantic AI
+only sends one you asked for explicitly: forcing it inferred itself falls back to `'auto'` while the request thinks.
 
 The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, except that Ollama documents `tool_choice` as unsupported and ignores it.
 

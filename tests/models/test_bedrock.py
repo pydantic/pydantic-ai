@@ -88,9 +88,14 @@ with try_import() as imports_successful:
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
     from vcr.cassette import Cassette
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
+    from pydantic_ai.models.bedrock import (
+        BedrockConverseModel,
+        BedrockModelName,
+        BedrockModelSettings,
+        _support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -2553,10 +2558,13 @@ Would you like detail on any specific method?\
         pytest.param('us.anthropic.claude-sonnet-4-6', False, id='sonnet-4-6'),
     ],
 )
-async def test_bedrock_adaptive_thinking_accepts_tool_output(
+async def test_bedrock_adaptive_thinking_keeps_tool_output_unforced(
     allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: str, stream: bool
 ) -> None:
-    """Converse and ConverseStream accept adaptive thinking with the forcing required by ToolOutput."""
+    """An explicit `ToolOutput` with adaptive thinking offers the output tool without forcing it.
+
+    Claude accepts a forced `toolChoice` alongside adaptive thinking but answers it without thinking.
+    """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     agent = Agent(model, output_type=ToolOutput(int), model_settings={'thinking': True})
 
@@ -2570,15 +2578,16 @@ async def test_bedrock_adaptive_thinking_accepts_tool_output(
     assert len(sent_requests) == 1
     sent = sent_requests[0]
     assert sent['additionalModelRequestFields']['thinking'] == {'type': 'adaptive'}
-    assert sent['toolConfig']['toolChoice'] == {'any': {}}
+    assert sent['toolConfig']['toolChoice'] == {'auto': {}}
     assert output == 42
 
 
 @pytest.mark.parametrize('model_settings', [{'thinking': True}, {}], ids=['explicit', 'implicit'])
-async def test_bedrock_opus_5_adaptive_thinking_uses_default_tool_output(
+async def test_bedrock_opus_5_thinking_offers_output_tool_unforced(
     allow_model_requests: None, bedrock_provider: BedrockProvider, model_settings: ModelSettings
 ) -> None:
-    """Default structured output uses tools whether adaptive thinking is explicit or the provider default."""
+    """Claude Opus 5 thinks whether adaptive thinking is explicit or the model's default, so the output tool isn't
+    forced. Bedrock doesn't offer native structured output for it, so a bare `output_type` keeps Tool Output."""
     model = BedrockConverseModel('us.anthropic.claude-opus-5', provider=bedrock_provider)
     agent = Agent(model, output_type=int)
 
@@ -2590,7 +2599,7 @@ async def test_bedrock_opus_5_adaptive_thinking_uses_default_tool_output(
     assert sent.get('additionalModelRequestFields', {}) == (
         {'thinking': {'type': 'adaptive'}} if model_settings else {}
     )
-    assert sent['toolConfig']['toolChoice'] == {'any': {}}
+    assert sent['toolConfig']['toolChoice'] == {'auto': {}}
     assert result.output == 42
 
 
@@ -3173,18 +3182,18 @@ Mexico City is an important cultural, financial, and political center for the co
     )
 
 
-async def test_bedrock_output_tool_with_thinking_raises(
+async def test_bedrock_output_tool_with_extended_thinking_is_unforced(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    """Legacy Sonnet 4 profiles keep output tools blocked with extended thinking.
+    """Extended thinking rejects a forced `toolChoice`, so an explicit `ToolOutput` offers the tool unforced.
 
     Uses the legacy `bedrock_additional_model_requests_fields` form. See
-    `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
+    `test_bedrock_output_tool_with_unified_extended_thinking_is_unforced` for the unified `thinking` field.
     Covers https://github.com/pydantic/pydantic-ai/issues/3092.
     """
     m = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=bedrock_provider,
         settings=BedrockModelSettings(
             bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
@@ -3193,32 +3202,33 @@ async def test_bedrock_output_tool_with_thinking_raises(
 
     agent = Agent(m, output_type=ToolOutput(int))
 
-    with pytest.raises(UserError, match='extended thinking and output tools'):
-        await agent.run('What is 3 + 3?')
+    with _capture_bedrock_request_bodies(m) as sent_requests:
+        result = await agent.run('What is 3 + 3?')
+    assert sent_requests[0]['toolConfig']['toolChoice'] == {'auto': {}}
+    assert result.output == 6
 
 
-async def test_bedrock_output_tool_with_unified_thinking_raises(
+async def test_bedrock_output_tool_with_unified_extended_thinking_is_unforced(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Sibling of `test_bedrock_output_tool_with_thinking_raises` for the unified `thinking` field.
+    """Sibling of `test_bedrock_output_tool_with_extended_thinking_is_unforced` for the unified `thinking` field.
 
     `Model.prepare_request` strips unified `thinking` into `ModelRequestParameters.thinking`, so
     the effective-thinking check must inspect both pre-strip (settings) and post-strip (params) state to
     catch the conflict regardless of which form the user picked.
     """
     m = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=bedrock_provider,
         settings=BedrockModelSettings(thinking=True),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
 
-    with pytest.raises(
-        UserError,
-        match='extended thinking and output tools',
-    ):
-        await agent.run('What is 3 + 3?')
+    with _capture_bedrock_request_bodies(m) as sent_requests:
+        result = await agent.run('What is 3 + 3?')
+    assert sent_requests[0]['toolConfig']['toolChoice'] == {'auto': {}}
+    assert result.output == 6
 
 
 async def test_bedrock_tool_choice_required_with_thinking(
@@ -7074,12 +7084,11 @@ async def test_bedrock_anthropic_model_without_tool_forcing_uses_auto(
 
 
 @pytest.mark.parametrize(
-    'model_name,model_settings,error_match',
+    'model_name,model_settings',
     [
         pytest.param(
             'anthropic.claude-sonnet-4-6',
             {'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
-            'extended thinking and output tools.*Alternatively, `bedrock_additional_model_requests_fields',
             id='manual-extended-thinking',
         ),
         pytest.param(
@@ -7088,44 +7097,98 @@ async def test_bedrock_anthropic_model_without_tool_forcing_uses_auto(
                 'thinking': True,
                 'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             },
-            'extended thinking and output tools',
             id='explicit-enabled-overrides-unified-adaptive',
         ),
-        pytest.param(
-            'anthropic.claude-fable-5-1',
-            {'thinking': True},
-            'rejects the forced tool choice',
-            id='adaptive-model-without-tool-forcing',
-        ),
-        pytest.param(
-            'anthropic.claude-fable-5-1',
-            {'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
-            r'extended thinking and output tools at the same time\. Use `output_type=PromptedOutput\(\.\.\.\)` instead\.$',
-            id='no-unavailable-adaptive-remedy',
-        ),
+        pytest.param('anthropic.claude-fable-5-1', {'thinking': True}, id='adaptive-model-without-tool-forcing'),
+        pytest.param('anthropic.claude-sonnet-4-6', {'thinking': True}, id='adaptive-thinking'),
     ],
 )
-async def test_bedrock_agent_output_tool_with_unsupported_thinking_raises(
+async def test_bedrock_agent_output_tool_with_thinking_is_unforced(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
     mocker: MockerFixture,
     model_name: str,
     model_settings: ModelSettings,
-    error_match: str,
 ) -> None:
-    """Output tools remain blocked for extended thinking and models that cannot force tools."""
+    """An explicit `ToolOutput` offers the output tool without forcing it when the request thinks.
+
+    Extended thinking and models that can't force reject a forced `toolChoice`; adaptive thinking accepts it
+    but answers without thinking. Mocked because extended thinking on these models and restricted-access models
+    can't all be recorded here.
+    """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
-    converse = mocker.patch.object(model.client, 'converse')
+    converse = mocker.patch.object(
+        model.client,
+        'converse',
+        return_value={
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [
+                        {'toolUse': {'toolUseId': 'tool_1', 'name': 'final_result', 'input': {'response': 42}}}
+                    ],
+                }
+            },
+            'stopReason': 'tool_use',
+            'usage': {'inputTokens': 12, 'outputTokens': 8, 'totalTokens': 20},
+        },
+    )
     agent = Agent(model, output_type=ToolOutput(int))
 
-    with pytest.raises(UserError, match=error_match):
-        await agent.run('What is 6 * 7?', model_settings=model_settings)
+    result = await agent.run('What is 6 * 7?', model_settings=model_settings)
 
-    converse.assert_not_called()
+    assert result.output == 42
+    assert converse.call_args.kwargs['toolConfig']['toolChoice'] == {'auto': {}}
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_fields', 'expected_tool_choice'),
+    [
+        # Opus 5 thinks by default but can turn it off, and then the output tool is forced as usual.
+        pytest.param('us.anthropic.claude-opus-5', {'thinking': {'type': 'disabled'}}, {'any': {}}, id='opus-5'),
+        # Fable 5 and Opus 5.5 can't turn thinking off, so `thinking=False` is ignored and forcing gives way.
+        pytest.param('us.anthropic.claude-fable-5', None, {'auto': {}}, id='fable-5'),
+        pytest.param('us.anthropic.claude-opus-5-5', None, {'auto': {}}, id='opus-5-5'),
+    ],
+)
+async def test_bedrock_thinking_false_on_models_that_think_by_default(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    model_name: str,
+    expected_fields: dict[str, Any] | None,
+    expected_tool_choice: dict[str, Any],
+) -> None:
+    """`thinking=False` sends `disabled` where omitting `thinking` would leave it on. Mocked because the payload is
+    the claim, and restricted-access models can't all be recorded here."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    converse = mocker.patch.object(
+        model.client,
+        'converse',
+        return_value={
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [
+                        {'toolUse': {'toolUseId': 'tool_1', 'name': 'final_result', 'input': {'response': 42}}}
+                    ],
+                }
+            },
+            'stopReason': 'tool_use',
+            'usage': {'inputTokens': 12, 'outputTokens': 8, 'totalTokens': 20},
+        },
+    )
+
+    result = await Agent(model, output_type=ToolOutput(int)).run('What is 6 * 7?', model_settings={'thinking': False})
+
+    assert result.output == 42
+    assert converse.call_args.kwargs.get('additionalModelRequestFields') == expected_fields
+    assert converse.call_args.kwargs['toolConfig']['toolChoice'] == expected_tool_choice
 
 
 def test_bedrock_disabled_unified_thinking_takes_precedence_over_params(bedrock_provider: BedrockProvider) -> None:
-    """The guard uses the same unified-thinking precedence as the base request preparation."""
+    """The unified `thinking=False` in settings wins over `params.thinking`, as in the base request preparation,
+    so the output tool can still be forced."""
     model = BedrockConverseModel('anthropic.claude-sonnet-4-5', provider=bedrock_provider)
     params = ModelRequestParameters(
         output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
@@ -7134,9 +7197,8 @@ def test_bedrock_disabled_unified_thinking_takes_precedence_over_params(bedrock_
         thinking=True,
     )
 
-    _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=False), params)
-
-    assert prepared_params.output_mode == 'tool'
+    profile = cast(BedrockModelProfile, model.profile)
+    assert _support_tool_forcing(model.model_name, profile, BedrockModelSettings(thinking=False), params)
 
 
 def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
