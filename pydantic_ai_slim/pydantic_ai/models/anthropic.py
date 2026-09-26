@@ -2919,8 +2919,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         if effort is not None:
+            # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
             self._validate_effort_vs_disabled_thinking(
-                effort, self._translate_thinking(model_settings, model_request_parameters)
+                effort,
+                _effective_thinking(model_settings, self._translate_thinking(model_settings, model_request_parameters)),
             )
 
         task_budget = self._get_task_budget(model_settings)
@@ -2937,7 +2939,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             config['task_budget'] = task_budget
         return config
 
-    def _validate_effort_vs_disabled_thinking(self, effort: AnthropicEffort, thinking: BetaThinkingConfigParam) -> None:
+    def _validate_effort_vs_disabled_thinking(
+        self, effort: AnthropicEffort, thinking: dict[str, object] | Omit
+    ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
         Claude Opus 5 caps effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
@@ -2948,7 +2952,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        if not thinking or thinking.get('type') != 'disabled':
+        if isinstance(thinking, Omit) or thinking.get('type') != 'disabled':
             return
         raise UserError(
             f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while thinking is '

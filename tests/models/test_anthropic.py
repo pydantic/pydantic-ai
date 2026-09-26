@@ -1693,6 +1693,14 @@ async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
     with pytest.raises(UserError, match='does not support `anthropic_effort='):
         await Agent(model).run('Hello')
 
+    # A caller's `extra_body` thinking is what reaches the wire, so it decides.
+    overridden = AnthropicModel(
+        'claude-opus-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings={**settings, 'extra_body': {'thinking': {'type': 'adaptive'}}},
+    )
+    assert (await Agent(overridden).run('Hello')).output == 'Hello!'
+
     # Opus 4.8 has the flag off, so the same settings go through untouched.
     allowed = AnthropicModel(
         'claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
