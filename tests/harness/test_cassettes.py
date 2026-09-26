@@ -22,7 +22,7 @@ from _pytest.mark import ParameterSet
 from pydantic import BaseModel
 from vcr.serializers import yamlserializer  # pyright: ignore[reportMissingTypeStubs]
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parents[2]
 
 # `httpx._decoders.SUPPORTED_DECODERS` minus the two entries it pops when their
 # optional package is absent: `br` needs `brotli`/`brotlicffi`, `zstd` needs
@@ -64,7 +64,7 @@ class _Cassette(BaseModel):
 
 
 def _cassettes() -> Iterable[ParameterSet]:
-    for directory in ('tests', 'integration_tests'):
+    for directory in ('tests/harness', 'src/pydantic_ai_harness/integration_tests'):
         for path in sorted((_ROOT / directory).glob('**/cassettes/**/*.yaml')):
             yield pytest.param(path, id=str(path.relative_to(_ROOT)))
 
@@ -74,7 +74,7 @@ def test_cassettes_discovered() -> None:
     assert sum(1 for _ in _cassettes()) >= 7
 
 
-@pytest.mark.parametrize('path', _cassettes())
+@pytest.mark.parametrize('path', list(_cassettes()))
 def test_cassette_replays_without_an_optional_decompressor(path: Path) -> None:
     # `vcr`'s own loader, because a cassette can carry tags `yaml.safe_load` rejects.
     document = yamlserializer.deserialize(path.read_text())  # pyright: ignore[reportUnknownMemberType]

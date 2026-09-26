@@ -13,16 +13,17 @@ from typing import Any
 
 import pytest
 import sniffio
+
+import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
-import pydantic_ai_harness
-from pydantic_ai_harness.localstack import LocalStack, LocalStackError, LocalStackToolset
-from pydantic_ai_harness.localstack import LocalStack as Exported
+from pydantic_ai_harness.localstack import LocalStack, LocalStack as Exported, LocalStackError, LocalStackToolset
 
 from ._http_server import HttpResponse, http_server, unused_tcp_port
+
+pytestmark = pytest.mark.anyio
 
 
 def _toolset(

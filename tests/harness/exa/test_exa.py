@@ -21,13 +21,15 @@ from exa_py.api import (
     SearchType,
     TextContentsOptions,
 )
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

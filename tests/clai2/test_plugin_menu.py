@@ -6,16 +6,18 @@ from collections.abc import Coroutine, Sequence
 from pathlib import Path
 
 import pytest
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.plugin_loader import PluginLoader
 from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.settings_store import SettingsStore
+
+pytestmark = pytest.mark.anyio
 
 PLUGIN = 'from pydantic_clai2.plugins import PluginHost\ndef activate(host: PluginHost) -> None:\n    pass\n'
 

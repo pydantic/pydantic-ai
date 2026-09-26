@@ -8,16 +8,18 @@ from types import ModuleType
 
 import anyio
 import pytest
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.plugin_loader import PluginError, PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

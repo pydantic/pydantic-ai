@@ -5,13 +5,15 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from rich.console import Console
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai_harness.coder import Coder
-from rich.console import Console
-
 from pydantic_clai2 import Session, StreamRenderer
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

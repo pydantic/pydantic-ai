@@ -14,7 +14,7 @@ def test_reload_running_shell(tmp_path: Path, mode: str) -> None:
 
 
 def run_script(tmp_path: Path, script: str, mode: str) -> None:
-    package = Path(__file__).parents[1] / 'src' / 'pydantic_clai2'
+    package = Path(__file__).parents[2] / 'src' / 'pydantic_clai2' / 'pydantic_clai2'
     shutil.copytree(package, tmp_path / 'pydantic_clai2', ignore=shutil.ignore_patterns('__pycache__'))
     result = subprocess.run(
         [sys.executable, str(Path(__file__).with_name(script)), str(tmp_path), mode],

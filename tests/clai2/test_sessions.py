@@ -7,6 +7,8 @@ from pathlib import Path
 
 import anyio
 import pytest
+from rich.console import Console
+
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
@@ -17,11 +19,11 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
     SqliteConversationStore,
 )
-from rich.console import Console
-
 from pydantic_clai2._session import Session
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.sessions import activate
+
+pytestmark = pytest.mark.anyio
 
 
 def saved_session(tmp_path: Path) -> Session[None, str]:

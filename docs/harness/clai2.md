@@ -469,7 +469,7 @@ importable with `/plugins add NAME module[:attr] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Plugins are trusted code running as you.
 
-[PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
+[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has the full list of hooks, events, and rules.
 
 ## Telemetry and references
 

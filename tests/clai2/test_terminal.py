@@ -14,13 +14,13 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent, AgentStreamEvent, ModelRequestContext, RunContext
-from pydantic_ai.capabilities import Hooks
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from rich.text import Text
 from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import Agent, AgentStreamEvent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
@@ -29,6 +29,8 @@ from pydantic_clai2.plugins import PluginHost, TurnEnd, TurnStart
 from pydantic_clai2.prompt_surface import PromptSurface
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

@@ -7,12 +7,12 @@ from pathlib import Path
 
 import anyio
 import pytest
+
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     InMemoryStepStore,
@@ -23,6 +23,8 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

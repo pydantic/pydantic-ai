@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
+
 from pydantic_ai import Agent, AgentRunResult, AgentSpec, DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, SkipToolExecution, ToolFailed, UserError
@@ -29,7 +30,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.guardrails import (
     GuardrailError,
     GuardrailResult,

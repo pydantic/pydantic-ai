@@ -7,7 +7,7 @@ capabilities during one run for activation on the next.
 capabilities written or selected by application code, see
 [Building Custom Capabilities](https://pydantic.dev/docs/ai/capabilities/custom/).
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/capability_creation/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/capability_creation/)
 
 ## The problem
 

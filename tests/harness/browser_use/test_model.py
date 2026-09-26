@@ -16,6 +16,7 @@ from browser_use.llm.messages import (
     UserMessage,
 )
 from pydantic import BaseModel
+
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -28,12 +29,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.browser_use import PydanticAIChatModel, resolve_chat_model
-from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
+
+pytestmark = pytest.mark.anyio
 
 
 class _Facts(BaseModel):

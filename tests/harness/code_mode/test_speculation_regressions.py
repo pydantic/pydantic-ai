@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 
 import anyio
 import pytest
+
 from pydantic_ai import Agent, Tool
 from pydantic_ai.messages import (
     ModelMessage,
@@ -31,7 +32,6 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-
 from pydantic_ai_harness.code_mode import CodeMode, SpeculativeCallLaunchedEvent
 from pydantic_ai_harness.code_mode._streaming import decode_partial_args
 

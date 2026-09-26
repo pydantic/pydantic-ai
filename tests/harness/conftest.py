@@ -6,8 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import pydantic_ai.models
 import pytest
+
+import pydantic_ai.models
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 # them where pydantic-ai expects concrete `str`/`datetime`/etc. fails pyright
 # strict. Following pydantic-ai's own conftest, re-export with TYPE_CHECKING
 # stubs that pretend the matchers return the concrete type. Tests should
-# `from tests.conftest import IsStr, IsDatetime, ...` instead of importing
+# `from tests.harness.conftest import IsStr, IsDatetime, ...` instead of importing
 # from `dirty_equals` directly.
 if TYPE_CHECKING:
     MatcherT = TypeVar('MatcherT')

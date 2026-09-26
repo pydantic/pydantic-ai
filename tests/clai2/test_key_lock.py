@@ -6,8 +6,8 @@ from pathlib import Path
 from threading import Event
 
 import pytest
-from pydantic_ai.exceptions import UserError
 
+from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import api_keys, openrouter, vllm
 from pydantic_clai2.credential_store import load_codex_credentials
 

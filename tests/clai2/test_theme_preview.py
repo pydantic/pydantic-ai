@@ -3,16 +3,18 @@
 import io
 
 import pytest
-from pydantic_ai import PartStartEvent, TextPart
-from pydantic_ai_harness.filesystem import FileEditedEvent
 from rich.color import Color
 from rich.console import Console
 from rich.text import Text
 from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
 from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import PartStartEvent, TextPart
+from pydantic_ai_harness.filesystem import FileEditedEvent
 from pydantic_clai2 import StreamRenderer, theme
 from pydantic_clai2.theme_picker import theme_preview
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize('name', theme.names())

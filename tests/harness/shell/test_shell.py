@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import anyio
 import pytest
 import sniffio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
@@ -23,11 +24,12 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
+
+pytestmark = pytest.mark.anyio
 
 
 def _env_toolset(

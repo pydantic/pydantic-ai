@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
+
 from pydantic_ai import Agent, AgentSpec, DeferredToolRequests, ModelRetry, RunContext
 from pydantic_ai.capabilities import ToolSearch
 from pydantic_ai.messages import (
@@ -30,7 +31,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.memory import (
     FileStore,
     InMemoryStore,
@@ -46,7 +46,7 @@ from pydantic_ai_harness.memory import (
     MemoryToolset,
     SqliteMemoryStore,
 )
-from tests._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
 
 pytestmark = pytest.mark.anyio
 
@@ -1427,7 +1427,7 @@ class TestTelemetryAndComposition:
 
     def test_temporal_durability_accepts_static_memory_toolset(self) -> None:
         pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # needs the temporal extra
 
         Agent(
             TestModel(),

@@ -4,6 +4,8 @@ import io
 from dataclasses import dataclass
 
 import pytest
+from rich.console import Console
+
 from pydantic_ai import CapabilityEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import (
     RetryPromptPart,
@@ -14,9 +16,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
-from rich.console import Console
-
 from pydantic_clai2 import StreamRenderer
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

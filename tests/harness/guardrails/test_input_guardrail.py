@@ -12,6 +12,7 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import CapabilityOrdering
 from pydantic_ai.exceptions import SkipModelRequest, UserError
@@ -28,7 +29,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import GuardrailResult, InputBlocked, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import _extract_prompt  # pyright: ignore[reportPrivateUsage]
 

@@ -6,11 +6,13 @@ from pathlib import Path
 import anyio
 import pytest
 from pydantic import ValidationError
+
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_harness.step_persistence.naming import NamingResult, SessionName, SessionNamer, generate_name
+
+pytestmark = pytest.mark.anyio
 
 
 async def test_structured_name_and_auxiliary_usage(anyio_backend: str) -> None:

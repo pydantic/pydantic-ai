@@ -2,7 +2,7 @@
 
 Replace individual tool calls with a single sandboxed Python execution environment.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/code_mode/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/)
 
 ## The problem
 

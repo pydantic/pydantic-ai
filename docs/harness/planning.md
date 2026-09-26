@@ -7,7 +7,7 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 `Planning` gives the model a structured, self-updating task list through a small toolset -- and surfaces the current plan back to the model every turn without ever invalidating the prompt cache. It can stay in memory for a single run or persist to SQLite/Postgres, break steps into subtasks with dependencies, and emit events from granular changes.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/planning/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
 > This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
 >
@@ -193,7 +193,7 @@ Planning(
 
 ## Agent spec (YAML/JSON)
 
-`Planning` works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/):
+`Planning` works with Pydantic AI's [agent spec](../agent-spec.md):
 
 ```yaml
 # agent.yaml
@@ -213,7 +213,7 @@ print(result.output)
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
 - [Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)
 - [Code Mode](code-mode.md) -- another prompt-cache-aware harness capability
 

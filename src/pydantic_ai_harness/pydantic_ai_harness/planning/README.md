@@ -2,7 +2,7 @@
 
 Give an agent a structured, self-updating task list -- without ever invalidating the prompt cache. Optionally persist it, break steps into subtasks with dependencies, and react to changes through events.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/planning/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
 > [!NOTE]
 > This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -> `write_plan`, `read_todos` -> `read_plan`, `add_todo` -> `add_task`, `update_todo_status(es)` -> `update_task_status(es)`, `remove_todo` -> `remove_task`; subtask tools keep their names).

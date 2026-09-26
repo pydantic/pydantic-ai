@@ -198,7 +198,7 @@ run_acp_stdio_sync(agent, session_store=InMemorySessionStore())
 
 ## Model selection
 
-Pass `models` to advertise a stable ACP session config option named `model` (using Pydantic AI [model names](/ai/models/)). The first is each session's default. A selection is applied as a per-run override -- the shared agent is never mutated -- and is persisted with the session when a `session_store` is set.
+Pass `models` to advertise a stable ACP session config option named `model` (using Pydantic AI [model names](../models/overview.md)). The first is each session's default. A selection is applied as a per-run override -- the shared agent is never mutated -- and is persisted with the session when a `session_store` is set.
 
 ```python
 run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-4-6', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
@@ -242,11 +242,11 @@ PydanticAIACPAgent(agent, *, ...)  # the ACP agent object, to embed in a custom 
 
 The module also exports the session types (`AcpSession`, `AcpSessionConfig`, `McpServer`), the store types (`SessionStore`, `StoredSession`, `InMemorySessionStore`), the client toolsets (`AcpFileSystemToolset`, `AcpTerminalToolset`, `acp_filesystem`, `acp_terminal`), the permission types (`ToolCallPermission`, `default_permission_scope`), and the presentation helpers (`ToolCallPresentation`, `chain_presenters`, `default_coding_presenter`).
 
-Source: [`pydantic_ai_harness/experimental/acp/`](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/experimental/acp/).
+Source: [`pydantic_ai_harness/experimental/acp/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/).
 
 ## Further reading
 
 - [Agent Client Protocol](https://agentclientprotocol.com) -- protocol specification
 - [Zed external agents](https://zed.dev/docs/ai/external-agents) -- editor-side configuration
-- [Human-in-the-loop tool approval](/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) (Pydantic AI)
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Human-in-the-loop tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) (Pydantic AI)
+- [Pydantic AI capabilities](../capabilities/overview.md)

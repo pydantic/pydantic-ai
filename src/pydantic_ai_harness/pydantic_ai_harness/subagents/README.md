@@ -2,7 +2,7 @@
 
 Let an agent delegate self-contained tasks to named child agents.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/subagents/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/subagents/)
 
 ## The problem
 

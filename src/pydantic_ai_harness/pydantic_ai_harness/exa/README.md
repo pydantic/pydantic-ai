@@ -7,7 +7,7 @@ URL, opt-in deep search that synthesizes a cited answer in one call, and a
 separate `ExaAgent` capability that delegates long-running research to the
 Exa Agent API as deferred tool calls.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/exa/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/exa/)
 
 ## Installation
 

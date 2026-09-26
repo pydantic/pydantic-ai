@@ -13,13 +13,13 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from rich.console import Console
-
 from pydantic_clai2 import Session, chat, image_input
 from pydantic_clai2.image_input import (
     ImageBuffer,
@@ -32,6 +32,8 @@ from pydantic_clai2.image_input import (
 )
 from pydantic_clai2.prompt_surface import PromptSurface
 from pydantic_clai2.settings_store import SettingsStore
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

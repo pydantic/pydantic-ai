@@ -15,13 +15,13 @@ import pytest
 # `tests/youdotcom` shadows the installed `youdotcom` for a bare `from youdotcom import ...`,
 # so import the SDK through its submodules (which the shadow package does not define).
 import youdotcom.models as models
+from youdotcom.errors import YouError
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from youdotcom.errors import YouError
-
 from pydantic_ai_harness.youdotcom import (
     ExtractionModeName,
     FinanceEffortName,
@@ -32,6 +32,8 @@ from pydantic_ai_harness.youdotcom import (
     YouSearchToolset,
 )
 from pydantic_ai_harness.youdotcom._toolset import default_client
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

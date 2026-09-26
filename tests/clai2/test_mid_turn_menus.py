@@ -13,11 +13,11 @@ from anyio.to_thread import run_sync as in_worker
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-
 from pydantic_clai2 import Session, chat
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
@@ -27,6 +27,8 @@ from pydantic_clai2.prompt_surface import PromptSurface
 from pydantic_clai2.screen import Screen
 from pydantic_clai2.session_settings import SessionSettings
 from pydantic_clai2.settings_store import SettingsStore
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

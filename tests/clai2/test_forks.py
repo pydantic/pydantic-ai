@@ -12,13 +12,13 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+from rich.text import Text
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-from rich.text import Text
-
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_shell
 from pydantic_clai2._session import Session
@@ -31,6 +31,8 @@ from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
+
+pytestmark = pytest.mark.anyio
 
 PromptT = TypeVar('PromptT')
 

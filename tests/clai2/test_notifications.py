@@ -8,16 +8,18 @@ from pathlib import Path
 import anyio
 import pytest
 from pydantic import JsonValue
+from rich.console import Console
+
 from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
-from rich.console import Console
-
 from pydantic_clai2 import notifications
 from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
 from pydantic_clai2.plugins import PluginHost, TurnEnd, TurnOutcome, TurnStart
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

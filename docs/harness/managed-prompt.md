@@ -11,7 +11,7 @@ so you can iterate on your system prompt from the Logfire UI -- versioned, label
 out -- without touching code or redeploying. It's a Pydantic AI [capability](index.md), so you
 wire it in through the `capabilities=` parameter on `Agent`.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/logfire/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/logfire/)
 
 Install the `logfire` extra:
 
@@ -37,7 +37,7 @@ back the moment it misbehaves in production without shipping a new build.
 `ManagedPrompt` moves the prompt out of your codebase and into Logfire's managed-variable store.
 It declares the backing managed variable for you and resolves it **once per run**, feeding the
 resolved value into the agent's instructions. Resolution happens inside the run's
-[`wrap_run`](/ai/api/pydantic-ai/capabilities/#pydantic_ai.capabilities.AbstractCapability.wrap_run)
+[`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
 hook, using the
 [`ResolvedVariable`](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/) as a
 context manager that stays open for the whole run -- so the selected label and version are attached
@@ -83,7 +83,7 @@ deliberate prompt rollout, which keeps the provider prompt cache hot (see
 
 For deterministic A/B assignment (the same user always sees the same label), pass a
 `targeting_key`. It can be a static string or a callable that derives the key from the
-[`RunContext`](/ai/api/pydantic-ai/tools/#pydantic_ai.tools.RunContext) -- handy when the
+[`RunContext`][pydantic_ai.tools.RunContext] -- handy when the
 key lives in your agent's `deps`:
 
 ```python
@@ -127,7 +127,7 @@ the agent's `RunContext`.
 
 By default the resolved prompt is used verbatim. Pass `render_template=True` to render it as a
 Handlebars template against the agent's `deps` -- the same mechanism as
-[`TemplateStr`](/ai/api/pydantic-ai/agent/) -- so `{{field}}` is filled
+[`TemplateStr`](../api/agent.md) -- so `{{field}}` is filled
 from `deps`:
 
 ```python
@@ -210,7 +210,7 @@ default and instance).
   picked up until the next run starts -- the trade-off for run-stable instructions and a single
   baggage scope across all child spans.
 - **Runs outermost.** The capability wraps
-  [`Instrumentation`](/ai/api/pydantic-ai/capabilities/#pydantic_ai.capabilities.Instrumentation)
+  [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
   so the resolved variable's baggage covers the agent run span as well as its children. On recent
   Logfire versions both the selected label and the version are propagated as separate baggage
   attributes.

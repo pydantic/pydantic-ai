@@ -8,13 +8,15 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 from rich.console import Console
 
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command, read_line
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
+
+pytestmark = pytest.mark.anyio
 
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'

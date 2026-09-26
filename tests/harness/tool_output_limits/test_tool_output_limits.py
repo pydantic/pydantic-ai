@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic_core import to_json
+
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -28,8 +30,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_core import to_json
-
 from pydantic_ai_harness.tool_output_limits import (
     Band,
     LocalFileStore,
@@ -61,11 +61,13 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
 )
 from pydantic_ai_harness.tool_output_limits._store import _safe_segment
-from tests._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
-from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
+
+pytestmark = pytest.mark.anyio
 
 # ---------------------------------------------------------------------------
 # Helpers

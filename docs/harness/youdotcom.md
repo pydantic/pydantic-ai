@@ -11,7 +11,7 @@ for surveying the web and reading one page in full. `YouResearch` adds
 `answer`, `research`, and `finance_research`, for cited answers to questions a
 single lookup cannot settle.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/youdotcom/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/youdotcom/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -24,7 +24,7 @@ lookup at all: answering them takes many searches, reading across the results,
 and writing up an answer with citations.
 
 `YouSearch` and `YouResearch` wrap the You.com search, page, and research APIs
-as two [capabilities](/ai/core-concepts/capabilities/). Each brings its tools,
+as two [capabilities](../capabilities/overview.md). Each brings its tools,
 a limit on how much text those tools return, and short research guidance for
 the system prompt.
 
@@ -77,7 +77,7 @@ the response that comes back.
 
 A `web_search` query that matches nothing is a valid answer, not an error: the
 tool returns `No results found for {query!r}.`. Other failures reach the model
-as a [`ModelRetry`](/ai/tools-toolsets/tools-advanced/#tool-retries): a URL or
+as a [`ModelRetry`](../tools-advanced.md#tool-retries): a URL or
 question that comes back empty, a rate limit, a parameter You.com rejected
 (422), or a temporary API or network problem. The run keeps going, and the
 model can fix the URL, reword the question, or try again. Authentication,
@@ -235,7 +235,7 @@ YouSearch(client=You(api_key_auth='...'))
 
 ## YouSearch vs core WebSearch
 
-Core ships a [`WebSearch`](/ai/core-concepts/capabilities/#provider-adaptive-tools)
+Core ships a [`WebSearch`](../capabilities/overview.md#provider-adaptive-tools)
 capability that adapts to the model: it uses the provider's own search where
 the model has one, and a local DuckDuckGo tool everywhere else. Use it when you
 want search that follows whichever model you run. Use `YouSearch` when you want
@@ -256,7 +256,7 @@ Anthropic models the built-in search is also called `web_search`, so
 ## Agent spec (YAML/JSON)
 
 `YouSearch` and `YouResearch` work with Pydantic AI's
-[agent spec](/ai/core-concepts/agent-spec/), so you can declare them in a
+[agent spec](../agent-spec.md), so you can declare them in a
 config file instead of Python:
 
 ```yaml
@@ -284,8 +284,8 @@ instances always build the default client from `YDC_API_KEY`. In specs,
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 - [You.com API documentation](https://documentation.you.com)
 
 ## API reference

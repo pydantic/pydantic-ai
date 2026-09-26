@@ -21,7 +21,7 @@
 
 Expose a Pydantic AI agent to editors and terminal UIs over the [Agent Client Protocol](https://agentclientprotocol.com).
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/experimental/acp/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/)
 
 ## The problem
 

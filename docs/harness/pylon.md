@@ -7,7 +7,7 @@ description: Connect a Pydantic AI agent to Pylon's hosted MCP server to work wi
 
 `Pylon` connects an agent to [Pylon](https://www.usepylon.com)'s hosted MCP server so it can search, read, create, and update support issues, look up and update accounts, and look up contacts as the signed-in user.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/pylon/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pylon/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -76,13 +76,13 @@ Each run connects as its own user, so concurrent runs never share an account.
 
 Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Pylon" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
 
-With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `pylon`, so `defer_loading=True` works without one. To add more than one `Pylon` to an agent, give each a distinct `id` and wrap them in [PrefixTools](/ai/capabilities/prefix-tools/), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `pylon`, so `defer_loading=True` works without one. To add more than one `Pylon` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
 
 ## Tool selection and approval
 
 `read_only=True` gives the agent only the tools that Pylon's server labels as read-only, and leaves out all the others. If Pylon has not labeled its read tools, the agent gets no Pylon tools at all. The token's permissions still decide what the agent can reach.
 
-To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](/ai/tools-toolsets/toolsets/). For example, this asks for approval before every tool call, which suits tools that create or update issues and accounts:
+To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call, which suits tools that create or update issues and accounts:
 
 ```python
 from pydantic_ai import Agent
@@ -97,7 +97,7 @@ agent = Agent(
 )
 ```
 
-Handle the approval requests with the [deferred tools workflow](/ai/tools-toolsets/deferred-tools/). To cap the size of tool output, add [Tool Output Limits](tool-output-limits.md).
+Handle the approval requests with the [deferred tools workflow](../deferred-tools.md). To cap the size of tool output, add [Tool Output Limits](tool-output-limits.md).
 
 ## Connection customization
 
@@ -107,7 +107,7 @@ A `client` is one connection shared by every run; see [Per-user credentials](#pe
 
 ## Telemetry
 
-`Pylon` emits no spans of its own. Core's [instrumentation](/ai/capabilities/instrumentation/) already records each Pylon tool call as a tool span, and connecting makes no decision worth a span of its own.
+`Pylon` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each Pylon tool call as a tool span, and connecting makes no decision worth a span of its own.
 
 ## Define the agent in YAML or JSON
 

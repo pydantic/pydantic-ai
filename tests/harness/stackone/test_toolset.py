@@ -12,8 +12,8 @@ pytest.importorskip('fastmcp')
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import AnyUrl
-from pydantic_ai.exceptions import UserError
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.stackone import StackOneToolset, ToolMode
 
 

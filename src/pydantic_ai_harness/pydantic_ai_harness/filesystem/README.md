@@ -2,7 +2,7 @@
 
 Give an agent sandboxed, pattern-filtered access to a directory tree.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/filesystem/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/filesystem/)
 
 ## The problem
 

@@ -7,7 +7,7 @@ description: "Let a Pydantic AI agent delegate tasks to named subagents through 
 
 `SubAgents` lets an agent delegate self-contained tasks to named child agents. It takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/subagents/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/subagents/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -196,7 +196,7 @@ agent = Agent(
 
 Nested model streaming from the child run is not an event concern; pass an `event_stream_handler` for that.
 
-See [capability events](/ai/core-concepts/capabilities/#capability-events) for how `@on_event` works.
+See [capability events](../capabilities/overview.md#capability-events) for how `@on_event` works.
 
 `SubAgents` emits no OpenTelemetry spans of its own: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result.
 
@@ -313,7 +313,7 @@ SubAgent(
 )
 ```
 
-`SubAgents` is not serializable via the [agent spec](/ai/core-concepts/agent-spec/) (it holds live `Agent` instances), so `get_serialization_name()` returns `None`.
+`SubAgents` is not serializable via the [agent spec](../agent-spec.md) (it holds live `Agent` instances), so `get_serialization_name()` returns `None`.
 
 ## Notes
 
@@ -322,8 +322,8 @@ SubAgent(
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
-- [Multi-agent applications](/ai/guides/multi-agent-applications/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Multi-agent applications](../multi-agent-applications.md)
 
 ## API reference
 

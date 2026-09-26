@@ -3,7 +3,7 @@
 Run a [Macroscope](https://docs.macroscope.com/cli) code review from a Pydantic AI
 agent and hand the findings back for validation and fixing.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/macroscope/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/macroscope/)
 
 ## The problem
 

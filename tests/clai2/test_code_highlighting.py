@@ -3,13 +3,15 @@
 import io
 
 import pytest
-from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
 from rich.color import Color
 from rich.console import Console
 from rich.text import Text
 from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
 from pydantic_clai2 import StreamRenderer, theme
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize('chunk_size', [1, 1000])

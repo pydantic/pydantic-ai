@@ -5,14 +5,16 @@ import io
 from typing import IO
 
 import pytest
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
-from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
 from rich.console import Console
 from rich.text import Text
 from termflow.stream import SmoothWriter  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
+from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

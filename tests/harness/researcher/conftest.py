@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from dirty_equals import IsDatetime, IsInstance, IsStr
 from inline_snapshot.plugin import customize
+
 from pydantic_ai.usage import RequestUsage
 
 

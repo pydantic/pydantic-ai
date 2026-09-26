@@ -5,19 +5,18 @@ from pathlib import Path
 
 import anyio
 import pytest
-from menu_script import Script, make_context, pick
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic import ValidationError
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from rich.text import Text
 from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat, theme
 from pydantic_clai2.commands import config_command, config_completions, set_completions
 from pydantic_clai2.config import Settings
@@ -25,6 +24,9 @@ from pydantic_clai2.field_menu import FieldMenu
 from pydantic_clai2.set_menu import open_settings_menu
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.theme_picker import build_theme_picker, theme_command
+from tests.clai2.menu_script import Script, make_context, pick
+
+pytestmark = pytest.mark.anyio
 
 
 async def test_picker_and_settings_share_registry_and_persistence(tmp_path: Path) -> None:

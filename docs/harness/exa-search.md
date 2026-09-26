@@ -12,7 +12,7 @@ retrieval for digging into a specific URL, and opt-in deep search that
 synthesizes a cited answer in one call. The separate `ExaAgent` capability
 delegates long-running research to the Exa Agent API as deferred tool calls.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/exa/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/exa/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -26,7 +26,7 @@ prompting the agent to research methodically is boilerplate every research
 agent reinvents.
 
 `ExaSearch` bundles that plumbing into a single
-[capability](/ai/core-concepts/capabilities/): the research tools, per-tool
+[capability](../capabilities/overview.md): the research tools, per-tool
 output budgets, and short research guidance in the system prompt.
 
 ## Usage
@@ -76,7 +76,7 @@ re-applied to the response.
 
 A URL or question that returns no content, a rate limit, or a transient API or
 network failure surfaces to the model as a
-[`ModelRetry`](/ai/tools-toolsets/tools-advanced/#tool-retries) rather than a
+[`ModelRetry`](../tools-advanced.md#tool-retries) rather than a
 hard error: the run continues and the model can correct the URL, rephrase, or
 try again. Authentication failures (401/403) are configuration errors and
 propagate.
@@ -182,7 +182,7 @@ The Exa [Agent API](https://exa.ai/docs/reference/agent-api-guide) runs open-end
 asynchronously: a run is created, moves through `queued -> running`, and
 reaches a terminal status (`completed`, `failed`, or `cancelled`) after up to
 an hour. The separate `ExaAgent` capability maps that lifecycle onto Pydantic
-AI's [deferred tool calls](/ai/tools-toolsets/deferred-tools/): its
+AI's [deferred tool calls](../deferred-tools.md): its
 `exa_agent` tool creates the run and defers, carrying the Exa run ID in the
 deferred call's metadata.
 
@@ -320,7 +320,7 @@ ExaSearch(client=AsyncExa(api_key='...'))
 ## ExaSearch vs core WebSearch
 
 Pydantic AI core ships a provider-adaptive
-[`WebSearch`](/ai/core-concepts/capabilities/#provider-adaptive-tools)
+[`WebSearch`](../capabilities/overview.md#provider-adaptive-tools)
 capability: on models with a native search tool it uses the provider's own
 search, executed server-side; elsewhere it falls back to a local DuckDuckGo
 tool. Reach for it when you want search that follows the model.
@@ -364,7 +364,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch(), MCP('htt
 ## Agent spec (YAML/JSON)
 
 `ExaSearch` works with Pydantic AI's
-[agent spec](/ai/core-concepts/agent-spec/), so you can declare it in a config
+[agent spec](../agent-spec.md), so you can declare it in a config
 file instead of Python:
 
 ```yaml
@@ -393,8 +393,8 @@ classes are only available when constructing the capability in Python.
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 - [Exa API documentation](https://docs.exa.ai)
 
 ## API reference

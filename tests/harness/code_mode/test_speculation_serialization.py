@@ -3,11 +3,13 @@
 from decimal import Decimal
 
 import pytest
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
 
+from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from pydantic_ai_harness.code_mode import CodeMode
 
 from .test_speculation import ToolLog, build_agent, padded
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

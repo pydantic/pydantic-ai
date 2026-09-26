@@ -6,13 +6,12 @@ import os
 from pathlib import Path
 
 import pytest
+from rich.console import Console
+
 from pydantic_ai import Agent, PartDeltaEvent, PartStartEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import TextPart, TextPartDelta, ThinkingPart
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-from test_plugin_loader import Harness
-
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.config import PluginSettings, Settings
@@ -21,6 +20,9 @@ from pydantic_clai2.model_settings import ModelSettingsForm
 from pydantic_clai2.plugin_loader import PluginError
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.test_plugin_loader import Harness
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

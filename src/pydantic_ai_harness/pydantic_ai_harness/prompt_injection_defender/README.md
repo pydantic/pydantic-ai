@@ -9,7 +9,7 @@ Results pass through unchanged by default. Set `block_high_risk=True` to replace
 result that the built-in defense rejects with a short notice. Use `on_detection`
 to observe flagged verdicts.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/prompt_injection_defender/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/prompt_injection_defender/)
 
 > [!NOTE]
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).

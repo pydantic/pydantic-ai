@@ -7,7 +7,7 @@ description: "Re-inject reminders into a long Pydantic AI agent run on a cadence
 
 `SystemReminders` re-states targeted behavioral guidance partway through a run -- on a fixed cadence or reactively from a condition -- to counter the instruction fade that sets in over many turns, without ever invalidating the prompt cache.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/system_reminders/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/system_reminders/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -179,12 +179,12 @@ The tail reminder is only appended when the last message in the request is a `Mo
 
 ## Not spec-serializable
 
-`SystemReminders.get_serialization_name()` returns `None`: reminders take arbitrary callables, which cannot be serialized to an [agent spec](/ai/core-concepts/agent-spec/).
+`SystemReminders.get_serialization_name()` returns `None`: reminders take arbitrary callables, which cannot be serialized to an [agent spec](../agent-spec.md).
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
-- [Hooks](/ai/core-concepts/hooks/) -- `wrap_model_request` is the ephemeral injection point used here
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Hooks](../hooks.md) -- `wrap_model_request` is the ephemeral injection point used here
 - [Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)
 - [Planning](planning.md) -- another prompt-cache-aware harness capability
 

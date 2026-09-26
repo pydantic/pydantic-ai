@@ -3,13 +3,13 @@
 from dataclasses import dataclass
 
 import pytest
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import AbstractModel, ModelRequestContext
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.compaction import (
     FallbackCompaction,
     SlidingWindowCompaction,
@@ -18,6 +18,8 @@ from pydantic_ai_harness.compaction import (
     estimate_context_tokens,
     pin,
 )
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

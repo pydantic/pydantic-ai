@@ -7,10 +7,10 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import TypeAdapter
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-
 from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs, PydanticAIDocsToolset, PydanticAIDocsTopic
 
 pytestmark = pytest.mark.anyio

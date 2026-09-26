@@ -158,7 +158,7 @@ Checks:
   "Tool Output Limits", not "Overflow"; "Runtime Capability Creation", not
   "Authoring").
 - **Source link.** Each page links its source module
-  (`https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/<module>/`)
+  (`https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/<module>/`)
   so a reading agent can verify behavior. Where the capability exposes a public
   class, the page may also end with a `## API reference` section of
   `::: pydantic_ai_harness...` autodoc blocks (auto-expanded from the docstring,

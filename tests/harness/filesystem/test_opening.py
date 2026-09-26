@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import BinaryIO
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-
 from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
 
 pytestmark = pytest.mark.anyio

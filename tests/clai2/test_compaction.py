@@ -6,19 +6,21 @@ from pathlib import Path
 
 import pytest
 from pydantic import JsonValue, ValidationError
+from rich.console import Console
+
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import FallbackCompaction
-from rich.console import Console
-from test_app_edges import inputs
-
 from pydantic_clai2 import Session, chat
 from pydantic_clai2.compaction import activate
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.plugins import PluginHost, SessionEnd, Transcript
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.test_app_edges import inputs
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

@@ -10,7 +10,7 @@ search, find, create, and inspect -- all scoped to a single `root_dir`. Every pa
 resolved and containment-checked (symlinks included) before any I/O, and access
 is filtered through allow / deny / protected glob patterns.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/filesystem/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/filesystem/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -209,7 +209,7 @@ Tool errors the model can correct -- a missing file, a denied path, a stale
 edit, a directory that collides with an existing file, an invalid glob pattern,
 a path name rejected by Windows, a path name the filesystem cannot encode, an
 over-long path name, a symlink loop -- are surfaced as
-[`ModelRetry`](/ai/core-concepts/agent/#reflection-and-self-correction),
+[`ModelRetry`](../agent.md#reflection-and-self-correction),
 so the agent gets the error message back and can adjust rather than aborting
 the run. Failures the model can do nothing about, such as a full or read-only
 disk, still abort.
@@ -355,7 +355,7 @@ dropped.
 ## Agent spec (YAML/JSON)
 
 `FileSystem` works with Pydantic AI's
-[agent spec](/ai/core-concepts/agent-spec/):
+[agent spec](../agent-spec.md):
 
 ```yaml
 model: anthropic:claude-sonnet-4-6
@@ -377,8 +377,8 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 - [the capabilities overview](index.md)
 
 ## API reference

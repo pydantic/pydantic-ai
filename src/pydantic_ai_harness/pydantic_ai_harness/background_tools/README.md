@@ -2,7 +2,7 @@
 
 `BackgroundTools` lets selected tools run in the background while the agent continues without waiting. Use it when the model can work on something else until the result is ready.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/background_tools/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/background_tools/)
 
 Install the OpenAI provider before running this example:
 

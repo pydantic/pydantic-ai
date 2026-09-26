@@ -22,9 +22,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
 from playwright._impl._errors import TargetClosedError
-from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import StorageState
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Error as PlaywrightError, StorageState, TimeoutError as PlaywrightTimeoutError
+
+import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
@@ -34,8 +34,6 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
-
-import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai_harness.playwright import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_ALLOWLIST_REACH,
@@ -2073,7 +2071,7 @@ class TestDurabilityRejection:
 
     def test_rejects_temporal_durability_at_construction(self) -> None:
         pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # needs the temporal extra
 
         with pytest.raises(UserError, match='does not support durable execution'):
             Agent(TestModel(), capabilities=[PlaywrightBrowser(), TemporalDurability()])

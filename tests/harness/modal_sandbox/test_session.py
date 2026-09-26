@@ -18,6 +18,8 @@ from pydantic_ai_harness.modal_sandbox import (
 
 from .fake_modal import FakeModal, FileInfo, _AioCallable
 
+pytestmark = pytest.mark.anyio
+
 
 class _HangingCall(_AioCallable):
     """A teardown RPC that never returns, to prove the teardown deadline bounds it."""

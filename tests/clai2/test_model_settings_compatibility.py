@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-from menu_script import make_context
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from pydantic_clai2 import model_settings
@@ -11,6 +10,7 @@ from pydantic_clai2.custom_params import CustomParamsMenu
 from pydantic_clai2.field_menu import FieldMenu, FieldRow
 from pydantic_clai2.model_menu import ModelSettingsSource
 from pydantic_clai2.model_settings import ModelSettingsForm, model_settings_from_json
+from tests.clai2.menu_script import make_context
 
 
 def test_legacy_reader_ignores_custom_params(monkeypatch: pytest.MonkeyPatch) -> None:

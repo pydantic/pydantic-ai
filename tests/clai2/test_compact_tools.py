@@ -3,15 +3,17 @@
 import io
 
 import pytest
+from rich.console import Console
+from rich.text import Text
+
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from rich.console import Console
-from rich.text import Text
-
 from pydantic_clai2 import StreamRenderer, theme
 from pydantic_clai2.config import Settings, resolve_settings
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

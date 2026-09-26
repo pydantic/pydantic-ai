@@ -10,17 +10,19 @@ from pathlib import Path
 
 import anyio
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.macroscope import (
     Macroscope,
     MacroscopeReview,
     MacroscopeToolset,
     parse_macroscope_stream,
 )
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

@@ -17,6 +17,7 @@ from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.exceptions import ExecutionError
 from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._run_context import get_current_run_context  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -37,7 +38,6 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.toolsets.external import ExternalToolset
-
 from pydantic_ai_harness.aws_lambda import (
     AWSLambdaDurability,
     _bridge,  # pyright: ignore[reportPrivateUsage]

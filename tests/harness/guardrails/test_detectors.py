@@ -7,6 +7,7 @@ import time
 
 import pytest
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -24,7 +25,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness import GuardrailResult, InputGuardrail, OutputBlocked, OutputGuardrail
 from pydantic_ai_harness.guardrails import ToolGuardrail, ToolResultInfo
 from pydantic_ai_harness.guardrails.detectors import (

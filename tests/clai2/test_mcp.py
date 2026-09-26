@@ -13,10 +13,10 @@ import anyio
 import httpx
 import pytest
 from pydantic import HttpUrl, JsonValue, ValidationError
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
@@ -33,6 +33,8 @@ from pydantic_clai2.mcp import (
 from pydantic_clai2.plugin_loader import PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart
 from pydantic_clai2.settings_store import SettingsStore
+
+pytestmark = pytest.mark.anyio
 
 
 def make_host(settings: dict[str, JsonValue], store: MCPStore | None = None) -> PluginHost[None]:

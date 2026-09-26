@@ -6,8 +6,8 @@ from dataclasses import replace
 from decimal import Decimal
 
 import pytest
-from pydantic_ai.usage import UsageLimits
 
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness._usage import reserved_usage_limits
 
 

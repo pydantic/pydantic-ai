@@ -16,11 +16,11 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import PartStartEvent
-from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent, TextPart, ToolCallPart
 from rich.console import Console
 from rich.text import Text
 
+from pydantic_ai import PartStartEvent
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent, TextPart, ToolCallPart
 from pydantic_clai2 import StreamRenderer, theme
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Commands
@@ -31,6 +31,8 @@ from pydantic_clai2.live_prompt import LivePrompt
 from pydantic_clai2.sandbox_calls import SandboxCallOrder, SandboxCallStartedEvent
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.speculation import Speculation, SpeculationCounters
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@
 
 Give an agent a tool that locates and returns Pydantic AI documentation on demand.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/pydantic_ai_docs/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pydantic_ai_docs/)
 
 ## The problem
 

@@ -2,7 +2,7 @@
 
 Discover and load a repo's accumulated coding-assistant context engineering (CE).
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/repo_context/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/repo_context/)
 
 ## The problem
 

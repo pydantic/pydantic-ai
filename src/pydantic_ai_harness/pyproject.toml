@@ -1,319 +1,99 @@
 [build-system]
-requires = ['hatchling', 'uv-dynamic-versioning>=0.7.0']
-build-backend = 'hatchling.build'
-
-[project]
-name = 'pydantic-ai-harness'
-dynamic = ['version']
-description = 'The official capability library and harness for Pydantic AI'
-readme = 'README.md'
-requires-python = '>=3.10'
-license = 'MIT'
-authors = [
-    { name = 'Douwe Maan', email = 'douwe@pydantic.dev' },
-    { name = 'David SF', email = 'david.sanchez@pydantic.dev' },
-    { name = 'Aditya Vardhan', email = 'aditya@pydantic.dev' },
-]
-classifiers = [
-    'Development Status :: 3 - Alpha',
-    'Intended Audience :: Developers',
-    'License :: OSI Approved :: MIT License',
-    'Programming Language :: Python :: 3',
-    'Programming Language :: Python :: 3.10',
-    'Programming Language :: Python :: 3.11',
-    'Programming Language :: Python :: 3.12',
-    'Programming Language :: Python :: 3.13',
-    'Programming Language :: Python :: 3.14',
-    'Topic :: Software Development :: Libraries',
-    'Typing :: Typed',
-]
-dependencies = [
-    "genai-prices>=0.0.71",
-    "httpx>=0.28.1",
-    "json-repair>=0.58.0",
-    "pydantic-ai-slim>=2.44.0",
-]
-
-[project.optional-dependencies]
-# Provider/CLI pass-throughs so `uv add "pydantic-ai-harness[anthropic,cli]"` works standalone,
-# without separately naming pydantic-ai-slim. (No openai/google pass-throughs: browser-use pins
-# provider SDKs that conflict with slim's floors when the workspace resolves all extras together.)
-anthropic = [
-    "pydantic-ai-slim[anthropic]>=2.44.0",
-]
-cli = [
-    "pydantic-ai-slim[cli]>=2.44.0",
-]
-code-mode = [
-    "pydantic-ai-slim[duckduckgo]>=2.44.0",
-    "pydantic-monty>=1.0.0,<2",
-]
-# Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
-codemode = [
-    "pydantic-ai-slim[duckduckgo]>=2.44.0",
-    "pydantic-monty>=1.0.0,<2",
-]
-researcher = [
-    "pydantic-ai-slim[duckduckgo,web-fetch]>=2.44.0",
-]
-temporal = [
-    'pydantic-ai-slim[temporal]',
-]
-dbos = [
-    'pydantic-ai-slim[dbos]',
-]
-logfire = [
-    'logfire>=4.31.0',
-    "pydantic-ai-slim[spec]>=2.18.0",
-]
-modal = [
-    "modal>=1.5.0",
-]
-dynamic-workflow = [
-    "pydantic-monty>=1.0.0,<2",
-]
-acp = [
-    # The SDK breaks across minors, so cap per minor.
-    "agent-client-protocol>=0.11,<0.12",
-]
-exa = [
-    "exa-py>=2.16.0",
-]
-aws-lambda = [
-    "aws-durable-execution-sdk-python>=1.7.0 ; python_full_version >= '3.11'",
-    "pydantic-ai-slim>=2.44.0",
-]
-youdotcom = [
-    "youdotcom>=3.1.2,<4",
-]
-mongodb = [
-    "pymongo>=4.17.0",
-]
-skills = [
-    "pyyaml>=6.0.2",
-]
-browser-use = [
-    "browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'",
-]
-playwright = [
-    "idna>=3.4",
-    "playwright>=1.61.0",
-]
-stackone = [
-    "fastmcp>=3.4.5,<4",
-    "pydantic-ai-slim[mcp]>=2.18.0",
-]
-ordinal = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-grain = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-day-ai = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-posthog = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-pylon = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-prompt-injection-defender = [
-    "stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'",
-]
-prompt-injection-defender-ml = [
-    "stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11'",
-]
-github = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-slack = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-coder = [
-    "ripgrep==14.1.0 ; sys_platform != 'android'",
-]
-logfire-mcp = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-linear = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-notion = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-google-workspace = [
-    "pydantic-ai-slim[mcp]>=2.44.0",
-]
-
-[project.urls]
-Homepage = 'https://github.com/pydantic/pydantic-ai-harness'
-Source = 'https://github.com/pydantic/pydantic-ai-harness'
-Issues = 'https://github.com/pydantic/pydantic-ai-harness/issues'
-
-[dependency-groups]
-dev = [
-    'pydantic-ai-harness[code-mode,coder]',
-    # Floors selected to keep the `test-floor` job (using `--resolution lowest-direct`)
-    # working: `anyio>=4.11.0` is when the pytest plugin started registering the
-    # `anyio_mode` ini option. `pytest-anyio` has only version 0.0.0 on PyPI, so no
-    # floor. The rest match pydantic-ai's discipline.
-    'pytest>=9.0.0',
-    'anyio[trio]>=4.11.0',
-    'pytest-anyio',
-    'coverage>=7.10.7',
-    'logfire[httpx]>=4.31.0',
-    'dirty-equals>=0.9.0',
-    'inline-snapshot>=0.32.5',
-    "pydantic-ai-slim[anthropic]",
-    "pydantic-ai-slim[openai]",
-    "pydantic-ai-slim[mcp,spec]>=2.18.0",
-    "pytest-examples>=0.0.18",
-    "pytest-recording>=0.13.4",
-    "mongomock-motor>=0.0.36",
-    "websockets>=14",
-    "redis>=6.0.0",
-    # httpx2 recording for device flow: https://github.com/pydantic/pydantic-ai/issues/8616.
-    "cassetter>=0.11.0",
-]
-lint = [
-    'ruff>=0.14',
-    # Match CLAI's version for its decorator-based plugin API (issue #875).
-    'pyright>=1.1.414',
-]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
 
 [tool.hatch.version]
-source = 'uv-dynamic-versioning'
+source = "uv-dynamic-versioning"
 
+# Harness stays on 0.x and follows pydantic-ai's minor and patch: pydantic-ai 2.51.0 ships
+# pydantic-ai-harness 0.51.0. `{{ version }}` in the dependency templates below is still the
+# pydantic-ai version, so `pydantic-ai-slim` is pinned to the release it was built with.
 [tool.uv-dynamic-versioning]
-vcs = 'git'
-style = 'pep440'
+vcs = "git"
+style = "pep440"
 bump = true
+format-jinja = "0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
 
-[tool.uv]
-exclude-newer-package = { pydantic-ai = false, pydantic-ai-slim = false, pydantic-evals = false, pydantic-graph = false }
+[project]
+name = "pydantic-ai-harness"
+dynamic = ["version", "dependencies", "optional-dependencies"]
+description = "The official capability library and harness for Pydantic AI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+    { name = "David SF", email = "david.sanchez@pydantic.dev" },
+    { name = "Aditya Vardhan", email = "aditya@pydantic.dev" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
 
-# hatchling 1.32.0 (2026-08-11) bumped its default core metadata version to 2.5,
-# which the pinned gh-action-pypi-publish validator rejects as "not a valid
-# metadata version". Ceiling until the publish action (or PyPI's own validator)
-# catches up. Affects `uv build`'s PEP 517 build isolation, not runtime installs.
-build-constraint-dependencies = ['hatchling<1.32']
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = ["genai-prices>=0.0.71", "httpx>=0.28.1", "json-repair>=0.58.0", "pydantic-ai-slim=={{ version }}"]
 
-# `browser-use` pins provider SDKs to exact versions far below the floors `pydantic-ai-slim`
-# declares (`anthropic==0.76.0`, `openai==2.16.0`), so they only resolve together under an
-# override -- browser-use then runs against SDKs newer than it pins. That is deliberate and
-# one-way: keeping pydantic-ai's floors current outranks tracking browser-use, whose exact-pin
-# policy has open, unaddressed resolution conflicts upstream (browser-use/browser-use#4824 and
-# #4877). When a floor can no longer be overridden without breaking browser-use, the extra
-# yields, not the floor.
-#
-# An override *replaces* every requirement on the package it names, so it erases the floors slim
-# declares as well as browser-use's pins, and `lowest-direct` resolves `pydantic-ai-slim` to its
-# floor while taking provider SDKs to the newest release the range admits. `anthropic` therefore
-# repeats the floor slim declares, so both halves of that pair resolve together under every
-# resolution mode. Move this floor whenever that one moves.
-override-dependencies = ['anthropic>=1.8.0', 'openai>=3.8.0']
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+anthropic = ["pydantic-ai-slim[anthropic]=={{ version }}"]
+cli = ["pydantic-ai-slim[cli]=={{ version }}"]
+code-mode = ["pydantic-ai-slim[duckduckgo]=={{ version }}", "pydantic-monty>=1.0.0,<2"]
+# Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
+codemode = ["pydantic-ai-slim[duckduckgo]=={{ version }}", "pydantic-monty>=1.0.0,<2"]
+researcher = ["pydantic-ai-slim[duckduckgo,web-fetch]=={{ version }}"]
+temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
+dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
+logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ version }}"]
+modal = ["modal>=1.5.0"]
+dynamic-workflow = ["pydantic-monty>=1.0.0,<2"]
+# The SDK breaks across minors, so cap per minor.
+acp = ["agent-client-protocol>=0.11,<0.12"]
+exa = ["exa-py>=2.16.0"]
+# 2.0 changed tool-result serialization in a way the durable bridge does not handle yet.
+aws-lambda = ["aws-durable-execution-sdk-python>=1.7.0,<2 ; python_full_version >= '3.11'"]
+# 3.2 types `page_age` as `datetime | str`, and the toolset formats it as a `datetime`.
+youdotcom = ["youdotcom>=3.1.2,<3.2"]
+mongodb = ["pymongo>=4.17.0"]
+skills = ["pyyaml>=6.0.2"]
+browser-use = ["browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'"]
+playwright = ["idna>=3.4", "playwright>=1.61.0"]
+stackone = ["fastmcp>=3.4.5,<4", "pydantic-ai-slim[mcp]=={{ version }}"]
+ordinal = ["pydantic-ai-slim[mcp]=={{ version }}"]
+grain = ["pydantic-ai-slim[mcp]=={{ version }}"]
+day-ai = ["pydantic-ai-slim[mcp]=={{ version }}"]
+posthog = ["pydantic-ai-slim[mcp]=={{ version }}"]
+pylon = ["pydantic-ai-slim[mcp]=={{ version }}"]
+prompt-injection-defender = ["stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'"]
+prompt-injection-defender-ml = ["stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11'"]
+github = ["pydantic-ai-slim[mcp]=={{ version }}"]
+slack = ["pydantic-ai-slim[mcp]=={{ version }}"]
+coder = ["ripgrep==14.1.0 ; sys_platform != 'android'"]
+logfire-mcp = ["pydantic-ai-slim[mcp]=={{ version }}"]
+linear = ["pydantic-ai-slim[mcp]=={{ version }}"]
+notion = ["pydantic-ai-slim[mcp]=={{ version }}"]
+google-workspace = ["pydantic-ai-slim[mcp]=={{ version }}"]
 
-[tool.uv.workspace]
-members = ['pydantic-clai2']
+[project.urls]
+Homepage = "https://pydantic.dev/docs/ai/harness/"
+Source = "https://github.com/pydantic/pydantic-ai"
+Documentation = "https://pydantic.dev/docs/ai/harness/"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.build.targets.wheel]
-packages = ['pydantic_ai_harness']
+packages = ["pydantic_ai_harness"]
 
-[tool.ruff]
-line-length = 120
-target-version = 'py310'
-exclude = ['template']
+[tool.hatch.build.targets.sdist]
+include = ["/pydantic_ai_harness", "/README.md", "/LICENSE"]
 
-[tool.ruff.lint]
-extend-select = ['Q', 'RUF100', 'C90', 'UP', 'I', 'D', 'TID251', 'PLC0415']
-
-[tool.ruff.lint.per-file-ignores]
-'tests/**/*.py' = ['D']
-# Deferred imports in the package are architectural, not convenience: `__getattr__`
-# lazy exports keep optional extras (pymongo, modal, ...) out of the base install,
-# some break an import cycle, and some defer a heavy data snapshot. PLC0415 cannot
-# tell those from an accidental function-scoped import, so it is off for the package
-# and enforced in tests, where every occurrence was accidental.
-'pydantic_ai_harness/**/*.py' = ['PLC0415']
-# `mcp` and `fastmcp` ship only with optional extras, so slim CI cannot import
-# them at module scope; these tests defer the import on purpose.
-'tests/stackone/**/*.py' = ['PLC0415']
-
-[tool.ruff.lint.flake8-quotes]
-inline-quotes = 'single'
-
-[tool.ruff.lint.mccabe]
-max-complexity = 15
-
-[tool.ruff.lint.pydocstyle]
-convention = 'google'
-
-[tool.ruff.format]
-# don't format python in docstrings, pytest-examples takes care of it
-docstring-code-format = false
-quote-style = 'single'
-
-[tool.pyright]
-pythonVersion = '3.10'
-typeCheckingMode = 'strict'
-exclude = ['template', '**/.venv*', 'local-notes', 'mutants', '.agents', '.claude']
-# `reportUnusedFunction` is disabled for tests because fixtures and `@agent.tool_plain`
-# helpers are registered via decorators and never referenced by name (matches pydantic-ai).
-executionEnvironments = [
-    { root = 'pydantic-clai2', extraPaths = ['pydantic-clai2/src'] },
-    { root = 'tests', reportPrivateUsage = false, reportUnusedFunction = false },
-    # `redis.asyncio.Redis` ships `py.typed` but leaves most of its command surface
-    # partially unknown (`from_url`, `ping`, `scan_iter`, `ttl`). Only the live-Redis
-    # tests touch the client directly -- `RedisSpendStore` itself goes through the
-    # `RedisClient` protocol and stays fully checked.
-    { root = 'integration_tests/redis', reportUnknownMemberType = false, reportUnknownVariableType = false, reportUnknownArgumentType = false },
-]
-
-[tool.pytest.ini_options]
-# Existing Harness cassettes use pytest-recording; CLAI uses cassetter's context manager for httpx2.
-addopts = '-p no:cassetter'
-testpaths = ['tests']
-xfail_strict = true
-markers = ['modal_live: runs against a real Modal control plane; needs credentials']
-filterwarnings = [
-    'error',
-    # DBOS's run_sync triggers this on Python 3.12+ — not our code.
-    'ignore:There is no current event loop:DeprecationWarning',
-    # browser-use's observability decorators call asyncio.iscoroutinefunction at
-    # import time, which Python 3.14+ deprecates — not our code.
-    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning",
-    # Experimental capabilities warn on import by design; assert it explicitly where it matters.
-    'ignore::pydantic_ai_harness.experimental.HarnessExperimentalWarning',
-]
-anyio_mode = 'auto'
-
-[tool.coverage.run]
-branch = true
-source = ['pydantic_ai_harness', 'tests']
-omit = ['tests/**/test_modal_live.py']
-
-[tool.coverage.paths]
-source = ['.', '/home/runner/work/pydantic-ai-harness/pydantic-ai-harness']
-
-[tool.coverage.report]
-fail_under = 100
-show_missing = true
-exclude_lines = [
-    'pragma: no cover',
-    'pragma: lax no cover',
-    'assert_never',
-    'if TYPE_CHECKING:',
-]
-
-[tool.mutmut]
-paths_to_mutate = [
-    'pydantic_ai_harness/filesystem/_toolset.py',
-    'pydantic_ai_harness/shell/_toolset.py',
-]
-tests_dir = ['tests/filesystem/', 'tests/shell/']
-also_copy = ['pydantic_ai_harness/', 'tests/']
-# Skip trio-parametrized tests during mutation testing — trio segfaults in
-# mutmut's subprocess environment on Python 3.14 (not a code bug).
-pytest_add_cli_args = ['-k', 'not trio']
-# See docs/mutation-testing.md for full results (89.7% kill rate, 60 equivalent mutants).
+[tool.uv.sources]
+pydantic-ai-slim = { workspace = true }

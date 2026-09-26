@@ -10,14 +10,14 @@ import prompt_toolkit
 import pytest
 from prompt_toolkit.completion import CompleteEvent, Completer
 from prompt_toolkit.document import Document
+from rich.console import Console
+
+import pydantic_clai2
 from pydantic_ai import Agent, ModelRequestContext, RunContext, models
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from rich.console import Console
-
-import pydantic_clai2
 from pydantic_clai2 import DEFAULT_PLUGINS, chat, theme
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.project_settings import ProjectSettings

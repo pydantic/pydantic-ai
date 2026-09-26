@@ -10,16 +10,18 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from rich.text import Text
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.screen import Screen
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.status import Status, StatusLine
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

@@ -7,9 +7,12 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import pydantic_ai.messages as messages_module
 import pytest
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
+
+import pydantic_ai.messages as messages_module
+import pydantic_ai_harness
+import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -32,9 +35,6 @@ from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-
-import pydantic_ai_harness
-import pydantic_ai_harness.compaction as compaction
 from pydantic_ai_harness.compaction import (
     DEFAULT_CONTEXT_WINDOW,
     ClearToolResults,
@@ -1623,4 +1623,4 @@ class TestSummarizerMustWriteText:
         assert any(isinstance(part, SystemPromptPart) and 'Summary.' in part.content for part in first.parts)
 
 
-pytestmark = pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')
+pytestmark = [pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'), pytest.mark.anyio]

@@ -10,6 +10,7 @@ from typing import Any
 import pydantic
 import pytest
 from inline_snapshot import snapshot
+
 from pydantic_ai import Agent, CapabilityEvent
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
@@ -17,7 +18,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
-
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import ContextUsageEvent, ReportContextUsage
 from pydantic_ai_harness.planning import (

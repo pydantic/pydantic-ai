@@ -11,12 +11,12 @@ from pathlib import Path
 from types import FrameType
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.filesystem import (
     FILE_SYSTEM_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
@@ -32,6 +32,8 @@ from pydantic_ai_harness.filesystem._toolset import (
     _is_binary,
     _sanitize_recoverable_error,
 )
+
+pytestmark = pytest.mark.anyio
 
 
 def _reported_hash(result: str) -> str:

@@ -6,7 +6,7 @@ surveying the web and reading one page in full. `YouResearch` adds `answer`,
 `research`, and `finance_research`, for cited answers to questions a single
 lookup cannot settle.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/youdotcom/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/youdotcom/)
 
 ## Installation
 

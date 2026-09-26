@@ -10,10 +10,10 @@ from uuid import UUID
 import keyring
 import pytest
 from keyring.errors import InitError, KeyringLocked, NoKeyringError, PasswordDeleteError
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
 from rich.console import Console
 
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
 from pydantic_clai2.auth import CodexAuth, CodexCredentials
 from pydantic_clai2.credential_store import (
     credentials_path,
@@ -21,6 +21,8 @@ from pydantic_clai2.credential_store import (
     load_codex_credentials,
     save_codex_credentials,
 )
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

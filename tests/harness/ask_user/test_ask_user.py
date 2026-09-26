@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Sequence
 
 import pytest
 from pydantic import ValidationError
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import (
@@ -21,7 +22,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness import AskUser
 from pydantic_ai_harness.ask_user import (
     DECLINED,

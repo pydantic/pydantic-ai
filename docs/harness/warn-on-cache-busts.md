@@ -95,9 +95,9 @@ The monitor's signal is the `CacheBustWarning`; routing it through `logging` is 
 
 ## API reference
 
-- [`pydantic_ai_harness.warn_on_cache_busts` source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/warn_on_cache_busts/)
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Pydantic AI hooks](/ai/core-concepts/hooks/)
+- [`pydantic_ai_harness.warn_on_cache_busts` source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/warn_on_cache_busts/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Pydantic AI hooks](../hooks.md)
 
 The public module exports `WarnOnCacheBusts` and `CacheBustWarning`. Import them from `pydantic_ai_harness.warn_on_cache_busts`.
 

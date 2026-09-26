@@ -26,6 +26,10 @@ from uuid import UUID
 import anyio
 import pytest
 from pydantic import BaseModel
+from pydantic_core import SchemaValidator, core_schema
+from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
+from typing_extensions import Never, TypedDict
+
 from pydantic_ai import (
     AbstractToolset,
     Agent,
@@ -34,8 +38,7 @@ from pydantic_ai import (
     ToolDefinition,
 )
 from pydantic_ai.capabilities import Capability, Instrumentation, ToolSearch
-from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     InstructionPart,
@@ -48,11 +51,11 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn as ToolReturnMsg,
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.messages import ToolReturn as ToolReturnMsg
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -63,10 +66,6 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
-from pydantic_core import SchemaValidator, core_schema
-from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
-from typing_extensions import Never, TypedDict
-
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
 from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolset
 from pydantic_ai_harness.code_mode._capability import (
@@ -634,7 +633,7 @@ class TestCodeMode:
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
-        docs = (Path(__file__).parents[2] / 'docs' / 'code-mode.md').read_text()
+        docs = (Path(__file__).parents[3] / 'docs' / 'harness' / 'code-mode.md').read_text()
         documented = re.search(r'Allowed stdlib modules: (.*?) \(', docs)
         assert advertised is not None and documented is not None
         modules = re.findall(r'`(\w+)`', advertised.group(1))
@@ -1234,7 +1233,7 @@ class TestCodeMode:
                 approvals={call.tool_call_id: ToolDenied(message='nope') for call in requests.approvals}
             )
 
-        from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
+        from pydantic_ai.capabilities import HandleDeferredToolCalls  # optional-version probe
 
         wrapper = CodeMode[object](max_tool_calls=1).get_wrapper_toolset(_build_function_toolset(needs_approval))
         assert isinstance(wrapper, CodeModeToolset)
@@ -2396,7 +2395,7 @@ class TestCodeMode:
         with the original denial message preserved in the trace.
         """
         try:
-            from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
+            from pydantic_ai.capabilities import HandleDeferredToolCalls  # optional-version probe
         except ImportError:  # pragma: no cover -- only fires on floor-slim CI, which doesn't gate on coverage
             pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
 
@@ -2425,7 +2424,7 @@ class TestCodeMode:
         deferral after approval is *not* re-resolved -- it bubbles up to the caller.
         """
         try:
-            from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
+            from pydantic_ai.capabilities import HandleDeferredToolCalls  # optional-version probe
         except ImportError:  # pragma: no cover -- only fires on floor-slim CI, which doesn't gate on coverage
             pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
 

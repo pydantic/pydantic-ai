@@ -54,7 +54,7 @@ problem as a finding (blocking / warning / nit) with a concrete fix.
    `../experimental/`, or badge markup.
    README: absolute links are fine.
 5. **Source link + API block.** Every page links its source module
-   (`https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/<module>/`)
+   (`https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/<module>/`)
    so a reading agent can verify behavior -- a missing source link is a finding.
    Where the capability exposes a public class, the page may also end with a
    `## API reference` section of `::: pydantic_ai_harness...` autodoc blocks

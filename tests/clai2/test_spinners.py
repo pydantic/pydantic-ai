@@ -8,18 +8,17 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
-from menu_script import Script, make_context, pick
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent
 from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import Agent
 from pydantic_clai2 import chat, theme
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
@@ -40,6 +39,9 @@ from pydantic_clai2.spinners import (
     make_spinner,
     user_spinners_path,
 )
+from tests.clai2.menu_script import Script, make_context, pick
+
+pytestmark = pytest.mark.anyio
 
 PromptT = TypeVar('PromptT')
 CODE_PUPPY_BUILTINS = (

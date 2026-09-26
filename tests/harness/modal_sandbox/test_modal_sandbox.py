@@ -9,6 +9,9 @@ from typing import Protocol, TypeGuard, runtime_checkable
 
 import pytest
 import sniffio
+
+import pydantic_ai_harness
+import pydantic_ai_harness.modal_sandbox as modal_sandbox
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
@@ -17,20 +20,19 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
-
-import pydantic_ai_harness
-import pydantic_ai_harness.modal_sandbox as modal_sandbox
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.modal_sandbox import (
     ModalSandbox,
+    ModalSandbox as Exported,
     ModalSandboxError,
     ModalSandboxSession,
     ModalSandboxTerminalError,
     ModalSandboxUnavailableError,
 )
-from pydantic_ai_harness.modal_sandbox import ModalSandbox as Exported
 
 from .fake_modal import FakeModal, FileInfo
+
+pytestmark = pytest.mark.anyio
 
 
 @runtime_checkable

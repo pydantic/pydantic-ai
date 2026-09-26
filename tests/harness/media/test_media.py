@@ -14,6 +14,7 @@ from typing import TypeGuard
 import httpx
 import pytest
 from httpx import AsyncClient, MockTransport, Request, Response
+
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     BinaryContent,
@@ -25,7 +26,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-
 from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaContext,

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import (
@@ -21,7 +22,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-
 from pydantic_ai_harness.filesystem import (
     MAX_DIFF_SOURCE_CHARS,
     MAX_EVENT_DIFF_CHARS,

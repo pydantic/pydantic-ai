@@ -14,6 +14,7 @@ from exa_py.agent.types import (
     AgentRunStatus,
 )
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import PrefixTools
@@ -32,13 +33,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.exa import (
     RUN_ID_METADATA_KEY,
     ExaAgent,
     ExaAgentToolset,
     agent_run_result,
 )
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

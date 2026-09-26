@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 import pytest
 from pydantic_monty._binary import find_monty_binary  # the lookup `AsyncMonty()` uses for local workers
 
-from tests.code_mode import websocket_relay  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.code_mode import websocket_relay  # pyright: ignore[reportMissingTypeStubs]
 
 
 @asynccontextmanager

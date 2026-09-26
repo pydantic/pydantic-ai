@@ -13,7 +13,7 @@ Point `Skills` at one or more skill libraries. The model first sees each
 skill's name and description. When a skill is useful, the model can call
 Pydantic AI's `load_capability` tool to receive that skill's instructions.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/skills/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/skills/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -76,7 +76,7 @@ When `Skills(...)` is constructed, it:
 The model initially sees only the skill names and descriptions. Loading a skill
 adds instructions headed `# Skill: <name>`, followed by its Markdown body, to
 the run through the same `load_capability` flow as other
-[on-demand capabilities](/ai/capabilities/on-demand/).
+[on-demand capabilities](../capabilities/on-demand.md).
 
 Discovery happens once at construction. The catalog and parsed instructions are
 a snapshot. Construct a new `Skills` instance to rescan the libraries.
@@ -204,7 +204,7 @@ are also accepted.
 
 ## Use an agent spec
 
-`Skills` works with Pydantic AI's [YAML and JSON agent specs](/ai/core-concepts/agent-spec/):
+`Skills` works with Pydantic AI's [YAML and JSON agent specs](../agent-spec.md):
 
 ```yaml
 model: anthropic:claude-sonnet-4-6
@@ -274,8 +274,8 @@ not configurable.
 
 - [Agent Skills specification](https://agentskills.io/specification)
 - [Adding skills support to an agent](https://agentskills.io/client-implementation/adding-skills-support)
-- [Pydantic AI on-demand capabilities](/ai/capabilities/on-demand/)
-- [Pydantic AI capabilities overview](/ai/capabilities/overview/)
+- [Pydantic AI on-demand capabilities](../capabilities/on-demand.md)
+- [Pydantic AI capabilities overview](../capabilities/overview.md)
 
 ## API reference
 
