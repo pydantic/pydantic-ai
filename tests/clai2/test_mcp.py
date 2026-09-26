@@ -109,7 +109,7 @@ def test_store_round_trip_is_private_and_fails_loudly(tmp_path: Path) -> None:
     assert '"enabled"' not in store.path.read_text(), 'defaults are not written'
     assert store.delete('local')
     store.path.write_text('{"servers": {"bad_name": {"type": "stdio", "command": "x"}}}')
-    with pytest.raises(ValueError, match=r'mcp\.json'):
+    with pytest.raises(ValueError, match=r'mcp.json'):
         store.load()
 
 

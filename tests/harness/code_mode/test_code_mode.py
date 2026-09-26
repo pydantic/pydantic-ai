@@ -4140,7 +4140,7 @@ class TestCodeModeOSAccessInTemporal:
         def handler(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
             return NOT_HANDLED
 
-        with pytest.raises(ModelRetry, match=r"'os\.getenv' is not supported in this environment"):
+        with pytest.raises(ModelRetry, match=r"'os.getenv' is not supported in this environment"):
             await self._run('import os\nos.getenv("HOME")', handler)
 
     async def test_handler_error_is_raised_in_the_sandbox(self) -> None:
