@@ -3,6 +3,13 @@
 from pathlib import Path
 
 
+def test_local_background_jobs_document_pipe_drain_grace() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    assert 'background jobs outlive' in page
+    assert 'redirect their output' in page
+    assert 'two-second drain' in page
+
+
 def test_no_unavailable_no_file_access_recipe() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert "no_files = UnavailableWorkspace(reason='This run has no file access.')" not in page

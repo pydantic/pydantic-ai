@@ -90,6 +90,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     This isolates nothing: commands and absolute paths reach anywhere this process can. Commands
     inherit only `PATH`, `HOME` and locale (`LANG`, `LC_ALL`, `LC_CTYPE`), so they find the host's
     tools and use its text encoding without inheriting arbitrary secrets.
+    Background jobs outlive `run()`; redirect their output to avoid waiting up to two seconds
+    for inherited output pipes. The caller manages those jobs when the host exits.
     The directory is the environment: its [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
     exists from construction, and the first operation raises
     [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing.

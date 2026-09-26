@@ -529,6 +529,8 @@ without a suitable payload codec.
 
 ## Platforms
 
+Local background jobs outlive `run()`; redirect their output to a file to avoid the two-second drain grace when they inherit stdout or stderr. The caller must clean up jobs when the host exits.
+
 Local commands that exceed the 10 MiB combined output limit raise `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large output to a file instead.
 
 The local backend and command-backed shell fallback require POSIX. A filesystem-only backend
