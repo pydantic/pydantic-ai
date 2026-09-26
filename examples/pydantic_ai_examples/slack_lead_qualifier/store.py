@@ -28,6 +28,5 @@ class AnalysisStore:
 
     @classmethod
     def _get_store(cls) -> modal.Dict:
-        return modal.Dict.from_name(
-            'analyses', create_if_missing=True
-        )  ### [/analysis_store]
+        return modal.Dict.from_name('analyses', create_if_missing=True)
+        ### [/analysis_store]
