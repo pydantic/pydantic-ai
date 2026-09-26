@@ -472,6 +472,8 @@ class _JsonSchemaTestData:
             return self._gen_any(js_def)
         elif any_of := schema.get('anyOf'):
             return self._gen_any(any_of[self.seed % len(any_of)])
+        elif one_of := schema.get('oneOf'):
+            return self._gen_any(one_of[self.seed % len(one_of)])
 
         type_ = schema.get('type')
         if type_ is None:

@@ -25,6 +25,7 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     ToolCallPart,
+    ToolOutput,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
@@ -726,3 +727,59 @@ def test_int_inclusive_upper_bound_reachable():
     assert generated_values(2.5, 5.5, list(range(4))) == [2.5, 3.5, 4.5, 2.5]
     assert generated_values(2.0, 5.5, list(range(5))) == [2.0, 3.0, 4.0, 5.0, 2.5]
     assert generated_values(0.0, 1e20, [10**20]) == [10**20]
+
+
+class Cat(BaseModel):
+    kind: Literal['cat']
+    name: str
+
+
+class Dog(BaseModel):
+    kind: Literal['dog']
+    breed: str
+
+
+Discriminated = Annotated[Cat | Dog, Field(discriminator='kind')]
+
+
+def test_tool_output_oneof_discriminated_union():
+    agent = Agent(model=TestModel(), output_type=ToolOutput(Discriminated))
+
+    result = agent.run_sync('hello')
+
+    assert isinstance(result.output, (Cat, Dog))
+
+
+def test_tool_output_anyof_plain_union_control():
+    agent = Agent(model=TestModel(), output_type=ToolOutput(Cat | Dog))
+
+    result = agent.run_sync('hello')
+
+    assert isinstance(result.output, (Cat, Dog))
+
+
+def test_function_tool_oneof_discriminated_union_arg():
+    received: list[Cat | Dog] = []
+
+    agent = Agent(model=TestModel())
+
+    @agent.tool_plain
+    def pet_name(pet: Discriminated) -> str:
+        received.append(pet)
+        return pet.kind
+
+    agent.run_sync('hello')
+
+    assert len(received) == 1
+    assert isinstance(received[0], (Cat, Dog))
+
+
+def test_custom_output_args_oneof_control():
+    agent = Agent(
+        model=TestModel(custom_output_args={'kind': 'cat', 'name': 'x'}),
+        output_type=ToolOutput(Discriminated),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == Cat(kind='cat', name='x')
