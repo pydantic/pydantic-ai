@@ -38,6 +38,13 @@ __all__ = ('IsDatetime', 'IsInstance', 'IsNow', 'IsPartialDict', 'IsStr', 'agent
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal
+    startup failure into a hang. https://github.com/pydantic/pydantic-ai/issues/8821"""
+    return False
+
+
 @pytest.fixture(autouse=True)
 def recording_plugin_in_subprocesses(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep child pytest processes on the same recording plugin as this suite."""
