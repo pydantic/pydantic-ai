@@ -2,7 +2,7 @@
 
 Let the model ask the user multiple-choice questions mid-run and wait for the answers.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/ask_user/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ask_user/)
 
 ## The problem
 
@@ -36,7 +36,7 @@ async def pick_first(request: AskUserRequest) -> AskUserResponse:
 agent = Agent('anthropic:claude-fable-5', capabilities=[AskUser(answerer=pick_first)])
 ```
 
-`pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic-clai2/)
+`pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2/)
 ships a terminal menu built on the same protocol; a web form would be another.
 
 ## Writing an answerer

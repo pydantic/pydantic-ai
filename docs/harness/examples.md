@@ -5,7 +5,7 @@ description: "Example Pydantic AI Harness agents to read and copy: a coding agen
 
 # Examples
 
-The [`examples/`](https://github.com/pydantic/pydantic-ai-harness/tree/main/examples)
+The [`examples/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/examples)
 directory contains complete agents assembled from individual capabilities. They are
 meant to be read as much as run: every capability choice has the reasoning next to it,
 and each example writes out its full configuration so you can copy it into your own
@@ -41,5 +41,5 @@ provider setup.
 
 Every example exposes a `build_agent()` factory you can import and embed in your own
 code, and a `main()` that runs a small demo. See
-[`examples/README.md`](https://github.com/pydantic/pydantic-ai-harness/blob/main/examples/README.md)
+[`examples/README.md`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/README.md)
 for per-example details.

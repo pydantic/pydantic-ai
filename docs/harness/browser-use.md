@@ -12,7 +12,7 @@ self-contained natural-language goal, browser-use drives a real Chromium with
 its own perception-action loop (indexed DOM, screenshots, planning,
 self-healing), and the tool returns a text result.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/browser_use/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/browser_use/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -389,7 +389,7 @@ you have not seen.
 ## Agent spec (YAML/JSON)
 
 `BrowserUse` works with Pydantic AI's
-[agent spec](/ai/core-concepts/agent-spec/):
+[agent spec](../agent-spec.md):
 
 ```yaml
 # agent.yaml
@@ -417,8 +417,8 @@ prose output, and the default agent factory.
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 - [browser-use documentation](https://docs.browser-use.com)
 
 ## API reference

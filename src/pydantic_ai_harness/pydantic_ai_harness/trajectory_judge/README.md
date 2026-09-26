@@ -12,7 +12,7 @@
 
 Watch a live agent run with a second model, and steer it back on course mid-run.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/trajectory_judge/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/trajectory_judge/)
 
 ## The problem
 

@@ -53,7 +53,7 @@ PR that updates pydantic-ai's `docs/navigation.yml`. Keep slugs
 - **Experimental framing only on ACP.** Every other capability page carries the standard
   version-promise blockquote ("While Pydantic AI Harness is on 0.x releases, the API may change
   between minor releases — …") directly before its first `##` heading, linking the
-  [version policy](../docs/index.md#version-policy). Copy it verbatim from an existing page;
+  [version policy](../../../docs/harness/index.md#version-policy). Copy it verbatim from an existing page;
   don't improvise variants.
 - **Example style**: comments one line max; outputs elided (`#> ...`) rather than long canned
   text; models are the current generation (verify against core's `_known_model_names.py` — as of

@@ -3,7 +3,7 @@
 Give an agent access to an emulated AWS environment, so it can provision and
 exercise AWS services without touching a real account.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/localstack/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/localstack/)
 
 ## The problem
 

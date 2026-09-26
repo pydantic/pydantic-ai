@@ -19,7 +19,7 @@ The storage plumbing that [`StepPersistence`](../step_persistence/) uses to keep
 
 This package does not define an agent capability.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/media/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/media/)
 
 ## Why
 

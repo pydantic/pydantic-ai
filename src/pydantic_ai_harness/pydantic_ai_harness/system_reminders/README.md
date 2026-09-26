@@ -12,7 +12,7 @@
 
 Re-inject behavioral guidance mid-run to counter instruction fade -- without invalidating the prompt cache.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/system_reminders/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/system_reminders/)
 
 ## The problem
 

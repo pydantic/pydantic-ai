@@ -7,7 +7,7 @@ description: "Let a Pydantic AI agent call its tools from one sandboxed Python s
 
 `CodeMode` replaces individual tool calls with a single sandboxed Python execution environment. Instead of the model issuing one tool call per action, it writes a Python program that calls your tools as functions -- with loops, conditionals, variables, and `asyncio.gather` -- all inside a sandboxed [Monty](https://github.com/pydantic/monty) runtime.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/code_mode/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -94,7 +94,7 @@ CodeMode(tools={'code_mode': True})
 
 Use metadata when the decision should travel with a tool or toolset, rather than with one `CodeMode` instance. This suits shared toolsets: the toolset author tags the tools that are safe and useful to call from generated code, and each agent opts into that tag with `CodeMode(tools={...})`.
 
-`CodeMode(tools={'code_mode': True})` uses the standard Pydantic AI [`ToolSelector`](/ai/api/pydantic-ai/tools/) metadata form. A tool is sandboxed when its `ToolDefinition.metadata` contains all of the selector's key-value pairs. Extra metadata on the tool is fine, and nested dictionaries are matched by deep inclusion.
+`CodeMode(tools={'code_mode': True})` uses the standard Pydantic AI [`ToolSelector`](../api/tools.md) metadata form. A tool is sandboxed when its `ToolDefinition.metadata` contains all of the selector's key-value pairs. Extra metadata on the tool is fine, and nested dictionaries are matched by deep inclusion.
 
 The common pattern is to tag an entire toolset with `.with_metadata(...)`:
 
@@ -127,11 +127,11 @@ Here `search` and `fetch` are removed from the model-facing tool list and become
 
 ## Tool Search interaction
 
-When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](/ai/tools-toolsets/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered -- they pass straight through, so Tool Search drives them as usual (sent on the wire with `defer_loading` on providers with native tool search; otherwise dropped until discovered, with a `search_tools` tool alongside `run_code`). `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
+When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](../tools-advanced.md#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered -- they pass straight through, so Tool Search drives them as usual (sent on the wire with `defer_loading` on providers with native tool search; otherwise dropped until discovered, with a `search_tools` tool alongside `run_code`). `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
 
 That fold-in grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
 
-- Pass `dynamic_catalog=True` to keep `run_code`'s description static across discoveries. The catalog of sandboxed-tool signatures moves into the agent instructions (as a dynamic [`InstructionPart`](/ai/api/pydantic-ai/messages/#pydantic_ai.messages.InstructionPart)) and newly-discovered tools are announced via [`ctx.enqueue`](/ai/api/pydantic-ai/tools/#pydantic_ai.tools.RunContext.enqueue) instead of by rebuilding the description:
+- Pass `dynamic_catalog=True` to keep `run_code`'s description static across discoveries. The catalog of sandboxed-tool signatures moves into the agent instructions (as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart]) and newly-discovered tools are announced via [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] instead of by rebuilding the description:
 
   ```python
   from pydantic_ai_harness import CodeMode
@@ -498,7 +498,7 @@ agent = Agent(
 )
 ```
 
-Follow the [Pydantic AI Temporal guide](/ai/capabilities/durable_execution/temporal/) to call the
+Follow the [Pydantic AI Temporal guide](../durable_execution/temporal.md) to call the
 plain agent from a workflow and register its activities with `PydanticAIPlugin` and either
 `__pydantic_ai_agents__` or `AgentPlugin`.
 
@@ -525,7 +525,7 @@ answered by Monty from the mounts first and reach the handler on another thread.
 
 ## Observability
 
-Nested tool calls inside `run_code` produce their own spans when instrumented with [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend -- the easiest way to understand what code mode actually did, since each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](/ai/integrations/logfire/) for setup.
+Nested tool calls inside `run_code` produce their own spans when instrumented with [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend -- the easiest way to understand what code mode actually did, since each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](../logfire.md) for setup.
 
 Suspension-limit retries use the existing `run_code` error span and nested tool spans, rather
 than a separate capability span. The retry includes bounded started-call context and recovery
@@ -562,7 +562,7 @@ for msg in result.all_messages():
 
 A representative run wires `CodeMode` up against an MCP server and a web search and asks it to find the most-discussed Hacker News story across three feeds, pull the comment thread and the submitter's profile, and search the web for follow-up coverage. `CodeMode` collapses that into two `run_code` calls: the first fetches all three feeds in parallel via `asyncio.gather`, dedupes by id, filters by score, and ranks by comment count -- in plain Python; the second batches the three follow-up calls (`hn_get_thread`, `hn_get_user`, `duckduckgo_search`) together.
 
-[![CodeMode's first run_code: parallel asyncio.gather over three HN feeds, then a dedupe and a score filter](images/code-mode-trace.png)](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)
+<!-- Trace screenshot removed until it is Tinified: https://github.com/pydantic/pydantic-ai/issues/8824 -->
 
 **[See the full Logfire trace ->](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)** Each `run_code` span fans out into the tool calls the model issued from inside the sandbox.
 
@@ -656,7 +656,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 ## Agent spec (YAML/JSON)
 
-`CodeMode` works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/) feature for defining agents in YAML or JSON:
+`CodeMode` works with Pydantic AI's [agent spec](../agent-spec.md) feature for defining agents in YAML or JSON:
 
 ```yaml
 # agent.yaml
@@ -687,7 +687,7 @@ capabilities:
 
 - [Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic)
 - [Code mode in production](https://blog.cloudflare.com/code-mode/) (Cloudflare)
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
 
 ## API reference
 

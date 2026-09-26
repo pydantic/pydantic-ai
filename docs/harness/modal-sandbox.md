@@ -247,10 +247,10 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[ModalSandbox])
 
 ## API reference
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Pydantic AI toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Pydantic AI toolsets](../toolsets.md)
 - [Modal sandboxes](https://modal.com/docs/guide/sandbox)
-- [Modal Sandbox source code](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/modal_sandbox/)
+- [Modal Sandbox source code](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/)
 - [Pydantic AI Harness version policy](index.md#version-policy)
 
 

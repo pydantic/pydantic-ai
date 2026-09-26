@@ -9,7 +9,7 @@ description: "Save Pydantic AI agent run snapshots to memory, files, SQLite, or 
 
 It is not a full graph-state checkpoint. Capability-state restore, workspace snapshots, and graph-node resume are out of scope and tracked separately (see `pydantic-ai-harness` issues #149 and #196).
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/step_persistence/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 

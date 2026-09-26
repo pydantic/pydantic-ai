@@ -12,7 +12,7 @@ On OpenAI and Anthropic, core also ships [provider-native compaction](https://py
 the provider summarizes history server-side. The strategies here are the model-agnostic
 alternative: they work with every model and keep the compaction logic (and its costs) under your control.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/compaction/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/compaction/)
 
 ## The menu
 

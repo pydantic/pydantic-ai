@@ -11,7 +11,7 @@ the AWS CLI to a running [LocalStack](https://www.localstack.cloud/) instance --
 injecting the endpoint, region, and credentials -- and can optionally start and
 stop the LocalStack Docker container for each run.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/localstack/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/localstack/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -182,7 +182,7 @@ you supply your own.
 ## Agent spec (YAML/JSON)
 
 `LocalStack` works with Pydantic AI's
-[agent spec](/ai/core-concepts/agent-spec/):
+[agent spec](../agent-spec.md):
 
 ```yaml
 # agent.yaml
@@ -206,8 +206,8 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 ## Further reading
 
 - [LocalStack documentation](https://docs.localstack.cloud/)
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 
 ## API reference
 

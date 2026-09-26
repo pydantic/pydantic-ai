@@ -171,7 +171,7 @@ before the repository instruction file, so it never leads the system prompt. Rea
 This tool needs no arguments and ignores extra arguments supplied by a model.
 Other tools keep their existing validation.
 
-The [bundled guide](src/pydantic_clai2/customization.md) includes examples for
+The [bundled guide](pydantic_clai2/customization.md) includes examples for
 commands, hooks, settings, renderers, custom Termflow menus, and custom model
 launchers. It also names current limits: PluginHost does not register providers,
 replace the prompt editor, or alter the built-in model catalog. Those need a

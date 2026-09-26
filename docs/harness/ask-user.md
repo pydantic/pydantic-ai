@@ -7,7 +7,7 @@ description: "Let a Pydantic AI agent ask the user clarifying multiple-choice qu
 
 Let the model ask the user multiple-choice questions mid-run and wait for the answers.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/ask_user/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ask_user/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -43,7 +43,7 @@ async def pick_first(request: AskUserRequest) -> AskUserResponse:
 agent = Agent('anthropic:claude-fable-5', capabilities=[AskUser(answerer=pick_first)])
 ```
 
-`pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic-clai2/)
+`pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2/)
 ships a terminal menu built on the same protocol; a web form would be another.
 
 ## Writing an answerer

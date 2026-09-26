@@ -503,4 +503,4 @@ ToolGuardrail(
 
 The guard callable takes the inspected value -- the prompt for `InputGuardrail`, the output for `OutputGuardrail`, a `ToolCallInfo` or `ToolResultInfo` for `ToolGuardrail` -- optionally preceded by a `RunContext`. `InputGuardrailFunc`, `OutputGuardrailFunc`, `ToolGuardrailFunc`, and `ToolResultGuardrailFunc` are the exported signature aliases; `GuardrailError` is the base for `InputBlocked`, `OutputBlocked`, and `ToolBlocked`.
 
-Source: [`pydantic_ai_harness/guardrails/`](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/guardrails/).
+Source: [`pydantic_ai_harness/guardrails/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/guardrails/).

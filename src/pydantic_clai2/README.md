@@ -1354,7 +1354,7 @@ not submit an answer or select choices. The conversation stays visible while you
 appear in the transcript and reach the model as a one-item list under the question's header.
 
 The menu is the built-in `ask_user` plugin around the harness's
-[`AskUser`](../docs/ask-user.md) capability. The capability only knows an
+[`AskUser`](../../docs/harness/ask-user.md) capability. The capability only knows an
 `Answerer`; the terminal menu is one, and [PLUGINS.md](PLUGINS.md#ask_user-questions-answered-from-the-terminal)
 shows how to put a different one, a web form for instance, in its place.
 `/plugins disable ask_user` removes the tool.

@@ -158,7 +158,7 @@ Checks:
   "Tool Output Limits", not "Overflow"; "Runtime Capability Creation", not
   "Authoring").
 - **Source link.** Each page links its source module
-  (`https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/<module>/`)
+  (`https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/<module>/`)
   so a reading agent can verify behavior. Where the capability exposes a public
   class, the page may also end with a `## API reference` section of
   `::: pydantic_ai_harness...` autodoc blocks (auto-expanded from the docstring,
@@ -168,9 +168,10 @@ Checks:
   `HarnessExperimentalWarning` block or "removed in any release" wording. ACP is
   the only page that keeps an `!!! warning "Experimental"` (it may still be
   removed).
-- Links: harness-internal links are relative `.md`; Pydantic AI docs use
-  root-relative internal links `/ai/<section>/<page>/` (verify the route resolves
-  on the live `pydantic.dev/docs` site before using it).
+- Links: harness-internal and Pydantic AI docs links are relative `.md` links
+  (`../toolsets.md` from `docs/harness/`), and API elements use reference-style
+  links (`[RunContext][pydantic_ai.tools.RunContext]`). The offline link check
+  in CI verifies that each target file and anchor exists.
 - Docs explain composition constraints and safety implications.
 - The PR links an issue.
 

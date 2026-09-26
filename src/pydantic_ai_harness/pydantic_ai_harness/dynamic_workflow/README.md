@@ -2,7 +2,7 @@
 
 Let one agent coordinate a whole team of sub-agents by writing a small Python script.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/dynamic_workflow/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
 ## The idea
 
