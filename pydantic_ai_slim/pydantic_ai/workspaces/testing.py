@@ -102,6 +102,16 @@ class WorkspaceBackendSuite:
         )
         assert (result.exit_code, result.stdout) == (0, output)
 
+    async def test_background_child_does_not_hold_up_completed_command(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell:
+            pytest.skip('fake has no background processes')
+        # The direct command exits; a short grace may drain its inherited output pipes.
+        with anyio.fail_after(5):
+            result = await _commands(backend).run('sleep 4 & printf done', shell=True)
+        assert (result.exit_code, result.stdout) == (0, 'done')
+
     async def test_result_reports_exit_code_stdout_and_stderr(self, backend: WorkspaceBackend) -> None:
         """A non-zero exit is a normal result, not an error."""
         result = await _commands(backend).run('printf out; printf err >&2; exit 7', shell=True)

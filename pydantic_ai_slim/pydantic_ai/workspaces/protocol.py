@@ -174,7 +174,8 @@ class SupportsCommands(Protocol):
         Undecodable stdout/stderr bytes are replaced with U+FFFD, never dropped.
         A missing argv program exits 127. A missing `cwd` raises `FileNotFoundError`.
         On timeout or cancellation, stop the foreground process tree on a best-effort basis;
-        background jobs may continue if they detach.
+        background jobs may continue if they detach. Return when the direct command exits,
+        after at most a short output-drain grace even if a background child keeps stdout open.
 
         Args:
             command: An argv sequence, or a shell string with `shell=True`; a mismatch raises `TypeError`.
