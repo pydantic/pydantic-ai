@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from io import StringIO
+from itertools import chain, repeat
 
 import pytest
 from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
@@ -279,7 +280,9 @@ def test_idle_loop_redraws_only_for_changes(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_failed_idle_refresh_waits_before_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     widget, _ = browser(keys=['', '', '', 'ctrl-c'])
-    ticks = iter([0.0, 0.6, 0.6, 0.7, 0.8])
+    # `time.monotonic` is the global one, so the clock holds its last tick for everything that
+    # reads it after the widget, such as the event loop the shared fixtures tear down on.
+    ticks = chain([0.0, 0.6, 0.6, 0.7], repeat(0.8))
     monkeypatch.setattr(module.time, 'monotonic', lambda: next(ticks))
     attempts: list[str] = []
 
