@@ -674,6 +674,7 @@ def test_profile_allow_seeding() -> None:
         google_supports_affective_dialog=True,
         # A typed turn doesn't see an image sent just before it as a video frame (verified live).
         google_text_turns_see_video_frames=False,
+        google_closes_tool_call_turn_separately=False,
     )
 
 

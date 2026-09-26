@@ -312,13 +312,15 @@ async def test_text_tool_round_parity(
         events = await _collect_complete_turn(session, after_tool_result=True)
 
     assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
     assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     messages = session.all_messages()
     assert [type(message) for message in messages[:3]] == [ModelRequest, ModelResponse, ModelRequest]
-    # One tool round is exactly four messages on every provider and route. Gemini closes the turn once
-    # when it takes the tool result and again when it has spoken; the first boundary carries usage but
-    # no output, and is folded into the answer rather than recorded as an empty response.
+    # One tool round is exactly four messages, and one turn boundary, on every provider and route.
+    # Vertex's `gemini-live-2.5-flash` closes the turn once when the tool-call generation ends and again
+    # when it has spoken; the first boundary carries usage but no output, and is folded into the answer
+    # rather than recorded as an empty response or reported as the end of the exchange.
     answer_responses = messages[3:]
     assert len(answer_responses) == 1
     final = answer_responses[-1]
