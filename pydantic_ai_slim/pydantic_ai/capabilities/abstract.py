@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
@@ -36,7 +37,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
@@ -1387,8 +1388,16 @@ def select_workspace(
             None,
         )
     if ref is not None and selected is not None and selected.ref is not None and selected.ref != ref:
-        # A resolver must not replace an expired or unauthorized environment with a fresh one.
-        raise UserError(f'Workspace resolver returned a different workspace than requested: {ref!r}')
+        backend = selected.backend if isinstance(selected, Workspace) else selected
+        # Local refs preserve their spelling, but aliases to the same directory are safe: the
+        # selected backend still uses its configured root. Other providers require exact refs.
+        if not (
+            isinstance(backend, LocalWorkspaceBackend)
+            and ref.provider == selected.ref.provider == 'local'
+            and os.path.realpath(ref.id) == os.path.realpath(selected.ref.id)
+        ):
+            # A resolver must not replace an expired or unauthorized environment with a fresh one.
+            raise UserError(f'Workspace resolver returned a different workspace than requested: {ref!r}')
     return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
 
 

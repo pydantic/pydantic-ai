@@ -491,7 +491,7 @@ class HostWorkspaceBackend(WorkspaceBackend):
                     self._ref = WorkspaceRef(provider='host', id=directory.name)
                 else:
                     # History can be untrusted; never let its id escape base_dir.
-                    if self._ref.provider != 'host' or not re.fullmatch(r"[0-9a-f]{32}", self._ref.id):
+                    if self._ref.provider != 'host' or not re.fullmatch(r'[0-9a-f]{32}', self._ref.id):
                         raise WorkspaceUnavailableError('invalid host workspace reference')
                     # A reference: attach to the environment it names, or fail. Never create a replacement.
                     directory = anyio.Path(self._base_dir / self._ref.id)
