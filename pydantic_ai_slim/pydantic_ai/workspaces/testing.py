@@ -102,11 +102,16 @@ class WorkspaceBackendSuite:
         )
         assert (result.exit_code, result.stdout) == (0, output)
 
+    @pytest.fixture
+    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
+        """Override only if the SDK cannot report exit independently of pipe EOF (E2B currently cannot)."""
+        return True
+
     async def test_background_child_does_not_hold_up_completed_command(
-        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool, can_detect_exit_with_inherited_output_pipes: bool
     ) -> None:
-        if not has_real_posix_shell:
-            pytest.skip('fake has no background processes')
+        if not has_real_posix_shell or not can_detect_exit_with_inherited_output_pipes:
+            pytest.skip('backend cannot observe the direct command exit independently of inherited output pipes')
         await backend.working_dir()  # Provisioning is not part of the command's drain deadline.
         # The direct command exits; a short grace may drain its inherited output pipes.
         with anyio.fail_after(5):
