@@ -105,11 +105,17 @@ class TruncateOutput:
 
     After a barge-in the user only heard part of the model's audio. Truncating tells the provider how
     much was actually played, so its stored transcript matches and the conversation context stays
-    consistent. The provider resolves which output item to truncate from its own state.
+    consistent. The provider resolves which output item to truncate from its own state unless
+    `item_id` names one.
     """
 
     audio_end_ms: int
-    """Milliseconds of the current output audio that were actually played before the interruption."""
+    """Milliseconds of the output audio that were actually played before the interruption."""
+
+    _: KW_ONLY
+    item_id: str | None = None
+    """The output item to truncate, when it isn't the provider's current one — a reply the listener was
+    still hearing after a newer one was generated. `None` truncates the current output item."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
