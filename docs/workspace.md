@@ -293,20 +293,9 @@ When no capability supplies a workspace:
 - A `WorkspaceRef` passed as `workspace=` raises `UserError`, and so does `workspace='new'`.
 - Without a reference, the run has no workspace, and tools that use it raise `UserError`.
 
-To answer a question without letting tools touch files, pass an
-[`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace]. Every workspace operation then
-raises `WorkspaceUnavailableError` with the reason you give:
-
-```python {requires="workspace_agent.py"}
-from pydantic_ai.workspaces import UnavailableWorkspace
-
-from workspace_agent import agent
-
-
-async def main() -> None:
-    no_files = UnavailableWorkspace(reason='This run has no file access.')
-    await agent.run('Explain what fizzbuzz.py does.', workspace=no_files)
-```
+For file inspection without changes, use a read-only workspace and read tools. To answer
+without file access, use a no-file-tools agent instead: workspace-backed tools need an attached
+workspace, and `UnavailableWorkspace` deliberately refuses all operations.
 
 ## Cleaning up
 
