@@ -402,6 +402,9 @@ class ProjectNotes(AbstractCapability):
             raise UserError("`ProjectNotes` needs a workspace. Attach one, such as `LocalWorkspace('.')`.")
 ```
 
+Realtime sessions do not currently select workspaces, even when the agent has a workspace capability.
+Workspace tools in a realtime session report this limit instead of suggesting a second capability.
+
 ## Writing a backend
 
 A backend is the object that talks to one environment; `Workspace` wraps it to give tools the

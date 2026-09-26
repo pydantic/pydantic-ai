@@ -1268,6 +1268,11 @@ async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() 
         assert resolution.instrumentation_settings.include_content is False, 'the session-level one wins'
         assert resolution.run_context.trace_include_content is False
 
+    workspace_agent = Agent(TestModel(), capabilities=[LocalWorkspace('/tmp')])
+    async with workspace_agent._resolve_realtime_session(_StubRealtimeModel()) as resolution:  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(Exception, match='Realtime sessions do not support workspaces yet'):
+            await resolution.run_context.workspace.working_dir()
+
 
 async def test_two_capabilities_on_one_agent_merge_rather_than_override() -> None:
     """Within a layer they are one configuration stated twice, so both sides' domains survive.

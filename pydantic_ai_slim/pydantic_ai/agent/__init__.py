@@ -132,7 +132,7 @@ from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
-from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
 from ..workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
@@ -3593,6 +3593,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
+        if run_capability.has_get_workspace:
+            # Realtime does not select a workspace yet; don't suggest attaching a capability that is already here.
+            run_context.workspace = Workspace(UnavailableWorkspace('Realtime sessions do not support workspaces yet.'))
         # Read back off the resolved tree, as `iter` does, so an `Instrumentation` only a `for_run`
         # contributed drives the session's spans and context too.
         session_instrumentation_settings = _run_instrumentation_settings([run_capability])
