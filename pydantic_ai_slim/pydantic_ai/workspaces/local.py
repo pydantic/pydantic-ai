@@ -265,7 +265,6 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         timeout: float | None = None,
     ) -> CommandResult:
         validate_timeout(timeout)
-        absolute_deadline = None if timeout is None else anyio.current_time() + timeout
         if cwd is not None and not Path(cwd).is_absolute():
             raise ValueError(
                 f'cwd must be an absolute path, got {cwd!r}: a relative cwd would resolve against '
@@ -278,6 +277,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         elif shell:
             raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
 
+        working_dir = cwd if cwd is not None else await self._get_working_dir()
+        # Directory preparation is not command time; process startup still counts, so a
+        # process spawned after the deadline is terminated by the existing cleanup path.
+        absolute_deadline = None if timeout is None else anyio.current_time() + timeout
         process: anyio.abc.Process | None = None
 
         async def spawn() -> None:
@@ -286,7 +289,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             nonlocal process
             process = await anyio.open_process(
                 command,
-                cwd=cwd if cwd is not None else await self._get_working_dir(),
+                cwd=working_dir,
                 env=merged_env,
                 stdin=DEVNULL,
                 stdout=PIPE,

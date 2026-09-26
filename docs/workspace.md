@@ -558,7 +558,8 @@ fixtures to enable the reattachment rules.
 
 ## Timeouts and clocks
 
-`run(timeout=...)` starts its clock after the sandbox is ready and covers the command only;
+`run(timeout=...)` starts its clock after the sandbox is ready (and, locally, after resolving the
+working directory). Local process startup counts as command time. The deadline covers the command only;
 `timeout=None` has no command deadline. A provider's sandbox lifetime and idle limits are
 separate. Commands receive stdin at EOF, so use non-interactive flags (such as `-y`). On its
 own deadline the foreground command is stopped and `WorkspaceTimeoutError` carries any partial
@@ -583,11 +584,11 @@ works without shell support, but cannot run commands.
 
 ## Limits
 
-- `LocalWorkspace` isolates nothing and runs only on POSIX systems. Create its directory before using
-  relative paths; an absolute root that does not exist may be created by an absolute-path write.
+- `LocalWorkspace` isolates nothing and runs only on POSIX systems. Create the configured local root before use, including absolute file writes beneath it.
+  Absolute paths outside that root remain allowed.
   `defer_loading=True` is rejected: the workspace must be selected before deferred capabilities load.
   (macOS and Linux). Its ref normalizes `.` and `..` without resolving symlinks, so differently
   spelled symlink roots have distinct refs even if they point to the same directory.
 - A run has one workspace.
-- Pydantic AI never creates or deletes a sandbox at run boundaries: cleanup is yours.
+- Non-durable runs do not create or delete sandboxes solely at run boundaries; durable runs eagerly create or attach an environment at their start, even without tool use. In either case, deletion remains the caller's job.
 - How a timed-out command is stopped depends on the provider.

@@ -468,12 +468,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec: Optional agent spec to apply as overrides.
             workspace: Workspace for runs without an explicit workspace argument.
         """
-        forward_kwargs: dict[str, Any] = {}
-        if _utils.is_set(retries):
-            forward_kwargs['retries'] = retries
-        if _utils.is_set(workspace):
-            forward_kwargs['workspace'] = workspace
-
         with self.wrapped.override(
             name=name,
             deps=deps,
@@ -484,7 +478,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             metadata=metadata,
             model_settings=model_settings,
+            retries=retries,
             spec=spec,
-            **forward_kwargs,
+            workspace=workspace,
         ):
             yield

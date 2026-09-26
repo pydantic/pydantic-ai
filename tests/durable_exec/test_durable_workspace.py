@@ -38,6 +38,7 @@ from pydantic_ai.durable_exec._workspace import (
     WorkspaceCallError,
     WorkspaceCallResult,
     error_as_data,
+    execute_call,
     raise_error,
 )
 from pydantic_ai.models.test import TestModel
@@ -49,6 +50,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
@@ -541,6 +543,19 @@ def test_error_table_round_trips_every_kind(error: Exception) -> None:
     if isinstance(error, WorkspaceTimeoutError):
         assert isinstance(raised.value, WorkspaceTimeoutError)
         assert (raised.value.stdout, raised.value.stderr) == ('partial', 'err')
+
+
+async def test_output_limit_error_survives_durable_workspace_call() -> None:
+    class LimitedWorkspace(FakeWorkspace):
+        async def run(self, *args: Any, **kwargs: Any) -> Any:
+            raise WorkspaceOutputLimitError('too much output', limit=42, stdout='first', stderr='warning')
+
+    result = await execute_call(Workspace(LimitedWorkspace('limited')), WorkspaceCall(method='run', command='echo hi'))
+    restored = JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result))
+    assert restored.error is not None
+    with pytest.raises(WorkspaceOutputLimitError) as raised:
+        raise_error(restored.error)
+    assert (raised.value.limit, raised.value.stdout, raised.value.stderr) == (42, 'first', 'warning')
 
 
 def test_unexpected_errors_fail_the_unit() -> None:

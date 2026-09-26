@@ -494,6 +494,56 @@ async def test_run_only_filesystem_raises_builtin_path_errors_in_one_command(tmp
         assert len(backend.commands) == 1
 
 
+async def test_shell_symlink_write_is_atomic_and_preserves_target_mode(tmp_path: Path) -> None:
+    target = tmp_path / 'target'
+    target.write_bytes(b'original')
+    target.chmod(0o640)
+    link = tmp_path / 'link'
+    link.symlink_to(target)
+
+    class FailedTransfer(RunOnlyWorkspaceBackend):
+        fail = True
+
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if self.fail and isinstance(command, str) and 'cat ' in command and f'> {link}' in command:
+                self.fail = False
+                # Simulate the old non-atomic copy failing after truncating the target.
+                command = f'printf partial > {link}; exit 1'
+            elif self.fail and isinstance(command, str) and 'base64 -d' in command and 'mv -f' in command:
+                self.fail = False
+                command = command.replace('mv -f', 'false && mv -f', 1)
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    backend = FailedTransfer(LocalWorkspaceBackend(tmp_path))
+    workspace = Workspace(backend)
+    with pytest.raises(WorkspaceError):
+        await workspace.write_bytes('link', b'replacement')
+    assert target.read_bytes() == b'original'
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert link.is_symlink()
+    assert not list(tmp_path.glob('.pydantic-ai-*'))
+
+    await workspace.write_bytes('link', b'replacement')
+    assert target.read_bytes() == b'replacement'
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert link.is_symlink()
+
+    dangling = tmp_path / 'dangling'
+    dangling.symlink_to(tmp_path / 'new-target')
+    await workspace.write_bytes('dangling', b'created')
+    assert dangling.is_symlink()
+    assert (tmp_path / 'new-target').read_bytes() == b'created'
+
+
 @pytest.mark.parametrize('cleanup_fails', [False, True])
 async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_path: Path, cleanup_fails: bool) -> None:
     cleanup_attempted = False

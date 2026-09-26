@@ -119,7 +119,16 @@ class _ShellFilesystem(SupportsFilesystem):
         return bytes(data)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        parent = posixpath.dirname(path)
+        quoted_path = shlex.quote(path)
+        link = await self._backend.run(
+            f'if test -L {quoted_path}; then readlink -n -- {quoted_path} | base64; fi', shell=True
+        )
+        await self._raise_for_error(link, path)
+        link_target = link.stdout.strip() if link.stdout else None
+        # Stage beside the resolved target, not the link: a copy through the link would truncate
+        # the old target before the transfer can succeed.
+        destination = await self.realpath(path) if link_target is not None else path
+        parent = posixpath.dirname(destination)
         temporary_path = posixpath.join(parent, f'.pydantic-ai-{uuid.uuid4().hex}.tmp')
         decoded_path = f'{temporary_path}.decoded'
         quoted_parent = shlex.quote(parent)
@@ -145,20 +154,22 @@ class _ShellFilesystem(SupportsFilesystem):
                 )
                 await self._raise_for_error(result, path)
 
-            quoted_path = shlex.quote(path)
-            # Decode beside the destination and rename into place so cancellation or a failed
-            # decode never leaves a partially written file. Copying an existing regular file
-            # first preserves its mode bits; a directory destination is rejected, as a native
-            # write rejects it. A symlink is written through, as a native write does, instead of
-            # being replaced.
+            quoted_destination = shlex.quote(destination)
+            # Copy first to preserve mode bits; commit only after decoding succeeds. Check the
+            # original link at commit so a changed link cannot redirect the write elsewhere.
+            link_guard = (
+                f'test -L {quoted_path} && '
+                f'test "$(readlink -n -- {quoted_path} | base64)" = {shlex.quote(link_target)} && '
+                if link_target is not None
+                else ''
+            )
             result = await self._backend.run(
-                f'if test -d {quoted_path}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
-                f'elif test -e {quoted_path} && ! test -w {quoted_path}; '
+                f'if test -d {quoted_destination}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
+                f'elif test -e {quoted_destination} && ! test -w {quoted_destination}; '
                 f'then status={_SHELL_EXIT_PERMISSION}; else '
-                f'{{ test -f {quoted_path} && cp {quoted_path} {quoted_decoded}; }}; '
+                f'{{ test -f {quoted_destination} && cp {quoted_destination} {quoted_decoded}; }}; '
                 f'base64 -d < {quoted_temporary} > {quoted_decoded} '
-                f'&& if test -L {quoted_path}; then cat {quoted_decoded} > {quoted_path}; '
-                f'else mv -f {quoted_decoded} {quoted_path}; fi; '
+                f'&& {link_guard}mv -f {quoted_decoded} {quoted_destination}; '
                 f'status=$?; fi; rm -f {quoted_temporary} {quoted_decoded}; exit $status',
                 shell=True,
             )
