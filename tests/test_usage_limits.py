@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
@@ -34,9 +35,9 @@ from pydantic_ai import (
 from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
 from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import PromptedOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
@@ -1169,44 +1170,79 @@ class _Answer(BaseModel):
     value: int
 
 
-@pytest.mark.parametrize('output_valid', [True, False])
-async def test_tool_calls_limit_early_end_strategy(output_valid: bool) -> None:
-    """Under `end_strategy='early'`, function calls skipped because an output won don't count against the limit."""
+@dataclass(frozen=True)
+class _EarlyEndCase:
+    id: str
+    output: Literal['output_tool', 'invalid_output_tool', 'prompted_text']
+    stream: bool = False
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(case, id=case.id)
+        for case in [
+            _EarlyEndCase(id='output_tool', output='output_tool'),
+            _EarlyEndCase(id='output_tool_streamed', output='output_tool', stream=True),
+            _EarlyEndCase(id='prompted_text', output='prompted_text'),
+            _EarlyEndCase(id='invalid_output_tool', output='invalid_output_tool'),
+        ]
+    ],
+)
+async def test_tool_calls_limit_early_end_strategy(case: _EarlyEndCase) -> None:
+    """Under `end_strategy='early'`, function calls skipped because an output won don't count against the limit.
+
+    Uses `FunctionModel`: a real model can't be made to reliably emit an output alongside function calls.
+    """
     executed: list[str] = []
+    function_calls = [ToolCallPart('side_effect', {}, 'call_1'), ToolCallPart('side_effect', {}, 'call_2')]
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        output_args = {'value': 1} if output_valid else {'value': 'not a number'}
-        return ModelResponse(
-            parts=[
-                ToolCallPart(info.output_tools[0].name, output_args, 'output_call'),
-                ToolCallPart('side_effect', {}, 'call_1'),
-                ToolCallPart('side_effect', {}, 'call_2'),
-            ]
-        )
+        if case.output == 'prompted_text':
+            return ModelResponse(parts=[TextPart('{"value": 1}'), *function_calls])
+        args = {'value': 1} if case.output == 'output_tool' else {'value': 'not a number'}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args, 'output_call'), *function_calls])
 
-    agent = Agent(FunctionModel(model_function), output_type=_Answer, end_strategy='early')
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(info.output_tools[0].name, '{"value": 1}', tool_call_id='output_call')}
+        for index, call in enumerate(function_calls, start=1):
+            yield {index: DeltaToolCall(call.tool_name, '{}', tool_call_id=call.tool_call_id)}
+
+    agent = Agent(
+        FunctionModel(model_function, stream_function=stream_function),
+        output_type=PromptedOutput(_Answer) if case.output == 'prompted_text' else _Answer,
+        end_strategy='early',
+    )
 
     @agent.tool_plain
     def side_effect() -> str:
-        executed.append('side_effect')
-        return 'done'
+        executed.append('side_effect')  # pragma: no cover
+        return 'done'  # pragma: no cover
 
-    if output_valid:
-        result = await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
-        assert result.output == _Answer(value=1)
-        assert result.usage.tool_calls == 0
-    else:
-        # The output failed, so the function calls would execute: the limit applies to them.
+    usage_limits = UsageLimits(tool_calls_limit=0)
+    if case.output == 'invalid_output_tool':
+        # Every output failed, so the function calls would execute: the limit applies to them.
         with pytest.raises(
             UsageLimitExceeded,
             match=re.escape('The next tool call(s) would exceed the tool_calls_limit of 0 (tool_calls=2).'),
         ):
-            await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
+            await agent.run('Hello', usage_limits=usage_limits)
+    elif case.stream:
+        async with agent.run_stream('Hello', usage_limits=usage_limits) as result:
+            assert await result.get_output() == _Answer(value=1)
+        assert result.usage.tool_calls == 0
+    else:
+        result = await agent.run('Hello', usage_limits=usage_limits)
+        assert result.output == _Answer(value=1)
+        assert result.usage.tool_calls == 0
     assert executed == []
 
 
 async def test_tool_calls_limit_ignores_unknown_tools() -> None:
-    """A call to an unknown tool can only produce a retry prompt, so it doesn't count against the limit."""
+    """A call to an unknown tool can only produce a retry prompt, so it doesn't count against the limit.
+
+    Uses `FunctionModel`: a real model can't be made to reliably call a tool that doesn't exist.
+    """
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -1218,13 +1254,28 @@ async def test_tool_calls_limit_ignores_unknown_tools() -> None:
     result = await agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
     assert result.output == 'done'
     assert result.usage.tool_calls == 0
-    request = result.all_messages()[2]
-    assert isinstance(request, ModelRequest)
-    assert isinstance(request.parts[0], RetryPromptPart)
+    assert result.all_messages()[2] == snapshot(
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content="Unknown tool name: 'nonexistent_tool'. No tools available.",
+                    tool_name='nonexistent_tool',
+                    tool_call_id='call_1',
+                    timestamp=IsDatetime(),
+                )
+            ],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 async def test_tool_calls_limit_counts_inline_approved_deferred_calls() -> None:
-    """Calls approved inline by `HandleDeferredToolCalls` execute, so they count against the limit."""
+    """Calls approved inline by `HandleDeferredToolCalls` execute, so they count against the limit.
+
+    Uses `FunctionModel` to emit a fixed batch of parallel calls, which a real model can't be made to do reliably.
+    """
     executed: list[int] = []
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1251,7 +1302,10 @@ async def test_tool_calls_limit_counts_inline_approved_deferred_calls() -> None:
 
 
 async def test_tool_calls_limit_ignores_denied_deferred_results() -> None:
-    """A deferred call resumed with `ToolDenied` doesn't execute, so it doesn't count against the limit."""
+    """A deferred call resumed with `ToolDenied` doesn't execute, so it doesn't count against the limit.
+
+    Uses `FunctionModel`: the behavior under test is the resume step, not the provider response.
+    """
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
