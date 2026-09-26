@@ -164,6 +164,30 @@ def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
     return GoogleRealtimeConnection(cast('AsyncSession', session))
 
 
+async def test_google_connection_cannot_reconnect_once_a_reconnect_has_failed() -> None:
+    dial, _ = _dialer()  # every re-dial fails
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession([])), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1}
+    )
+    assert conn._can_reconnect  # pyright: ignore[reportPrivateUsage]
+    events = [event async for event in conn]
+    assert isinstance(events[-1], RealtimeSessionErrorEvent) and 'reconnect failed' in events[-1].message
+    assert conn._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_google_connection_can_reconnect_only_with_a_policy() -> None:
+    async def dial(handle: str | None) -> AsyncSession:
+        raise NotImplementedError  # pragma: no cover
+
+    assert _conn(_RecordingSession())._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
+    assert GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), dial=dial, reconnect={})._can_reconnect  # pyright: ignore[reportPrivateUsage]
+    # A spent budget means no reconnect is coming, so a failed audio chunk raises rather than dropping.
+    spent = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()), dial=dial, reconnect={'max_reconnects': 0}
+    )
+    assert spent._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
+
+
 def test_google_connection_restores_in_flight_state_on_reconnect() -> None:
     # Gemini settles the cut turn in the connection itself and resumes conversation state on re-dial, so
     # the session does not settle again — it keeps the base connection's default.
