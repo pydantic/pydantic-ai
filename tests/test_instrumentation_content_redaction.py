@@ -18,6 +18,7 @@ from a user, and is expected to appear on spans; content in there is the caller'
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 from opentelemetry.context import Context
@@ -25,11 +26,13 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, open_request_policy, span_include_content
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import Tool
 
@@ -92,6 +95,22 @@ def redacted_setup(include_content: bool = False) -> tuple[InstrumentationSettin
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     return InstrumentationSettings(include_content=include_content, tracer_provider=provider), exporter
+
+
+async def test_workspace_identity_is_recorded_without_content(tmp_path: Path) -> None:
+    settings, exporter = redacted_setup(include_content=False)
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path), Instrumentation(settings=settings)])
+    await agent.run('go')
+    run_spans = [
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'invoke_agent'
+    ]
+    assert len(run_spans) == 1
+    attributes = run_spans[0].attributes
+    assert attributes is not None
+    assert attributes['pydantic_ai.workspace.provider'] == 'local'
+    assert attributes['pydantic_ai.workspace.id'] == str(tmp_path)
 
 
 def check(exporter: InMemorySpanExporter, include_content: bool, drives: set[str]) -> None:
