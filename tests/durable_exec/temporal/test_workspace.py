@@ -26,6 +26,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -40,6 +41,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces.unavailable import UnavailableWorkspace
 
 try:
     from temporalio import activity, workflow
@@ -60,7 +62,7 @@ try:
         _workflow_runner,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._operation_backend import workspace_run_activity_config
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import with_non_retryable_errors
     from pydantic_ai.durable_exec.temporal._transports import _WorkspaceCallWire
 
@@ -151,6 +153,18 @@ def test_workspace_run_activity_has_time_for_command_and_cleanup() -> None:
     assert workspace_run_activity_config(config, 120).get('start_to_close_timeout') == timedelta(seconds=150)
     assert workspace_run_activity_config(config, None).get('start_to_close_timeout') == timedelta(hours=1)
     assert config.get('start_to_close_timeout') == timedelta(seconds=60)
+
+
+async def test_unavailable_workspace_reason_survives_activity_context() -> None:
+    agent = Agent(TestModel(), name='unavailable')
+    ctx = RunContext(
+        deps=None, model=TestModel(), usage=RunUsage(), workspace=Workspace(UnavailableWorkspace('disabled by policy'))
+    )
+    restored = deserialize_run_context(
+        TemporalRunContext, TemporalRunContext.serialize_run_context(ctx), deps=None, agent=agent
+    )
+    with pytest.raises(WorkspaceUnavailableError, match='disabled by policy'):
+        await restored.workspace.working_dir()
 
 
 # --- A fake remote provider ---------------------------------------------------------------------
