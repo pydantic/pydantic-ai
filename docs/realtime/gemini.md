@@ -59,8 +59,9 @@ differs from every other Live model in three ways the model handles for you:
   level the model accepts, because reasoning costs latency. Ask for more with
   [`thinking`](../capabilities/thinking.md)`='medium'` or `'high'`. `thinking=False` means "as little as
   possible" here rather than "off", since the model has no off.
-- **Its tool calls are always asynchronous.** `google_async_tool_calls` is on regardless, and an
-  explicit `False` is ignored, since the model has no blocking mode.
+- **Its tool calls are always asynchronous.** Its profile's
+  [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
+  `'always'`, since the model has no blocking mode, so an explicit `async_tool_calls=False` is ignored.
 - **Its spoken filler doesn't end the turn.** Gemini closes the filler's response and says the
   interaction is still in progress, so the filler and the tool call it was stalling for are recorded
   as one `ModelResponse`, and `RealtimeTurnCompleteEvent` and
@@ -71,7 +72,7 @@ differs from every other Live model in three ways the model handles for you:
 `gemini-3.8-live` is the same family without background reasoning. It rejects a thinking *level*, so
 the shared [`thinking`](../capabilities/thinking.md) setting is ignored rather than sent. Unlike older
 Live models it defaults to asynchronous tool calls, so Pydantic AI declares tools `BLOCKING` unless
-`google_async_tool_calls=True` asks otherwise, keeping the same default as every other model.
+`async_tool_calls=True` asks otherwise, keeping the same default as every other model.
 
 Both 3.8 models keep proactive audio permanently on, so there's nothing for `google_proactive_audio`
 to turn on and it can be left unset. Gemini rejects an explicit `False`, which Pydantic AI never sends,
@@ -111,7 +112,6 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | `google_input_transcription`, `google_output_transcription` | Native [transcription](audio.md#input-transcription) switches, enabled by default |
 | `google_context_compression` | Sliding-window compression for long sessions |
 | `google_enable_session_resumption` | Native state restoration; enabled automatically by a `reconnect` policy |
-| `google_async_tool_calls` | Lets supported models, including `gemini-3.8-live`, continue speaking during tools; always on for extended thinking |
 | `google_config_overrides` | Raw `LiveConnectConfig` keys merged last as a forward-compatibility escape hatch |
 
 `google_voice` is the provider voice setting. `google_thinking_config` takes precedence over the
@@ -150,12 +150,18 @@ Gemini-specific control is needed.
 
 ### Asynchronous tool calls
 
-Gemini normally pauses generation while a function tool is outstanding. Set
-`google_async_tool_calls=True` on supported models to let it continue speaking. This is best for slow
-tools; a fast result can interrupt speech that barely started and leave an empty interrupted turn in
-history. Models that don't support it ignore the setting, and
-`gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every tool call this way
-regardless — see [Extended thinking](#extended-thinking).
+Gemini normally pauses generation while a function tool is outstanding. On the native-audio models and
+`gemini-3.8-live`, set the shared
+[`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to
+let it keep speaking and answering: tools are then declared `NON_BLOCKING`, and their results are
+returned with `INTERRUPT` scheduling, so each cuts into whatever the model is saying when it arrives.
+This is best for slow tools; a fast result can interrupt speech that barely started and leave an empty
+interrupted turn in history.
+
+The other Live models accept a `NON_BLOCKING` declaration and then wait for the result anyway, so
+they ignore the setting, and `gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every
+tool call this way regardless — see [Extended thinking](#extended-thinking). The deprecated
+`google_async_tool_calls` setting still works as an alias, with a deprecation warning.
 
 ### Native tools
 

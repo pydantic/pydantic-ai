@@ -1104,7 +1104,8 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=True,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
-        supports_async_tool_calls=True,  # the realtime models keep talking through a tool call
+        async_tool_call_mode='always',  # the realtime models keep talking through a tool call
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,

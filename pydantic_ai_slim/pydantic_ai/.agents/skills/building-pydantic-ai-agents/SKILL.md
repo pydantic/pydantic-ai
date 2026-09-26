@@ -338,12 +338,15 @@ Key facts for building realtime agents:
   nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
   Under manual turn control, stop sending and call `clear_audio()` instead.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
-  the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
-  `google_async_tool_calls=True` on a native-audio model, and does it unconditionally on
-  `gemini-3.8-live-extended-thinking`, which has no blocking mode and reasons in the background —
+  the model keeps speaking and answering meanwhile is the profile's `async_tool_call_mode`:
+  `'always'` (OpenAI, Azure, GPT-Live, xAI, `gemini-3.8-live-extended-thinking`), `'optional'`
+  (Gemini native-audio and `gemini-3.8-live`, on only with the shared `async_tool_calls=True`
+  setting, which the other models ignore), or `'never'` (other Gemini Live models). Don't use the
+  deprecated `google_async_tool_calls` setting or `supports_async_tool_calls` profile flag.
+  `gemini-3.8-live-extended-thinking` has no blocking mode and reasons in the background —
   it speaks a filler, runs the tool, and speaks again inside one exchange, so read
   `RealtimeTurnCompleteEvent` or await `session.wait_for_reply()` rather than watching each response
-  to know it's done). An unhandled tool
+  to know it's done. An unhandled tool
   exception is raised from session iteration while it is active; otherwise it ends `stream_audio()` and
   `stream_transcripts()` and is raised when the session context closes. The next outbound method
   raises an already-ended receive side's failure instead, and every failure is delivered only once.

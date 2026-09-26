@@ -17,6 +17,7 @@ Application Default Credentials.
 from __future__ import annotations as _annotations
 
 import time
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
@@ -39,6 +40,7 @@ except ImportError as _import_error:
 
 from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     AudioUrl,
@@ -281,23 +283,10 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """
 
     google_async_tool_calls: bool
-    """Whether tool calls may run without pausing the model's speech. Defaults to `False`.
+    """Deprecated: use the shared [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting instead.
 
-    By default Gemini stops generating while a tool call is outstanding, so the caller hears silence
-    for as long as the tool takes. Enabling this declares tools `NON_BLOCKING` and returns their
-    results with `INTERRUPT` scheduling, so the model keeps talking (typically narrating what it's
-    doing) and the result cuts into that speech when it arrives.
-
-    This pays off for tools that take a noticeable moment. It is a poor trade for fast tools: the
-    result interrupts a reply the model has barely started, leaving an extra interrupted turn in
-    history with nothing in it. Verified live against `gemini-2.5-flash-native-audio-latest`.
-
-    Supported by the Gemini native-audio models and `gemini-3.8-live` (see
-    [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]).
-    Other models silently ignore it.
-
-    `gemini-3.8-live-extended-thinking` has no blocking mode at all, so it runs tool calls
-    asynchronously whether or not this is set, and ignores an explicit `False` the same way.
+    Translated (with a deprecation warning) when a session connects; an `async_tool_calls` in the same
+    settings wins.
     """
 
 
@@ -331,19 +320,15 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     """Whether the model runs a tool call asynchronously when its declaration sets no `behavior`. Default: `False`.
 
     True of the Gemini 3.8 Live family, where Google made `NON_BLOCKING` the default. Tool calls stay
-    blocking unless
-    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
+    blocking unless [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls]
     asks otherwise, so on such a model the declaration says `BLOCKING` explicitly instead of leaving it unset.
     """
 
     google_requires_async_tool_calls: bool
-    """Whether the model *only* runs tool calls asynchronously, having no blocking mode. Default: `False`.
+    """Deprecated: use [`async_tool_call_mode='always'`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] instead.
 
-    Stronger than [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]:
-    tool calls are declared `NON_BLOCKING` whatever
-    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
-    says, since a `BLOCKING` declaration closes the session. `gemini-3.8-live-extended-thinking` answers
-    `1007 BLOCKING function calls are not supported for this model`.
+    Translated (with a deprecation warning) when the profile is resolved: `True` becomes
+    `async_tool_call_mode='always'`, and `False`, which left the choice to the other flags, is dropped.
     """
 
     google_supports_async_tool_call_scheduling: bool
@@ -624,6 +609,23 @@ def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
     )
 
 
+def _translate_legacy_settings(settings: GoogleRealtimeModelSettings) -> GoogleRealtimeModelSettings:
+    """Translate the deprecated `google_async_tool_calls` into the shared `async_tool_calls`, warning."""
+    # TODO(v3): remove, along with the `google_async_tool_calls` setting.
+    if 'google_async_tool_calls' not in settings:
+        return settings
+    # Settings reach the model at connect time, where no stack level points at the code that set them, so
+    # the message names the setting instead.
+    warnings.warn(
+        '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=2,
+    )
+    translated = settings.copy()
+    translated.setdefault('async_tool_calls', translated.pop('google_async_tool_calls'))
+    return translated
+
+
 def _tool_def_to_genai(
     tool: ToolDefinition, *, async_tool_calls: bool = False, explicit_blocking: bool = False
 ) -> genai_types.FunctionDeclaration:
@@ -836,9 +838,35 @@ class GoogleRealtimeModel(RealtimeModel):
         return self._provider.name
 
     @property
+    def profile(self) -> RealtimeModelProfile:
+        profile = cast(GoogleRealtimeModelProfile, super().profile)
+        # TODO(v3): remove, along with the `google_requires_async_tool_calls` profile field.
+        if 'google_requires_async_tool_calls' not in profile:
+            return profile
+        warnings.warn(
+            '`GoogleRealtimeModelProfile` key `google_requires_async_tool_calls` is deprecated, use '
+            "`async_tool_call_mode='always'` instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        translated = profile.copy()
+        if translated.pop('google_requires_async_tool_calls'):
+            translated.update(async_tool_call_mode='always', supports_async_tool_calls=True)
+        return translated
+
+    @property
     def _google_profile(self) -> GoogleRealtimeModelProfile:
         """[`profile`][pydantic_ai.realtime.RealtimeModel.profile], narrowed to the Gemini-specific fields."""
         return cast(GoogleRealtimeModelProfile, self.profile)
+
+    def _merge_model_settings(self, model_settings: RealtimeModelSettings | None) -> RealtimeModelSettings | None:
+        # Each layer is translated on its own, so a deprecated setting keeps its layer's precedence.
+        merged: GoogleRealtimeModelSettings | None = None
+        for layer in (self.settings, model_settings):
+            if layer is not None:
+                translated = _translate_legacy_settings(cast(GoogleRealtimeModelSettings, layer))
+                merged = {**merged, **translated} if merged is not None else translated.copy()
+        return merged
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -877,23 +905,6 @@ class GoogleRealtimeModel(RealtimeModel):
             multi_speaker_voice_config=multi_speaker_config,
             language_code=language_code,
         )
-
-    def _async_tool_calls(self, model_settings: GoogleRealtimeModelSettings | None) -> bool:
-        """Whether to run this session's tool calls without pausing the model's speech.
-
-        Opt-in, and only where the model actually honors it — the other Live families accept
-        `NON_BLOCKING` and then block anyway, so enabling it there would promise something the
-        provider doesn't deliver. A model that has no blocking mode
-        ([`google_requires_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_requires_async_tool_calls])
-        runs them asynchronously whether or not the session asked, since a `BLOCKING` declaration
-        closes the session outright. Either way a setting the model can't honor is ignored, not raised.
-        """
-        profile = self._google_profile
-        if profile.get('google_requires_async_tool_calls', False):
-            return True
-        if not (model_settings and model_settings.get('google_async_tool_calls', False)):
-            return False
-        return profile.get('supports_async_tool_calls', False)
 
     def _check_proactive_audio_api_version(self, settings: GoogleRealtimeModelSettings) -> None:
         """Reject a proactive-audio session on a client that can't carry the setting.

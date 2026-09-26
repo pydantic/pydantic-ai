@@ -77,6 +77,22 @@ class RealtimeModelSettings(TypedDict, total=False):
     Supported by: OpenAI, Azure OpenAI, and xAI.
     """
 
+    async_tool_calls: bool | None
+    """Whether the model keeps the conversation going while a tool call runs. `None` (the default) leaves it to the model.
+
+    With async tool calls, the model can keep speaking (typically saying what it's doing) and answer the
+    user while a tool runs, and the result reaches it when it's ready. Without them, the model goes quiet
+    until the result is back. This pays off for tools that take a noticeable moment; see
+    [Concurrent tool execution](../realtime/tools.md#concurrent-tool-execution) for the tradeoffs.
+
+    Only models whose profile's
+    [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
+    `'optional'` offer a choice, and every one of them defaults to off. The others ignore this setting,
+    since they either always or never run tool calls asynchronously.
+
+    Supported by: the Gemini native-audio models and `gemini-3.8-live`.
+    """
+
     tool_choice: ToolChoice
     """Control which function tools the model can use.
 

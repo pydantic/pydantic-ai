@@ -9,7 +9,7 @@ from . import ModelProfile
 
 if TYPE_CHECKING:
     from ..realtime.google import GoogleRealtimeModelProfile
-    from ..realtime.profiles import RealtimeModelProfile
+    from ..realtime.profiles import AsyncToolCallMode, RealtimeModelProfile
 
 GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
 """Native Gemini `thinking_level` values."""
@@ -277,6 +277,18 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
     )
+    # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with a slow tool,
+    # where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and `gemini-3.1-flash-live-preview`
+    # accepts the flag but still goes silent until the result lands. `gemini-3.8-live` honors it too: verified
+    # live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with the call rather than after its
+    # result, as it does for `BLOCKING`. On those it's the session's choice, via the `async_tool_calls`
+    # setting. Extended thinking has no other mode: it answers `1007 BLOCKING function calls are not
+    # supported for this model` to a `BLOCKING` declaration (verified live 2026-09-16).
+    async_tool_call_mode: AsyncToolCallMode = 'never'
+    if is_extended_thinking:
+        async_tool_call_mode = 'always'
+    elif 'native-audio' in model_name or is_3_8_live:
+        async_tool_call_mode = 'optional'
     profile: GoogleRealtimeModelProfile = {
         'supports_image_input': True,
         # Every general-purpose Live model is audio-only: a session asking for `TEXT` is closed with
@@ -320,14 +332,7 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # setting is skipped for it too.
         'supports_thinking': is_extended_thinking
         or (('native-audio' in model_name or not model_name.startswith('gemini-live-2.5')) and not is_3_8_live),
-        # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
-        # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
-        # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result
-        # lands. This gates the opt-in `google_async_tool_calls` setting; it is not enabled by
-        # merely being supported. Extended thinking has no other mode — see below. `gemini-3.8-live`
-        # honors it too: verified live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with
-        # the call rather than after its result, as it does for `BLOCKING`.
-        'supports_async_tool_calls': 'native-audio' in model_name or is_3_8_live or is_extended_thinking,
+        'async_tool_call_mode': async_tool_call_mode,
         # Gemini Live takes a tool's return schema natively, as the function declaration's
         # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
         'supports_tool_return_schema': True,
@@ -343,11 +348,8 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # completes the turn alongside the call just as `NON_BLOCKING` does.
     # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live#migrating
     profile['google_async_tool_calls_by_default'] = is_3_8_live or is_extended_thinking
-    # Verified live 2026-09-16: `gemini-3.8-live-extended-thinking` answers `1007 BLOCKING function calls
-    # are not supported for this model` to a `BLOCKING` declaration, so every tool session on it is async.
-    profile['google_requires_async_tool_calls'] = is_extended_thinking
-    # ...and it rejects the scheduling field outright: `1007 Function response scheduling is not supported
-    # for this model`. The native-audio models and `gemini-3.8-live` take `INTERRUPT` (verified live
+    # Extended thinking rejects the scheduling field outright: `1007 Function response scheduling is not
+    # supported for this model`. The native-audio models and `gemini-3.8-live` take `INTERRUPT` (verified live
     # 2026-09-16 for the latter, as Google documents).
     profile['google_supports_async_tool_call_scheduling'] = 'native-audio' in model_name or is_3_8_live
     # Verified live 2026-09-25 with `enable_affective_dialog`: `gemini-3.1-flash-live-preview` refuses the

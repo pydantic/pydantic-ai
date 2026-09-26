@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
 from typing_extensions import TypeAliasType
 
 from .._genai_prices import lookup_context_window, preload_pricing_data
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
 from ..messages import ModelMessage
 from ..models import ModelRequestParameters
@@ -22,6 +24,7 @@ from .codec import RealtimeConnection
 from .profiles import (
     DEFAULT_AUDIO_SAMPLE_RATE,
     DEFAULT_REALTIME_PROFILE,
+    AsyncToolCallMode,
     RealtimeModelProfile,
     RealtimeModelProfileSpec,
     merge_realtime_profile,
@@ -45,6 +48,64 @@ class RealtimeError(ModelAPIError):
     the API. Catch it specifically to separate the session's own failures from those of any text agent
     the session [delegates to](../realtime/tools.md#delegating-work-during-a-call).
     """
+
+
+def _translate_legacy_async_tool_call_flag(
+    profile: RealtimeModelProfile, *, base_mode: AsyncToolCallMode
+) -> RealtimeModelProfile:
+    """Translate a deprecated `supports_async_tool_calls` in a profile layer into `async_tool_call_mode`, warning.
+
+    `base_mode` is the mode of the layers below: the flag never changed a model that has no blocking
+    mode, so it doesn't override `'always'`. An explicit `async_tool_call_mode` in the same layer wins.
+    """
+    # TODO(v3): remove, along with the `supports_async_tool_calls` profile field.
+    if 'supports_async_tool_calls' not in profile:
+        return profile
+    warnings.warn(
+        '`RealtimeModelProfile` key `supports_async_tool_calls` is deprecated, use `async_tool_call_mode` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=3,
+    )
+    translated = profile.copy()
+    supported = translated.pop('supports_async_tool_calls')
+    if base_mode != 'always':
+        translated.setdefault('async_tool_call_mode', 'optional' if supported else 'never')
+    return translated
+
+
+def _with_legacy_async_tool_call_flag(profile: RealtimeModelProfile) -> RealtimeModelProfile:
+    """Derive the deprecated `supports_async_tool_calls` from `async_tool_call_mode`, so it stays readable."""
+    return merge_realtime_profile(
+        profile,
+        RealtimeModelProfile(supports_async_tool_calls=profile.get('async_tool_call_mode', 'never') != 'never'),
+    )
+
+
+def _resolve_profile_callable(
+    user: Callable[[RealtimeModelProfile], RealtimeModelProfile], resolved: RealtimeModelProfile
+) -> RealtimeModelProfile:
+    """Apply a callable `profile=`, translating the deprecated `supports_async_tool_calls` if it changed it.
+
+    The callable is handed the flag derived, as a resolved profile carries it, so one that reads it keeps
+    working. Passing it back unchanged is no use of the deprecated flag; changing it is, and is translated
+    against the mode the callable was given, unless it changed that too.
+    """
+    given = _with_legacy_async_tool_call_flag(resolved)
+    returned = user(given)
+    if 'supports_async_tool_calls' not in returned:
+        return returned
+    layer = returned.copy()
+    if layer['supports_async_tool_calls'] == given.get('supports_async_tool_calls'):
+        del layer['supports_async_tool_calls']
+        return layer
+    base_mode = given.get('async_tool_call_mode', 'never')
+    kept_mode = layer.get('async_tool_call_mode') == base_mode
+    if kept_mode:
+        del layer['async_tool_call_mode']
+    translated = _translate_legacy_async_tool_call_flag(layer, base_mode=base_mode)
+    if kept_mode:
+        translated.setdefault('async_tool_call_mode', base_mode)
+    return translated
 
 
 # WebRTC / browser-media artifacts.
@@ -193,6 +254,20 @@ class RealtimeModel(AbstractModel):
                 settings.update(model_settings)
         return settings
 
+    def _async_tool_calls(self, model_settings: RealtimeModelSettings | None) -> bool:
+        """Whether this session's tool calls run asynchronously, for adapters that have to say so on the wire.
+
+        Resolves the [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls]
+        setting against the profile's
+        [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode]: an
+        `'optional'` model follows the setting, off unless it's `True`, and `'never'` and `'always'` models
+        ignore it. A setting the model can't honor isn't an error: the model does what it can.
+        """
+        mode = self.profile.get('async_tool_call_mode', 'never')
+        if mode == 'optional':
+            return bool(model_settings and model_settings.get('async_tool_calls'))
+        return mode == 'always'
+
     @abstractmethod
     def connect(
         self,
@@ -306,10 +381,15 @@ class RealtimeModel(AbstractModel):
              `(resolved) -> profile` for full control.
 
         Then `supported_native_tools` is intersected with what this model class actually implements, so
-        the resolved profile is the single source of truth for what is usable.
+        the resolved profile is the single source of truth for what is usable, and the deprecated
+        [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]
+        is derived from
+        [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode].
         """
         provider: Provider[object] | None = getattr(self, '_provider', None)
         provider_profile = provider.realtime_model_profile(self.model_name) if provider is not None else None
+        if provider_profile is not None:
+            provider_profile = _translate_legacy_async_tool_call_flag(provider_profile, base_mode='never')
         resolved = merge_realtime_profile(DEFAULT_REALTIME_PROFILE, provider_profile)
         user = self._profile
         context_window_set = 'context_window' in (provider_profile or {}) or (
@@ -319,15 +399,18 @@ class RealtimeModel(AbstractModel):
             context_window = lookup_context_window(self)
             if context_window is not None:
                 resolved = merge_realtime_profile(resolved, RealtimeModelProfile(context_window=context_window))
-        if user is not None:
+        if callable(user):
             # The callable form replaces the resolved profile wholesale rather than merging, so a caller
             # can drop a claim the provider made and not just add to it.
-            resolved = user(resolved) if callable(user) else merge_realtime_profile(resolved, user)
+            resolved = _resolve_profile_callable(user, resolved)
+        elif user is not None:
+            user = _translate_legacy_async_tool_call_flag(user, base_mode=resolved.get('async_tool_call_mode', 'never'))
+            resolved = merge_realtime_profile(resolved, user)
         profile_supported = resolved.get('supported_native_tools', frozenset())
         effective_tools = profile_supported & self.__class__.supported_native_tools()
         if effective_tools != profile_supported:
             resolved = merge_realtime_profile(resolved, RealtimeModelProfile(supported_native_tools=effective_tools))
-        return resolved
+        return _with_legacy_async_tool_call_flag(resolved)
 
     @property
     def context_window(self) -> int | None:

@@ -518,7 +518,9 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_thinking=True,
-        supports_async_tool_calls=False,
+        # Grok Voice answers the user while a tool call is outstanding (verified live).
+        async_tool_call_mode='always',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
