@@ -574,6 +574,28 @@ async def test_for_run_cannot_change_the_workspace_selected_before_it(tmp_path: 
         await Agent(TestModel(), capabilities=[ReadOnlyPerRun(tmp_path)]).run('go')
 
 
+async def test_failed_run_error_hook_exposes_workspace_ref_for_cleanup() -> None:
+    backend = FakeWorkspace('failed-run')
+    seen: list[WorkspaceRef | None] = []
+
+    class Cleanup(AbstractCapability[Any]):
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+            await ctx.workspace.working_dir()
+            return await handler()
+
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            seen.append(ctx.workspace.ref)
+            raise error
+
+    def fail_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('failure')
+
+    agent = Agent(FunctionModel(fail_model), capabilities=[WorkspaceCapability(backend), Cleanup()])
+    with pytest.raises(ValueError, match='failure'):
+        await agent.run('go')
+    assert seen == [backend.ref]
+
+
 async def test_the_result_carries_the_workspace_the_run_used() -> None:
     """`result.workspace` is the same object tools saw, so a caller can keep working in it."""
     capability = WorkspaceCapability()
