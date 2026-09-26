@@ -1,6 +1,34 @@
 """Regression checks for workspace recipes that cannot be executed without a harness install."""
 
+import subprocess
+import sys
 from pathlib import Path
+
+
+def test_first_quickstart_runs_main(tmp_path: Path) -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    example = page.split('```python {title="workspace_agent.py"}', 1)[1].split('```', 1)[0]
+    # Stub the model call so this checks the script entry point without credentials.
+    setup = """
+import sys
+from types import ModuleType
+from pathlib import Path
+ai = ModuleType('pydantic_ai')
+class Agent:
+    def __init__(self, *args, **kwargs): pass
+    def tool(self, fn): return fn
+    async def run(self, prompt): Path('fizzbuzz.py').write_text('created')
+ai.Agent = Agent
+ai.ModelRetry = type('ModelRetry', (Exception,), {})
+ai.RunContext = type('RunContext', (), {})
+cap = ModuleType('pydantic_ai.capabilities')
+cap.LocalWorkspace = lambda path: path
+ws = ModuleType('pydantic_ai.workspaces')
+ws.WorkspaceError = type('WorkspaceError', (Exception,), {})
+sys.modules.update({'pydantic_ai': ai, 'pydantic_ai.capabilities': cap, 'pydantic_ai.workspaces': ws})
+"""
+    subprocess.run([sys.executable, '-c', setup + example], cwd=tmp_path, check=True)
+    assert (tmp_path / 'fizzbuzz.py').read_text() == 'created'
 
 
 def test_host_backend_serializes_first_use() -> None:

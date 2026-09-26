@@ -7,6 +7,8 @@ which, because they all use it through [`ctx.workspace`][pydantic_ai.tools.RunCo
 ## Give an agent a computer
 
 ```python {title="workspace_agent.py"}
+import asyncio
+
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.workspaces import WorkspaceError
@@ -29,6 +31,10 @@ async def execute(ctx: RunContext, command: list[str]) -> str:
 
 async def main() -> None:
     await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
 ```
 
 - `LocalWorkspace('.')` gives every run the current directory. Commands start there, and relative
