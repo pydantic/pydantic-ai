@@ -1001,13 +1001,15 @@ def test_runner_drops_dynamic_workflow_dependencies():
 
 
 def test_runner_resolves_pydantic_ai_from_the_workspace():
-    """The shim's code is this checkout, so its library must be too — see #6998, #7103."""
+    """The shim's code is this checkout, so its libraries must be too — see #6998, #7103."""
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert '# [tool.uv.sources]' in runner
-    assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim" }' in runner
+    assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim", editable = true }' in runner
+    assert '# pydantic-ai-harness = { path = "../../src/pydantic_ai_harness", editable = true }' in runner
 
     lock = (Path(__file__).parent / 'pydantic-ai-runner.lock').read_text(encoding='utf-8')
-    assert 'directory = "../../pydantic_ai_slim"' in lock
+    assert 'source = { editable = "../../pydantic_ai_slim" }' in lock
+    assert 'source = { editable = "../../src/pydantic_ai_harness" }' in lock
 
 
 def test_compiled_workflows_pin_retry_policy():

@@ -101,6 +101,8 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
+pydantic-ai-harness = { workspace = true }
+pydantic-clai2 = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -109,6 +111,8 @@ members = [
     "pydantic_graph",
     "clai",
     "examples",
+    "src/pydantic_ai_harness",
+    "src/pydantic_clai2",
 ]
 
 [tool.uv]
@@ -130,6 +134,15 @@ conflicts = [
     [
         { package = "pydantic-ai", extra = "mcp-tasks" },
         { group = "dev" },
+    ],
+    # `pydantic-ai-harness[stackone]` needs FastMCP 3.
+    [
+        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
+        { package = "pydantic-ai-harness", extra = "stackone" },
+    ],
+    [
+        { package = "pydantic-ai", extra = "mcp-tasks" },
+        { package = "pydantic-ai-harness", extra = "stackone" },
     ],
 ]
 constraint-dependencies = [
@@ -164,6 +177,20 @@ constraint-dependencies = [
     "torch>=2.13.0",
     "transformers>=5.5.0",
 ]
+# `pydantic-ai-harness[browser-use]` pins provider SDKs below the floors `pydantic-ai-slim` declares, so
+# they only resolve together under an override: browser-use then runs against newer SDKs than it pins.
+# An override replaces every requirement on the package it names, so each line repeats the workspace's
+# own floor; move it whenever that floor moves. If one can no longer be overridden without breaking
+# browser-use, the extra yields, not the floor.
+override-dependencies = [
+    "anthropic>=1.8.0",
+    "google-auth>=2.56.0",
+    "google-genai>=2.25.0",
+    # browser-use pins `groq==1.0.0`, but `pydantic_ai.models.groq` is written against the 0.x SDK
+    # (1.0 replaced the `NotGiven` sentinel with `Omit`); keep the workspace on the 0.x line.
+    "groq>=0.25.0,<1",
+    "openai>=3.19.0",
+]
 build-constraint-dependencies = [
     # hatchling 1.32.0 (2026-08-11) bumped its default core metadata version to 2.5,
     # which the pinned gh-action-pypi-publish validator rejects as "not a valid
@@ -183,10 +210,16 @@ pydantic-core = false
 pydantic-extra-types = false
 pydantic-settings = false
 pydantic-handlebars = false
+pydantic-monty = false
+pydantic-monty-client = false
+pydantic-monty-runtime = false
 genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
+# termflow-md 0.9.3 is the first release supporting Python 3.10, which `pydantic-clai2` needs.
+# TODO(Kludex): Remove after 2026-10-01 16:36 UTC.
+termflow-md = "2026-09-24T16:36:46Z"
 # Anthropic 1.8.0 is the first release listing `claude-opus-5-5`.
 # TODO(DouweM): Remove after 2026-09-29 16:25 UTC. https://github.com/pydantic/pydantic-ai/issues/8636
 # This admits only the reviewed 1.8.0 artifacts; later Anthropic artifacts remain quarantined.

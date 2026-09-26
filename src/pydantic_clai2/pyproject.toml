@@ -1,28 +1,39 @@
 [build-system]
-requires = ['hatchling']
-build-backend = 'hatchling.build'
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+# Same scheme as `pydantic-ai-harness`, which this package pins exactly; keep the two in sync.
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+format-jinja = "0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
 
 [project]
-name = 'pydantic-clai2'
-version = '0.1.0'
-description = 'A capability-aware streaming terminal client for Pydantic AI'
-readme = 'README.md'
-requires-python = '>=3.10'
-license = 'MIT'
-license-files = ['THIRD_PARTY_NOTICES.md']
-# Terminal dependencies are isolated from Harness. Tracking issue: #875.
+name = "pydantic-clai2"
+dynamic = ["version", "dependencies"]
+description = "A capability-aware streaming terminal client for Pydantic AI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    'pydantic-ai-harness[coder]',
+    "pydantic-ai-harness[coder]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     # Speculative execution runs CodeMode's Monty sandbox. Pinned directly rather than via
     # `pydantic-ai-harness[code-mode]`, which also pulls a web-search client CLAI does not use.
-    'pydantic-monty>=1.0.0,<2',
+    "pydantic-monty>=1.0.0,<2",
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai-harness/issues/966.
-    'pydantic-ai-slim[anthropic,mcp,openai]>=2.49.0',
-    'genai-prices>=0.1.7',
-    'termflow-md>=0.9.3,<0.10',
-    'pyfiglet>=1.0.4',
-    'prompt-toolkit>=3.0.52',
-    'rich>=14',
+    "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    "genai-prices>=0.1.7",
+    "termflow-md>=0.9.3,<0.10",
+    "pyfiglet>=1.0.4",
+    "prompt-toolkit>=3.0.52",
+    "rich>=14",
     "keyring>=25.6",
     "pillow>=12.3.0",
     # Default telemetry plugin: https://github.com/pydantic/pydantic-ai-harness/issues/979.
@@ -30,26 +41,20 @@ dependencies = [
     "exceptiongroup>=1.0.2; python_version < '3.11'",
 ]
 
+[project.urls]
+Homepage = "https://pydantic.dev/docs/ai/harness/clai2/"
+Source = "https://github.com/pydantic/pydantic-ai"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
 [project.scripts]
-clai2 = 'pydantic_clai2.__main__:main'
+clai2 = "pydantic_clai2.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ['src/pydantic_clai2']
+packages = ["pydantic_clai2"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/pydantic_clai2", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md"]
 
 [tool.uv.sources]
 pydantic-ai-harness = { workspace = true }
-
-[tool.coverage.run]
-branch = true
-patch = ['subprocess']
-relative_files = true
-source = ['src/pydantic_clai2']
-
-[tool.coverage.report]
-fail_under = 100
-show_missing = true
-
-[tool.pytest.ini_options]
-addopts = '-p no:cassetter'
-anyio_mode = 'auto'
-testpaths = ['tests']
+pydantic-ai-slim = { workspace = true }
