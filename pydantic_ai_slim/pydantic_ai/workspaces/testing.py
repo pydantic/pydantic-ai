@@ -86,7 +86,8 @@ class WorkspaceBackendSuite:
 
     async def test_stdin_is_at_eof(self, backend: WorkspaceBackend) -> None:
         """Noninteractive commands never wait for input from the caller."""
-        result = await _commands(backend).run(['sh', '-c', 'read value || printf eof'], timeout=5)
+        # This is a command deadline, not a latency assertion on remote dispatch.
+        result = await _commands(backend).run(['sh', '-c', 'read value || printf eof'], timeout=30)
         assert (result.exit_code, result.stdout) == (0, 'eof')
 
     async def test_missing_cwd_raises_file_not_found(self, backend: WorkspaceBackend) -> None:
@@ -124,11 +125,26 @@ class WorkspaceBackendSuite:
     ) -> None:
         if not has_real_posix_shell or not can_detect_exit_with_inherited_output_pipes:
             pytest.skip('backend cannot observe the direct command exit independently of inherited output pipes')
-        await backend.working_dir()  # Provisioning is not part of the command's drain deadline.
-        # The direct command exits; a short grace may drain its inherited output pipes.
-        with anyio.fail_after(5):
-            result = await _commands(backend).run('sleep 4 & printf done', shell=True)
-        assert (result.exit_code, result.stdout) == (0, 'done')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            release = posixpath.join(root, 'release')
+            finished = posixpath.join(root, 'finished')
+            # The background child holds stdout open until released. A backend waiting for
+            # pipe EOF cannot complete this run, regardless of control-plane latency.
+            command = 'while [ ! -f "$1" ]; do sleep 0.1; done; printf finished > "$2"'
+            try:
+                with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
+                    result = await _commands(backend).run(
+                        ['sh', '-c', f'({command}) & printf done', 'sh', release, finished]
+                    )
+                assert (result.exit_code, result.stdout) == (0, 'done')
+                assert not await workspace.exists(finished)
+            finally:
+                # Release the child even if the hang guard cancelled the command.
+                with anyio.move_on_after(30, shield=True):
+                    await workspace.write_bytes(release, b'go')
+                    while not await workspace.exists(finished):
+                        await anyio.sleep(0.1)
 
     async def test_result_reports_exit_code_stdout_and_stderr(self, backend: WorkspaceBackend) -> None:
         """A non-zero exit is a normal result, not an error."""

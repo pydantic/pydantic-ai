@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
+import anyio
 import anyio.to_thread
 import pytest
 
-from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import (
+    CommandResult,
+    LocalWorkspaceBackend,
+    WorkspaceBackend,
+    WorkspaceCommand,
+    WorkspaceRef,
+)
 from pydantic_ai.workspaces.testing import WorkspaceBackendSuite
 
 from .workspace_fakes import (
@@ -22,6 +29,49 @@ from .workspace_fakes import (
 )
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='workspace conformance command rules use POSIX sh')
+
+
+@pytest.mark.anyio
+async def test_stdin_rule_does_not_use_a_remote_latency_deadline(tmp_path: Path) -> None:
+    class RecordingBackend(LocalWorkspaceBackend):
+        command_timeout: float | None = None
+
+        async def run(
+            self,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> CommandResult:
+            self.command_timeout = timeout
+            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+
+    backend = RecordingBackend(tmp_path)
+    await WorkspaceBackendSuite.test_stdin_is_at_eof(WorkspaceBackendSuite(), backend)
+    assert backend.command_timeout is not None and backend.command_timeout >= 30
+
+
+@pytest.mark.anyio
+async def test_background_rule_tolerates_slow_control_plane(tmp_path: Path) -> None:
+    class SlowBackend(LocalWorkspaceBackend):
+        async def run(
+            self,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> CommandResult:
+            if isinstance(command, list) and any('printf done' in part for part in command):
+                await anyio.sleep(6)  # Simulate slow remote dispatch after provisioning.
+            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+
+    await WorkspaceBackendSuite.test_background_child_does_not_hold_up_completed_command(
+        WorkspaceBackendSuite(), SlowBackend(tmp_path), True, True
+    )
 
 
 class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
