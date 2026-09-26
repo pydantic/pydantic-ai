@@ -1,3 +1,5 @@
+# Imported from pydantic-ai-harness and not adapted to this repository yet.
+exclude: ^(src/pydantic_ai_harness|src/pydantic_clai2|tests/harness|tests/clai2|docs/harness)/
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.3.0

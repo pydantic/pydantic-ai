@@ -31,7 +31,9 @@ exclude_loopback = true
 
 # `CONTRIBUTING.md` is a symlink to `docs/contributing.md`, so its relative links resolve from
 # `docs/` and not from the repository root. The file is checked at its real path.
-exclude_path = ["CONTRIBUTING.md"]
+#
+# `docs/harness` is imported from pydantic-ai-harness and not adapted to this repository yet; it links the rest of the site root-relative.
+exclude_path = ["CONTRIBUTING.md", "docs/harness"]
 
 # Login-gated or bot-blocking hosts that return non-2xx to automated checks even
 # though the links are valid in a browser; not worth failing the run over.

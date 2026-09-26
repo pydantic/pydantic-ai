@@ -66,6 +66,9 @@ with suppress(ImportError):
 
 T = TypeVar('T')
 
+# Imported from pydantic-ai-harness and not adapted to this repository yet; their packages are not installed yet.
+collect_ignore = ['harness', 'clai2']
+
 __all__ = (
     'IsDatetime',
     'IsDecimal',

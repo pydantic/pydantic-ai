@@ -115,12 +115,16 @@ def _collect_all_tests_from_file(path: Path) -> set[str]:
     return cassette_names
 
 
+# Imported from pydantic-ai-harness and not adapted to this repository yet.
+_UNADAPTED = (Path('tests/harness'), Path('tests/clai2'))
+
+
 def get_all_cassettes() -> dict[str, set[str]]:
     """Return {test_file_stem: set of cassette names (without .yaml)}."""
     cassettes: dict[str, set[str]] = {}
 
     for cassette_dir in Path('tests').rglob('cassettes'):
-        if not cassette_dir.is_dir():
+        if not cassette_dir.is_dir() or any(cassette_dir.is_relative_to(path) for path in _UNADAPTED):
             continue
         for subdir in cassette_dir.iterdir():
             if subdir.is_dir():
@@ -139,6 +143,8 @@ def get_all_tests() -> dict[str, set[str]]:
     tests: dict[str, set[str]] = defaultdict(set)
 
     for test_file in Path('tests').rglob('test_*.py'):
+        if any(test_file.is_relative_to(path) for path in _UNADAPTED):
+            continue
         if test_file.stem.endswith(_WS_CASSETTE_SUFFIX):
             cassette_names = _collect_all_tests_from_file(test_file)
         else:

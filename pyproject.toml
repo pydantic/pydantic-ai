@@ -273,6 +273,8 @@ exclude = ["/tests"]
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+# Imported from pydantic-ai-harness and not adapted to this repository yet.
+extend-exclude = ["src/pydantic_ai_harness", "src/pydantic_clai2", "tests/harness", "tests/clai2"]
 include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
@@ -405,6 +407,9 @@ executionEnvironments = [
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
+    # Imported from pydantic-ai-harness and not adapted to this repository yet.
+    "tests/harness",
+    "tests/clai2",
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
