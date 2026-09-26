@@ -108,7 +108,7 @@ class TestShellFileLimits:
     @pytest.mark.anyio
     @pytest.mark.skipif(os.name != 'posix', reason='Requires POSIX resource limits')
     async def test_agent_run_clone(self, tmp_path: Path, anyio_backend: str) -> None:
-        if anyio_backend != 'asyncio':
+        if anyio_backend != 'asyncio':  # pragma: no cover -- only asyncio runs here
             pytest.skip('Agent lifecycle requires asyncio')
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

@@ -1788,7 +1788,7 @@ class TestFileSystemCapability:
 
     @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self, tmp_path: Path, anyio_backend: object) -> None:
-        if str(anyio_backend) != 'asyncio':
+        if str(anyio_backend) != 'asyncio':  # pragma: no cover -- only asyncio runs here
             pytest.skip('Agent.run requires asyncio event loop')
         (tmp_path / 'test.txt').write_text('hello agent\n')
         model = TestModel(custom_output_text='done', call_tools=[])

@@ -451,7 +451,7 @@ jobs:
         shell: bash
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            export COVERAGE_PROCESS_START=./pyproject.toml
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
@@ -460,7 +460,7 @@ jobs:
           uv run ${{ matrix.install.command }} "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec ${{ matrix.install.paths }}
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
       # Merge this job's per-worker/per-subprocess data files into one before upload: the
       # combine work runs in parallel across the matrix instead of serially in the `coverage`
@@ -469,7 +469,7 @@ jobs:
         if: env.COLLECT_COVERAGE == 'true'
         run: uv run ${{ matrix.install.command }} coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -581,7 +581,7 @@ jobs:
         shell: bash
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            export COVERAGE_PROCESS_START=./pyproject.toml
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
@@ -592,14 +592,14 @@ jobs:
           uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec --splits 2 --group ${{ matrix.shard }}
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: uv run --all-packages --all-extras --no-extra mcp-tasks coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -689,7 +689,7 @@ jobs:
         shell: bash
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            export COVERAGE_PROCESS_START=./pyproject.toml
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
@@ -698,7 +698,7 @@ jobs:
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       # See the matching step in the `test` job.
       - name: combine coverage files
@@ -707,7 +707,7 @@ jobs:
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
           coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -799,7 +799,7 @@ jobs:
         shell: bash
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            export COVERAGE_PROCESS_START=./pyproject.toml
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
@@ -808,14 +808,14 @@ jobs:
           uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec --splits 2 --group ${{ matrix.shard }}
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
 
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: uv run --no-sync coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -884,7 +884,7 @@ jobs:
     timeout-minutes: 10
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -922,14 +922,14 @@ jobs:
           tests/models/test_mcp_sampling.py
           tests/test_conftest.py
         env:
-          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
 
       # See the matching step in the `test` job. Plain `uv run`: combining is
       # environment-independent, so the FastMCP 4 `--with` overlay isn't needed.
       - name: combine coverage files
         run: uv run --all-extras --no-extra mcp-tasks --all-packages coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
 
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1125,7 +1125,7 @@ jobs:
 
       - run: uv run --no-sync strict-no-cover
         env:
-          COVERAGE_FILE: .coverage/.coverage
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
