@@ -13,6 +13,8 @@ from json import dumps
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import ReferenceType, ref
 
+from typing_extensions import Self, assert_never
+
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.messages import (
     CompactionPart,
@@ -36,8 +38,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import RunContext
-from typing_extensions import Self, assert_never
-
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (

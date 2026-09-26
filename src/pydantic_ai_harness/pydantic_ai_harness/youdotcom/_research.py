@@ -7,13 +7,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Literal, get_args
 
+from youdotcom import models
+
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from youdotcom import models
-
 from pydantic_ai_harness.youdotcom._toolset import (
     YouClient,
     default_client,

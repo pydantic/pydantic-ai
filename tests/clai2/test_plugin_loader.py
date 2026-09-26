@@ -8,10 +8,10 @@ from types import ModuleType
 
 import anyio
 import pytest
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings

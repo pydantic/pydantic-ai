@@ -8,13 +8,13 @@ from typing import Any
 
 import pytest
 import websockets
+from pydantic_monty import MountDir
+from typing_extensions import Never
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_monty import MountDir
-from typing_extensions import Never
-
 from pydantic_ai_harness import CodeMode
 
 pytestmark = pytest.mark.anyio

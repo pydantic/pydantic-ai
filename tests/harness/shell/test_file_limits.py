@@ -11,10 +11,10 @@ from unittest.mock import patch
 
 import anyio
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-
 from pydantic_ai_harness.shell import Shell
 
 if os.name == 'posix':  # pragma: no branch

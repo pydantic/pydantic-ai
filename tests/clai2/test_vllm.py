@@ -6,8 +6,8 @@ import httpx
 import pytest
 from menu_script import make_context
 from pydantic import SecretStr
-from pydantic_ai.exceptions import UserError
 
+from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import vllm
 from pydantic_clai2.model_menu import open_add_model_menu
 

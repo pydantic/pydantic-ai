@@ -10,6 +10,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
+from rich.cells import set_cell_size
+from rich.console import Console
+from typing_extensions import Self
+
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import (
     TextPart,
@@ -19,9 +23,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
-from rich.cells import set_cell_size
-from rich.console import Console
-from typing_extensions import Self
 
 from . import theme
 from .spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -96,7 +97,7 @@ class Status:
                 if text:
                     # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
                     shown.append(_printable(text))
-            except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
+            except Exception as exc:
                 shown.append(f'!{type(exc).__name__}')
         return '' if not shown else ' | ' + ' | '.join(shown)
 

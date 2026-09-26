@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
@@ -26,7 +27,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.media import DiskMediaStore, SqliteMediaStore
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,

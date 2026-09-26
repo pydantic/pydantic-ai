@@ -8,11 +8,12 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
 import anyio.to_thread
+from pydantic_core import to_jsonable_python
+
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
-from pydantic_core import to_jsonable_python
 
 try:
     from stackone_defender import DefenseResult, PromptDefense

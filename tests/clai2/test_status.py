@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
-from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
 from rich.console import Console
 
+from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
+from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
 from pydantic_clai2._app import _reset_status  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.status import Status, StatusLine
 from pydantic_clai2.theme import MUTED, WARNING, sgr

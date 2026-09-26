@@ -13,14 +13,14 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, StepEvent, ToolEffectRecord
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_ai_harness.step_persistence.naming import SessionNamer
-from rich.console import Console
-
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2._session import Session
 from pydantic_clai2.command_context import CommandContext

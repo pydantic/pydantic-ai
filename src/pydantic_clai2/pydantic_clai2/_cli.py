@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 """CLI settings resolution and interactive application startup."""
 
 import argparse

@@ -13,10 +13,10 @@ import anyio
 import httpx
 import pytest
 from pydantic import HttpUrl, JsonValue, ValidationError
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
@@ -59,7 +59,7 @@ def write_server(tmp_path: Path, *, with_tool: bool = True) -> tuple[Path, Path]
 def assert_exited(pid_file: Path) -> None:
     if sys.platform != 'win32':
         with pytest.raises(ProcessLookupError):
-            os.kill(int(pid_file.read_text()), 0)
+            os.kill(int(pid_file.read_text(encoding='utf-8')), 0)
 
 
 async def test_http_client_rejects_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,7 +107,7 @@ def test_store_round_trip_is_private_and_fails_loudly(tmp_path: Path) -> None:
     assert '"enabled"' not in store.path.read_text(), 'defaults are not written'
     assert store.delete('local')
     store.path.write_text('{"servers": {"bad_name": {"type": "stdio", "command": "x"}}}')
-    with pytest.raises(ValueError, match='mcp.json'):
+    with pytest.raises(ValueError, match=r'mcp.json'):
         store.load()
 
 

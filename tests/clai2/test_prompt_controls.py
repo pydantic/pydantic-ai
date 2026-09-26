@@ -8,10 +8,10 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.settings_store import SettingsStore
 

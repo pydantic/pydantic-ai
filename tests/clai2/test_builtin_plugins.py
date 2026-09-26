@@ -5,11 +5,11 @@ import io
 from collections.abc import Coroutine, Sequence
 from pathlib import Path
 
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings

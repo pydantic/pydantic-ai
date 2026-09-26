@@ -9,8 +9,9 @@ from uuid import uuid4
 
 from PIL import Image, ImageGrab, ImageOps
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
-from pydantic_ai.messages import BinaryContent
 from typing_extensions import Buffer
+
+from pydantic_ai.messages import BinaryContent
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_PENDING_BYTES = 32 * 1024 * 1024

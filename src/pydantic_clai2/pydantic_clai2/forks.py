@@ -21,12 +21,14 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Generic, Literal, TypeVar
 
+import anyio
 from anyio import move_on_after
-from pydantic_ai import AgentStreamEvent, PartStartEvent, TextPart
-from pydantic_ai.messages import ModelMessage
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+
+from pydantic_ai import AgentStreamEvent, PartStartEvent, TextPart
+from pydantic_ai.messages import ModelMessage
 
 from . import theme
 from ._rendering import StreamRenderer
@@ -128,7 +130,7 @@ class Forks(Generic[DepsT, OutputT]):
         self._busy = 0
         self._idle = asyncio.Event()
         self._idle.set()
-        self._terminal = asyncio.Lock()
+        self._terminal = anyio.Lock(fast_acquire=True)
         self._held: list[tuple[str, str]] = []
 
     @property
@@ -240,7 +242,7 @@ class Forks(Generic[DepsT, OutputT]):
         # Deep copy, so nothing the fork does to its messages can reach the foreground history.
         try:
             return copy.deepcopy(list(self._history()))
-        except Exception:  # noqa: BLE001 -- a failed copy must not block the fork.
+        except Exception:
             self.console.print(
                 "/fork couldn't copy the current conversation. Forking with a fresh context.",
                 style=theme.color(theme.WARNING),
@@ -256,7 +258,7 @@ class Forks(Generic[DepsT, OutputT]):
             with move_on_after(5, shield=True):
                 await self._fire(TurnEnd(text=prompt, outcome='cancelled'))
             raise
-        except Exception as exc:  # noqa: BLE001 -- a failed fork reports and never reaches the shell.
+        except Exception as exc:
             record = self._finish(fork_id, 'failed', session)
             first_line = (error_message(exc).strip().splitlines() or [''])[0]
             self._notify(

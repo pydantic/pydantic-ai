@@ -10,7 +10,6 @@ import os
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai.models import Model
-
 from pydantic_ai_harness import SubAgent, SubAgents, ToolOutputLimits
 
 DEFAULT_MODEL = os.environ.get('PYDANTIC_AI_MODEL', 'openai:gpt-5.6-sol')

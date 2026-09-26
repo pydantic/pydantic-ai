@@ -6,15 +6,15 @@ from pathlib import Path
 
 import anyio
 import pytest
+from rich.console import Console
+from rich.text import Text
+from test_live_prompt import editor
+
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-from rich.text import Text
-from test_live_prompt import editor
-
 from pydantic_clai2._app import create_shell
 from pydantic_clai2._session import Session
 from pydantic_clai2.live_prompt import LivePrompt

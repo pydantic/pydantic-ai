@@ -10,6 +10,7 @@ from typing import Generic, Literal, TypeVar
 from uuid import uuid4
 
 from anyio import get_cancelled_exc_class, move_on_after
+
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
@@ -209,7 +210,7 @@ class Session(Generic[DepsT, OutputT]):
                     try:
                         with move_on_after(5, shield=True):
                             await self._save_turn(outcome='cancelled')
-                    except Exception as exc:  # noqa: BLE001 -- persistence failure must not swallow cancellation.
+                    except Exception as exc:
                         if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
                             cancelled.add_note(f'Could not save cancelled turn: {exc}')
                         logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)

@@ -8,7 +8,6 @@ from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, ShellToolset
 
 _DEFAULT_DENIED_COMMANDS: tuple[str, ...] = (

@@ -14,9 +14,9 @@ import httpx
 import pytest
 from menu_script import make_context
 from pydantic import SecretStr, TypeAdapter
-from pydantic_ai.exceptions import UserError
 from rich.console import Console
 
+from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
 

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import anyio
 import pytest
 import sniffio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
@@ -23,7 +24,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._policy import is_interactive_command
@@ -751,7 +751,7 @@ class TestRunCommand:
         assert 'exit code' not in result
 
     async def test_error_message_content(self, shell_dir: Path) -> None:
-        with pytest.raises(ValueError, match='^Specify allowed_commands or denied_commands, not both\\.$'):
+        with pytest.raises(ValueError, match=r'^Specify allowed_commands or denied_commands, not both\.$'):
             ShellToolset(
                 cwd=shell_dir,
                 allowed_commands=['echo'],
@@ -766,7 +766,7 @@ class TestRunCommand:
     def test_non_positive_max_output_chars_rejected(self, shell_dir: Path) -> None:
         # Matches LocalStackToolset: a cap of 0 would blank every response,
         # including start_command's ID line, leaving its process unstoppable.
-        with pytest.raises(ValueError, match='max_output_chars must be a positive integer.'):
+        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer.'):
             _shell_toolset(shell_dir, max_output_chars=0)
 
     async def test_stdout_chunks_joined_cleanly(self, shell_dir: Path) -> None:

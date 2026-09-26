@@ -10,7 +10,6 @@ from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ToolCallPart
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
     compact_with_span,

@@ -7,6 +7,9 @@ from pathlib import Path
 import anyio
 import pytest
 from pydantic import ValidationError
+from rich.console import Console
+from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
+
 from pydantic_ai import (
     Agent,
     CapabilityEvent,
@@ -23,9 +26,6 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
-
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.commands import Command, Commands, config_command, config_completions, plugins_command
 from pydantic_clai2.settings_store import SettingsStore

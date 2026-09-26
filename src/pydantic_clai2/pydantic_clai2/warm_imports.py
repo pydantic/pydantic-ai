@@ -33,5 +33,5 @@ def _import_all(modules: tuple[str, ...]) -> None:
     for name in modules:
         try:
             importlib.import_module(name)
-        except Exception:  # noqa: BLE001 -- warming is an optimization; the importing caller reports the error.
+        except Exception:
             logging.getLogger(__name__).debug('Could not warm %s', name, exc_info=True)

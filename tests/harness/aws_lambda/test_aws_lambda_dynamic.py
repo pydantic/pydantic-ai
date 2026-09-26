@@ -26,7 +26,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset  # pyright: ignore[reportPrivateUsage]
-
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
 
 from .conftest import FakeDurableContext

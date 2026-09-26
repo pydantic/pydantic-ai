@@ -31,10 +31,10 @@ from typing import Protocol
 
 import anyio
 from acp import Client, schema
+
 from pydantic_ai.capabilities import Toolset
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-
 from pydantic_ai_harness.experimental.acp._session import AcpSession
 from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
 

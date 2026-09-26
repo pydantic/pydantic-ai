@@ -10,6 +10,9 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, ConfigDict, Field, GetCoreSchemaHandler
+from pydantic_core import core_schema
+from pydantic_monty import AsyncMonty
+
 from pydantic_ai import Agent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -26,9 +29,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_core import core_schema
-from pydantic_monty import AsyncMonty
-
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.dynamic_workflow import (

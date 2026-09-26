@@ -8,7 +8,6 @@ from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import HistorySource
 from pydantic_ai_harness.conversation_search._toolset import (

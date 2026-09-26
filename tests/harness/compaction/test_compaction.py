@@ -10,6 +10,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
+
+import pydantic_ai_harness
+import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError
@@ -24,6 +27,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelResponse as _MR,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -32,6 +36,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
+    TextPart as _TP,
     TextPartDelta,
     ThinkingPart,
     ToolCallPart,
@@ -41,8 +46,6 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.messages import ModelResponse as _MR
-from pydantic_ai.messages import TextPart as _TP
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -52,9 +55,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-
-import pydantic_ai_harness
-import pydantic_ai_harness.compaction as compaction
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,

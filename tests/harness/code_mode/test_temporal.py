@@ -32,11 +32,6 @@ from typing import Any
 import pytest
 
 try:
-    from pydantic_ai.durable_exec.temporal import (
-        AgentPlugin,
-        PydanticAIPlugin,
-        TemporalDurability,
-    )
     from temporalio import workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
@@ -48,6 +43,12 @@ try:
         SandboxRestrictions,
     )
     from temporalio.workflow import ActivityConfig
+
+    from pydantic_ai.durable_exec.temporal import (
+        AgentPlugin,
+        PydanticAIPlugin,
+        TemporalDurability,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
@@ -55,7 +56,6 @@ from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
-
 from pydantic_ai_harness import CodeMode
 from tests.code_mode.conftest import websocket_relay_server  # pyright: ignore[reportMissingTypeStubs]
 

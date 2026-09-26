@@ -12,6 +12,11 @@ import pytest
 from cassetter import use_cassette
 from keyring.errors import NoKeyringError
 from menu_script import Script, make_context, pick, typed
+from rich.console import Console
+from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from test_app_edges import inputs
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
@@ -20,11 +25,6 @@ from pydantic_ai.providers.github_copilot import (
     GitHubCopilotDeviceAuthorization,
     GitHubCopilotOAuthFlow,
 )
-from rich.console import Console
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from test_app_edges import inputs
-
 from pydantic_clai2 import chat, github_copilot
 from pydantic_clai2.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.model_catalog import github_copilot_models
@@ -303,5 +303,5 @@ async def test_discovery_http_failure(monkeypatch: pytest.MonkeyPatch, status: i
 @pytest.mark.parametrize('body', ['{"data": []}', '{"data": [{"id": "responses-only"}]}', '{"bad": true}'])
 async def test_unusable_discovery(monkeypatch: pytest.MonkeyPatch, body: str) -> None:
     monkeypatch.setenv('GITHUB_COPILOT_API_KEY', 'test-token')
-    with pytest.raises(UserError, match='no Chat Completions models|invalid model list'):
+    with pytest.raises(UserError, match=r'no Chat Completions models|invalid model list'):
         await github_copilot.discover(transport=httpx2.MockTransport(lambda request: httpx2.Response(200, text=body)))

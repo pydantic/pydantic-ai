@@ -5,12 +5,12 @@ from pathlib import Path
 
 import anyio
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-
 from pydantic_clai2 import _cli, headless
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.project_settings import ProjectSettings

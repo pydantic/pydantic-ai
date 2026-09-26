@@ -6,6 +6,7 @@ import base64
 from collections.abc import Sequence
 
 from acp import schema
+
 from pydantic_ai.messages import BinaryContent, ImageUrl, UserContent
 
 # The content block variants ACP may send in a `session/prompt` request.

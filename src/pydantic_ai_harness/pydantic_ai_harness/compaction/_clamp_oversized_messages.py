@@ -16,7 +16,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.compaction._shared import compact_with_span, context_for_request, estimate_text_tokens
 
 if TYPE_CHECKING:

@@ -12,6 +12,7 @@ from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
@@ -20,7 +21,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.

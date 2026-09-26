@@ -12,16 +12,15 @@ from urllib.parse import urlsplit
 
 import anyio
 from pydantic import BaseModel, ValidationError
+
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-
 from pydantic_ai_harness.browser_use._model import resolve_chat_model
 from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 
 try:
-    from browser_use import Agent as _BrowserUseAgent
-    from browser_use import Tools
+    from browser_use import Agent as _BrowserUseAgent, Tools
     from browser_use.browser import BrowserProfile, BrowserSession
     from browser_use.llm.base import BaseChatModel
 except ImportError as _import_error:  # pragma: no cover
@@ -456,8 +455,8 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         self._active_call_sessions = 0
         self._call_cleanup_in_progress = False
         self._call_condition = asyncio.Condition()
-        self._cleanup_lock = asyncio.Lock()
-        self._session_lock = asyncio.Lock()
+        self._cleanup_lock = anyio.Lock(fast_acquire=True)
+        self._session_lock = anyio.Lock(fast_acquire=True)
         self.add_function(self.browse_web, name=_TOOL_NAME)
 
     def _build_session(self) -> BrowserSession:

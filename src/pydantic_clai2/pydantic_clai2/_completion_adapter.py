@@ -5,8 +5,10 @@ from collections.abc import Iterable
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.styles import DynamicStyle, Style
-from termflow.tui.completion import CompleteEvent as TermflowEvent  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.completion import Document as TermflowDocument  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import (
+    CompleteEvent as TermflowEvent,  # pyright: ignore[reportMissingTypeStubs]
+    Document as TermflowDocument,  # pyright: ignore[reportMissingTypeStubs]
+)
 
 from . import theme
 from .commands import Commands

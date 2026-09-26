@@ -13,10 +13,10 @@ import anyio
 import pytest
 from anyio.abc import SocketAttribute, SocketStream
 from anyio.to_thread import run_sync
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.shell import (
     MAX_FOREGROUND_WAIT,
     RUN_SCOPED_TOOL_NAMES,

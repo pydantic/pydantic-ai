@@ -39,18 +39,6 @@ packages = ['src/pydantic_clai2']
 [tool.uv.sources]
 pydantic-ai-harness = { workspace = true }
 
-[tool.ruff]
-extend = '../pyproject.toml'
-
-[tool.ruff.lint]
-extend-select = ['BLE001']
-
-[tool.ruff.lint.per-file-ignores]
-'**/tests/**/*.py' = ['D']
-'src/pydantic_clai2/__init__.py' = ['PLC0415']
-'src/pydantic_clai2/__main__.py' = ['PLC0415']
-'src/pydantic_clai2/plugin_loader.py' = ['S102']  # Executes explicitly trusted plugin source.
-
 [tool.coverage.run]
 branch = true
 patch = ['subprocess']

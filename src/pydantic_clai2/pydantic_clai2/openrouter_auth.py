@@ -15,8 +15,9 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 from anyio import fail_after
 from pydantic import BaseModel, Field, SecretStr, ValidationError
-from pydantic_ai.exceptions import UserError
 from rich.console import Console
+
+from pydantic_ai.exceptions import UserError
 
 from . import theme
 from .auth import ReadLine, read_line

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
@@ -28,7 +29,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import UsageLimits
-
 from pydantic_ai_harness.subagents import SubAgent, SubAgents, SubAgentToolset
 
 

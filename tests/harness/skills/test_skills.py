@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import leaf_capabilities
@@ -13,7 +14,6 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart, LoadCapabilityReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-
 from pydantic_ai_harness.skills import Skills
 
 pytestmark = pytest.mark.anyio
@@ -466,7 +466,7 @@ class TestSkillValidation:
         library = tmp_path / 'skills'
         _write_skill(library, 'alpha')
 
-        with pytest.raises(ValueError, match='points to a skill package.*Pass its parent directory'):
+        with pytest.raises(ValueError, match=r'points to a skill package.*Pass its parent directory'):
             Skills(library / 'alpha')
 
     def test_missing_root_is_rejected(self, tmp_path: Path) -> None:

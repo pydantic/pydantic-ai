@@ -12,7 +12,6 @@ from collections.abc import AsyncIterator
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
-
 from pydantic_ai_harness.experimental.acp import (
     AcpSession,
     AcpSessionConfig,

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -26,7 +27,6 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
-
 from pydantic_ai_harness.planning import Planning
 from pydantic_ai_harness.system_reminders import (
     DynamicReminder,

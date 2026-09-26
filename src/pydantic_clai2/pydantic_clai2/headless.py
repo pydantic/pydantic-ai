@@ -5,8 +5,9 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from anyio import CancelScope
-from pydantic_ai.usage import UsageLimits
 from rich.console import Console
+
+from pydantic_ai.usage import UsageLimits
 
 from ._app import DEFAULT_PLUGINS, create_agent, create_shell
 from .config import Settings
@@ -31,7 +32,7 @@ async def run_headless(
     if settings.model is None:
         raise ValueError('Choose a model with -m PROVIDER:NAME')
     reason: SessionEndReason = 'error'
-    with open(os.devnull, 'w') as sink:
+    with open(os.devnull, 'w', encoding='utf-8') as sink:
         shell = create_shell(
             agent,
             deps=None,
@@ -67,7 +68,7 @@ async def run_headless(
                     assert ended.result is not None
                     answer = str(ended.result.output)
                     reason = 'exit'
-                except Exception as exc:  # noqa: BLE001 -- CLI boundary, stdout must remain answer-only.
+                except Exception as exc:
                     Console(stderr=True).print(error_message(exc), markup=False, highlight=False)
                     return 1
                 finally:

@@ -14,6 +14,7 @@ from anyio import to_thread
 from fastmcp.client.auth import OAuth
 from keyring.errors import KeyringError
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
+
 from pydantic_ai.exceptions import UserError
 
 from ..credential_store import delete_credentials, load_codex_credentials, save_codex_credentials

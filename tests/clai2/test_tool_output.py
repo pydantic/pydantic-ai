@@ -3,13 +3,13 @@
 import io
 
 import pytest
+from rich.console import Console
+from rich.text import Text
+
 from pydantic_ai import FunctionToolCallEvent
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.filesystem import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from rich.console import Console
-from rich.text import Text
-
 from pydantic_clai2 import StreamRenderer
 
 

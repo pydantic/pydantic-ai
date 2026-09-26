@@ -6,9 +6,11 @@ import functools
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Concatenate, Literal, ParamSpec, Protocol, TypedDict, TypeVar
+from typing import Concatenate, Literal, ParamSpec, Protocol, TypeVar
 
 import httpx
+from typing_extensions import TypedDict
+
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT

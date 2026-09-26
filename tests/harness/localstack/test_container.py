@@ -276,13 +276,13 @@ class TestLifecycle:
         port = unused_tcp_port()
         # startup_timeout also bounds `docker run` (the stub subprocess); keep it well
         # above subprocess-spawn time so the readiness poll, not the launch, times out.
-        with pytest.raises(LocalStackError, match='did not become ready within 1.0s'):
+        with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
             async with LocalStackContainer(docker_path=docker, host_port=port, startup_timeout=1.0, poll_interval=0.01):
                 pass  # pragma: no cover
         assert 'stop container-abc123' in log.read_text()
 
     async def test_docker_not_found(self) -> None:
-        with pytest.raises(LocalStackError, match='Docker CLI .* not found'):
+        with pytest.raises(LocalStackError, match=r'Docker CLI .* not found'):
             async with LocalStackContainer(docker_path='/no/such/docker'):
                 pass  # pragma: no cover
 
@@ -292,14 +292,14 @@ class TestLifecycle:
                 pass  # pragma: no cover
 
     async def test_start_timeout_when_docker_hangs(self, tmp_path: Path) -> None:
-        with pytest.raises(LocalStackError, match='Docker did not start the LocalStack container within 0.05s'):
+        with pytest.raises(LocalStackError, match=r'Docker did not start the LocalStack container within 0.05s'):
             async with LocalStackContainer(docker_path=_hanging_docker_stub(tmp_path), startup_timeout=0.05):
                 pass  # pragma: no cover
 
     async def test_stop_timeout_raises_and_keeps_container_id(self, tmp_path: Path) -> None:
         container = LocalStackContainer(docker_path=_hanging_docker_stub(tmp_path), startup_timeout=0.05)
         container._container_id = 'stuck'
-        with pytest.raises(LocalStackError, match='did not stop the LocalStack container stuck within 0.05s'):
+        with pytest.raises(LocalStackError, match=r'did not stop the LocalStack container stuck within 0.05s'):
             await container.__aexit__(None, None, None)
         assert container.container_id == 'stuck'
 
@@ -318,13 +318,13 @@ class TestLifecycle:
     async def test_stop_missing_docker_raises_and_keeps_container_id(self, tmp_path: Path) -> None:
         container = LocalStackContainer(docker_path='/no/such/docker')
         container._container_id = 'orphan'
-        with pytest.raises(LocalStackError, match='Docker CLI .* not found while stopping'):
+        with pytest.raises(LocalStackError, match=r'Docker CLI .* not found while stopping'):
             await container.__aexit__(None, None, None)
         assert container.container_id == 'orphan'
 
     async def test_readiness_failure_raises_original_error_even_if_stop_fails(self, tmp_path: Path) -> None:
         docker = _stop_failing_docker_stub(tmp_path)
         port = unused_tcp_port()
-        with pytest.raises(LocalStackError, match='did not become ready within 1.0s'):
+        with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
             async with LocalStackContainer(docker_path=docker, host_port=port, startup_timeout=1.0, poll_interval=0.01):
                 pass  # pragma: no cover

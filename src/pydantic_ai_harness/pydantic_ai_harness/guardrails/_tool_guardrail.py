@@ -31,6 +31,8 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeGuard, cast
 
+from typing_extensions import assert_never
+
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapRunHandler
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -42,8 +44,6 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
-from typing_extensions import assert_never
-
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
     evaluate,

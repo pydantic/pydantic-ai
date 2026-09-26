@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from typing import TypeAlias, TypeVar, overload
 
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,

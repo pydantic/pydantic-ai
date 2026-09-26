@@ -4,13 +4,13 @@ from pathlib import Path
 import json_repair
 import pytest
 from logfire.testing import CaptureLogfire
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments

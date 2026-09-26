@@ -10,7 +10,6 @@ from typing import Any
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FilteredToolset
-
 from pydantic_ai_harness.filesystem._toolset import DEFAULT_TOOL_NAMES, READ_ONLY_TOOL_NAMES, FileSystemToolset
 
 _DEFAULT_PROTECTED: list[str] = [

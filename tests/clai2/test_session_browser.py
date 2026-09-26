@@ -5,11 +5,11 @@ from datetime import datetime, timedelta, timezone
 from io import StringIO
 
 import pytest
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.keys import Key  # pyright: ignore[reportMissingTypeStubs]
 
 import pydantic_clai2.session_browser as module
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.session_browser import SessionBrowser, date_label, plain
 
 

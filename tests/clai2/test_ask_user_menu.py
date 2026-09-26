@@ -9,6 +9,10 @@ from threading import Event
 import anyio
 import pytest
 from prompt_toolkit.input import PipeInput, create_pipe_input
+from rich.cells import cell_len
+from rich.console import Console
+from rich.text import Text
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -23,10 +27,6 @@ from pydantic_ai_harness.ask_user import (
     Question,
     QuestionOption,
 )
-from rich.cells import cell_len
-from rich.console import Console
-from rich.text import Text
-
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.ask_user_menu import QuestionMenu, TerminalAnswerer, activate, render_answer
 from pydantic_clai2.menu_worker import menu_key

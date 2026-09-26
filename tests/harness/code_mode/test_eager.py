@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
 import pytest
+
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry
@@ -31,7 +32,6 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 from .._recording_durability import RecordingDurability

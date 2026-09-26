@@ -3,9 +3,9 @@
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
-
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent
 
 from .test_tools import call

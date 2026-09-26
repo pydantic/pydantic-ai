@@ -380,7 +380,7 @@ def edit_in_editor(initial: str) -> str | None:
         print('\x1b[2J\x1b[H', end='', flush=True, file=sys.__stdout__)
         if subprocess.call([*editor, name]) != 0:
             return None
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
     except (OSError, ValueError):  # ValueError: an unparsable $EDITOR; the one-line input takes over.
         return None
     finally:

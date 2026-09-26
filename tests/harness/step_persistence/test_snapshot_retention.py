@@ -14,6 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -24,7 +25,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,

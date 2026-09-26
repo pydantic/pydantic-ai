@@ -6,6 +6,8 @@ from typing import get_args
 
 import pytest
 from pydantic import BaseModel, JsonValue, ValidationError
+from rich.console import Console
+
 from pydantic_ai import (
     Agent,
     CapabilityEvent,
@@ -17,8 +19,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import Capability, Hooks, ValidatedToolArgs
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import CoreHookName, PluginHost, SessionEnd, SessionStart, Transcript, TurnEnd, TurnStart

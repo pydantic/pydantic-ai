@@ -17,6 +17,7 @@ from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.exceptions import ExecutionError
 from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._run_context import get_current_run_context  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -37,7 +38,6 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.toolsets.external import ExternalToolset
-
 from pydantic_ai_harness.aws_lambda import (
     AWSLambdaDurability,
     _bridge,  # pyright: ignore[reportPrivateUsage]
@@ -173,7 +173,7 @@ class TestDurableAgentHandler:
         sdk_wrapped = durable_execution(handler)
         with pytest.raises(
             UserError,
-            match='`@durable_execution` must be the outermost decorator.*synchronous handler should call `run_durable`',
+            match=r'`@durable_execution` must be the outermost decorator.*synchronous handler should call `run_durable`',
         ):
             durable_agent_handler(sdk_wrapped)  # pyright: ignore[reportCallIssue, reportArgumentType]
 
@@ -482,7 +482,7 @@ class TestStepConfig:
         agent = Agent(tool_then_text(), name='a', toolsets=[toolset], capabilities=[AWSLambdaDurability()])
         ctx = FakeDurableContext()
 
-        with pytest.raises(UserError, match='expected a dict .* or `False`, got str'):
+        with pytest.raises(UserError, match=r'expected a dict .* or `False`, got str'):
             run_durable(lambda: agent.run('go'), context=ctx)
 
 

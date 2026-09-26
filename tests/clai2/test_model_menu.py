@@ -5,13 +5,13 @@ from pathlib import Path
 import pytest
 from menu_script import Script, make_context, pick, typed
 from pydantic import JsonValue, ValidationError
+from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-
 from pydantic_clai2 import Session
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.config import Settings
@@ -224,7 +224,7 @@ async def test_saved_model_picker_and_completion(tmp_path: Path) -> None:
     assert await model_command(context, [], runners=script.runners) == 'Saved model. Applied.'
     assert context.settings.model == 'test' and applied == ['model']
     assert await model_command(context, [original]) == 'Saved model. Applied.'
-    with pytest.raises(ValueError, match='Model not added: unknown. Use /add_model'):
+    with pytest.raises(ValueError, match=r'Model not added: unknown. Use /add_model'):
         await model_command(context, ['unknown'])
     with pytest.raises(ValueError, match='Usage: /model'):
         await model_command(context, ['test', 'extra'])

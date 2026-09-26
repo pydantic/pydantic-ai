@@ -30,7 +30,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     SystemPromptPart,
 )
-
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord
 
 SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'

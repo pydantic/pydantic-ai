@@ -279,6 +279,8 @@ include = [
     "pydantic_graph/**/*.py",
     "examples/**/*.py",
     "clai/**/*.py",
+    "src/pydantic_ai_harness/**/*.py",
+    "src/pydantic_clai2/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
@@ -336,7 +338,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph"]
+known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydantic_ai_harness", "pydantic_clai2"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

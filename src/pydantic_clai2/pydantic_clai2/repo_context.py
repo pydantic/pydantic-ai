@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
 from pydantic_ai_harness.repo_context import RepoContext
 
 from .plugins import DepsT, PluginHost

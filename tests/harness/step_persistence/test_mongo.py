@@ -14,6 +14,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from mongomock_motor import AsyncMongoMockClient
+from pymongo import AsyncMongoClient
+
+import pydantic_ai_harness.step_persistence as sp
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
@@ -25,9 +28,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pymongo import AsyncMongoClient
-
-import pydantic_ai_harness.step_persistence as sp
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import MongoMediaStore
 from pydantic_ai_harness.step_persistence import (

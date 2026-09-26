@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, TypeAlias, runtime_checkable
 
 from pydantic import Field, TypeAdapter
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError

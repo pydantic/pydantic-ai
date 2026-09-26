@@ -13,6 +13,7 @@ from __future__ import annotations
 import warnings
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart
@@ -22,7 +23,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
-
 from pydantic_ai_harness.warn_on_cache_busts import (
     CacheBustWarning,
     WarnOnCacheBusts,

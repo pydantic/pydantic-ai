@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import ApprovalRequired, UserError
@@ -41,7 +42,6 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.code_mode import (
     CodeMode,
     CodeModeToolset,

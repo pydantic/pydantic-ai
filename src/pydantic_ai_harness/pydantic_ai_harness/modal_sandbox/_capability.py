@@ -9,17 +9,10 @@ from dataclasses import dataclass
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness.modal_sandbox._session import (
     DEFAULT_APP_NAME as _DEFAULT_APP_NAME,
-)
-from pydantic_ai_harness.modal_sandbox._session import (
     DEFAULT_IMAGE as _DEFAULT_IMAGE,
-)
-from pydantic_ai_harness.modal_sandbox._session import (
     DEFAULT_SANDBOX_TIMEOUT as _DEFAULT_SANDBOX_TIMEOUT,
-)
-from pydantic_ai_harness.modal_sandbox._session import (
     ModalSandboxSession,
 )
 from pydantic_ai_harness.modal_sandbox._tool_output import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES

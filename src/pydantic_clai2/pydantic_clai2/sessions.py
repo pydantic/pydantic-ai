@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import Awaitable, Coroutine
 from typing import Generic, TypeVar
 
+from rich.console import Console
+
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
@@ -12,7 +14,6 @@ from pydantic_ai_harness.step_persistence.conversations import (
 )
 from pydantic_ai_harness.step_persistence.naming import NamingResult, SessionNamer, generate_name
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
-from rich.console import Console
 
 from ._session import Session
 from .command_context import CommandContext

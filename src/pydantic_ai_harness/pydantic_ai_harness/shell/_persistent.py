@@ -25,9 +25,9 @@ from typing import Generic, Literal
 import anyio
 from anyio.to_thread import run_sync
 from pydantic import BaseModel
+
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 
 MAX_FOREGROUND_WAIT: float = 270.0
@@ -103,7 +103,9 @@ class _CommandOutput(Generic[AgentDepsT]):
         tail = self.decoder.decode(b'', final=True)
         if tail:
             await self.ctx.emit(CommandOutputEvent(text=tail))
-        status = CommandStatus.model_validate_json(status_path.read_text()) if status_path.exists() else None
+        status = (
+            CommandStatus.model_validate_json(status_path.read_text(encoding='utf-8')) if status_path.exists() else None
+        )
         await self.ctx.emit(
             CommandFinishedEvent(
                 pid=pid,
@@ -117,7 +119,7 @@ class _CommandOutput(Generic[AgentDepsT]):
 
 
 def _finished(status_path: Path) -> bool:
-    return status_path.exists() and json.loads(status_path.read_text())['exit_code'] is not None
+    return status_path.exists() and json.loads(status_path.read_text(encoding='utf-8'))['exit_code'] is not None
 
 
 def _kill_session(process: subprocess.Popen[bytes]) -> None:

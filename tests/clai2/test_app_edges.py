@@ -10,15 +10,15 @@ from typing import Generic, TypeVar
 import pytest
 from menu_script import Script, pick, typed
 from prompt_toolkit.styles import BaseStyle
-from pydantic_ai import Agent, ModelRequestContext, RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models.test import TestModel
 from rich.color import Color
 from rich.console import Console
 from rich.text import Text
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import api_keys, chat, key_menu, theme
 from pydantic_clai2.auth import CodexAuth
 from pydantic_clai2.command_context import CommandContext

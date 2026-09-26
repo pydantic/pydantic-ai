@@ -9,6 +9,8 @@ from anyio import fail_after
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from pydantic import TypeAdapter, ValidationError
+from rich.console import Console
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai_codex import OpenAICodexModel
 from pydantic_ai.providers.openai_codex import (
@@ -17,7 +19,6 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexOAuthFlow,
     OpenAICodexProvider,
 )
-from rich.console import Console
 
 from . import github_copilot, theme
 from .credential_store import credentials_path, load_codex_credentials, save_codex_credentials

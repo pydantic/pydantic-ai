@@ -9,13 +9,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.capability_creation import (
     CapabilityCreation,
     CapabilityCreationToolset,

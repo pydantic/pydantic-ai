@@ -9,9 +9,10 @@ Monty stays out of startup.
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from rich.console import Console
+
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.tools import AgentDepsT
-from rich.console import Console
 
 from . import theme
 from .command_context import CommandContext
@@ -92,7 +93,7 @@ class Speculation:
         if not self.enabled:
             return []
         try:
-            from .speculative_mode import speculative_capabilities  # noqa: PLC0415 -- keep Monty out of startup.
+            from .speculative_mode import speculative_capabilities
         except ImportError as exc:
             self.console.print(
                 f'Speculative execution is unavailable: {exc}', style=theme.color(theme.WARNING), markup=False

@@ -20,7 +20,6 @@ import warnings
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks, WrapperCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.spend._exceptions import SpendCompositionWarning
 
 

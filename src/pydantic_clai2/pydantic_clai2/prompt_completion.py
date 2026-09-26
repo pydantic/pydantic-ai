@@ -89,7 +89,7 @@ class CompletionWorker:
             except StopIteration as exc:
                 result = RuntimeError('Completion operation raised StopIteration')
                 result.__cause__ = exc
-            except BaseException as exc:  # noqa: BLE001 -- propagate provider failures to the owning loop.
+            except BaseException as exc:
                 result = exc
             if self._closed.is_set():
                 return

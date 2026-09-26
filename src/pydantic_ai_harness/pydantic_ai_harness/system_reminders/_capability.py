@@ -24,7 +24,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent

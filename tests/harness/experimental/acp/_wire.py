@@ -22,7 +22,6 @@ from types import TracebackType
 
 import acp
 from acp.client.connection import ClientSideConnection
-
 from tests.experimental.acp._acp_clients import RecordingClientBase  # pyright: ignore[reportMissingTypeStubs]
 
 

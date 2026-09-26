@@ -4,13 +4,13 @@ from typing import Literal
 
 import pytest
 from pydantic import BaseModel
+
 from pydantic_ai import AdvisorTool, Agent, NativeOutput, ToolOutput
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.profiles import ModelProfile
-
 from pydantic_ai_harness.advisor import Advisor
 
 pytestmark = pytest.mark.anyio

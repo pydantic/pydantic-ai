@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import AbstractModel
@@ -15,7 +16,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
-
 from pydantic_ai_harness.subagents import (
     MINIMUM_EFFORT_FLOOR,
     AgentOverride,

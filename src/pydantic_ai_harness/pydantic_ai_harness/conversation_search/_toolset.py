@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from typing_extensions import assert_never
+
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     ModelMessage,
@@ -34,8 +36,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from typing_extensions import assert_never
-
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource
 

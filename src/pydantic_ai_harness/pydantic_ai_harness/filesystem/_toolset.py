@@ -14,12 +14,13 @@ import stat
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
-from typing import BinaryIO, Concatenate, ParamSpec, TypedDict
+from typing import BinaryIO, Concatenate, ParamSpec
+
+from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-
 from pydantic_ai_harness.filesystem._changes import Change
 from pydantic_ai_harness.filesystem._events import (
     MAX_DIFF_SOURCE_CHARS,
