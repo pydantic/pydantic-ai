@@ -14,6 +14,7 @@ import anyio
 from pydantic_ai.exceptions import UserError
 
 from .protocol import (
+    CommandResult,
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
@@ -213,23 +214,53 @@ class _ShellFilesystem(SupportsFilesystem):
         # Do not pipe `find` into `base64`: a POSIX shell reports only `base64`'s exit status and
         # could turn a failed traversal into a successful partial listing. The temporary file keeps
         # `find`'s status authoritative, and the trap removes it on every shell exit path.
+        paged = False
+        completed = False
         try:
-            return await self._backend.run(
+            result = await self._backend.run(
                 f'file={temporary_path}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
                 f'if ! test -d {quoted_path}; then '
                 f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
                 f'find -H {quoted_path} -mindepth 1 -maxdepth 1{mark} > "$file" '
-                '&& wc -c < "$file" && base64 < "$file"',
+                f'&& size=$(wc -c < "$file") && printf "%s\\n" "$size" && '
+                f'if [ "$size" -le {_SHELL_READ_CHUNK_BYTES} ]; then base64 < "$file"; '
+                'else printf "PAGED\\n"; trap - EXIT HUP INT TERM; fi',
                 shell=True,
             )
-        except BaseException:
-            # A cancelled command may be killed before its EXIT trap runs; clean up separately.
+            size, separator, encoded = result.stdout.partition('\n')
+            if result.exit_code != 0 or not separator or encoded.strip() != 'PAGED':
+                completed = True
+                return result
+            paged = True
+            if not size.strip().isdigit():
+                raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {quoted_path!r}')
+            length = int(size)
+            listing = bytearray()
+            # Each remote command is below the command-output cap, even for a huge directory.
+            for index in range((length + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
+                chunk_result = await self._backend.run(
+                    f'dd if={temporary_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
+                    shell=True,
+                )
+                await self._raise_for_error(chunk_result, quoted_path)
+                try:
+                    chunk = base64.b64decode(chunk_result.stdout)
+                except ValueError as error:
+                    raise WorkspaceError('shell filesystem returned invalid base64 while listing') from error
+                if len(chunk) != min(_SHELL_READ_CHUNK_BYTES, length - len(listing)):
+                    raise WorkspaceError('shell filesystem returned incomplete output while listing')
+                listing.extend(chunk)
+            completed = True
+            return CommandResult(exit_code=0, stdout=f'{size}\n{base64.b64encode(listing).decode()}', stderr='')
+        finally:
+            # A cancelled command may be killed before its EXIT trap runs. Paged listings also
+            # keep the file alive across commands; shield only the bounded cleanup.
             with anyio.move_on_after(_SHELL_CLEANUP_TIMEOUT, shield=True):
                 try:
-                    await self._backend.run(f'rm -f {temporary_path}', shell=True)
+                    if paged or not completed:
+                        await self._backend.run(f'rm -f {temporary_path}', shell=True)
                 except Exception:
                     pass
-            raise
 
     async def make_dir(self, path: str) -> None:
         quoted_path = shlex.quote(path)

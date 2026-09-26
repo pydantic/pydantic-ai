@@ -50,6 +50,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
     WrapperWorkspace,
+    local as local_module,
 )
 
 from .workspace_fakes import (
@@ -192,6 +193,14 @@ async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
 
     with pytest.raises(WorkspaceError, match='invalid real path'):
         await workspace.realpath('x')
+
+
+async def test_shell_listing_larger_than_command_output_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for index in range(600):
+        (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
+    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 120 * 1024)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    assert len(await workspace.list_dir('.')) == 600
 
 
 async def test_shell_listing_uses_configured_temporary_directory(tmp_path: Path) -> None:
