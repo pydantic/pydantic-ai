@@ -10,6 +10,13 @@ def test_host_backend_serializes_first_use() -> None:
     assert 'async with self._lock:' in example
 
 
+def test_host_backend_rejects_untrusted_ref_id() -> None:
+    page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
+    example = page.split('```python {title="host_workspace.py"}', 1)[1].split('```', 1)[0]
+    assert 're.fullmatch(r"[0-9a-f]{32}", self._ref.id)' in example
+    assert 'ref ids can come from' in page.lower()
+
+
 def test_no_unavailable_no_file_access_recipe() -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
     assert "no_files = UnavailableWorkspace(reason='This run has no file access.')" not in page

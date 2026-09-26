@@ -377,6 +377,7 @@ the user. This separates where users start; like `LocalWorkspace`, it isolates n
 
 - With `ref=None`, return the backend for a new or default environment.
 - With a `ref` you recognize, return a backend that attaches to it. Return `None` for any other.
+  Ref ids can come from stored or untrusted history: validate them before using them as paths or identifiers.
 - To apply a policy, return a `Workspace` around the backend, such as
   `ReadOnlyWorkspace(Workspace(backend))`.
 - Don't do I/O or keep state in `get_workspace`: it can be called more than once per run. Connect on
@@ -416,6 +417,7 @@ resolved, so a root-directory check such as the harness `FileSystem`'s is textua
 This backend gives each environment its own directory under `base_dir`:
 
 ```python {title="host_workspace.py"}
+import re
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
@@ -453,6 +455,9 @@ class HostWorkspaceBackend(WorkspaceBackend):
                     await directory.mkdir()
                     self._ref = WorkspaceRef(provider='host', id=directory.name)
                 else:
+                    # History can be untrusted; never let its id escape base_dir.
+                    if self._ref.provider != 'host' or not re.fullmatch(r"[0-9a-f]{32}", self._ref.id):
+                        raise WorkspaceUnavailableError('invalid host workspace reference')
                     # A reference: attach to the environment it names, or fail. Never create a replacement.
                     directory = anyio.Path(self._base_dir / self._ref.id)
                     if not await directory.is_dir():
