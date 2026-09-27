@@ -15,25 +15,23 @@ from datetime import timedelta
 from importlib.machinery import ModuleSpec
 from typing import Any
 
+import anyio
 import pytest
-from pydantic.errors import PydanticUserError
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.exceptions import AgentRunError, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Workspace,
-    WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.unavailable import UnavailableWorkspace
-from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from ...workspace_fakes import InMemoryProvider
 from ..workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
@@ -41,13 +39,15 @@ from ..workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scena
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
+    from temporalio.api.enums.v1 import EventType
+    from temporalio.api.failure.v1 import Failure
+    from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError, WorkflowHandle, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
-    from pydantic_ai.durable_exec._workspace import ReraisedWorkspaceCallError, WorkspaceCall
+    from pydantic_ai.durable_exec._workspace import WorkspaceCall
     from pydantic_ai.durable_exec.prefect import PrefectDurability
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -140,18 +140,6 @@ def test_workspace_failures_do_not_retry_temporal_activities() -> None:
     )
 
 
-def test_workspaces_add_no_builtins_to_workflow_failure_types() -> None:
-    """A builtin raised by a workflow's own code still fails only the workflow task, as without workspaces."""
-    assert PydanticAIPlugin().workflow_failure_exception_types == [
-        UserError,
-        PydanticUserError,
-        AgentRunError,
-        UnsupportedEventLoopError,
-        WorkspaceError,
-        ReraisedWorkspaceCallError,
-    ]
-
-
 def test_unattached_workspace_does_not_serialize_an_unavailable_reason() -> None:
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     assert 'workspace_unavailable_reason' not in TemporalRunContext.serialize_run_context(ctx)
@@ -205,7 +193,7 @@ async def _execute(client: Client, name: str, arg: str | None = None) -> tuple[A
         return output, await handle.fetch_history()
 
 
-@pytest.mark.parametrize('check', cases())
+@pytest.mark.parametrize('check', [case for case in cases() if case.id != 'uncaught'])
 async def test_workspace_scenario(client: Client, check: Check) -> None:
     provider.reset()
 
@@ -213,6 +201,37 @@ async def test_workspace_scenario(client: Client, check: Check) -> None:
         return (await _execute(client, name, arg))[0]
 
     await check(run, agents)
+
+
+async def test_an_uncaught_builtin_workspace_error_fails_the_workflow_task(client: Client) -> None:
+    """Like any exception in workflow code, it fails the task, which Temporal retries until a fix is deployed."""
+    provider.reset()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ScenarioWorkflow],
+        plugins=[AgentPlugin(agent) for agent in agents.all()],
+    ):
+        handle = await client.start_workflow(
+            ScenarioWorkflow.run, args=['uncaught', ''], id=f'uncaught-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        try:
+            with anyio.fail_after(30):  # hang guard
+                while not (failures := await _workflow_task_failures(handle)):
+                    await anyio.sleep(0.1)
+            assert 'missing.txt' in failures[0].message
+            assert failures[0].application_failure_info.type == 'FileNotFoundError'
+            assert (await handle.describe()).status == WorkflowExecutionStatus.RUNNING
+        finally:
+            await handle.terminate()
+
+
+async def _workflow_task_failures(handle: WorkflowHandle[Any, Any]) -> list[Failure]:
+    return [
+        event.workflow_task_failed_event_attributes.failure
+        async for event in handle.fetch_history_events()
+        if event.event_type == EventType.EVENT_TYPE_WORKFLOW_TASK_FAILED
+    ]
 
 
 def _activity_names(history: WorkflowHistory) -> list[str]:
