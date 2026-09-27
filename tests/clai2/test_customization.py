@@ -22,7 +22,7 @@ pytestmark = pytest.mark.anyio
 
 async def test_default_agent_does_not_read_guide_for_normal_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     def unexpected_read(*args: object, **kwargs: object) -> str:
-        raise AssertionError('Guide must not be read until requested')
+        raise AssertionError('Guide must not be read until requested')  # pragma: no cover
 
     monkeypatch.setattr('pydantic_clai2.customization.files', unexpected_read)
     agent = create_agent()

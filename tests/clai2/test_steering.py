@@ -97,7 +97,7 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         assert Text.from_ansi(live.frame()[-1]).plain == 'ready'
 
         def idle(text: str) -> bool:
-            return False
+            return False  # pragma: no cover
 
         live.steer = idle
         live.buffer.replace('idle prompt')

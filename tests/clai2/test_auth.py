@@ -33,7 +33,7 @@ def fixed_state(nbytes: int) -> str:
 
 async def never_pasted(message: str) -> str:
     await asyncio.Event().wait()
-    raise AssertionError('unreachable')
+    raise AssertionError('unreachable')  # pragma: no cover
 
 
 async def never_called_back(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:

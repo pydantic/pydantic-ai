@@ -188,7 +188,7 @@ def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None) -> None
     save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
     assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
     assert list(fallback.parent.iterdir()) == [fallback]
-    if sys.platform != 'win32':
+    if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 
 

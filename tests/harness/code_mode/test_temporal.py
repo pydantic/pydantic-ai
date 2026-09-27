@@ -248,9 +248,9 @@ class RemoteCodeModeWorkflow:
 
     @workflow.run
     async def run(self, prompt: str) -> str:
-        _request_id.set('req-42')
-        result = await remote_code_mode_agent.run(prompt)
-        return str(result.output)
+        _request_id.set('req-42')  # pragma: no cover
+        result = await remote_code_mode_agent.run(prompt)  # pragma: no cover
+        return str(result.output)  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------

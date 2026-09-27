@@ -505,7 +505,7 @@ def test_every_capability_declares_a_combine_policy() -> None:
     )
     # Only meaningful when every module imported: an optional group that is not installed makes its
     # capabilities look deleted, and the slim CI lane installs none of them.
-    if not skipped:
+    if not skipped:  # pragma: lax no cover -- every optional group imports only where browser-use is installed
         assert not (declared - shipped), (
             f'`COMBINE_POLICY` names capabilities that no longer exist: {sorted(declared - shipped)}.'
         )

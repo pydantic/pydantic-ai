@@ -62,7 +62,7 @@ class SurfaceTerminal(io.StringIO):
                 self.column = 0
             elif token.startswith('\x1b['):
                 self.control(token)
-            elif not token.startswith('\x1b') and token.isprintable():
+            elif not token.startswith('\x1b') and token.isprintable():  # pragma: no branch
                 if self.column == self.width:
                     self.column = 0
                     self.advance()

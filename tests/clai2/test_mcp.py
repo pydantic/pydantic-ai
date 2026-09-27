@@ -344,7 +344,7 @@ async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
                 except OSError:
                     await anyio.sleep(0.05)
         message = ''
-        for _ in range(100):
+        for _ in range(100):  # pragma: no branch
             message = await run('/mcp restart web')
             if message.startswith('Started'):
                 break

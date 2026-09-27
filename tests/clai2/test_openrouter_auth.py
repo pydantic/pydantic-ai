@@ -235,7 +235,7 @@ async def test_cancel_before_browser_returns() -> None:
         return True
 
     async def unexpected_prompt(message: str) -> str:
-        raise AssertionError('Cancelled before opening the prompt')
+        raise AssertionError('Cancelled before opening the prompt')  # pragma: no cover
 
     auth = OpenRouterAuth(console=Console(file=StringIO()), open_browser=browser, read_line=unexpected_prompt)
     login = asyncio.create_task(auth.login())

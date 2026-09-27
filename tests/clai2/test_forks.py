@@ -47,7 +47,7 @@ def last_prompt(messages: list[ModelMessage]) -> str:
     for message in reversed(messages):
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str):  # pragma: no branch
                     return part.content
     raise AssertionError('no prompt')  # pragma: no cover
 
