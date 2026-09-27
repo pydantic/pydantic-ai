@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import os.path
 from collections.abc import Awaitable
+from datetime import timedelta
 from typing import Protocol
 
 import anyio
@@ -196,7 +197,11 @@ class AcpTerminalToolset(FunctionToolset[AgentDepsT]):
         self.add_function(
             self.run_command,
             name='run_command',
-            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'},
+            metadata={
+                'code_arg_name': 'command',
+                'code_arg_language': 'shell',
+                'temporal': {'start_to_close_timeout': timedelta(hours=1)},
+            },
         )
 
     # Embedding a live terminal pane in the tool call would require the terminal id at

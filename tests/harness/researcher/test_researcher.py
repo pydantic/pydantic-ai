@@ -4,6 +4,9 @@ from pathlib import Path
 
 import pytest
 
+# `Researcher` builds `WebFetch(local=True)`, which needs the `web-fetch` extra.
+pytest.importorskip('markdownify')
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
