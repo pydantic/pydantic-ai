@@ -590,6 +590,39 @@ async def test_shell_filesystem_refuses_damaged_output(
         await getattr(workspace, operation)('directory/data.bin' if operation != 'list_dir' else 'directory')
 
 
+async def test_shell_filesystem_rereads_a_file_replaced_mid_read(tmp_path: Path) -> None:
+    """A file swapped for a different size between the size check and the read is read again, not refused."""
+    status = anyio.Path(tmp_path / 'status.json')
+    await status.write_text('{"exit_code": null}')
+
+    class PublishingBackend(RunOnlyWorkspaceBackend):
+        replacements: list[str] = []
+
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if isinstance(command, str) and command.startswith('dd ') and self.replacements:
+                # The job publishes a new status right after the size was read.
+                await status.write_text(self.replacements.pop(0))
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    backend = PublishingBackend(LocalWorkspaceBackend(tmp_path))
+    backend.replacements = ['{"exit_code": 0}']
+    assert await Workspace(backend).read_text('status.json') == '{"exit_code": 0}'
+
+    # A file that keeps changing size is refused rather than read forever.
+    backend.replacements = ['1', '22', '333']
+    with pytest.raises(WorkspaceError, match='damaged or incomplete output'):
+        await Workspace(backend).read_text('status.json')
+
+
 async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None:
     class FailedFindBackend(RunOnlyWorkspaceBackend):
         async def run(

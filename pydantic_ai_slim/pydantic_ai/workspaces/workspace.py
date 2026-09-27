@@ -33,6 +33,7 @@ __all__ = ('Workspace', 'WrapperWorkspace')
 
 
 _SHELL_READ_CHUNK_BYTES = 64 * 1024
+_SHELL_READ_ATTEMPTS = 3
 _SHELL_WRITE_CHUNK_CHARS = 64 * 1024
 """Maximum base64 characters embedded in one shell command.
 
@@ -65,8 +66,12 @@ _SHELL_CHECK_PARENTS = (
 )
 
 
+class _DamagedOutputError(WorkspaceError):
+    pass
+
+
 def _damaged(path: str) -> WorkspaceError:
-    return WorkspaceError(f'shell filesystem returned damaged or incomplete output for {path!r}')
+    return _DamagedOutputError(f'shell filesystem returned damaged or incomplete output for {path!r}')
 
 
 def _size(text: str, path: str) -> int:
@@ -112,11 +117,22 @@ class _ShellFilesystem(SupportsFilesystem):
 
     async def read_bytes(self, path: str) -> bytes:
         # The size bounds the read, so a file growing meanwhile can't make it run on.
-        entry = await self.stat(path)
-        if entry.is_dir:
-            raise IsADirectoryError(path)
-        assert entry.size is not None
-        return await self._read_chunks(shlex.quote(path), entry.size, path, 'read')
+        size: int | None = None
+        for _ in range(_SHELL_READ_ATTEMPTS):
+            entry = await self.stat(path)
+            if entry.is_dir:
+                raise IsADirectoryError(path)
+            assert entry.size is not None
+            # A file replaced after its size was read (a job publishing its status, say) is read again
+            # at its new size; an unchanged size means the output itself was damaged.
+            if entry.size == size:
+                break
+            size = entry.size
+            try:
+                return await self._read_chunks(shlex.quote(path), size, path, 'read')
+            except _DamagedOutputError:
+                pass
+        raise _damaged(path)
 
     async def _read_chunks(self, source: str, size: int, path: str, what: str) -> bytes:
         data = bytearray()
