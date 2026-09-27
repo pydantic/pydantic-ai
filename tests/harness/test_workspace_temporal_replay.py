@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -25,6 +26,14 @@ try:
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
+
+# Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14.
+if sys.version_info >= (3, 14):  # pragma: lax no cover
+    pytest.skip(
+        'temporalio sandbox is incompatible with Python 3.14 '
+        '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
+        allow_module_level=True,
+    )
 
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
