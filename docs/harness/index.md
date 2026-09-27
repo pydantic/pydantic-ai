@@ -96,6 +96,8 @@ limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's te
 
 By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored.
 
+Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and Code Mode mounts still use paths on the machine running the agent, not the workspace. This is expected to change in a future release.
+
 `FileSystem`'s `root_dir` limits only the file tools, not `Shell` commands.
 
 Upgrading from an earlier release? The [Coder page](coder.md#upgrading) lists what changed.
