@@ -1,10 +1,10 @@
 # Workspaces
 
-A workspace is a computer your agent can use: it runs commands and reads and writes files there.
+A workspace is an environment your agent can use: it runs commands and reads and writes files there.
 It can be a directory on your machine or a sandbox in the cloud, and your tools don't need to know
 which, because they all use it through [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace].
 
-## Give an agent a computer
+## Give an agent an environment
 
 ```python {title="workspace_agent.py"}
 import asyncio
@@ -324,7 +324,7 @@ When no capability supplies a workspace:
   capability. An agent with no workspace capability, such as one that summarizes the conversation,
   ignores the reference.
 - A `WorkspaceRef` passed as `workspace=` raises `UserError`, and so does `workspace='new'`.
-- Without a reference, the run has no workspace, and tools that use it raise `UserError`.
+- Without a reference, the run has no workspace, and tools that use it raise `WorkspaceUnavailableError`.
 
 For file inspection without changes, use a read-only workspace and read tools. To answer
 without file access, use a no-file-tools agent instead: workspace-backed tools need an attached
@@ -373,11 +373,10 @@ activities.
   tool. Calls made in workflow code use the engine's own settings (Temporal `activity_config`, DBOS
   `mcp_step_config`; Prefect runs them once), and only infrastructure failures are retried there, never
   workspace or file errors. Timeouts, read-only refusals and a lost environment are never retried.
-- On Temporal, a command run from workflow code gets an activity timeout of its own `timeout` plus
-  30 seconds, or one hour for `timeout=None`, unless `activity_config` sets a longer one. A command
-  run inside a tool is bounded by that tool's activity timeout, 60 seconds by default; raise it with
-  `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. If you set `activity_config`,
-  keep a `start_to_close_timeout` in it, for example
+- On Temporal, a command runs within an activity's `start_to_close_timeout`, 60 seconds by default,
+  whatever its own `timeout`. Inside a tool that is the tool's activity; raise it with
+  `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. From workflow code it is
+  `activity_config`; if you set that, keep a `start_to_close_timeout` in it, for example
   `activity_config={'start_to_close_timeout': timedelta(seconds=60), 'retry_policy': RetryPolicy(maximum_attempts=3)}`.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
   capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
@@ -493,19 +492,17 @@ path. On a link loop it must not hang: it either raises `OSError` or returns a p
 directory holding the loop. The check and the later file operation are separate calls, so a link
 swapped in between them is not caught; for untrusted code, rely on the sandbox, not on path checks.
 
-This backend gives each environment its own directory under `base_dir`:
+A backend for a cloud sandbox has this shape (`sandbox_sdk` stands in for the provider's SDK):
 
-```python {title="host_workspace.py"}
-import re
-import uuid
+```python {title="my_sandbox.py" test="skip" lint="skip"}
 from collections.abc import Mapping
-from pathlib import Path
 
 import anyio
+import sandbox_sdk
 
 from pydantic_ai.workspaces import (
     CommandResult,
-    LocalWorkspaceBackend,
+    SupportsCommands,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceRef,
@@ -513,36 +510,28 @@ from pydantic_ai.workspaces import (
 )
 
 
-class HostWorkspaceBackend(WorkspaceBackend):
-    def __init__(self, base_dir: Path, ref: WorkspaceRef | None = None):
-        self._base_dir = base_dir
+class MySandbox(WorkspaceBackend, SupportsCommands):
+    def __init__(self, ref: WorkspaceRef | None = None):
         self._ref = ref
-        self._local: LocalWorkspaceBackend | None = None
+        self._sandbox: sandbox_sdk.Sandbox | None = None
         self._lock = anyio.Lock()
 
     @property
     def ref(self) -> WorkspaceRef | None:
         return self._ref
 
-    async def _directory(self) -> LocalWorkspaceBackend:
-        # Concurrent first operations must agree on one environment and its ref.
-        async with self._lock:
-            if self._local is None:
+    async def _connect(self) -> sandbox_sdk.Sandbox:
+        async with self._lock:  # concurrent first operations share one sandbox
+            if self._sandbox is None:
                 if self._ref is None:
-                    # No reference: create the environment, then report its identity.
-                    directory = anyio.Path(self._base_dir / uuid.uuid4().hex)
-                    await directory.mkdir()
-                    self._ref = WorkspaceRef(provider='host', id=directory.name)
+                    self._sandbox = await sandbox_sdk.Sandbox.create()
+                    self._ref = WorkspaceRef(provider='my-sandbox', id=self._sandbox.id)
                 else:
-                    # History can be untrusted; never let its id escape base_dir.
-                    if self._ref.provider != 'host' or not re.fullmatch(r'[0-9a-f]{32}', self._ref.id):
-                        raise WorkspaceUnavailableError('invalid host workspace reference')
-                    # A reference: attach to the environment it names, or fail. Never create a replacement.
-                    directory = anyio.Path(self._base_dir / self._ref.id)
-                    if not await directory.is_dir():
-                        raise WorkspaceUnavailableError(f'workspace {self._ref.id!r} no longer exists')
-                self._local = LocalWorkspaceBackend(Path(directory))
-            return self._local
+                    try:
+                        self._sandbox = await sandbox_sdk.Sandbox.connect(self._ref.id)
+                    except sandbox_sdk.NotFound as error:
+                        raise WorkspaceUnavailableError(f'sandbox {self._ref.id!r} no longer exists') from error
+            return self._sandbox
 
     async def run(
         self,
@@ -553,12 +542,12 @@ class HostWorkspaceBackend(WorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        local = await self._directory()
-        return await local.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        sandbox = await self._connect()
+        result = await sandbox.exec(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
     async def working_dir(self) -> str:
-        local = await self._directory()
-        return await local.working_dir()
+        return (await self._connect()).working_dir
 ```
 
 - The constructor does no I/O. The first operation creates the environment, or attaches to the one
@@ -595,7 +584,10 @@ class TestMyBackend(WorkspaceBackendSuite):
 ```
 
 The suite needs the anyio pytest plugin. A class-scoped fixture starts one environment for the whole
-suite instead of one per rule. Provide `attach_backend` to check reattachment; to check destruction,
+suite instead of one per rule. Under durable execution every workspace call rebuilds your backend from
+its ref, so provide `attach_backend`, a factory that builds a backend for a ref the way your capability's
+`get_workspace` does: it enables the rule that a backend attached by ref reaches the same files and
+commands and keeps that ref. To check destruction,
 also provide `destroy_environment` and `destructive_backend`, a factory for an independent environment.
 The latter defaults to `fresh_backend` when supplied. The destructive rule never uses the shared `backend` fixture.
 

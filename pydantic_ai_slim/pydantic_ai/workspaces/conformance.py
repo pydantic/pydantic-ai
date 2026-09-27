@@ -466,17 +466,24 @@ class WorkspaceBackendSuite:
             assert await workspace.read_bytes(target) == b'new'
             assert await workspace.realpath(link) == target
 
-    async def test_a_backend_attached_by_ref_sees_the_same_files(
+    async def test_a_backend_attached_by_ref_reaches_the_same_environment(
         self, backend: WorkspaceBackend, attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None
     ) -> None:
+        """Durable execution rebuilds the backend from its ref for every call, so this is what it relies on."""
         if attach_backend is None:
             pytest.skip('provide the `attach_backend` fixture to enable this rule')
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
             path = posixpath.join(root, 'file')
             await workspace.write_bytes(path, b'reattached')
-            assert backend.ref is not None
-            assert await Workspace(attach_backend(backend.ref)).read_bytes(path) == b'reattached'
+            ref = backend.ref
+            assert ref is not None
+            attached = attach_backend(ref)
+            assert await Workspace(attached).read_bytes(path) == b'reattached'
+            if isinstance(attached, SupportsCommands):
+                assert (await attached.run(['cat', path])).stdout == 'reattached'
+            # Attaching never replaces the environment it names.
+            assert attached.ref == ref
 
     async def test_destroying_environment_during_command_raises_unavailable(
         self,
