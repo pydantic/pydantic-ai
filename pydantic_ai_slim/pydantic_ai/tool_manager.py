@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from pydantic import ValidationError
 
-from . import messages as _messages
+from . import _usage_attribution, messages as _messages
 from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
@@ -1029,7 +1029,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validated, usage=usage, wrap_validation_errors=wrap_validation_errors
             )
         except SkipToolExecution as e:
-            usage.tool_calls += 1
+            _usage_attribution.record_tool_call(usage)
             tool_result = e.result
 
         # Only record success when wrapping is requested, mirroring the `failed_tools` gating:
@@ -1070,7 +1070,7 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        usage.tool_calls += 1
+        _usage_attribution.record_tool_call(usage)
 
         return tool_result
 

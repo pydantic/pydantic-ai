@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -54,6 +55,8 @@ with try_import():
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
     # `pydantic-ai-slim` / `pydantic-evals` install groups either.
     from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 try:
@@ -3915,6 +3918,105 @@ def test_instrument_all_skipped_when_capability_already_present(
         Agent.instrument_all(False)
 
 
+@dataclass
+class _SeenInstrumentation:
+    tracer: Any
+    include_content: bool
+    version: int
+
+
+def _seen(ctx: RunContext[Any]) -> _SeenInstrumentation:
+    return _SeenInstrumentation(ctx.tracer, ctx.trace_include_content, ctx.instrumentation_version)
+
+
+@dataclass
+class _ObserveForRun(AbstractCapability[Any]):
+    """Records what a `for_run` hook sees of the run's instrumentation."""
+
+    seen: list[_SeenInstrumentation]
+
+    async def for_run(self, ctx: RunContext[Any]) -> _ObserveForRun:
+        self.seen.append(_seen(ctx))
+        return self
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('explicit_on', [None, 'agent', 'run'])
+def test_run_context_instrumentation_follows_the_capability_that_instruments_the_run(
+    explicit_on: Literal['agent', 'run'] | None,
+) -> None:
+    """An explicit `Instrumentation` capability replaces the `instrument_all()` one, so `RunContext` describes it.
+
+    Its `tracer`, `trace_include_content` and `instrumentation_version` are what the run's spans use, both
+    in `for_run` hooks and in the context a tool gets later in the run. Without one, `instrument_all()`'s
+    settings still apply.
+    """
+    implicit = InstrumentationSettings(include_content=True, tracer_provider=TracerProvider())
+    explicit = InstrumentationSettings(include_content=False, version=6, tracer_provider=TracerProvider())
+    expected = implicit if explicit_on is None else explicit
+
+    for_run_seen: list[_SeenInstrumentation] = []
+    agent_capabilities: list[AbstractCapability[Any]] = [_ObserveForRun(for_run_seen)]
+    run_capabilities: list[AbstractCapability[Any]] = []
+    if explicit_on == 'agent':
+        agent_capabilities.append(Instrumentation(settings=explicit))
+    elif explicit_on == 'run':
+        run_capabilities.append(Instrumentation(settings=explicit))
+
+    Agent.instrument_all(implicit)
+    try:
+        agent = Agent(TestModel(), capabilities=agent_capabilities)
+        tool_seen: list[_SeenInstrumentation] = []
+
+        @agent.tool
+        def peek(ctx: RunContext[Any]) -> str:
+            tool_seen.append(_seen(ctx))
+            return 'ok'
+
+        agent.run_sync('hi', capabilities=run_capabilities)
+    finally:
+        Agent.instrument_all(False)
+
+    assert implicit.tracer is not explicit.tracer
+    expected_seen = _SeenInstrumentation(expected.tracer, expected.include_content, expected.version)
+    assert for_run_seen == [expected_seen]
+    assert tool_seen == [expected_seen]
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_context_instrumentation_follows_a_capability_function_instrumentation() -> None:
+    """An `Instrumentation` only a capability function's `for_run` returns still instruments the run, so the
+    context the run's tools get describes it too, even though it couldn't be known before `for_run`."""
+    implicit_provider = TracerProvider()
+    implicit_exporter = InMemorySpanExporter()
+    implicit_provider.add_span_processor(SimpleSpanProcessor(implicit_exporter))
+    dynamic_provider = TracerProvider()
+    dynamic_exporter = InMemorySpanExporter()
+    dynamic_provider.add_span_processor(SimpleSpanProcessor(dynamic_exporter))
+    dynamic = InstrumentationSettings(include_content=False, version=6, tracer_provider=dynamic_provider)
+
+    Agent.instrument_all(InstrumentationSettings(include_content=True, tracer_provider=implicit_provider))
+    try:
+        agent = Agent(TestModel())
+        tool_seen: list[_SeenInstrumentation] = []
+
+        @agent.tool
+        def peek(ctx: RunContext[Any]) -> str:
+            tool_seen.append(_seen(ctx))
+            return 'ok'
+
+        agent.run_sync('hi', capabilities=[lambda ctx: Instrumentation(settings=dynamic)])
+    finally:
+        Agent.instrument_all(False)
+
+    assert tool_seen == [_SeenInstrumentation(dynamic.tracer, False, 6)]
+    # The capability function's `Instrumentation` is the one that opened the run's spans.
+    assert implicit_exporter.get_finished_spans() == ()
+    assert [span.name for span in dynamic_exporter.get_finished_spans()] == snapshot(
+        ['chat test', 'execute_tool peek', 'chat test', 'invoke_agent agent']
+    )
+
+
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_agent_with_user_provided_instrumented_model(
     get_logfire_summary: Callable[[], LogfireSummary],
@@ -4255,6 +4357,144 @@ def test_run_span_reports_the_runs_own_usage_not_the_conversations(capfire: Capt
     ]
     assert reported == snapshot([51, 52])
     assert second.usage.input_tokens == snapshot(103)
+
+
+async def _run_delegating_agent(*, share_usage: bool, sequential: bool, instrument_delegate: bool = True) -> None:
+    """Run a parent agent whose tool delegates to a second agent, once per tool call."""
+
+    async def delegate_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Force the two delegate runs to overlap, so a sibling's usage lands inside this run's window.
+        await asyncio.sleep(0.05)
+        return ModelResponse(parts=[TextPart('joke')], usage=RequestUsage(input_tokens=10, output_tokens=1))
+
+    delegate = Agent(
+        FunctionModel(delegate_fn), name='delegate', capabilities=[Instrumentation()] if instrument_delegate else []
+    )
+
+    async def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=1000, output_tokens=5)
+        if len(messages) == 1:
+            calls = [ToolCallPart('pick', {'n': n}, tool_call_id=str(n)) for n in (1, 2)]
+            return ModelResponse(parts=calls, usage=usage)
+        return ModelResponse(parts=[TextPart('done')], usage=usage)
+
+    parent = Agent(FunctionModel(parent_fn), name='parent', capabilities=[Instrumentation()])
+
+    @parent.tool(sequential=sequential)
+    async def pick(ctx: RunContext[Any], n: int) -> str:
+        return (await delegate.run('x', usage=ctx.usage if share_usage else None)).output
+
+    await parent.run('go')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('share_usage', [True, False])
+@pytest.mark.parametrize('sequential', [True, False])
+@pytest.mark.anyio
+async def test_run_span_reports_its_own_usage_under_concurrent_delegation(
+    capfire: CaptureLogfire, share_usage: bool, sequential: bool
+) -> None:
+    """Each agent-run span reports its own requests, whatever the delegates do with the usage object.
+
+    Concurrent delegates handed the parent's `RunUsage` (the `usage=ctx.usage` pattern in
+    `docs/multi-agent-applications.md`) overlap in time, so neither the shared object's contents nor
+    an end-minus-start delta on it can say which run added what: each delegate would otherwise
+    absorb its sibling's tokens, by more the wider the fan-out. Crediting the run that made the
+    request instead makes all four combinations agree, and makes the spans sum to the run's total
+    rather than counting a delegate's tokens again on the parent that contains it.
+    """
+    await _run_delegating_agent(share_usage=share_usage, sequential=sequential)
+
+    agent_spans = [
+        (span['name'], span['attributes']['gen_ai.aggregated_usage.input_tokens'])
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+    ]
+    assert set(agent_spans) == snapshot({('invoke_agent delegate', 10), ('invoke_agent parent', 2000)})
+    # The delegates' tokens are reported once, on the delegates, so summing every agent-run span
+    # gives the run's total rather than counting them again on the parent containing them.
+    assert sum(tokens for _, tokens in agent_spans) == snapshot(2020)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('share_usage', [True, False])
+@pytest.mark.parametrize('sequential', [True, False])
+@pytest.mark.anyio
+async def test_run_span_excludes_an_uninstrumented_delegates_usage(
+    capfire: CaptureLogfire, share_usage: bool, sequential: bool
+) -> None:
+    """A delegate without a span of its own doesn't report its usage on the caller's.
+
+    The caller's span reports what the caller spent whether or not the runs it starts are
+    instrumented: crediting an unspanned delegate's tokens to the nearest instrumented run would
+    make that run's span disagree with its own `result.usage`, and look no different from a run
+    that really spent that much.
+    """
+    await _run_delegating_agent(share_usage=share_usage, sequential=sequential, instrument_delegate=False)
+
+    agent_spans = [
+        (span['name'], span['attributes']['gen_ai.aggregated_usage.input_tokens'])
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+    ]
+    assert agent_spans == snapshot([('invoke_agent parent', 2000)])
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_nested_delegation_spans_sum_to_the_runs_total(capfire: CaptureLogfire) -> None:
+    """Every run in a three-deep tree reports its own requests, so the spans still sum to the total.
+
+    Depth is what separates reporting a run's own usage from reporting its subtree: a leaf's tokens
+    belong to one span, not to that span and to each of the runs above it. Both agents here fan out
+    to two concurrent children sharing one `RunUsage`, so a leaf's tokens would otherwise be counted
+    on the leaf, on both middle runs, and on the top.
+    """
+
+    def leaf_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('leaf')], usage=RequestUsage(input_tokens=1))
+
+    leaf = Agent(FunctionModel(leaf_fn), name='leaf', capabilities=[Instrumentation()])
+
+    async def middle_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=10)
+        if len(messages) == 1:
+            calls = [ToolCallPart('ask_leaf', {'n': n}, tool_call_id=f'm{n}') for n in (1, 2)]
+            return ModelResponse(parts=calls, usage=usage)
+        return ModelResponse(parts=[TextPart('middle')], usage=usage)
+
+    middle = Agent(FunctionModel(middle_fn), name='middle', capabilities=[Instrumentation()])
+
+    @middle.tool
+    async def ask_leaf(ctx: RunContext[Any], n: int) -> str:
+        return (await leaf.run('x', usage=ctx.usage)).output
+
+    async def top_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=100)
+        if len(messages) == 1:
+            calls = [ToolCallPart('ask_middle', {'n': n}, tool_call_id=str(n)) for n in (1, 2)]
+            return ModelResponse(parts=calls, usage=usage)
+        return ModelResponse(parts=[TextPart('top')], usage=usage)
+
+    top = Agent(FunctionModel(top_fn), name='top', capabilities=[Instrumentation()])
+
+    @top.tool
+    async def ask_middle(ctx: RunContext[Any], n: int) -> str:
+        return (await middle.run('x', usage=ctx.usage)).output
+
+    result = await top.run('go')
+
+    reported: dict[str, list[int]] = {}
+    for span in capfire.exporter.exported_spans_as_dict():
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent':
+            name = span['attributes']['gen_ai.agent.name']
+            reported.setdefault(name, []).append(span['attributes']['gen_ai.aggregated_usage.input_tokens'])
+
+    # Each run's own requests: four leaf runs of one, two middle runs of two-by-ten, one top run of
+    # two-by-a-hundred. Reporting subtrees instead would put 22 on each middle and 244 on the top.
+    assert reported == snapshot({'leaf': [1, 1, 1, 1], 'middle': [20, 20], 'top': [200]})
+    assert sum(tokens for tokens_per_run in reported.values() for tokens in tokens_per_run) == snapshot(244)
+    assert result.usage.input_tokens == snapshot(244)
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

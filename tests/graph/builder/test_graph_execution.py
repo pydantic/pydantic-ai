@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
+import anyio
 import pytest
-from anyio import create_task_group
+from anyio import Event, create_task_group, fail_after
 
 from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.graph_builder import GraphTask, _GraphIterator  # pyright: ignore[reportPrivateUsage]
-from pydantic_graph.id_types import NodeRunID, TaskID
+from pydantic_graph.graph_builder import EndMarker, GraphTask, _GraphIterator  # pyright: ignore[reportPrivateUsage]
+from pydantic_graph.id_types import ForkID, JoinID, NodeRunID, TaskID
 from pydantic_graph.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
+from pydantic_graph.node import Fork
 
 pytestmark = pytest.mark.anyio
+
+READINESS_WAIT_TIMEOUT = 5
 
 
 @dataclass
@@ -408,6 +413,158 @@ async def test_multiple_sequential_joins():
     assert sorted(result) == [11, 12, 13]
 
 
+@pytest.mark.parametrize(
+    'include_plain_producer, skip_fan_result, expected',
+    [
+        pytest.param(False, False, [[10, 20, 30]], id='fan-only'),
+        pytest.param(True, False, [[-1], [10, 20, 30]], id='mixed-producers'),
+        pytest.param(True, True, [[-1]], id='discarded-fan-tail'),
+    ],
+)
+async def test_join_with_fanned_producer(
+    include_plain_producer: bool, skip_fan_result: bool, expected: list[list[int]]
+):
+    """A join waits for the fanned producer's tail, unless the caller discards it."""
+    g = GraphBuilder(input_type=str, output_type=list[list[int]])
+    fan_started = Event()
+    execution_order: list[str] = []
+
+    @g.step
+    async def root(ctx: StepContext[None, None, str]) -> str:
+        return ctx.inputs
+
+    @g.step
+    async def fan_prepare(ctx: StepContext[None, None, str]) -> list[int]:
+        fan_started.set()
+        return [1, 2, 3]
+
+    @g.step
+    async def fan_unit(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs * 10
+
+    fan_join = g.join(reduce_list_append, initial_factory=list[int], node_id='fan_join')
+
+    @g.step
+    async def fan_result(ctx: StepContext[None, None, list[int]]) -> list[int]:
+        execution_order.append('fan_result')
+        return sorted(ctx.inputs)
+
+    merge = g.join(reduce_list_append, initial_factory=list[list[int]], node_id='merge')
+
+    @g.step
+    async def downstream(ctx: StepContext[None, None, list[list[int]]]) -> list[list[int]]:
+        execution_order.append('downstream')
+        return ctx.inputs
+
+    g.add_edge(g.start_node, root)
+    g.add_edge(root, fan_prepare)
+    if include_plain_producer:
+
+        @g.step
+        async def plain_producer(ctx: StepContext[None, None, str]) -> list[int]:
+            with fail_after(READINESS_WAIT_TIMEOUT):
+                await fan_started.wait()
+            return [-1]
+
+        g.add_edge(root, plain_producer)
+        g.add_edge(plain_producer, merge)
+
+    g.add_mapping_edge(fan_prepare, fan_unit, fork_id=ForkID('fan_fork'), downstream_join_id=JoinID('fan_join'))
+    g.add_edge(fan_unit, fan_join)
+    g.add_edge(fan_join, fan_result)
+    g.add_edge(fan_result, merge)
+    g.add_edge(merge, downstream)
+    g.add_edge(downstream, g.end_node)
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        async with g.build().iter(inputs='go') as run:
+            async for batch in run:
+                if (
+                    skip_fan_result
+                    and not isinstance(batch, EndMarker)
+                    and any(task.node_id == fan_result.id for task in batch)
+                ):
+                    run.override_next([])
+
+    result = run.output
+    assert result is not None
+    assert sorted(result) == expected
+    assert execution_order == (['downstream'] if skip_fan_result else ['fan_result', 'downstream'])
+
+
+async def test_independent_joins_finalize_while_other_tails_are_running():
+    """Independent join tails can synchronize without blocking each other's finalization."""
+    g = GraphBuilder(output_type=list[int])
+    left_received = Event()
+    right_received = Event()
+    left_started = Event()
+    right_started = Event()
+
+    @g.step
+    async def root(ctx: StepContext[None, None, None]) -> int:
+        return 0
+
+    @g.step
+    async def producer(ctx: StepContext[None, None, int]) -> int:
+        return 1
+
+    @g.step
+    async def gate(ctx: StepContext[None, None, int]) -> int:
+        await left_received.wait()
+        await right_received.wait()
+        return 999
+
+    def collect_left(current: list[int], inputs: int) -> list[int]:
+        left_received.set()
+        return reduce_list_append(current, inputs)
+
+    def collect_right(current: list[int], inputs: int) -> list[int]:
+        right_received.set()
+        return reduce_list_append(current, inputs)
+
+    left = g.join(collect_left, initial_factory=list[int], node_id='left')
+    right = g.join(collect_right, initial_factory=list[int], node_id='right')
+
+    @g.step
+    async def tail_left(ctx: StepContext[None, None, list[int]]) -> int:
+        left_started.set()
+        await right_started.wait()
+        return 10
+
+    @g.step
+    async def tail_right(ctx: StepContext[None, None, list[int]]) -> int:
+        right_started.set()
+        await left_started.wait()
+        return 20
+
+    merge = g.join(reduce_list_append, initial_factory=list[int], node_id='merge')
+    g.add_edge(g.start_node, root)
+    g.add_edge(root, producer)
+    g.add_edge(root, gate)
+    for source in (producer, gate):
+        g.add_edge(source, left)
+        g.add_edge(source, right)
+    g.add_edge(left, tail_left)
+    g.add_edge(right, tail_right)
+    g.add_edge(tail_left, merge)
+    g.add_edge(tail_right, merge)
+    g.add_edge(merge, g.end_node)
+
+    gate_discarded = False
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        async with g.build().iter() as run:
+            async for batch in run:
+                if not isinstance(batch, EndMarker) and any(task.inputs == 999 for task in batch):
+                    # Leave both joins ready in the same fallback pass, with no active tasks.
+                    run.override_next([])
+                    gate_discarded = True
+
+    assert gate_discarded
+    result = run.output
+    assert result is not None
+    assert sorted(result) == [10, 20]
+
+
 async def test_early_termination_from_nested_generator():
     """Test that a generator wrapping an iteration can be terminated early."""
     g = GraphBuilder()
@@ -507,3 +664,64 @@ def test_run_sync():
     # Second call skips name inference because the name is already set.
     assert graph.run_sync(inputs=4) == 10
     assert graph.name == 'graph'
+
+
+async def test_genuine_cancellation_preserves_cancelled_error():
+    """Test that genuine cancellation with an in-flight stream node still surfaces CancelledError."""
+    g = GraphBuilder(output_type=int)
+    entered = anyio.Event()
+
+    @g.stream()
+    async def stream_never(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        entered.set()
+        await anyio.sleep_forever()
+        yield 0  # pragma: no cover
+
+    g.add(
+        g.edge_from(g.start_node).to(stream_never),
+        # A stream node needs an outgoing edge for the graph runtime to wire up its
+        # iterable; the generator below never yields, so no items ever flow through
+        # this edge.
+        g.edge_from(stream_never).map().to(g.end_node),
+    )
+    graph = g.build()
+
+    async with create_task_group() as outer:
+
+        async def run_graph():
+            with pytest.raises(anyio.get_cancelled_exc_class()):
+                async with graph.iter() as run:
+                    async for _event in run:
+                        pass
+
+        outer.start_soon(run_graph)
+        await entered.wait()
+        outer.cancel_scope.cancel()
+
+
+@pytest.mark.parametrize('close_sender', [False, True], ids=['closed-receiver', 'closed-sender'])
+async def test_stream_error_during_teardown_is_swallowed(close_sender: bool):
+    """Drive the task directly to deterministically reproduce the stream-closing teardown race."""
+    entered = False
+
+    async def failing_stream() -> AsyncIterator[int]:
+        nonlocal entered
+        entered = True
+        raise ValueError('stream failed during teardown')
+        yield 0  # pragma: no cover
+
+    g = GraphBuilder(input_type=AsyncIterator[int], output_type=int)
+    g.add(g.edge_from(g.start_node).map().to(g.end_node))
+    graph = g.build()
+    fork = next(node for node in graph.nodes.values() if isinstance(node, Fork))
+
+    async with create_task_group() as task_group:
+        iterator = _GraphIterator(graph, None, None, task_group, lambda: NodeRunID('run:1'), lambda: TaskID('task:1'))
+        with iterator.iter_stream_sender:
+            if close_sender:
+                iterator.iter_stream_sender.close()
+            iterator.iter_stream_receiver.close()
+            task = GraphTask(fork.id, failing_stream(), (), TaskID('task:1'))
+            await iterator._run_tracked_task(task)  # pyright: ignore[reportPrivateUsage]
+
+    assert entered

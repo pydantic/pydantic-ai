@@ -3,11 +3,12 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
 import pydantic_core
 import pytest
-from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, ValidationError, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -30,6 +31,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UseEnumMemberDocstrings,
     UserError,
     UserPromptPart,
 )
@@ -42,6 +44,7 @@ from pydantic_ai.tools import (
     DeferredToolCallResult,
     DeferredToolRequests,
     DeferredToolResults,
+    GenerateToolJsonSchema,
     ToolApproved,
     ToolDefinition,
     ToolDenied,
@@ -5198,3 +5201,262 @@ def test_tool_return_part_serializes_with_serialization_alias():
     # The wire output keys agree with the advertised return schema properties.
     assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
+
+
+class DescribedEnum(UseEnumMemberDocstrings, str, Enum):
+    """A base for enums built by the functional API, which takes one mix-in type and no extra bases."""
+
+
+def test_enum_member_docstrings_describe_options():
+    """A docstring under an enum member becomes that option's description, as `anyOf` of `const`s."""
+
+    class Priority(UseEnumMemberDocstrings, str, Enum):
+        """How urgent the ticket is."""
+
+        low = 'low'
+        """Can wait a week."""
+        high = 'high'
+        """Needs attention today."""
+        unknown = 'unknown'
+        annotated: str = 'annotated'  # pyright: ignore[reportGeneralTypeIssues]
+        """An annotated member is a member too."""
+        _ignore_ = ['label']
+        """A string after a name that is not a member describes nothing."""
+
+        def label(self) -> str:
+            return self.value.title()  # pragma: no cover
+
+        """A string that follows no member describes nothing."""
+
+    # Opted in, but built without source to read, so no member can be described.
+    Undocumented = DescribedEnum('Undocumented', {'a': 'a', 'b': 'b'})
+
+    agent = Agent(FunctionModel(get_json_schema))
+
+    @agent.tool_plain
+    def triage(priority: Priority, other: Undocumented) -> None: ...  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema']['$defs'] == snapshot(
+        {
+            'Priority': {
+                'anyOf': [
+                    {'const': 'low', 'description': 'Can wait a week.'},
+                    {'const': 'high', 'description': 'Needs attention today.'},
+                    {'const': 'unknown'},
+                    {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+                ],
+                'description': 'How urgent the ticket is.',
+                'title': 'Priority',
+                'type': 'string',
+            },
+            'Undocumented': {'enum': ['a', 'b'], 'title': 'Undocumented', 'type': 'string'},
+        }
+    )
+
+
+class Urgency(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+class UnopinionatedUrgency(str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+def test_mixing_in_use_enum_member_docstrings_is_what_describes_the_options():
+    """`UseEnumMemberDocstrings` is the opt-in, and the only difference between these two enums."""
+
+    class Ticket(BaseModel):
+        urgency: Urgency
+
+    assert Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)['$defs']['Urgency'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high', 'description': 'Needs attention today.'},
+            ],
+            'description': 'How urgent the ticket is.',
+            'title': 'Urgency',
+            'type': 'string',
+        }
+    )
+
+
+def test_an_enum_that_does_not_mix_it_in_is_described_exactly_as_pydantic_describes_it():
+    """Without the opt-in, the docstrings are ignored and the schema is the one Pydantic itself generates.
+
+    `UnopinionatedUrgency` has the same body as `Urgency` above, minus the mix-in, and is compared against
+    Pydantic's own generator rather than a snapshot alone, so the guarantee is that nothing moved for a user
+    who hasn't opted in — not merely that today's shape is the one we wrote down.
+    """
+
+    class Ticket(BaseModel):
+        urgency: UnopinionatedUrgency
+
+    ours = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)['$defs']['UnopinionatedUrgency']
+    pydantics = Ticket.model_json_schema()['$defs']['UnopinionatedUrgency']
+    assert ours == pydantics
+    assert ours == snapshot(
+        {
+            'description': 'How urgent the ticket is.',
+            'enum': ['low', 'high'],
+            'title': 'UnopinionatedUrgency',
+            'type': 'string',
+        }
+    )
+
+
+class Level(UseEnumMemberDocstrings, str, Enum):
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    annotated: str = 'annotated'  # pyright: ignore[reportGeneralTypeIssues]
+    """An annotated member is a member too."""
+    _ignore_ = ['label']
+    """A string after a name that is not a member describes nothing."""
+
+    def label(self) -> str:
+        return self.value.title()  # pragma: no cover
+
+    """A string that follows no member describes nothing."""
+
+
+Functional = DescribedEnum('Functional', {'low': 'low', 'high': 'high'})
+"""Opted in, but built without source to read, so no member can be described."""
+
+
+def test_a_none_member_keeps_the_enum_in_its_plain_form():
+    """`{'const': None}` reads as "no const" to a lookup with a default, so such an enum is left alone."""
+
+    class Settled(UseEnumMemberDocstrings, Enum):
+        yes = 'yes'
+        """The claim holds."""
+        unknown = None
+        """Nothing in the material settles it."""
+
+    class Verdict(BaseModel):
+        settled: Settled
+
+    seen: list[dict[str, Any]] = []
+
+    def capture(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.output_tools[0].parameters_json_schema)
+        return ModelResponse(parts=[ToolCallPart('final_result', {'settled': 'yes'}, 'call_1')])
+
+    Agent(FunctionModel(capture), output_type=Verdict).run_sync('Hello')
+    assert seen[0]['$defs']['Settled'] == snapshot({'enum': ['yes', None], 'title': 'Settled'})
+
+
+class Aliased(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    high = 'high'
+    urgent = 'high'
+    """Same as high, under the name the ticketing system uses."""
+    low = 'low'
+    """Can wait a week."""
+
+
+def test_an_enum_alias_describes_the_option_it_was_written_for():
+    """A docstring is read under the name it was declared under, but an alias is the same member.
+
+    `Aliased.urgent is Aliased.high`, so the schema only ever names `high`; looking the docstring up by
+    the member's own name found nothing and dropped it silently.
+    """
+
+    class Ticket(BaseModel):
+        priority: Aliased
+
+    schema = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)
+    assert schema['$defs']['Aliased'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'high', 'description': 'Same as high, under the name the ticketing system uses.'},
+                {'const': 'high', 'description': 'Same as high, under the name the ticketing system uses.'},
+                {'const': 'low', 'description': 'Can wait a week.'},
+            ],
+            'description': 'How urgent the ticket is.',
+            'title': 'Aliased',
+            'type': 'string',
+        }
+    )
+
+
+def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
+    """The enum's own mix-in is the whole opt-in, wherever Pydantic AI describes that enum to a model.
+
+    The enclosing model's `use_attribute_docstrings` neither enables this nor is required by it: that config
+    is pushed while the core schema is built and never while the JSON schema is generated, so an enum reached
+    from a tool's parameters never sees it even though `_function_schema` sets it. Gating on it would have held
+    in three of these four places, with nothing to tell the user which one they were in.
+    """
+
+    class Quiet(BaseModel):
+        level: Level
+
+    class Described(BaseModel):
+        model_config = ConfigDict(use_attribute_docstrings=True)
+        level: Level
+
+    def defs(output_type: Any) -> dict[str, Any]:
+        seen: list[dict[str, Any]] = []
+
+        def capture(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.output_tools[0].parameters_json_schema)
+            args = (
+                {'response': 'low'}
+                if isinstance(output_type, type) and issubclass(output_type, Enum)
+                else {'level': 'low'}
+            )
+            return ModelResponse(parts=[ToolCallPart('final_result', args, 'call_1')])
+
+        Agent(FunctionModel(capture), output_type=output_type).run_sync('Hello')
+        return seen[0]
+
+    assert defs(Quiet)['$defs']['Level'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
+            'title': 'Level',
+            'type': 'string',
+        }
+    )
+    assert defs(Described)['$defs']['Level'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
+            'title': 'Level',
+            'type': 'string',
+        }
+    )
+    assert defs(Functional)['$defs']['Functional'] == snapshot(
+        {'enum': ['low', 'high'], 'title': 'Functional', 'type': 'string'}
+    )
+    assert defs(Level)['$defs']['Level'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
+            'title': 'Level',
+            'type': 'string',
+        }
+    )

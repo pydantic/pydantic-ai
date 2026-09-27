@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -282,7 +283,6 @@ async def test_iter_state_inspection():
 
 async def test_iter_with_async_iterable_map():
     """Test iteration with map using an async iterable."""
-    from collections.abc import AsyncIterator
 
     g = GraphBuilder(state_type=IterState, output_type=list[int])
 
@@ -596,3 +596,76 @@ async def test_iter_error_caught_without_override_re_raises_on_continue():
         # causing the generator to re-raise the original error
         with pytest.raises(ValueError, match='intentional error'):
             await run.next()
+
+
+@pytest.mark.parametrize('yield_first', [False, True], ids=['before-first-yield', 'after-first-yield'])
+@pytest.mark.parametrize('use_next', [False, True], ids=['async-for', 'next'])
+async def test_stream_node_error_surfaces_in_context(yield_first: bool, use_next: bool):
+    """Stream errors reach the caller inside the graph context, before or after yielding."""
+    g = GraphBuilder(output_type=list[int])
+    error = RuntimeError('stream node failed')
+
+    @g.stream()
+    async def stream_fail(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        if yield_first:
+            yield 1
+        raise error
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+    g.add(
+        g.edge_from(g.start_node).to(stream_fail),
+        g.edge_from(stream_fail).map().to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+    graph = g.build()
+
+    async with graph.iter() as run:
+        with pytest.raises(RuntimeError, match='stream node failed') as exc_info:
+            if use_next:
+                while True:
+                    await run.next()
+            else:
+                async for _event in run:
+                    pass
+        assert exc_info.value is error
+
+
+async def test_stream_node_error_recoverable_via_override_next():
+    """Test that a stream-node error surfaced via `run.next()` can be recovered mid-run via `override_next`."""
+    g = GraphBuilder(state_type=IterState, output_type=int)
+
+    @g.stream()
+    async def stream_fail(ctx: StepContext[IterState, None, None]) -> AsyncIterator[int]:
+        raise RuntimeError('stream node failed mid-stream')
+        yield 0  # pragma: no cover
+
+    @g.step
+    async def fallback_step(ctx: StepContext[IterState, None, int]) -> int:
+        ctx.state.counter = 99
+        return ctx.state.counter
+
+    g.add(
+        g.edge_from(g.start_node).to(stream_fail),
+        # A stream node needs an outgoing edge for the graph runtime to wire up its
+        # iterable; the generator below raises before yielding anything, so no items
+        # ever flow through this edge.
+        g.edge_from(stream_fail).map().to(fallback_step),
+        g.edge_from(fallback_step).to(g.end_node),
+    )
+    graph = g.build()
+    state = IterState()
+
+    async with graph.iter(state=state) as run:
+        while True:
+            try:
+                event = await run.next()
+            except RuntimeError:
+                # Recover from the stream-node failure by redirecting to the fallback node.
+                fallback_task = GraphTaskRequest(node_id=NodeID('fallback_step'), inputs=0, fork_stack=())
+                run.override_next([fallback_task])
+                continue
+            if isinstance(event, EndMarker):
+                break
+
+    assert run.output == 99
+    assert state.counter == 99

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from typing_extensions import assert_type
 
@@ -84,3 +84,18 @@ assert_type(tool_6, Tool[int])
 # function, as shown in the example immediately above
 tool_7 = Tool(my_context_tool, prepare=my_prepare_any)
 assert_type(tool_7, Tool[Any])
+
+
+# A type form such as `Literal[...]` or a union binds the deps type it spells; a class binds as before
+assert_type(Agent('test', deps_type=Literal['human', 'machine']), Agent[Literal['human', 'machine'], str])
+assert_type(Agent('test', deps_type=DepsA | None), Agent[DepsA | None, str])
+assert_type(Agent('test', deps_type=AgentDeps), Agent[AgentDeps, str])
+assert_type(Agent('test', deps_type=int, output_type=int), Agent[int, int])
+Agent('test', deps_type=5)  # pyright: ignore[reportArgumentType,reportCallIssue]
+
+
+def literal_deps_tool(ctx: RunContext[Literal['human', 'machine']]) -> str:
+    return ctx.deps
+
+
+Agent('test', deps_type=Literal['human', 'machine'], tools=[literal_deps_tool])

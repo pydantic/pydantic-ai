@@ -189,7 +189,7 @@ def test_voice_live_session_config_options() -> None:
         input_transcription_model=None,
         openai_voice='alloy',
         max_tokens=123,
-        tool_choice='required',
+        tool_choice='auto',
     )
 
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
@@ -202,7 +202,7 @@ def test_voice_live_session_config_options() -> None:
     assert 'input_audio_transcription' not in config
     assert config['voice'] == {'type': 'openai', 'name': 'alloy'}
     assert config['max_response_output_tokens'] == 123
-    assert config['tool_choice'] == 'required'
+    assert config['tool_choice'] == 'auto'
     assert config['tools'][0]['name'] == 'lookup'
 
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]

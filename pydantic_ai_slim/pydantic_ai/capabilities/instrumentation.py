@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Awaitable, Callable
-from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -13,6 +12,7 @@ from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
 from pydantic_core import ValidationError, to_json
 
+from pydantic_ai import _usage_attribution
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
@@ -96,7 +96,12 @@ class Instrumentation(AbstractCapability[Any]):
     # these fields would race.
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
-    _starting_usage: RunUsage = field(default_factory=RunUsage, repr=False, init=False)
+    _run_usage: RunUsage = field(default_factory=RunUsage, repr=False, init=False)
+    """Usage this run recorded while its span was open, credited by `_usage_attribution`.
+
+    A nested run's `accumulate` replaces the active accumulator for the length of its own span, so
+    what a delegate records is the delegate's; this holds only what this run recorded itself.
+    """
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
     _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
@@ -176,11 +181,9 @@ class Instrumentation(AbstractCapability[Any]):
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
         inst._new_message_index = len(ctx.messages)
-        # A run accumulates into the `RunUsage` it is handed, so a caller carrying one across a
-        # conversation (`usage=`, or a `Conversation`) hands this run a non-zero starting point.
-        # Copy it so the end-of-run span can report what *this* run added; see
-        # `_run_span_end_attributes`.
-        inst._starting_usage = copy(ctx.usage)
+        # Usage this run's span is accountable for, credited by `_usage_attribution` for as long as
+        # the span is open in `wrap_run`; see `_run_span_end_attributes`.
+        inst._run_usage = RunUsage()
         return inst
 
     # ------------------------------------------------------------------
@@ -226,6 +229,9 @@ class Instrumentation(AbstractCapability[Any]):
                 set_status_on_exception=False,
             ) as span,
             _record_uncaught_errors(span, include_content=settings.include_content),
+            # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
+            # the usage this run recorded — nested runs report their own on their own spans.
+            _usage_attribution.accumulate(self._run_usage),
         ):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
@@ -303,11 +309,12 @@ class Instrumentation(AbstractCapability[Any]):
         if metadata is not None:
             attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
-        # This run's own contribution, not the conversation's running total: `ctx.usage` is the
-        # object the caller passed in, accumulated into in place, so reporting it directly would
-        # make every run after the first include its predecessors' tokens and double-count anyone
-        # summing agent-run spans. The per-request `chat` spans are unaffected either way.
-        usage_attrs = settings.aggregated_usage_attributes(ctx.usage - self._starting_usage)
+        # What this run spent, which is what `gen_ai.aggregated_usage.*` means and what lets the
+        # agent-run spans in a trace be summed without counting a nested run twice. Not `ctx.usage`:
+        # that is the object the caller passed in, accumulated into in place, so it holds the whole
+        # conversation when usage is carried across runs and a delegate's tokens when it is shared.
+        # The per-request `chat` spans are unaffected either way.
+        usage_attrs = settings.aggregated_usage_attributes(self._run_usage)
 
         return {
             **usage_attrs,

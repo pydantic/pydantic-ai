@@ -121,7 +121,10 @@ class WebFetchLocalTool:
                 blocked_domains=self.blocked_domains,
                 max_bytes=self.max_download_bytes,
             )
-        except (ValueError, httpx2.HTTPStatusError, httpx2.RequestError) as e:
+        # The model picks the URL, so every way one can be bad has to come back as something it can
+        # act on. `InvalidURL` (an IDNA hostname httpx2 rejects, say) subclasses neither `ValueError`
+        # nor `HTTPError`, so it needs naming separately.
+        except (ValueError, httpx2.InvalidURL, httpx2.HTTPStatusError, httpx2.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
 
         media_type = response.headers.get('content-type', '')

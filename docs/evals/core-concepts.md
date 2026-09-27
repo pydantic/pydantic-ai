@@ -1,3 +1,7 @@
+---
+description: "Learn the core concepts of Pydantic Evals, including datasets, cases, experiments, evaluators and evaluation reports, and how they work together."
+---
+
 # Core Concepts
 
 This page explains the key concepts in Pydantic Evals and how they work together.

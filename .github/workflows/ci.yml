@@ -94,7 +94,7 @@ jobs:
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
             case "$1" in
-              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
               *) return 1 ;;
             esac
           }
@@ -143,15 +143,6 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
-      # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
-      # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
-      # whose name is shadowed by the workspace member, so keeping it in the
-      # universal lock breaks the lowest-direct re-resolution. Install it into the
-      # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
-      # present from the workspace). Keep the pin in sync with the runner's
-      # (.github/scripts/pydantic-ai-runner).
-      - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0"
-
       - name: Test GitHub agentic workflow policy
         env:
           UV_NO_SYNC: "1"
@@ -177,6 +168,14 @@ jobs:
         env:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
+
+      # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
+      # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
+      # included, must refresh it.
+      - name: Check the gh-aw runner's script lock is up to date
+        run: >-
+          uv lock --script .github/scripts/pydantic-ai-runner --check
+          || { echo "::error file=.github/scripts/pydantic-ai-runner.lock::Stale gh-aw runner lock; run: uv lock --script .github/scripts/pydantic-ai-runner"; exit 1; }
 
       # The tests above import the shim inside this job's workspace venv, which is not
       # the environment it runs in: gh-aw executes it via `uv run --script` against the
@@ -255,12 +254,17 @@ jobs:
           # Fail a passing pyright run that outlasts this many seconds, so a change that makes
           # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
           # nothing caught it (see #8177): the hook ran 328 to 490 s over the five `main` runs
-          # between those two. 110 is 1.1x the p99 (98.4 s) of the hook's own duration over the 60
-          # successful `main` push runs before that regression (mean 83.8 s, max 99.2 s), rounded up;
-          # derived in https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259.
-          PYRIGHT_TIME_BUDGET: "110"
-          # pre-commit hooks shell out via `uv run`; without this they would
-          # re-sync the venv and drop the out-of-band harness install above.
+          # between those two. The budget was 110 (1.1x the p99 of 60 main runs, derived in
+          # https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259), but by
+          # 2026-09-23 the hook ran 66 to 111 s on the same day's main runs (runner variance alone
+          # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
+          # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
+          # 150 leaves room for that variance while still failing a regression like #8077's 328 to
+          # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
+          # 156 s, so 200 keeps the same headroom.
+          PYRIGHT_TIME_BUDGET: "200"
+          # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
+          # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
 
       # Run inside `quality checks`, which finishes several minutes before the test/coverage critical path.
@@ -281,6 +285,11 @@ jobs:
           fi
           git fetch --depth=1 origin tag "$release_tag"
           uv run python .github/scripts/check_api_compatibility.py --against "$release_tag"
+
+      # `src/pydantic_ai_harness/gh-aw/pydantic.md` is the engine definition gh-aw consumers compile
+      # from the default branch, so nothing downstream re-checks it. `--published` refuses an
+      # `engine.version` PyPI does not serve.
+      - run: uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py --published
 
       - run: uv build --all-packages --no-sources
       - run: uv run python .github/scripts/check_http_dependencies.py
@@ -392,6 +401,14 @@ jobs:
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
+          # The extras its suite always ran with; every other extra is covered by `all-extras`.
+          - name: pydantic-ai-harness
+            command: "--package pydantic-ai-harness --extra code-mode --extra coder --extra logfire"
+            # Its own suite: the rest of `tests/` is covered by the other cells.
+            paths: tests/harness
+          - name: pydantic-clai2
+            command: "--package pydantic-clai2"
+            paths: tests/clai2
           - name: standard
             command: ""
     env:
@@ -430,16 +447,16 @@ jobs:
         shell: bash
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            export COVERAGE_PROCESS_START=./pyproject.toml
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
           uv run ${{ matrix.install.command }} "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec
+            --ignore=tests/durable_exec ${{ matrix.install.paths }}
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
       # Merge this job's per-worker/per-subprocess data files into one before upload: the
       # combine work runs in parallel across the matrix instead of serially in the `coverage`
@@ -448,7 +465,7 @@ jobs:
         if: env.COLLECT_COVERAGE == 'true'
         run: uv run ${{ matrix.install.command }} coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -482,6 +499,8 @@ jobs:
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
+      # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
+      TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -558,23 +577,25 @@ jobs:
         shell: bash
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            export COVERAGE_PROCESS_START=./pyproject.toml
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          uv run --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          # `--all-packages` so the extras of every workspace member are installed, not just the
+          # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
+          uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec --splits 2 --group ${{ matrix.shard }}
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        run: uv run --all-extras --no-extra mcp-tasks coverage combine
+        run: uv run --all-packages --all-extras --no-extra mcp-tasks coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -664,7 +685,7 @@ jobs:
         shell: bash
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            export COVERAGE_PROCESS_START=./pyproject.toml
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
@@ -673,7 +694,7 @@ jobs:
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       # See the matching step in the `test` job.
       - name: combine coverage files
@@ -682,7 +703,7 @@ jobs:
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
           coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -710,6 +731,8 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
+      # The docs examples are type-checked in the Python 3.14 all-extras jobs.
+      TYPECHECK_EXAMPLES: false
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -731,7 +754,7 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
 
-      - run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
+      - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -772,7 +795,7 @@ jobs:
         shell: bash
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            export COVERAGE_PROCESS_START=./pyproject.toml
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
@@ -781,14 +804,14 @@ jobs:
           uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec --splits 2 --group ${{ matrix.shard }}
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
 
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: uv run --no-sync coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -849,6 +872,39 @@ jobs:
 
       - run: uv run --all-extras --no-extra mcp-tasks python tests/import_examples.py
 
+  # `browser-use` pins every one of its dependencies exactly, so the workspace lock excludes it
+  # (`exclude-dependencies` in pyproject.toml) and no other job installs it. This one installs it on
+  # top of the locked environment, getting the versions `pydantic-ai-harness[browser-use]` users get,
+  # and runs and type-checks `BrowserUse` there.
+  test-harness-browser-use:
+    name: test harness browser-use
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: true
+      # Not yet for the harness suites: https://github.com/pydantic/pydantic-ai/issues/8821
+      BLOCKBUSTER_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: harness-browser-use
+
+      - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --group lint
+      # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
+      - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
+      - run: uv run --no-sync pytest tests/harness/browser_use
+      - run: uv run --no-sync pyright -p tests/harness/browser_use
+        env:
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
+
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
@@ -857,7 +913,7 @@ jobs:
     timeout-minutes: 10
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -895,14 +951,14 @@ jobs:
           tests/models/test_mcp_sampling.py
           tests/test_conftest.py
         env:
-          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
 
       # See the matching step in the `test` job. Plain `uv run`: combining is
       # environment-independent, so the FastMCP 4 `--with` overlay isn't needed.
       - name: combine coverage files
         run: uv run --all-extras --no-extra mcp-tasks --all-packages coverage combine
         env:
-          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
 
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -910,6 +966,156 @@ jobs:
           name: coverage-fastmcp-4
           path: .coverage
           include-hidden-files: true
+
+  # Live-service suites for the harness storage and AWS backends, outside `tests/` because they need
+  # a real server. Each runs when its capability, the dependencies, or this workflow change, and
+  # always on tags.
+  harness-integration-changes:
+    name: classify harness integration changes
+    if: github.event_name == 'pull_request' || github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    outputs:
+      localstack: ${{ steps.detect.outputs.localstack }}
+      mongodb: ${{ steps.detect.outputs.mongodb }}
+      redis: ${{ steps.detect.outputs.redis }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: detect
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          H=src/pydantic_ai_harness
+          # `Makefile` because the jobs below run its `integration-*` targets.
+          shared=(pyproject.toml uv.lock Makefile "$H/pyproject.toml" .github/workflows/ci.yml)
+          detect() {
+            local name=$1; shift
+            if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- "$@" "${shared[@]}"; then
+              echo "$name=false" >> "$GITHUB_OUTPUT"
+            else
+              status=$?
+              [ "$status" -eq 1 ] || exit "$status"
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          detect localstack "$H/pydantic_ai_harness/localstack" tests/harness/localstack "$H/integration_tests/localstack"
+          detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
+            tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
+          detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+
+  harness-localstack-integration:
+    name: harness LocalStack integration tests
+    needs: [harness-integration-changes]
+    # Also skipped where `LOCALSTACK_AUTH_TOKEN` is unreadable (fork and Dependabot pull requests):
+    # `LOCALSTACK_REQUIRE_AUTH_TOKEN` turns a missing token into a failure, not a skip.
+    # Disabled until the secret is set: https://github.com/pydantic/pydantic-ai/issues/8824
+    if: >-
+      ${{ false
+          && always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.localstack == 'true')
+          && (github.event_name != 'pull_request'
+              || (github.event.pull_request.head.repo.full_name == github.repository
+                  && github.actor != 'dependabot[bot]')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LOCALSTACK_REQUIRE_AUTH_TOKEN: "1"
+      LOCALSTACK_AWS_CLI: aws
+      LOCALSTACK_IMAGE: localstack/localstack
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-localstack
+
+      - uses: LocalStack/setup-localstack@7c8a0cb3405bc58be4c8f763f812aa000bc46303 # v0.3.2
+        with:
+          install-awslocal: "true"
+          skip-startup: "true"
+
+      - run: make integration-localstack
+        env:
+          # The job executes the full PR checkout, so path detection is not a security boundary.
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }} # zizmor: ignore[secrets-outside-env]
+
+  harness-mongodb-integration:
+    name: harness MongoDB integration tests
+    needs: [harness-integration-changes]
+    # No fork clause: the service below reads no secret.
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.mongodb == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mongodb:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # An unreachable server is a skip locally and must be a failure here.
+      MONGODB_REQUIRE_LIVE: "1"
+      MONGODB_TEST_URL: mongodb://127.0.0.1:27017
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-mongodb
+
+      - run: make integration-mongodb
+
+  harness-redis-integration:
+    name: harness Redis integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.redis == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      REDIS_REQUIRE_LIVE: "1"
+      REDIS_TEST_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-redis
+
+      - run: make integration-redis
 
   # Release gate: resolve the workspace at the top of the ranges this tag declares and run the
   # suite there, so we can't publish a version whose own dependency ranges already admit an SDK
@@ -948,7 +1154,7 @@ jobs:
 
       - run: uv run --no-sync strict-no-cover
         env:
-          COVERAGE_FILE: .coverage/.coverage
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
@@ -966,6 +1172,11 @@ jobs:
       - test-temporal-latest
       - test-examples
       - test-fastmcp-4
+      - test-harness-browser-use
+      - harness-integration-changes
+      - harness-localstack-integration
+      - harness-mongodb-integration
+      - harness-redis-integration
       - latest-versions-canary
       - coverage
     runs-on: ubuntu-latest
@@ -978,14 +1189,16 @@ jobs:
           # signal upstream drift rather than release blockers. It runs on tag refs only, and
           # `docs-only` runs only for Markdown-only PRs.
           # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
+          # The harness integration jobs run only when their paths change (always on tags), and
+          # LocalStack also skips where its secret is unreadable.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
               needs.classify.outputs.docs_only == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,latest-versions-canary,coverage'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
               || github.ref_type == 'tag'
-              && 'docs-only'
-              || 'docs-only,latest-versions-canary'
+              && 'docs-only,harness-integration-changes,harness-localstack-integration'
+              || 'docs-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
@@ -1044,9 +1257,10 @@ jobs:
           smoke_dir=$(mktemp -d)
           uv venv "$smoke_dir"
           uv pip install --python "$smoke_dir/bin/python" dist/*.whl
-          "$smoke_dir/bin/python" -I -c "import clai, pydantic_ai, pydantic_evals, pydantic_graph"
+          "$smoke_dir/bin/python" -I -c "import clai, pydantic_ai, pydantic_evals, pydantic_graph, pydantic_ai_harness, pydantic_clai2"
           "$smoke_dir/bin/pai" --help
           "$smoke_dir/bin/clai" --help
+          "$smoke_dir/bin/clai2" --help
 
       - name: Inspect package version
         id: inspect_package
@@ -1088,41 +1302,3 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           skip-existing: true
-
-  send-tweet:
-    name: Send tweet
-    needs: [release]
-    if: ${{ !cancelled() && needs.release.result == 'success' }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: pip install tweepy==4.14.0
-      - name: Send tweet
-        shell: python
-        run: |
-          import os
-          import tweepy
-
-          client = tweepy.Client(
-              access_token=os.getenv("TWITTER_ACCESS_TOKEN"),
-              access_token_secret=os.getenv("TWITTER_ACCESS_TOKEN_SECRET"),
-              consumer_key=os.getenv("TWITTER_CONSUMER_KEY"),
-              consumer_secret=os.getenv("TWITTER_CONSUMER_SECRET"),
-          )
-          version = os.getenv("VERSION").strip('"')
-          tweet = os.getenv("TWEET").format(version=version)
-          client.create_tweet(text=tweet)
-        env:
-          VERSION: ${{ needs.release.outputs.package-version }}
-          TWEET: |
-            Pydantic AI version {version} is out! 🎉
-
-            https://github.com/pydantic/pydantic-ai/releases/tag/v{version}
-          TWITTER_CONSUMER_KEY: ${{ secrets.TWITTER_CONSUMER_KEY }}
-          TWITTER_CONSUMER_SECRET: ${{ secrets.TWITTER_CONSUMER_SECRET }}
-          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
-          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}

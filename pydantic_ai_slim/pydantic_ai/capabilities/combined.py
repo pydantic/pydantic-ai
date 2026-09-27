@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from copy import copy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -1101,6 +1102,12 @@ def _ctx_for_active_cap(
 def _replace_capability_context(
     ctx: RunContext[AgentDepsT], *, capability: AbstractCapability[AgentDepsT], capability_active: bool
 ) -> RunContext[AgentDepsT]:
+    if type(ctx) is RunContext:
+        cap_ctx = copy(ctx)
+        cap_ctx.capability_active = capability_active
+        cap_ctx._capability = capability  # pyright: ignore[reportPrivateUsage]
+        return cap_ctx
+    # Subclasses can rely on reconstruction, e.g. TemporalRunContext's field availability guards.
     return replace(ctx, capability_active=capability_active, _capability=capability)
 
 

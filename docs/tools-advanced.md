@@ -1,3 +1,7 @@
+---
+description: "Advanced Pydantic AI function tools: return images and files, custom schemas, strict mode, dynamic tools, tool choice, retries, parallel calls and tool search."
+---
+
 # Advanced Tool Features
 
 This page covers advanced features for function tools in Pydantic AI. For basic tool usage, see the [Function Tools](tools.md) documentation.
@@ -249,7 +253,7 @@ As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestM
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 
-agent = Agent('test')
+agent = Agent('test', deps_type=int)
 
 
 async def only_if_42(
@@ -306,6 +310,7 @@ agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machin
 result = agent.run_sync('testing...', deps='human')
 print(result.output)
 #> {"greet":"hello a"}
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
@@ -365,6 +370,7 @@ def echo(message: str) -> str:
 
 
 agent.run_sync('testing...')
+assert test_model.last_model_request_parameters is not None
 assert test_model.last_model_request_parameters.function_tools[0].strict is None
 
 # Set the system attribute of the test_model to 'openai'
@@ -524,11 +530,14 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | OpenAI | ✓ | ✓ | Full support |
 | Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
 | Google | ✓ | ✓ | |
-| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
+| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
 | Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
 | xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
+
+With adaptive thinking, a forced tool response may contain only the tool call and no visible thinking block. Enabling
+adaptive thinking does not guarantee that the model will return visible reasoning.
 
 The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, with two exceptions. Ollama documents `tool_choice` as unsupported and ignores it. OpenRouter raises a `UserError` for an explicit `'required'` or named subset on models that can't combine forced tool choice with thinking, rather than silently dropping the reasoning; forcing that Pydantic AI merely inferred falls back to `'auto'` instead.
 
@@ -545,7 +554,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
+| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |

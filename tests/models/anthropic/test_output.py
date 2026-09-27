@@ -23,7 +23,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.output import NativeOutput
 
 from ..._inline_snapshot import snapshot
-from ...conftest import try_import
+from ...conftest import RequestCapture, try_import
 from ..test_anthropic import MockAnthropic, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -595,3 +595,47 @@ def test_unsupported_native_output_raises(
 
     with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
         agent.run_sync('Tell me about Berlin')
+
+
+# =============================================================================
+# Models That Reject Forcing
+# =============================================================================
+
+
+@pytest.mark.vcr
+def test_opus_5_5_basemodel_output_falls_back_to_auto(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+    request_capture: RequestCapture,
+) -> None:
+    """Claude Opus 5.5 rejects a forced `tool_choice`, so a bare structured `output_type` still completes.
+
+    Tool Output resolves to a forced choice of the output tool, which Opus 5.5 answers with a 400
+    (`tool_choice: type "tool" and "any" are not supported for this model`). The profile's
+    `anthropic_supports_forced_tool_choice=False` makes it fall back to `auto` with the tools filtered
+    to the output tool, and the model calls it anyway.
+    """
+    model = anthropic_model('claude-opus-5-5', capture=True)
+    agent = Agent(model, output_type=CityInfo)
+    result = agent.run_sync('Give me information about Tokyo')
+
+    assert result.output == snapshot(CityInfo(city='Tokyo', country='Japan', population=14000000))
+    body = request_capture.bodies('/v1/messages')[0]
+    assert body.get('tool_choice') == snapshot({'type': 'auto'})
+    assert body['tools'] == snapshot(
+        [
+            {
+                'name': 'final_result',
+                'description': 'Information about a city.',
+                'input_schema': {
+                    'properties': {
+                        'city': {'type': 'string'},
+                        'country': {'type': 'string'},
+                        'population': {'type': 'integer'},
+                    },
+                    'required': ['city', 'country', 'population'],
+                    'type': 'object',
+                },
+            }
+        ]
+    )

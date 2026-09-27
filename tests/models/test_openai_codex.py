@@ -9,7 +9,18 @@ import pytest
 from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
 
-from pydantic_ai import Agent
+from pydantic_ai import (
+    Agent,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolAvailabilityDeltaPart,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
@@ -40,6 +51,11 @@ def codex_credentials(vcr: Cassette) -> OpenAICodexCredentials:
     )
 
 
+async def reject_refresh(request: httpx2.Request) -> None:
+    # Recording must not consume the CLI's single-use refresh token.
+    assert request.url.host != 'auth.openai.com', 'Run `codex login` before recording to obtain a fresh access token.'
+
+
 @pytest.mark.parametrize('stream', [False, True])
 async def test_codex_tool_roundtrip(
     allow_model_requests: None,
@@ -49,13 +65,6 @@ async def test_codex_tool_roundtrip(
     stream: bool,
 ):
     """Astra calls a local tool and consumes its result over the authenticated Codex SSE API."""
-
-    async def reject_refresh(request: httpx2.Request) -> None:
-        # Recording must not consume the CLI's single-use refresh token.
-        assert request.url.host != 'auth.openai.com', (
-            'Run `codex login` before recording to obtain a fresh access token.'
-        )
-
     request_capture.client.event_hooks['request'].insert(0, reject_refresh)
     logfire.instrument_httpx(request_capture.client)
     logfire.instrument_pydantic_ai()
@@ -139,4 +148,119 @@ async def test_codex_tool_roundtrip(
             {'name': 'chat gpt-6-astra', 'operation': 'chat', 'model': 'gpt-6-astra'},
             {'name': 'invoke_agent agent', 'operation': 'invoke_agent', 'model': None},
         ]
+    )
+
+
+async def test_codex_deferred_tool_search(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    codex_credentials: OpenAICodexCredentials,
+):
+    """Astra finds a deferred tool through native tool search, then calls it.
+
+    Tool search is only valid with at least one `defer_loading` tool beside it: without a deferral mode
+    the corpus was withheld instead, and the backend rejected every request with
+    `tools.tool_search requires at least one deferred tool`.
+    """
+    request_capture.client.event_hooks['request'].insert(0, reject_refresh)
+    provider = OpenAICodexProvider(credentials=codex_credentials, http_client=request_capture.client)
+    toolset = FunctionToolset()
+    calls: list[str] = []
+
+    @toolset.tool_plain
+    def moo() -> str:
+        """Return a cheerful cow sound."""
+        calls.append('moo')
+        return 'Moo!'
+
+    agent = Agent(
+        OpenAICodexModel('gpt-6-astra', provider=provider),
+        toolsets=[toolset.defer_loading()],
+        instructions='Find a tool that makes a cow sound, call it exactly once, then reply with its result verbatim and nothing else.',
+    )
+
+    output = (await agent.run('Make a cow sound.')).output
+
+    assert {'output': output, 'tool_calls': calls} == snapshot({'output': 'Moo!', 'tool_calls': ['moo']})
+    assert [body['tools'] for body in request_capture.bodies('/responses')][0] == snapshot(
+        [
+            {'type': 'tool_search'},
+            {
+                'name': 'moo',
+                'parameters': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'type': 'function',
+                'description': 'Return a cheerful cow sound.',
+                'strict': False,
+                'defer_loading': True,
+            },
+        ]
+    )
+
+
+async def test_codex_calls_additional_tool(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    codex_credentials: OpenAICodexCredentials,
+):
+    """Astra calls a revealed tool declared only through the native `additional_tools` item."""
+    request_capture.client.event_hooks['request'].insert(0, reject_refresh)
+    model = OpenAICodexModel(
+        'gpt-6-astra',
+        provider=OpenAICodexProvider(credentials=codex_credentials, http_client=request_capture.client),
+    )
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+    )
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
+    messages = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Process the refund for order-123 using the available capability.')]
+            ),
+            ModelResponse(parts=[TextPart(content='I will load the required capability.')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+        ],
+        parameters,
+    )
+
+    response = await model.request(messages, None, parameters)
+
+    assert len(response.parts) == 1
+    call = response.parts[0]
+    assert isinstance(call, ToolCallPart)
+    assert call.tool_name == 'lookup_refund_policy'
+    assert call.args == '{"order_id":"order-123"}'
+    body = request_capture.bodies('/responses')[-1]
+    assert 'tools' not in body
+    request_input = body['input']
+    assert isinstance(request_input, list)
+    assert request_input[-1] == snapshot(
+        {
+            'type': 'additional_tools',
+            'role': 'developer',
+            'tools': [
+                {
+                    'type': 'function',
+                    'name': 'lookup_refund_policy',
+                    'description': 'Look up the refund policy for an order.',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {'order_id': {'type': 'string'}},
+                        'required': ['order_id'],
+                        'additionalProperties': False,
+                    },
+                    'strict': True,
+                }
+            ],
+        }
     )

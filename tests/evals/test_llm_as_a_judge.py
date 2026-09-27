@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
+from typing import Any, Literal
 
 import pytest
 from pytest_mock import MockerFixture
@@ -10,16 +11,25 @@ from ..conftest import BinaryContent, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai import Agent
+    from pydantic_ai.exceptions import UserError
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolCallPart
+    from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.models.wrapper import WrapperModel
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GEvalOutput,
         GradingOutput,
         _build_prompt,  # pyright: ignore[reportPrivateUsage]
+        _judge_g_eval,  # pyright: ignore[reportPrivateUsage]
+        _judge_input_output,  # pyright: ignore[reportPrivateUsage]
         _judge_input_output_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_input_output_expected,  # pyright: ignore[reportPrivateUsage]
         _judge_input_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_output,  # pyright: ignore[reportPrivateUsage]
         _judge_output_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_output_expected,  # pyright: ignore[reportPrivateUsage]
         _judge_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
         _stringify,  # pyright: ignore[reportPrivateUsage]
         judge_g_eval,
@@ -30,6 +40,12 @@ with try_import() as imports_successful:
     )
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+
+@pytest.fixture(autouse=True)
+def _default_judge_model(monkeypatch: pytest.MonkeyPatch):
+    """Keep mocked judge tests independent of provider credentials."""
+    monkeypatch.setattr('pydantic_evals.evaluators.llm_as_a_judge._default_model', TestModel())
 
 
 def test_grading_output():
@@ -85,6 +101,262 @@ async def test_judge_prompts_constrain_reason():
     for system_prompt in captured:
         assert 'concise 1-2 sentence justification' in system_prompt
         assert 'Do not include your reasoning process' in system_prompt
+
+
+async def test_judge_output_with_text_support_retries_a_null_reason():
+    """A nullable public result must not weaken the text judge's output schema."""
+    requests = 0
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        assert info.output_tools is not None
+        reason = None if requests == 1 else 'The output contains a greeting.'
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, {'reason': reason, 'pass': True, 'score': 1.0})]
+        )
+
+    result = await judge_output('Hello world', 'Content contains a greeting', model=FunctionModel(answer))
+
+    assert requests == 2
+    assert result == GradingOutput(reason='The output contains a greeting.', pass_=True, score=1.0)
+
+
+async def test_judge_g_eval_with_text_support_retries_a_null_reason():
+    """G-Eval keeps requiring a reason from judges that can generate text."""
+    requests = 0
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        assert info.output_tools is not None
+        reason = None if requests == 1 else 'The output is clear.'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'reason': reason, 'score': 4})])
+
+    result = await judge_g_eval('Clear output.', 'clarity', ['Read it.'], model=FunctionModel(answer))
+
+    assert requests == 2
+    assert result == GEvalOutput(reason='The output is clear.', score=4)
+
+
+async def test_judge_output_without_text_support():
+    """A verdict-only judge gets one boolean question and reports no invented reason."""
+    schemas: list[dict[str, object]] = []
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        schemas.append(output_tool.parameters_json_schema)
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, {'pass': True})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    result = await _judge_output('Hello world', 'Content contains a greeting', model=model, allow_reasonless=True)
+
+    assert result.reason is None
+    assert result.pass_ is True
+    assert result.score == 1.0
+    assert schemas == snapshot(
+        [
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'pass': {
+                        'description': 'Is the statement in <Rubric> true for <Output>?',
+                        'type': 'boolean',
+                    },
+                },
+                'required': ['pass'],
+                'title': 'BinaryGrading',
+                'type': 'object',
+            }
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'variant,kwargs,expected_question',
+    [
+        pytest.param(
+            'output',
+            {'output': 'O', 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>?',
+            id='output',
+        ),
+        pytest.param(
+            'input_output',
+            {'inputs': 'I', 'output': 'O', 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>, taking <Input> into account?',
+            id='input and output',
+        ),
+        pytest.param(
+            'output_expected',
+            {'output': 'O', 'expected_output': 'E', 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>, taking <ExpectedOutput> into account?',
+            id='output and expected output',
+        ),
+        pytest.param(
+            'input_output_expected',
+            {'inputs': 'I', 'output': 'O', 'expected_output': 'E', 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>, taking <Input> and <ExpectedOutput> into account?',
+            id='input, output and expected output',
+        ),
+        pytest.param(
+            'input_output_expected',
+            {'inputs': None, 'output': 'O', 'expected_output': None, 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>?',
+            id='the helper takes both but the caller passed neither',
+        ),
+    ],
+)
+async def test_the_verdict_question_names_only_the_sections_the_prompt_carries(
+    variant: str, kwargs: dict[str, Any], expected_question: str
+):
+    """A judge that cannot write a reason is asked about the sections it was given, and no others."""
+    # Resolve the helper inside the test body so the module-level skip applies when the optional
+    # `pydantic-evals` dependency is missing: a name in a `parametrize` is read at collection time.
+    judge: Any = {
+        'output': _judge_output,
+        'input_output': _judge_input_output,
+        'output_expected': _judge_output_expected,
+        'input_output_expected': _judge_input_output_expected,
+    }[variant]
+    questions: list[str] = []
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        properties = output_tool.parameters_json_schema['properties']
+        questions.append(properties['pass']['description'])
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, {'pass': True})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    await judge(**kwargs, model=model, allow_reasonless=True)
+
+    assert questions == [expected_question]
+
+
+async def test_a_verdict_that_is_not_a_boolean_is_refused():
+    """A judge that cannot write a reason still has to answer the one question it was asked."""
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'pass': 'yes'})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    with pytest.raises(ValueError, match="Judge returned an invalid verdict: 'yes'"):
+        await _judge_output('Hello world', 'Content contains a greeting', model=model, allow_reasonless=True)
+
+
+async def test_judge_g_eval_without_text_support():
+    """A reason-less G-Eval judge gets a normalized rubric and returns the requested integer scale."""
+    schemas: list[dict[str, object]] = []
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        schemas.append(output_tool.parameters_json_schema)
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, {'score': 3})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    result = await _judge_g_eval(
+        'Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model, allow_reasonless=True
+    )
+
+    assert result.reason is None
+    assert result.score == 4
+    assert schemas == snapshot(
+        [
+            {
+                'type': 'object',
+                'properties': {
+                    'score': {
+                        'description': 'What score does the output earn according to the criteria and evaluation steps?',
+                        'anyOf': [
+                            {'const': 0, 'description': '1: the worst score according to the evaluation criteria.'},
+                            {'const': 1, 'description': '2: an intermediate score between the worst and best.'},
+                            {'const': 2, 'description': '3: an intermediate score between the worst and best.'},
+                            {'const': 3, 'description': '4: an intermediate score between the worst and best.'},
+                            {'const': 4, 'description': '5: the best score according to the evaluation criteria.'},
+                        ],
+                    }
+                },
+                'required': ['score'],
+                'additionalProperties': False,
+                'title': 'GEvalScore',
+            }
+        ]
+    )
+
+
+async def test_judge_g_eval_without_text_support_rejects_an_invalid_score():
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'score': 'high'})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    with pytest.raises(ValueError, match="Judge returned an invalid score: 'high'"):
+        await _judge_g_eval(
+            'Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model, allow_reasonless=True
+        )
+
+
+async def test_judge_g_eval_without_text_support_rejects_too_many_score_levels():
+    """An oversized rubric fails before the grading agent can make a request."""
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('request should not be made')  # pragma: no cover
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            '`score_range` can contain at most 20 levels for a judge that does not support text output; '
+            'got 21 in (0, 20).'
+        ),
+    ):
+        await _judge_g_eval(
+            'Clear output.', 'clarity', ['Read it.'], score_range=(0, 20), model=model, allow_reasonless=True
+        )
+
+
+async def test_public_judge_helpers_require_a_reason():
+    """The existing helper result types stay strict; evaluators own reasonless results."""
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('request should not be made')  # pragma: no cover
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    with pytest.raises(UserError, match='Use the `LLMJudge` evaluator'):
+        await judge_output('Clear output.', 'Content is clear.', model=model)
+    with pytest.raises(UserError, match='Use the `GEval` evaluator'):
+        await judge_g_eval('Clear output.', 'clarity', ['Read it.'], model=model)
+
+
+@pytest.mark.parametrize('wrapped', [False, True])
+@pytest.mark.parametrize('judge', ['grading', 'g_eval'])
+async def test_text_judges_support_fallback_models(wrapped: bool, judge: Literal['grading', 'g_eval']):
+    """Composite models without an aggregate profile keep the existing text-judge path."""
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        properties = output_tool.parameters_json_schema['properties']
+        args = (
+            {'reason': 'The output is clear.', 'pass': True, 'score': 1.0}
+            if 'pass' in properties
+            else {'reason': 'The output is clear.', 'score': 4}
+        )
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, args)])
+
+    model = FallbackModel(FunctionModel(answer), FunctionModel(answer))
+    judge_model = WrapperModel(model) if wrapped else model
+
+    if judge == 'grading':
+        result = await judge_output('Clear output.', 'Content is clear.', model=judge_model)
+    else:
+        result = await judge_g_eval('Clear output.', 'clarity', ['Read it.'], model=judge_model)
+
+    assert result.reason == 'The output is clear.'
 
 
 def test_stringify():
@@ -148,7 +420,7 @@ def test_build_prompt_section_order_matches_few_shot_examples(
         'input_output_expected': _judge_input_output_expected_agent,
     }[variant]
 
-    prompt = _build_prompt(**kwargs)
+    prompt, _ = _build_prompt(**kwargs)
     assert isinstance(prompt, str)
     assert re.findall(r'<(\w+)>', prompt) == expected_tags
 

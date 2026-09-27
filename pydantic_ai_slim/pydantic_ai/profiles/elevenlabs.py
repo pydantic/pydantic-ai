@@ -39,6 +39,15 @@ def elevenlabs_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # ElevenLabs' WebRTC transport is LiveKit-based with no server-side control-plane sideband.
         'supports_webrtc': False,
         'supports_thinking': False,
+        # `agent_response` is an explicit end-of-response frame carrying the whole reply text, so the
+        # turn boundary is a protocol fact, and every recorded response is one agent turn.
+        'synthesizes_turn_boundary': False,
+        'responses_are_requests': True,
+        # Usage arrives as `context_usage`, once per user turn and after the `agent_response`
+        # boundary, so it is never attached to a `ModelResponse`: the response usage measures nothing
+        # about the context. The live fraction is `ElevenLabsRealtimeConnection.context_limit_tokens`
+        # against the reported `context_tokens` instead.
+        'response_usage_covers_context': False,
         # The LLM behind a hosted agent is configured on the agent (and overridable per conversation
         # via `elevenlabs_llm`), so no context window can be inferred from the agent id and the
         # genai-prices lookup is skipped. Pass `profile={'context_window': ...}` to pin one; the live

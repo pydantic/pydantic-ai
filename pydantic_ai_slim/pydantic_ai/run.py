@@ -165,6 +165,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             End(data=FinalResult(output='The capital of France is Paris.')),
         ]
         '''
+        assert agent_run.result is not None
         print(agent_run.result.output)
         #> The capital of France is Paris.
     ```
@@ -538,6 +539,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     End(data=FinalResult(output='The capital of France is Paris.')),
                 ]
                 '''
+                assert agent_run.result is not None
                 print('Final result:', agent_run.result.output)
                 #> Final result: The capital of France is Paris.
         ```

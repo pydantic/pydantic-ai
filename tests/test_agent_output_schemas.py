@@ -1,8 +1,10 @@
 import dataclasses
 import json
+from typing import Annotated, Any, Optional
 
 import pytest
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel, Field
+from typing_extensions import TypeAliasType
 
 from pydantic_ai import (
     Agent,
@@ -14,9 +16,11 @@ from pydantic_ai import (
     TextOutput,
     ToolOutput,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition
+from pydantic_ai.tools import ToolDefinition
 
 from ._inline_snapshot import snapshot
 from .conftest import remove_schema_descriptions
@@ -751,3 +755,315 @@ async def test_output_type_description(output_type: type, expected_schema: dict[
 async def test_nested_output_type_description(output_type: type, expected_schema: dict[str, object]):
     agent: Agent[object, str] = Agent('test', output_type=output_type)
     assert remove_schema_descriptions(agent.output_json_schema()) == expected_schema
+
+
+class Ticket(BaseModel):
+    """Triage a ticket."""
+
+    urgent: bool
+
+
+class Escalation(BaseModel):
+    to: str
+
+
+class Thread(BaseModel):
+    """Reply to a thread."""
+
+    ticket: Ticket
+
+
+@pytest.mark.parametrize(
+    'output_type, expected_tools',
+    [
+        pytest.param(
+            [Annotated[Ticket, Field(description='An urgent ticket.')], Escalation],
+            snapshot(
+                [
+                    ('final_result_Ticket', 'An urgent ticket.'),
+                    ('final_result_Escalation', 'Escalation: The final response which ends this conversation'),
+                ]
+            ),
+            id='field_description',
+        ),
+        pytest.param(
+            [Annotated[Ticket, Field()], Escalation],
+            snapshot(
+                [
+                    ('final_result_Ticket', 'Triage a ticket.'),
+                    ('final_result_Escalation', 'Escalation: The final response which ends this conversation'),
+                ]
+            ),
+            id='docstring',
+        ),
+        pytest.param(
+            [Annotated[Ticket, Field(description='A ticket.')], Annotated[Escalation, Field(description='Escalate.')]],
+            snapshot([('final_result_Ticket', 'A ticket.'), ('final_result_Escalation', 'Escalate.')]),
+            id='two_annotated',
+        ),
+        pytest.param(
+            [Annotated[Annotated[Ticket, Field(description='Inner.')], Field(description='Outer.')], Escalation],
+            snapshot(
+                [
+                    ('final_result_Ticket', 'Outer.'),
+                    ('final_result_Escalation', 'Escalation: The final response which ends this conversation'),
+                ]
+            ),
+            id='nested_annotated',
+        ),
+        pytest.param(
+            [Annotated[Ticket, Field(title='UrgentTicket')], Escalation],
+            snapshot(
+                [
+                    ('final_result_UrgentTicket', 'Triage a ticket.'),
+                    ('final_result_Escalation', 'Escalation: The final response which ends this conversation'),
+                ]
+            ),
+            id='field_title',
+        ),
+        pytest.param(
+            [Annotated[Thread, Field(description='A thread.')], Escalation],
+            snapshot(
+                [
+                    ('final_result_Thread', 'A thread.'),
+                    ('final_result_Escalation', 'Escalation: The final response which ends this conversation'),
+                ]
+            ),
+            id='model_with_refs',
+        ),
+        pytest.param(
+            [Ticket, Annotated[None, Field(description='Nothing needs doing.')]],
+            snapshot(
+                [
+                    ('final_result_Ticket', 'Triage a ticket.'),
+                    ('final_result_None', 'None: The final response which ends this conversation'),
+                ]
+            ),
+            id='none',
+        ),
+    ],
+)
+async def test_annotated_output_tool_name_and_description(output_type: Any, expected_tools: list[tuple[str, str]]):
+    """An `Annotated[X, ...]` union member is named and described after `X`, with a `Field(description=...)` winning.
+
+    Not a VCR test: the output tool definitions are what's under test, and they're built before any request is sent.
+    """
+    model = TestModel()
+    agent: Agent[None, Any] = Agent(model, output_type=output_type)
+    await agent.run('Triage this ticket.')
+
+    params = model.last_model_request_parameters
+    assert params is not None
+    assert [(tool.name, tool.description) for tool in params.output_tools] == expected_tools
+
+
+async def test_annotated_output_tool_schema_and_validation():
+    """An `Annotated` model is offered as the model's own schema with the annotation's keywords added, and its
+    metadata still validates the output."""
+
+    def require_urgent(ticket: Ticket) -> Ticket:
+        if not ticket.urgent:
+            raise ValueError('Only urgent tickets can be triaged.')
+        return ticket
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert [tool.parameters_json_schema for tool in info.output_tools] == snapshot(
+            [
+                {
+                    'properties': {'urgent': {'type': 'boolean'}},
+                    'required': ['urgent'],
+                    'title': 'Ticket',
+                    'type': 'object',
+                    'examples': [{'urgent': True}],
+                },
+                {
+                    'properties': {'to': {'type': 'string'}},
+                    'required': ['to'],
+                    'title': 'Escalation',
+                    'type': 'object',
+                },
+            ]
+        )
+        retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+        return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': retried})])
+
+    # Type checkers read an `Annotated[...]` expression as the `Annotated` special form rather than a type.
+    output_type: Any = [
+        Annotated[Ticket, AfterValidator(require_urgent), Field(examples=[{'urgent': True}])],
+        Escalation,
+    ]
+    agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=output_type)
+    result = await agent.run('Triage this ticket.')
+    assert result.output == Ticket(urgent=True)
+
+
+async def test_native_output_union_with_annotated_member():
+    """A `NativeOutput` union member written as `Annotated[X, ...]` is named after `X` and resolves to it."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.output_object is not None
+        [ticket_schema, _] = info.model_request_parameters.output_object.json_schema['properties']['result']['anyOf']
+        assert ticket_schema['title'] == 'Ticket'
+        assert ticket_schema['description'] == 'An urgent ticket.'
+        return ModelResponse(parts=[TextPart(json.dumps({'result': {'kind': 'Ticket', 'data': {'urgent': True}}}))])
+
+    # Type checkers read an `Annotated[...]` expression as the `Annotated` special form rather than a type.
+    outputs: Any = [Annotated[Ticket, Field(description='An urgent ticket.')], Escalation]
+    agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=NativeOutput(outputs))
+    result = await agent.run('Triage this ticket.')
+    assert result.output == Ticket(urgent=True)
+
+
+def require_urgent(ticket: Ticket) -> Ticket:
+    if not ticket.urgent:
+        raise ValueError('Only urgent tickets can be triaged.')
+    return ticket
+
+
+UrgentTicket = Annotated[Ticket, AfterValidator(require_urgent), Field(description='An urgent ticket.')]
+DescribedNone = Annotated[None, Field(description='Nothing needs doing.')]
+TicketOrEscalation = TypeAliasType('TicketOrEscalation', UrgentTicket | Escalation)
+Answer = Annotated[str, Field(description='A plain answer.', min_length=5)]
+
+
+def urgent_on_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the `Ticket` output tool with a non-urgent ticket, and with an urgent one once the validator objected."""
+    retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+    return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': retried})])
+
+
+# Type checkers read an `Annotated[...]` expression as the `Annotated` special form rather than a type, hence `Any`.
+UNION_SPELLINGS: list[Any] = [
+    pytest.param(
+        [UrgentTicket, Escalation],
+        UrgentTicket | Escalation,
+        ['final_result_Ticket', 'final_result_Escalation'],
+        id='union',
+    ),
+    pytest.param(
+        [UrgentTicket, Escalation],
+        TicketOrEscalation,
+        ['final_result_Ticket', 'final_result_Escalation'],
+        id='alias',
+    ),
+    pytest.param(
+        [UrgentTicket, None],
+        Optional[UrgentTicket],  # noqa: UP045
+        ['final_result_Ticket', 'final_result_None'],
+        id='optional',
+    ),
+    pytest.param(
+        [Ticket, DescribedNone],
+        Ticket | DescribedNone,
+        ['final_result_Ticket', 'final_result_None'],
+        id='described_none',
+    ),
+    # An annotated `str` is a value to validate, so it gets an output tool rather than the plain text a bare `str` allows.
+    pytest.param([Ticket, Answer], Ticket | Answer, ['final_result_Ticket', 'final_result_str'], id='annotated_str'),
+]
+
+
+@pytest.mark.parametrize('listed, union, names', UNION_SPELLINGS)
+async def test_annotated_union_member_matches_list(listed: Any, union: Any, names: list[str]):
+    """`X | Y` offers the model exactly the output tools `[X, Y]` does, `Annotated` metadata included.
+
+    Not a VCR test: the output tool definitions are built before any request is sent.
+    """
+    tools: list[list[ToolDefinition]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tools.append(info.output_tools)
+        return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': True})])
+
+    for output_type in (listed, union):
+        await Agent(FunctionModel(respond), output_type=output_type).run('Triage this ticket.')
+    assert tools[0] == tools[1]
+    assert [tool.name for tool in tools[1]] == names
+    assert (
+        Agent('test', output_type=listed).output_json_schema() == Agent('test', output_type=union).output_json_schema()
+    )
+
+
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param([UrgentTicket, Escalation], id='list'),
+        pytest.param(UrgentTicket | Escalation, id='union'),
+        pytest.param(Optional[UrgentTicket], id='optional'),  # noqa: UP045
+    ],
+)
+async def test_annotated_union_member_validates_and_describes(output_type: Any):
+    """An `Annotated` member's validator runs and its description reaches the tool, however the union is spelled."""
+    descriptions: list[str | None] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descriptions.append(info.output_tools[0].description)
+        return urgent_on_retry(messages, info)
+
+    agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=output_type)
+    result = await agent.run('Triage this ticket.')
+
+    assert result.output == Ticket(urgent=True)
+    assert descriptions == ['An urgent ticket.', 'An urgent ticket.']
+
+
+@pytest.mark.parametrize('marker', [NativeOutput, PromptedOutput])
+async def test_structured_output_union_annotated_member(marker: type[NativeOutput[Any] | PromptedOutput[Any]]):
+    """A `NativeOutput` or `PromptedOutput` of `X | Y` keeps an `Annotated` member's validator and description."""
+    descriptions: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.output_object is not None
+        [ticket_schema, _] = info.model_request_parameters.output_object.json_schema['properties']['result']['anyOf']
+        descriptions.append(ticket_schema['description'])
+        retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+        return ModelResponse(parts=[TextPart(json.dumps({'result': {'kind': 'Ticket', 'data': {'urgent': retried}}}))])
+
+    output_type: Any = UrgentTicket | Escalation
+    agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=marker(output_type))
+    result = await agent.run('Triage this ticket.')
+
+    assert result.output == Ticket(urgent=True)
+    assert descriptions == ['An urgent ticket.', 'An urgent ticket.']
+
+
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param([Ticket, DescribedNone], id='list'),
+        pytest.param(Ticket | DescribedNone, id='union'),
+    ],
+)
+async def test_described_none_output(output_type: Any):
+    """A described `None` is still `None`: an empty response is its answer, and its description reaches its tool."""
+    tools: list[ToolDefinition] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tools.extend(info.output_tools)
+        return ModelResponse(parts=[])
+
+    agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=output_type)
+    result = await agent.run('Triage this ticket.')
+
+    assert result.output is None
+    assert [(tool.name, tool.parameters_json_schema) for tool in tools] == snapshot(
+        [
+            (
+                'final_result_Ticket',
+                {
+                    'properties': {'urgent': {'type': 'boolean'}},
+                    'required': ['urgent'],
+                    'title': 'Ticket',
+                    'type': 'object',
+                },
+            ),
+            (
+                'final_result_None',
+                {
+                    'properties': {'response': {'description': 'Nothing needs doing.', 'type': 'null'}},
+                    'required': ['response'],
+                    'type': 'object',
+                },
+            ),
+        ]
+    )
