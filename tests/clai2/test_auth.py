@@ -16,6 +16,8 @@ from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, lo
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 
+pytestmark = pytest.mark.anyio
+
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
 )
@@ -31,12 +33,12 @@ def fixed_state(nbytes: int) -> str:
 
 async def never_pasted(message: str) -> str:
     await asyncio.Event().wait()
-    raise AssertionError('unreachable')
+    raise AssertionError('unreachable')  # pragma: no cover
 
 
 async def never_called_back(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
     await asyncio.Event().wait()
-    raise AssertionError('unreachable')
+    raise AssertionError('unreachable')  # pragma: no cover
 
 
 def scripted(values: list[str | BaseException]) -> tuple[list[str], CodexAuth]:

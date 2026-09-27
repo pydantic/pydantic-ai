@@ -45,13 +45,23 @@ class ProjectFile(BaseModel):
     servers: Servers = Field(default_factory=dict[str, StdioServer | HTTPServer | SSEServer])
 
 
-class ClaudeProjectFile(ProjectFile):
+class ClaudeProjectFile(BaseModel):
     """Claude Code's project `.mcp.json`: the same servers under `mcpServers`, `type` optional for stdio."""
 
-    servers: Servers = Field(default_factory=dict[str, StdioServer | HTTPServer | SSEServer], alias='mcpServers')
+    model_config = ConfigDict(extra='forbid', frozen=True, hide_input_in_errors=True)
+    # Named after the file's key rather than aliased to `servers`: pydantic 2.13 accepts an aliased
+    # field by its name too, so a `servers` key would no longer be rejected as extra.
+    mcpServers: Servers = Field(default_factory=dict[str, StdioServer | HTTPServer | SSEServer])
+
+    @property
+    def servers(self) -> Servers:
+        return self.mcpServers
 
 
-_FORMATS: dict[Path, type[ProjectFile]] = {PROJECT_MCP_FILE: ProjectFile, CLAUDE_MCP_FILE: ClaudeProjectFile}
+_FORMATS: dict[Path, type[ProjectFile | ClaudeProjectFile]] = {
+    PROJECT_MCP_FILE: ProjectFile,
+    CLAUDE_MCP_FILE: ClaudeProjectFile,
+}
 
 
 class MCPStore:
@@ -94,7 +104,7 @@ class MCPStore:
         """The nearest copy of each `PROJECT_MCP_FILES` name between the workspace and the git root."""
         return list(self._project_files())
 
-    def _project_files(self) -> dict[Path, type[ProjectFile]]:
+    def _project_files(self) -> dict[Path, type[ProjectFile | ClaudeProjectFile]]:
         workspace = self._workspace or Path.cwd()
         found = ((find_project_file(workspace, name), model) for name, model in _FORMATS.items())
         return {path: model for path, model in found if path is not None}
@@ -139,7 +149,7 @@ class MCPStore:
         return {path: servers for path, servers in loaded if servers is not None}
 
 
-def _read_trusted(path: Path, model: type[ProjectFile], accepted: dict[str, str]) -> Servers | None:
+def _read_trusted(path: Path, model: type[ProjectFile | ClaudeProjectFile], accepted: dict[str, str]) -> Servers | None:
     """The file's servers when its bytes are the accepted ones.
 
     The bytes are read once, so the file cannot be swapped between the hash check and parsing.

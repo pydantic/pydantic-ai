@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Generic, TypeVar
 
+import anyio
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
@@ -32,6 +33,8 @@ from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
 
+pytestmark = pytest.mark.anyio
+
 PromptT = TypeVar('PromptT')
 
 
@@ -42,9 +45,9 @@ def anyio_backend() -> str:
 
 def last_prompt(messages: list[ModelMessage]) -> str:
     for message in reversed(messages):
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+        if isinstance(message, ModelRequest):  # pragma: no branch
+            for part in message.parts:  # pragma: no branch
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str):  # pragma: no branch
                     return part.content
     raise AssertionError('no prompt')  # pragma: no cover
 
@@ -351,8 +354,10 @@ async def test_live_rows_follow_each_fork(tmp_path: Path) -> None:
         assert first.endswith('starting')
         assert second.startswith(' FORK #2  agent default  \u2713 00:0')
         assert second.endswith('done, prints after this turn')
-    await asyncio.sleep(0)
-    assert finished.announced
+    # Announcing takes the terminal lock, and acquiring it is a checkpoint.
+    with anyio.fail_after(5):
+        while not finished.announced:
+            await asyncio.sleep(0)
     assert [Text.from_ansi(row).plain[:9] for row in forks.rows('*')] == [' FORK #1 ']
     for activity in ('thinking', 'tool: grep', 'running: grep', 'responding', 'working'):
         running.progress.activity = activity
@@ -503,7 +508,7 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
 
     async def after_command() -> str:
         # Idle again: the held banner prints before the next prompt returns.
-        for _ in range(20):
+        for _ in range(20):  # pragma: no branch
             if 'FORK #1' in output.getvalue():
                 break
             await asyncio.sleep(0.01)

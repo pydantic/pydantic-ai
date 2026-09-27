@@ -18,6 +18,8 @@ from pydantic_ai_harness.localstack import LocalStackContainer, LocalStackError
 
 from ._http_server import HttpResponse, http_server, unused_tcp_port
 
+pytestmark = pytest.mark.anyio
+
 _LOCALSTACK_ENV_NAMES = (
     'LOCALSTACK_AUTH_TOKEN',
     'LOCALSTACK_API_KEY',
