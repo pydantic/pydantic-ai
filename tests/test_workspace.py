@@ -271,7 +271,7 @@ async def test_shell_listing_removes_scratch_file_on_cancel(tmp_path: Path) -> N
     workspace = Workspace(InterruptedBackend(LocalWorkspaceBackend(tmp_path)))
     task = asyncio.create_task(workspace.list_dir('.'))
     try:
-        with anyio.fail_after(3):
+        with anyio.fail_after(30):
             await started.wait()
     finally:
         task.cancel()

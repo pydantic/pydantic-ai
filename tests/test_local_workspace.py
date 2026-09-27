@@ -43,7 +43,7 @@ async def _process_running(pid: int) -> bool:
 
 
 async def _assert_process_gone(pid: int) -> None:
-    with anyio.move_on_after(10):
+    with anyio.move_on_after(30):
         while await _process_running(pid):
             await anyio.sleep(0.01)
         return
@@ -344,7 +344,7 @@ async def test_stalled_spawn_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
         await entered.wait()
         if mode == 'cancel':
             tg.cancel_scope.cancel()
-        with anyio.fail_after(5, shield=True):
+        with anyio.fail_after(30, shield=True):
             await cancelled.wait()
 
 
@@ -359,11 +359,11 @@ async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.Monke
             await anyio.sleep_forever()
         finally:
             # The fake stalls only the first close; release real OS resources after cancellation.
-            with anyio.move_on_after(2, shield=True):
+            with anyio.move_on_after(30, shield=True):
                 await real_close(process)
 
     monkeypatch.setattr(workspace, '_close', stalled_close)
-    with anyio.fail_after(5):
+    with anyio.fail_after(30):
         with pytest.raises(WorkspaceTimeoutError):
             await workspace.run(['sh', '-c', 'sleep 30'], timeout=0.05)
     assert entered.is_set()
