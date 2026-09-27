@@ -11,6 +11,7 @@ import signal
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, NoReturn
@@ -30,6 +31,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
+    FileEntry,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
@@ -1752,6 +1754,27 @@ class TestReadBgOutputEdgeCases:
         finally:
             stdout_log.chmod(0o600)
             await ts.stop_command(_ctx(shell_dir), command_id)
+
+
+class _NoStatSizes(LocalWorkspaceBackend):
+    """A backend whose `stat` reports no file sizes, as the workspace protocol allows."""
+
+    async def stat(self, path: str) -> FileEntry:
+        return replace(await super().stat(path), size=None)
+
+
+class TestJobLogSizes:
+    async def test_log_is_counted_in_the_workspace_when_stat_has_no_size(self, shell_dir: Path) -> None:
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_NoStatSizes(shell_dir)))
+        job = await _job(ts, ctx, _parse_command_id(await ts.start_command(ctx, 'echo finished')))
+        with anyio.fail_after(5):
+            while (await job.status())[0]:
+                await anyio.sleep(0.05)  # pragma: lax no cover
+        assert await job.size(job.output_path) == len(b'finished\n')
+        assert await job.tail(job.output_path, 100) == b'finished\n'
+        with pytest.raises(WorkspaceError, match='Is a directory'):
+            await job.size(job.directory)
 
 
 class TestJobStatusEdgeCases:

@@ -231,13 +231,20 @@ class SupportsFilesystem(Protocol):
 
 @runtime_checkable
 class SupportsRealpath(Protocol):
-    """Optional native symlink resolution.
+    """Native symlink resolution for path boundaries such as harness FileSystem's `root_dir`.
 
-    Without it, [`Workspace.realpath`][pydantic_ai.workspaces.Workspace.realpath] uses the backend's shell.
+    Without it, `Workspace.realpath` uses the backend's shell, and on a backend without commands it
+    only normalizes the path as text, so path checks cannot see through symlinks. Implement it on a
+    filesystem-only backend whose storage can hold symlinks.
     """
 
     async def realpath(self, path: str) -> str:
-        """Resolve every symlink in an absolute POSIX path, like `os.path.realpath(path, strict=False)`."""
+        """Resolve inside the environment, like `os.path.realpath(path, strict=False)`.
+
+        Relative link targets start in the link's directory; `..` after a link climbs from its
+        target. Keep missing components as written. A loop must not hang; a returned path through a loop
+        must stay inside the directory holding it (or raise `OSError`). Return an absolute, normalized path.
+        """
         ...
 
 

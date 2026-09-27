@@ -32,6 +32,22 @@ pytestmark = pytest.mark.skipif(os.name != 'posix', reason='workspace conformanc
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize('raises', [True, False])
+async def test_realpath_rule_accepts_loop_error_or_confined_path(tmp_path: Path, raises: bool) -> None:
+    class LoopBackend(LocalWorkspaceBackend):
+        async def realpath(self, path: str) -> str:
+            if path.endswith('/loop1/q'):
+                if raises:
+                    raise OSError('symlink loop')
+                return path
+            return await super().realpath(path)
+
+    await WorkspaceBackendSuite.test_realpath_and_entries_follow_symlinks(
+        WorkspaceBackendSuite(), LoopBackend(tmp_path)
+    )
+
+
+@pytest.mark.anyio
 async def test_stdin_rule_does_not_use_a_remote_latency_deadline(tmp_path: Path) -> None:
     class RecordingBackend(LocalWorkspaceBackend):
         command_timeout: float | None = None

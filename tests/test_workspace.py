@@ -356,12 +356,16 @@ async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) 
                 await operation('fifo')
 
 
-async def test_shell_realpath_stops_at_a_symlink_loop(tmp_path: Path) -> None:
+async def test_shell_realpath_leaves_a_symlink_loop_unresolved(tmp_path: Path) -> None:
     (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
 
-    with pytest.raises(WorkspaceError, match='too many levels of symbolic links'):
-        await workspace.realpath('loop')
+    (tmp_path / 'loop1').symlink_to('loop2')
+    (tmp_path / 'loop2').symlink_to('loop1')
+    # Like `os.path.realpath`: a loop is left unresolved rather than failing the call.
+    with anyio.fail_after(30):
+        assert await workspace.realpath('loop') == str(tmp_path / 'loop')
+        assert await workspace.realpath('loop1/q') == str(tmp_path / 'loop1' / 'q')
 
 
 async def test_realpath_only_normalizes_on_a_filesystem_only_backend() -> None:
