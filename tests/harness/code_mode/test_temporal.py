@@ -180,7 +180,10 @@ code_mode_agent = Agent(
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='unset')
 
 
-def _workflow_os(*, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object) -> object:
+# Only the skipped relay test runs Code Mode with this `os_access` (#8824).
+def _workflow_os(
+    *, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object
+) -> object:  # pragma: lax no cover
     if name == 'datetime.now':
         # Raises "Not in workflow event loop" anywhere but the workflow's own thread.
         return workflow.now()

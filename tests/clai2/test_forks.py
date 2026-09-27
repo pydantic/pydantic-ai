@@ -45,7 +45,7 @@ def anyio_backend() -> str:
 
 def last_prompt(messages: list[ModelMessage]) -> str:
     for message in reversed(messages):
-        if isinstance(message, ModelRequest):
+        if isinstance(message, ModelRequest):  # pragma: no branch
             for part in message.parts:  # pragma: no branch
                 if isinstance(part, UserPromptPart) and isinstance(part.content, str):  # pragma: no branch
                     return part.content

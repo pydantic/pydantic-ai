@@ -59,7 +59,7 @@ def write_server(tmp_path: Path, *, with_tool: bool = True) -> tuple[Path, Path]
 
 
 def assert_exited(pid_file: Path) -> None:
-    if sys.platform != 'win32':
+    if sys.platform != 'win32':  # pragma: no branch
         with pytest.raises(ProcessLookupError):
             os.kill(int(pid_file.read_text(encoding='utf-8')), 0)
 
