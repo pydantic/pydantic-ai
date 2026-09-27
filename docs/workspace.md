@@ -369,6 +369,9 @@ activities.
 - Without an explicit `run_id`, a run inside a workflow or flow gets an ID derived from the Temporal
   execution run ID, the DBOS workflow ID or the Prefect flow run ID, so its workspace state stays
   addressable after a worker restart or flow retry.
+- On DBOS, a run with a workspace runs its tool calls one at a time, with a warning unless you pass
+  `parallel_execution_mode='sequential'`: DBOS numbers steps as they start, so parallel tools making
+  several workspace calls each could not be replayed reliably.
 - A workspace call may run again if a worker dies mid-call. Calls made inside a tool retry with that
   tool. Calls made in workflow code use the engine's own settings (Temporal `activity_config`, DBOS
   `mcp_step_config`; Prefect runs them once), and only infrastructure failures are retried there, never

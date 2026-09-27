@@ -235,6 +235,7 @@ Under DBOS, tools are executed in parallel by default to minimize latency. To gu
 It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
 
 If you prefer strict ordering, you can configure the agent to run tools sequentially by setting `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability].
+A run with a [workspace](../workspace.md) always runs its tool calls sequentially, and warns unless you set this.
 
 ### Toolsets at Runtime
 
