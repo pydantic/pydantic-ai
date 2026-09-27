@@ -17,6 +17,8 @@ from typing import Any
 
 import anyio
 import pytest
+from pytest_examples import CodeExample
+
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import (
     Workspace,
@@ -25,8 +27,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pytest_examples import CodeExample
-
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
 

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import anyio
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -39,7 +40,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     command_argv,
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     import modal
     import modal.container_process
     import modal.io_streams
+
     from pydantic_ai.workspaces import WorkspaceCommand
 
 __all__ = ('ModalSandboxBackend',)

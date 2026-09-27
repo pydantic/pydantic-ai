@@ -11,9 +11,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-
 from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
 
 from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT, skip_or_fail_live_tier
@@ -71,7 +71,7 @@ class TestLiveModalSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover - 
             yield backend
         finally:
             if backend.ref is not None:
-                import modal  # noqa: PLC0415 - optional extra, absent on slim installs
+                import modal
 
                 sandbox = await modal.Sandbox.from_id.aio(backend.ref.id)
                 if await sandbox.poll.aio() is None:

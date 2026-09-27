@@ -11,6 +11,7 @@ from typing import Any
 
 import anyio
 import pytest
+
 from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
@@ -18,7 +19,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _backend
 
 from .fake_modal import FakeImage, FakeModal, FileInfo
@@ -766,7 +766,7 @@ class TestFilesystem:
         # The protocol's contract: backends translate their SDK's own missing-file exception
         # into the builtin `FileNotFoundError` every consumer already handles.
         backend = await started()
-        with pytest.raises(FileNotFoundError, match="'/tmp/missing.txt'"):
+        with pytest.raises(FileNotFoundError, match=r"'/tmp/missing.txt'"):
             await getattr(backend, operation)('/tmp/missing.txt')
 
     async def test_exists_still_reports_other_failures(self, fake_modal: FakeModal) -> None:

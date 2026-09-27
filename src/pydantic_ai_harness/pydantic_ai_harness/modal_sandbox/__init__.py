@@ -7,8 +7,7 @@ want to create or attach to a sandbox themselves and pass it to a run as `worksp
 """
 
 from pydantic_ai_harness.modal_sandbox._backend import ModalSandboxBackend
-from pydantic_ai_harness.modal_sandbox._capability import UPGRADE_DOCS_URL as _UPGRADE_DOCS_URL
-from pydantic_ai_harness.modal_sandbox._capability import ModalSandbox
+from pydantic_ai_harness.modal_sandbox._capability import UPGRADE_DOCS_URL as _UPGRADE_DOCS_URL, ModalSandbox
 
 __all__ = ['ModalSandbox', 'ModalSandboxBackend']
 

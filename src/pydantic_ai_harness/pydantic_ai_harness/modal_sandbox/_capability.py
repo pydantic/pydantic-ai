@@ -7,12 +7,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from typing_extensions import Never
+
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from typing_extensions import Never
-
 from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
 from pydantic_ai_harness.modal_sandbox._backend import (
