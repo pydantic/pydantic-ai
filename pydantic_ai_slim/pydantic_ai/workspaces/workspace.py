@@ -300,16 +300,16 @@ class _ShellFilesystem(SupportsFilesystem):
         # One round trip, resolving the way `os.path.realpath(strict=False)` does: walk the components
         # left to right, follow each symlink one level with `readlink` and walk its target in place of
         # the link, and let `..` climb the path resolved so far. A missing component is kept as
-        # written and can still be climbed out of, after which symlinks resolve again. The result is
+        # written and can still be climbed out of, after which symlinks resolve again. Past the link
+        # limit, as in a loop, the rest is kept as written, like Python's loop handling. The result is
         # base64-encoded because command substitution would drop a trailing newline from a name.
         result = await self._backend.run(
             f'rest={shlex.quote(path.lstrip("/"))}; resolved=; links=0; '
             'while [ -n "$rest" ]; do '
             'case "$rest" in */*) part="${rest%%/*}"; rest="${rest#*/}";; *) part="$rest"; rest=;; esac; '
             'case "$part" in ""|.) ;; ..) resolved="${resolved%/*}";; *) '
-            'if [ -L "$resolved/$part" ]; then '
-            f'links=$((links + 1)); if [ "$links" -gt {_SHELL_MAX_SYMLINKS} ]; then '
-            'echo "too many levels of symbolic links" >&2; exit 1; fi; '
+            f'if [ "$links" -lt {_SHELL_MAX_SYMLINKS} ] && [ -L "$resolved/$part" ]; then '
+            'links=$((links + 1)); '
             'target=$(readlink -n -- "$resolved/$part"; printf x); target="${target%x}"; '
             'case "$target" in /*) resolved=;; esac; rest="$target/$rest"; '
             'else resolved="$resolved/$part"; fi;; esac; done; '
@@ -475,7 +475,8 @@ class Workspace(WorkspaceBackend):
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
 
         Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath], else `readlink` in
-        its shell; filesystem-only backends only normalize the path and do not resolve symlinks.
+        its shell. Without either, it only normalizes the path as text: symlinks are not followed, so a
+        path check built on it can be escaped through a link.
         """
         if not posixpath.isabs(path):
             # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
