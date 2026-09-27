@@ -46,7 +46,7 @@ See [Custom capabilities in specs](agent-spec.md#custom-capabilities-in-specs) f
 
 ## Pydantic AI Harness
 
-[**Pydantic AI Harness**](https://pydantic.dev/docs/ai/harness/) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, and context management live there rather than in core. See [What goes where?](https://pydantic.dev/docs/ai/harness/#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness#capability-matrix).
+[**Pydantic AI Harness**](https://pydantic.dev/docs/ai/harness/) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, and context management live there rather than in core. See [What goes where?](https://pydantic.dev/docs/ai/harness/#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness#capabilities).
 
 ## Third-party ecosystem
 
