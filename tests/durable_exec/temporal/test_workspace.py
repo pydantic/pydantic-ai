@@ -16,21 +16,24 @@ from importlib.machinery import ModuleSpec
 from typing import Any
 
 import pytest
+from pydantic.errors import PydanticUserError
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import AgentRunError, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Workspace,
+    WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.unavailable import UnavailableWorkspace
+from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from ...workspace_fakes import InMemoryProvider
 from ..workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
@@ -44,7 +47,7 @@ try:
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
-    from pydantic_ai.durable_exec._workspace import WorkspaceCall
+    from pydantic_ai.durable_exec._workspace import ReraisedWorkspaceCallError, WorkspaceCall
     from pydantic_ai.durable_exec.prefect import PrefectDurability
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -135,6 +138,18 @@ def test_workspace_failures_do_not_retry_temporal_activities() -> None:
     assert {WorkspaceTimeoutError.__name__, WorkspaceReadOnlyError.__name__, WorkspaceUnavailableError.__name__} <= set(
         policy.non_retryable_error_types or []
     )
+
+
+def test_workspaces_add_no_builtins_to_workflow_failure_types() -> None:
+    """A builtin raised by a workflow's own code still fails only the workflow task, as without workspaces."""
+    assert PydanticAIPlugin().workflow_failure_exception_types == [
+        UserError,
+        PydanticUserError,
+        AgentRunError,
+        UnsupportedEventLoopError,
+        WorkspaceError,
+        ReraisedWorkspaceCallError,
+    ]
 
 
 def test_unattached_workspace_does_not_serialize_an_unavailable_reason() -> None:

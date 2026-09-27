@@ -28,6 +28,7 @@ from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ...workspaces import WorkspaceError
+from .._workspace import ReraisedWorkspaceCallError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._event_stream import (
@@ -201,21 +202,17 @@ class PydanticAIPlugin(SimplePlugin):
             # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
             # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
             # would otherwise turn it into a `UserError`; without it those would hang the same way.
-            # `WorkspaceError` and the builtin file errors a workspace raises are re-raised in
-            # workflow code by `DurableWorkspace` after crossing an activity boundary as data; a
-            # hook that lets one escape must fail the workflow the same way, not hang it.
+            # `DurableWorkspace` re-raises a workspace call's error in workflow code after it crossed
+            # an activity boundary as data; a hook that lets one escape must fail the workflow the
+            # same way, not hang it. Builtins come back marked with `ReraisedWorkspaceCallError`, so
+            # the same builtin raised by a workflow's own code still fails only the task, as before.
             workflow_failure_exception_types=[
                 UserError,
                 PydanticUserError,
                 AgentRunError,
                 UnsupportedEventLoopError,
                 WorkspaceError,
-                FileNotFoundError,
-                NotADirectoryError,
-                IsADirectoryError,
-                PermissionError,
-                FileExistsError,
-                UnicodeDecodeError,
+                ReraisedWorkspaceCallError,
             ],
         )
 
