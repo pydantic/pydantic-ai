@@ -1268,7 +1268,7 @@ class TestS3MediaStoreWithMockTransport:
     ),
     reason='live S3/R2 env vars not set',
 )
-class TestS3MediaStoreLive:  # pragma: no cover
+class TestS3MediaStoreLive:  # pragma: lax no cover
     """Live integration against the configured S3 endpoint (e.g. R2).
 
     Activated only when all five S3_* env vars are set. Reads creds out of

@@ -268,7 +268,7 @@ class _StaticToolset(AbstractToolset[object]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover - required by AbstractToolset, never read in tests
+        return None  # pragma: lax no cover - required by AbstractToolset, never read in tests
 
     async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
         return {

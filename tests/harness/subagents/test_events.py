@@ -237,7 +237,7 @@ class TestDelegationEvents:
 class TestOutcomes:
     async def test_timeout(self) -> None:
         # The timeout may fire before the child reaches its model, so no line here is a sure hit.
-        async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
             await asyncio.sleep(1)
             return ModelResponse(parts=[TextPart('late')])
 

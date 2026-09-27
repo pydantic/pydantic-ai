@@ -383,7 +383,7 @@ def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]
         return False
     try:
         return issubclass(obj, AbstractCapability)
-    except TypeError:  # pragma: no cover
+    except TypeError:  # pragma: lax no cover
         return False
 
 
@@ -516,7 +516,7 @@ def test_capability_combine_policy_holds(name: str) -> None:
     """Each capability composes -- or refuses to -- the way its policy says."""
     policy = COMBINE_POLICY[name]
     shipped, _ = _shipped_capability_types()
-    if name not in shipped:  # pragma: no cover
+    if name not in shipped:  # pragma: lax no cover
         pytest.skip(f'{name} needs an optional dependency group that is not installed')
     capability_type = shipped[name]
 

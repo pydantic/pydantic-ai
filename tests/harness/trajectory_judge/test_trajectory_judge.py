@@ -496,7 +496,7 @@ class TestFailureHandling:
 
         # The gate never opens: the run ends first and the evaluation is cancelled, possibly
         # before the body even starts, so the whole function is excluded from coverage.
-        async def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        async def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
             await gate.wait()
             return _all_good_response()
 
@@ -683,7 +683,7 @@ class TestUsageCoordination:
 
         # The gate never opens: the failing run cancels the evaluation, so the body's tail
         # never executes and the whole function is excluded from coverage.
-        async def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        async def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
             nonlocal judge_calls
             judge_calls += 1
             judge_entered.set()
