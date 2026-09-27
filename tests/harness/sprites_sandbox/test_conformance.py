@@ -13,9 +13,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
+
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-
 from pydantic_ai_harness.sprites_sandbox import SpritesSandboxBackend
 
 from .fake_sprites import SpriteTransport
@@ -82,7 +82,7 @@ class TestLiveSpritesSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover 
         backend = SpritesSandboxBackend()
         yield backend
         if backend.ref is not None:
-            from sprites.exceptions import NotFoundError  # noqa: PLC0415 - optional extra, absent on slim installs
+            from sprites.exceptions import NotFoundError
 
             try:
                 await _delete(backend)

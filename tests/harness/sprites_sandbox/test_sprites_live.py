@@ -31,14 +31,14 @@ from typing import Any
 
 import anyio
 import pytest
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
-from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pytest_examples import CodeExample
 from sprites import AsyncSprite, AsyncSpritesClient
 from sprites.exceptions import NotFoundError, SpriteError
 
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 

@@ -9,19 +9,6 @@ from pathlib import Path
 import anyio
 import httpx
 import pytest
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
-from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import (
-    Workspace,
-    WorkspaceError,
-    WorkspaceRef,
-    WorkspaceTimeoutError,
-    WorkspaceUnavailableError,
-)
 from sprites import AsyncSprite
 from sprites.exceptions import (
     APIError,
@@ -36,6 +23,19 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidMessage, InvalidStatus
 from websockets.http11 import Response
 
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import (
+    Workspace,
+    WorkspaceError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 
@@ -648,7 +648,7 @@ class TestSpritesSandbox:
     async def test_deadline_closes_the_socket_and_preserves_partial_output(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
-        with pytest.raises(WorkspaceTimeoutError, match='Command timed out after 0.3 seconds') as caught:
+        with pytest.raises(WorkspaceTimeoutError, match=r'Command timed out after 0.3 seconds') as caught:
             await backend.run('printf ready; exec sleep 5', shell=True, timeout=0.3)
         assert caught.value.stdout == 'ready'
         assert transport.execs[0].process.wait(timeout=1) == -signal.SIGKILL
