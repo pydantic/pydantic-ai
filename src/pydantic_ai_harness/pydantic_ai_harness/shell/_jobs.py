@@ -46,6 +46,7 @@ publish() {{
 }}
 trap : TERM
 publish null
+while [ ! -e "$dir/launch.ready" ]; do sleep 0.1 2> /dev/null || sleep 1; done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
@@ -76,6 +77,7 @@ else
   if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
 while [ ! -e "$dir/status.json" ]; do sleep 0.1 2> /dev/null || sleep 1; done
+: > "$dir/launch.ready"
 echo "$pid $group" > "$dir/handle"
 echo "$pid $group"
 """
