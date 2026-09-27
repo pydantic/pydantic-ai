@@ -109,13 +109,13 @@ async def dispatch_event_stream(
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
 
 
-def unattached_workspace() -> Workspace:
+def no_workspace() -> Workspace:
     # Imported lazily to keep the run-context module independent of the workspace facade during
     # package initialization. This factory runs only when a `RunContext` is constructed.
     from .workspaces import Workspace
-    from .workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
+    from .workspaces.unavailable import NO_WORKSPACE
 
-    return Workspace(_UnattachedWorkspace(_NO_WORKSPACE_REASON))
+    return Workspace(NO_WORKSPACE)
 
 
 def recorded_workspace_ref(workspace: Workspace, carried: WorkspaceRef | None) -> WorkspaceRef | None:
@@ -125,15 +125,6 @@ def recorded_workspace_ref(workspace: Workspace, carried: WorkspaceRef | None) -
     conversation's ref, so a turn that couldn't touch the workspace doesn't lose it for the next one.
     """
     return workspace.ref if workspace.attached else carried
-
-
-_NO_WORKSPACE_REASON = (
-    "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('.')]` to the agent, or pass "
-    "`workspace=LocalWorkspaceBackend('.')` to the run method, to use the local machine (unsafe: commands and "
-    'file operations run with the full permissions of this process); attach another capability that supplies a '
-    'workspace through its `get_workspace` hook; or pass a `WorkspaceRef` to connect to an existing environment. '
-    'See https://pydantic.dev/docs/ai/workspace/ for details.'
-)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -263,7 +254,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
     with, for the whole session (realtime settings are fixed at connect time).
     """
-    workspace: Workspace = field(default_factory=unattached_workspace)
+    workspace: Workspace = field(default_factory=no_workspace)
     """The run's [`Workspace`](../workspace.md): the one passed as `workspace=`, else the first a capability supplies.
 
     Without one, a placeholder whose operations explain how to attach one.
@@ -349,7 +340,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Provides access to tool validation and execution, including tracing and
     capability hooks. Useful for toolsets that need to dispatch tool calls
-    programmatically (e.g. code execution workspaces).
+    programmatically (e.g. code execution sandboxes).
 
     Not available in `TemporalRunContext` — it is not serializable across
     Temporal activity boundaries.

@@ -1497,7 +1497,7 @@ async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself(tmp_
 
     async def unused_operation(
         name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any], config: Mapping[str, Any]
-    ) -> Any: ...
+    ) -> Any: ...  # pragma: no branch
 
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     if attached:

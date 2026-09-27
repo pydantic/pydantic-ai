@@ -69,7 +69,8 @@ around the selected workspace inside the container; each of its calls, `ensure` 
 fallback on first call, so parallel units share one environment. Inside a unit, `_unit_workspace`
 gives the call the plain workspace: the live one in-process, or on Temporal the one rebuilt from the
 serialized ref. Expected workspace errors cross as data and are re-raised with their original type;
-Temporal also lists them as workflow-failure types so an uncaught one fails the workflow.
+Temporal lists `WorkspaceError` as a workflow-failure type; an uncaught builtin error keeps Temporal's
+default and fails the workflow task.
 
 Assume a durable unit may execute more than once if the process fails after the side effect but
 before its checkpoint commits. Document the engine's guarantees and require idempotency or expose

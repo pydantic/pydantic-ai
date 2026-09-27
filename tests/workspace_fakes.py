@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import posixpath
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -339,8 +339,11 @@ class InMemoryProvider:
     provider's does; a backend with no ref creates an environment on first use and takes its ref.
     """
 
-    def __init__(self, name: str = 'fake') -> None:
+    def __init__(self, name: str = 'fake', *, in_unit: Callable[[], bool] | None = None) -> None:
         self.name = name
+        # Under a durable engine: whether the caller is inside a durable unit, the only place a remote
+        # environment may be reached from.
+        self.in_unit = in_unit
         self.environments: dict[str, dict[str, bytes]] = {}
         self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
@@ -370,6 +373,7 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def _files(self) -> dict[str, bytes]:
         await anyio.sleep(0)
         provider = self._provider
+        assert provider.in_unit is None or provider.in_unit(), 'the environment was reached outside a durable unit'
         if self._ref is None:
             env_id = f'env-{len(provider.environments) + 1}'
             provider.environments[env_id] = {}

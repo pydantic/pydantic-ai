@@ -107,7 +107,8 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
 
         durability = PrefectDurability()
     else:
-        durability = DBOSDurability()
+        # A run with a workspace is sequential on DBOS; saying so keeps it from warning.
+        durability = DBOSDurability(parallel_execution_mode='sequential')
     agent = Agent(
         FunctionModel(model, stream_function=stream),
         name=f'matrix_{engine}_{capability}_{uuid4().hex}',

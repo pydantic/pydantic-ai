@@ -188,14 +188,6 @@ async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path:
     assert await workspace.realpath(path) == os.path.realpath(root.resolve() / path)
 
 
-async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
-    # This fake answers every unknown command with `connected`, which no real shell would print here.
-    workspace = Workspace(RunOnlyWorkspaceBackend(FakeWorkspace('garbled')))
-
-    with pytest.raises(WorkspaceError, match='invalid real path'):
-        await workspace.realpath('x')
-
-
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / 'large').write_bytes(b'x' * (80 * 1024))
     monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
@@ -235,8 +227,7 @@ async def test_shell_listing_uses_configured_temporary_directory(tmp_path: Path)
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'find ' in command:
-                assert '/tmp/.pydantic-ai-' not in command
+            assert '/tmp/.pydantic-ai-' not in str(command)
             result = await super().run(command, shell=shell, cwd=cwd, env={'TMPDIR': str(temporary)}, timeout=timeout)
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
@@ -292,11 +283,8 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'find ' in command:
-                listing = b'-/workspace/file-\xff\0'
-                return FakeWorkspaceResult(stdout=f'{len(listing)}\n{base64.b64encode(listing).decode()}')
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            listing = b'-/workspace/file-\xff\0'
+            return FakeWorkspaceResult(stdout=f'{len(listing)}\n{base64.b64encode(listing).decode()}')
 
     workspace = Workspace(ByteListingBackend(LocalWorkspaceBackend(tmp_path)))
     assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
@@ -304,7 +292,7 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
 
 async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> None:
     if os.geteuid() == 0:
-        pytest.skip('root bypasses filesystem permissions')
+        pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
     (tmp_path / 'unreadable').write_bytes(b'x')
     (tmp_path / 'unreadable').chmod(0)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
@@ -555,42 +543,32 @@ async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_p
     assert cleanup_attempted
 
 
-async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
-    class InvalidStatBackend(RunOnlyWorkspaceBackend):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'wc -c' in command:
-                return FakeWorkspaceResult(stdout='not-a-size')
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
-
-    workspace = Workspace(InvalidStatBackend(LocalWorkspaceBackend(tmp_path)))
-    (tmp_path / 'data.bin').write_bytes(b'data')
-    with pytest.raises(WorkspaceError, match='invalid size'):
-        await workspace.stat('data.bin')
-
-
-def _lose_the_head(stdout: str) -> str:
-    """Only the tail of the output arrives, the way a backend that attached late loses it."""
-    return stdout[4:]
+def _truncate(stdout: str) -> str:
+    """Drop the end of the output, the way a connection lost mid-transfer does."""
+    return stdout.strip()[:-4]
 
 
 def _garble(stdout: str) -> str:
-    return 'AAA'
+    """A plausible size, then base64 whose padding is broken."""
+    return '4\nAAA'
 
 
-@pytest.mark.parametrize(('corrupt', 'error'), [(_lose_the_head, 'incomplete output'), (_garble, 'invalid base64')])
-async def test_shell_read_rejects_output_damaged_in_transit(
-    tmp_path: Path, corrupt: Callable[[str], str], error: str
+@pytest.mark.parametrize(
+    ('operation', 'corrupt'),
+    [
+        *(
+            (operation, corrupt)
+            for operation in ('read_bytes', 'list_dir', 'realpath')
+            for corrupt in (_truncate, _garble)
+        ),
+        # A cut-short size is still a number, so only a garbled one is detectable.
+        ('stat', _garble),
+    ],
+)
+async def test_shell_filesystem_refuses_damaged_output(
+    tmp_path: Path, operation: str, corrupt: Callable[[str], str]
 ) -> None:
-    """Damaged output must raise, never turn into a shorter or different file."""
+    """Damaged output raises; it never becomes a shorter file, a different listing or another path."""
 
     class DamagingBackend(RunOnlyWorkspaceBackend):
         async def run(
@@ -603,45 +581,23 @@ async def test_shell_read_rejects_output_damaged_in_transit(
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            stdout = corrupt(result.stdout) if isinstance(command, str) and '| base64' in command else result.stdout
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=stdout, stderr=result.stderr)
-
-    (tmp_path / 'data.bin').write_bytes(bytes(range(256)) * 100)
-    with pytest.raises(WorkspaceError, match=error):
-        await Workspace(DamagingBackend(LocalWorkspaceBackend(tmp_path))).read_bytes('data.bin')
-
-
-@pytest.mark.parametrize('operation', ['list_dir', 'realpath'])
-async def test_shell_metadata_rejects_truncated_valid_base64(tmp_path: Path, operation: str) -> None:
-    class TruncatedBackend(RunOnlyWorkspaceBackend):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            if isinstance(command, str) and ('find ' in command or 'readlink -n' in command):
-                return FakeWorkspaceResult(
-                    exit_code=result.exit_code, stdout=result.stdout.strip()[:-4], stderr=result.stderr
-                )
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=corrupt(result.stdout), stderr=result.stderr)
 
     (tmp_path / 'directory').mkdir()
-    (tmp_path / 'directory' / 'long-name.txt').write_text('x')
-    workspace = Workspace(TruncatedBackend(LocalWorkspaceBackend(tmp_path)))
-    with pytest.raises(WorkspaceError, match='incomplete output'):
-        if operation == 'list_dir':
-            await workspace.list_dir('directory')
-        else:
-            await workspace.realpath('directory/long-name.txt')
+    (tmp_path / 'directory' / 'data.bin').write_bytes(bytes(range(256)) * 100)
+    workspace = Workspace(DamagingBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(WorkspaceError, match='damaged or incomplete output'):
+        await getattr(workspace, operation)('directory/data.bin' if operation != 'list_dir' else 'directory')
 
 
-async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> None:
-    class InvalidListingBackend(RunOnlyWorkspaceBackend):
+async def test_shell_filesystem_rereads_a_file_replaced_mid_read(tmp_path: Path) -> None:
+    """A file swapped for a different size between the size check and the read is read again, not refused."""
+    status = anyio.Path(tmp_path / 'status.json')
+    await status.write_text('{"exit_code": null}')
+
+    class PublishingBackend(RunOnlyWorkspaceBackend):
+        replacements: list[str] = []
+
         async def run(
             self,
             command: str | Sequence[str],
@@ -651,35 +607,20 @@ async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> 
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'find ' in command:
-                return FakeWorkspaceResult(stdout='1\n/w==')
+            if isinstance(command, str) and command.startswith('dd ') and self.replacements:
+                # The job publishes a new status right after the size was read.
+                await status.write_text(self.replacements.pop(0))
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
-    workspace = Workspace(InvalidListingBackend(LocalWorkspaceBackend(tmp_path)))
-    await workspace.make_dir('directory')
-    with pytest.raises(WorkspaceError, match='invalid directory listing'):
-        await workspace.list_dir('.')
+    backend = PublishingBackend(LocalWorkspaceBackend(tmp_path))
+    backend.replacements = ['{"exit_code": 0}']
+    assert await Workspace(backend).read_text('status.json') == '{"exit_code": 0}'
 
-
-async def test_shell_list_dir_rejects_invalid_paged_size(tmp_path: Path) -> None:
-    class InvalidSizeBackend(RunOnlyWorkspaceBackend):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'find ' in command:
-                return FakeWorkspaceResult(stdout='bad-size\nPAGED\n')
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
-
-    with pytest.raises(WorkspaceError, match='invalid directory listing'):
-        await Workspace(InvalidSizeBackend(LocalWorkspaceBackend(tmp_path))).list_dir('.')
+    # A file that keeps changing size is refused rather than read forever.
+    backend.replacements = ['1', '22', '333']
+    with pytest.raises(WorkspaceError, match='damaged or incomplete output'):
+        await Workspace(backend).read_text('status.json')
 
 
 async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None:
@@ -744,7 +685,9 @@ def test_a_plain_workspace_around_a_wrapper_keeps_its_policy() -> None:
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
-    with pytest.raises(UserError, match=r"LocalWorkspace\('\.'\).*https://pydantic\.dev/docs/ai/workspace/"):
+    with pytest.raises(
+        WorkspaceUnavailableError, match=r"LocalWorkspace\('\.'\).*https://pydantic\.dev/docs/ai/workspace/"
+    ):
         await ctx.workspace.run(['true'])
 
 
@@ -956,7 +899,7 @@ async def test_historical_workspace_ref_without_capability_stays_unavailable() -
 
     @agent.tool
     async def probe(ctx: RunContext[None]) -> str:
-        with pytest.raises(UserError, match='No workspace is attached'):
+        with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
             await ctx.workspace.run(['true'])
         return 'unavailable'
 
@@ -977,14 +920,14 @@ async def test_a_result_still_round_trips_through_json_when_a_workspace_was_used
     restored = adapter.validate_json(adapter.dump_json(result))
 
     assert restored == result
-    with pytest.raises(UserError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
         await restored.workspace.run(['true'])
 
 
 async def test_a_result_built_outside_a_run_explains_that_no_workspace_is_attached() -> None:
     result = AgentRunResult[str]('output')
 
-    with pytest.raises(UserError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
         await result.workspace.run(['true'])
 
 
@@ -1067,6 +1010,21 @@ async def test_an_unrecognized_history_ref_is_an_error_when_the_agent_has_worksp
     assert fresh.workspace.attached
 
 
+@pytest.mark.parametrize('source', ['explicit', 'history'])
+async def test_a_resolver_cannot_answer_a_ref_with_a_backend_that_would_create_a_fresh_one(source: str) -> None:
+    class LazyResolver(AbstractCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return FakeWorkspace('lazy')
+
+    ref = WorkspaceRef(provider='fake', id='existing')
+    agent = Agent(TestModel(), capabilities=[LazyResolver()])
+    with pytest.raises(UserError, match='different workspace than requested'):
+        if source == 'explicit':
+            await agent.run('go', workspace=ref)
+        else:
+            await agent.run('go', message_history=[ModelResponse(parts=[TextPart('old')], workspace_ref=ref)])
+
+
 async def test_a_gone_workspace_fails_on_first_use_and_new_recovers() -> None:
     def probe_each_turn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
@@ -1122,12 +1080,12 @@ def test_has_get_workspace_mirrors_the_capability_tree() -> None:
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
             return None  # pragma: no cover
 
-    assert supplier.has_get_workspace
-    assert not AbstractCapability[Any]().has_get_workspace
-    assert CombinedCapability([AbstractCapability[Any](), supplier]).has_get_workspace
-    assert WrapperCapability(supplier).has_get_workspace
-    assert not WrapperCapability(AbstractCapability[Any]()).has_get_workspace
-    assert Policy(AbstractCapability[Any]()).has_get_workspace
+    assert supplier._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert not AbstractCapability[Any]()._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert CombinedCapability([AbstractCapability[Any](), supplier])._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert WrapperCapability(supplier)._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert not WrapperCapability(AbstractCapability[Any]())._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert Policy(AbstractCapability[Any]())._has_get_workspace  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_new_workspace_ignores_the_ref_in_history() -> None:
@@ -1246,7 +1204,7 @@ async def test_declining_capability_leaves_the_run_workspace_unavailable() -> No
         await ctx.workspace.run(['true'])
         return 'unreachable'  # pragma: no cover
 
-    with pytest.raises(UserError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
         await agent.run('go')
     assert capability.calls == 1
 

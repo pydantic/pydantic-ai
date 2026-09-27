@@ -45,7 +45,7 @@ async def _process_running(pid: int) -> bool:
 async def _assert_process_gone(pid: int) -> None:
     with anyio.move_on_after(30):
         while await _process_running(pid):
-            await anyio.sleep(0.01)
+            await anyio.sleep(0.01)  # pragma: lax no cover - depends on how fast the process dies
         return
     with suppress(ProcessLookupError):  # pragma: no cover - defensive cleanup before failing
         os.kill(pid, signal.SIGKILL)
@@ -148,6 +148,22 @@ async def test_working_dir_expands_home(
     assert await workspace.working_dir() == str((tmp_path / expected).resolve())
     result = await workspace.run(['pwd'])
     assert result.stdout.rstrip('\n') == await workspace.working_dir()
+
+
+async def test_reading_a_directory_closes_its_descriptor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    opened: list[int] = []
+    real_open = os.open
+
+    def recording_open(*args: Any, **kwargs: Any) -> int:
+        opened.append(real_open(*args, **kwargs))
+        return opened[-1]
+
+    monkeypatch.setattr(os, 'open', recording_open)
+    with pytest.raises(IsADirectoryError):
+        await LocalWorkspaceBackend(tmp_path).read_bytes(str(tmp_path))
+    [fd] = opened
+    with pytest.raises(OSError):
+        os.fstat(fd)
 
 
 async def test_a_program_that_cannot_run_is_a_result_like_in_sh(tmp_path: Path):
@@ -323,7 +339,7 @@ async def test_stalled_spawn_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
             await anyio.sleep_forever()
         finally:
             cancelled.set()
-        raise AssertionError('unreachable')
+        raise AssertionError('unreachable')  # pragma: no cover
 
     monkeypatch.setattr(anyio, 'open_process', stalled_spawn)
     workspace = LocalWorkspaceBackend(tmp_path)

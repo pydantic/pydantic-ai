@@ -258,8 +258,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return self.wrapped.get_wrapper_toolset(toolset)
 
     @property
-    def has_get_workspace(self) -> bool:
-        return type(self).get_workspace is not WrapperCapability.get_workspace or self.wrapped.has_get_workspace
+    def _has_get_workspace(self) -> bool:
+        return type(self).get_workspace is not WrapperCapability.get_workspace or self.wrapped._has_get_workspace
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         return self.wrapped.get_workspace(ctx, ref=ref)

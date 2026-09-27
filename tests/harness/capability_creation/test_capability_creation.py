@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -478,8 +479,8 @@ class TestCapabilityCreationCapability:
 class TestEndToEnd:
     async def test_authored_capability_injected_and_runs(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
-        store.write('marker', VALID_CODE)
-        agent = Agent(TestModel(), capabilities=store.load_active())
+        await anyio.to_thread.run_sync(store.write, 'marker', VALID_CODE)
+        agent = Agent(TestModel(), capabilities=await anyio.to_thread.run_sync(store.load_active))
         result = await agent.run('go')
         returns = [
             part.content
