@@ -13,8 +13,6 @@ import os
 import shutil
 import sys
 import uuid
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import timedelta
 from importlib.machinery import ModuleSpec
 from pathlib import Path
@@ -29,20 +27,17 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
-    CommandResult,
-    FileEntry,
     ReadOnlyWorkspace,
-    SupportsCommands,
-    SupportsFilesystem,
     Workspace,
     WorkspaceBackend,
-    WorkspaceCommand,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.unavailable import UnavailableWorkspace
+
+from ...workspace_fakes import InMemoryProvider, ProviderBackend, ProviderWorkspaces
 
 try:
     from temporalio import activity, workflow
@@ -181,99 +176,33 @@ async def test_unavailable_workspace_reason_survives_activity_context() -> None:
 # module and so gets its own empty copy, which is the point: constructing a backend there is pure,
 # and only an activity (which runs in the worker process proper) reaches the environments.
 
-_ENVIRONMENTS: dict[str, dict[str, bytes]] = {}
-_PROVIDER_LOG: list[str] = []
+
+class RemoteBackend(ProviderBackend):
+    def __init__(self, ref: WorkspaceRef | None) -> None:
+        super().__init__(_REMOTE_PROVIDER, ref)
+
+    async def _files(self) -> dict[str, bytes]:
+        assert activity.in_activity(), 'the fake provider must only be reached from an activity'
+        return await super()._files()
+
+
+class RemoteProvider(InMemoryProvider):
+    def backend(self, ref: WorkspaceRef | None) -> RemoteBackend:
+        return RemoteBackend(ref)
+
+
+_REMOTE_PROVIDER = RemoteProvider('remote')
+_ENVIRONMENTS = _REMOTE_PROVIDER.environments
+_PROVIDER_LOG = _REMOTE_PROVIDER.log
 
 
 def _reset_provider() -> None:
-    _ENVIRONMENTS.clear()
-    _PROVIDER_LOG.clear()
+    _REMOTE_PROVIDER.reset()
 
 
-class RemoteBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
-    """A backend that creates or attaches on first use, like a real remote provider's."""
-
-    def __init__(self, ref: WorkspaceRef | None) -> None:
-        self._ref = ref
-
-    @property
-    def ref(self) -> WorkspaceRef | None:
-        return self._ref
-
-    def _files(self) -> dict[str, bytes]:
-        assert activity.in_activity(), 'the fake provider must only be reached from an activity'
-        if self._ref is None:
-            env_id = f'env-{len(_ENVIRONMENTS) + 1}'
-            _ENVIRONMENTS[env_id] = {}
-            _PROVIDER_LOG.append(f'create:{env_id}')
-            self._ref = WorkspaceRef(provider='remote', id=env_id)
-        elif self._ref.id not in _ENVIRONMENTS:
-            raise WorkspaceUnavailableError(f'environment {self._ref.id!r} does not exist')
-        else:
-            _PROVIDER_LOG.append(f'attach:{self._ref.id}')
-        return _ENVIRONMENTS[self._ref.id]
-
-    async def run(
-        self,
-        command: WorkspaceCommand,
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> CommandResult:
-        self._files()
-        if isinstance(command, str) != shell:
-            raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
-        return CommandResult(exit_code=0, stdout=f'ran:{" ".join(command)}', stderr='')
-
-    async def working_dir(self) -> str:
-        self._files()
-        return '/remote'
-
-    async def read_bytes(self, path: str) -> bytes:
-        files = self._files()
-        if path not in files:
-            raise FileNotFoundError(path)
-        return files[path]
-
-    async def write_bytes(self, path: str, data: bytes) -> None:
-        self._files()[path] = data
-
-    async def stat(self, path: str) -> FileEntry:
-        files = self._files()
-        if path not in files:
-            raise FileNotFoundError(path)
-        return FileEntry(name=path.rsplit('/', 1)[-1], path=path, is_dir=False, size=len(files[path]))
-
-    async def list_dir(self, path: str) -> Sequence[FileEntry]:
-        return [
-            FileEntry(name=file.rsplit('/', 1)[-1], path=file, is_dir=False, size=len(data))
-            for file, data in sorted(self._files().items())
-        ]
-
-    async def make_dir(self, path: str) -> None:
-        self._files()
-
-    async def remove(self, path: str) -> None:
-        files = self._files()
-        if path not in files:
-            raise FileNotFoundError(path)
-        del files[path]
-
-    async def exists(self, path: str) -> bool:
-        return path in self._files()
-
-
-@dataclass
-class RemoteWorkspaces(AbstractCapability[Any]):
-    read_only: bool = False
-
-    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if ref is not None and ref.provider != 'remote':
-            return None
-        backend = RemoteBackend(ref)
-        return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
+class RemoteWorkspaces(ProviderWorkspaces):
+    def __init__(self, *, read_only: bool = False) -> None:
+        super().__init__(_REMOTE_PROVIDER, read_only=read_only)
 
 
 class WriteInHook(AbstractCapability[Any]):
