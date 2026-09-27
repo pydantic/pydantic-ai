@@ -65,7 +65,7 @@ Still experimental: an ACP server adapter, imported from `pydantic_ai_harness.ex
 emits a `HarnessExperimentalWarning`.
 
 The full, current list with links and status is in the
-[capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
+[capability matrix](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness#capabilities).
 
 ## Install
 
