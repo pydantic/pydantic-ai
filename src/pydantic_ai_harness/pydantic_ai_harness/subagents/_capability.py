@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import anyio
+
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler
@@ -17,9 +19,9 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceBackend
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness._workspace import secondary_workspace, workspace_path
+from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._effort import clamp_effort
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
@@ -157,11 +159,13 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     - a folder-name `str` (the default `'agents'` is the conventional layout): load
       from `.agents/<name>/` under the workspace's working directory, falling back to
-      `.claude/<name>/` when `.agents/` is absent. Skipped when the run has no workspace.
+      `.claude/<name>/` when `.agents/` is absent. Skipped when the run has no workspace,
+      with a `HarnessDeprecationWarning` when this process's working directory or the home
+      directory has that folder, which earlier releases read.
     - a sequence of paths in the workspace, absolute or relative to its working
       directory: load from exactly those folders, in order. A run with no workspace
-      still reads them from this machine, with a deprecation warning; pass
-      `workspace=LocalWorkspaceBackend('.')` to keep that.
+      fails at its start; pass `workspace=LocalWorkspaceBackend('.')` to read them from
+      this machine.
     - `None`: disable disk loading entirely (only `agents` are exposed).
 
     Missing folders are skipped. Within a folder every `*.md` file is a candidate."""
@@ -269,16 +273,15 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     _workspace: Workspace | None = field(default=None, init=False, repr=False, compare=False)
     """`workspace` wrapped as a `Workspace`, or `None` to read from the run's."""
 
-    _host_fallback: list[Workspace] = field(default_factory=list[Workspace], init=False, repr=False, compare=False)
-    """The deprecated host read for explicit folders in a run with no workspace: this process's
-    working directory, created (and warned about) on first use. Shared with every per-run copy,
-    so the warning is given once per capability."""
-
     _built: dict[DiskDefinition, SubAgent[AgentDepsT]] = field(
         default_factory=dict[DiskDefinition, 'SubAgent[AgentDepsT]'], init=False, repr=False, compare=False
     )
     """Disk delegates built so far, shared with every per-run copy. A definition is built once, so
     runs over unchanged files reuse the same agents and `tool_resolver` is not asked again."""
+
+    _warned_host_folders: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Folders on this machine already reported as no longer read, shared with every per-run copy so
+    each is reported once per instance rather than once per run."""
 
     _run_toolset: SubAgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """This run's delegate toolset, on a per-run copy only. Built once per run, so every step of the
@@ -416,11 +419,14 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         folders = self.agent_folders
         if not self._per_run or folders is None:
             return
-        workspace = self._workspace or (ctx.workspace if ctx.workspace.attached else None)
+        workspace = self._workspace
         if workspace is None:
-            if isinstance(folders, str):
-                return  # Convention discovery: a run with no workspace has no project to look in.
-            workspace = self._deprecated_host_workspace()
+            if isinstance(folders, str) and not ctx.workspace.attached:
+                # Convention discovery: a run with no workspace has no project to look in.
+                await self._warn_host_folder_ignored(folders)
+                return
+            require_workspace(ctx.workspace, 'SubAgents')
+            workspace = ctx.workspace
         definitions = await load_definitions(
             workspace, folders if isinstance(folders, str) else [_folder_path(folder) for folder in folders]
         )
@@ -429,17 +435,44 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         self._build_roster(self._disk_agents(definitions))
         self._run_toolset = self._make_toolset()
 
-    def _deprecated_host_workspace(self) -> Workspace:
-        if not self._host_fallback:
-            warnings.warn(
-                "`SubAgents(agent_folders=[...])` now reads its folders through the run's workspace, but this run "
-                "has none, so they were read from this machine. Pass `workspace=LocalWorkspaceBackend('.')` to "
-                'keep reading them here; reading them without a workspace will stop working in a future release.',
-                category=HarnessDeprecationWarning,
-                stacklevel=2,
+    async def _warn_host_folder_ignored(self, name: str) -> None:
+        """Warn when this machine has a convention folder earlier releases read without a workspace.
+
+        Those releases read it under the process's working directory, then under the home
+        directory, so a run without a workspace would otherwise lose those delegates silently.
+        """
+        cwd, home = await anyio.Path.cwd(), await anyio.Path.home()
+        project = home_folder = None
+        for root in (cwd, home):
+            folder = (root / '.agents' if await (root / '.agents').is_dir() else root / '.claude') / name
+            if not await folder.is_dir():
+                continue
+            if root == cwd:
+                project = folder
+            else:
+                home_folder = folder
+        found = [str(folder) for folder in (project, home_folder) if folder is not None]
+        if not found or set(found) <= self._warned_host_folders:
+            return
+        self._warned_host_folders.update(found)
+        if home_folder is None:
+            fix = (
+                "add `LocalWorkspace('.')` to the agent's capabilities, or pass "
+                "`SubAgents(workspace=LocalWorkspaceBackend('.'))`"
             )
-            self._host_fallback.append(Workspace(LocalWorkspaceBackend('.')))
-        return self._host_fallback[0]
+        elif project is None:
+            fix = 'pass `SubAgents(workspace=LocalWorkspaceBackend(Path.home()))`'
+        else:
+            # One workspace reaches both: a local one reads absolute paths anywhere on this machine.
+            fix = f"add `LocalWorkspace('.')` to the agent's capabilities and pass `SubAgents(agent_folders={found!r})`"
+        folders = ' and '.join(f'`{folder}`' for folder in found)
+        warnings.warn(
+            f'`SubAgents` did not load the agent definitions in {folders} on this machine: definitions '
+            f"are now read through the run's workspace, and this run has none. To keep loading them, {fix}; "
+            'pass `SubAgents(agent_folders=None)` to turn discovery off and silence this warning.',
+            category=HarnessDeprecationWarning,
+            stacklevel=2,
+        )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Run the parent agent, then drop this run's delegation counts so they don't accumulate."""

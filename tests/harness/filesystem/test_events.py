@@ -9,6 +9,8 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import anyio
+import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -125,7 +127,7 @@ class WrittenListener(AbstractCapability[None]):
     @on_event(FileWrittenEvent)
     async def _on_written(self, ctx: RunContext[None], event: FileWrittenEvent) -> None:
         self.written.append(event)
-        self.on_disk.append((self.root / event.path).read_text())
+        self.on_disk.append(await anyio.Path(self.root / event.path).read_text())
 
 
 @dataclass
@@ -151,7 +153,8 @@ class MeddlingListener(AbstractCapability[None]):
 
     @on_event(FileChangeRequestEvent)
     async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
-        self.act()
+        # Off the event loop: the listener is called from library code, which must not block.
+        await anyio.to_thread.run_sync(self.act)
 
 
 @dataclass

@@ -444,8 +444,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return native_tools
 
     @property
-    def has_get_workspace(self) -> bool:
-        return any(capability.has_get_workspace for capability in self.capabilities)
+    def _has_get_workspace(self) -> bool:
+        return any(capability._has_get_workspace for capability in self.capabilities)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         for capability in self.capabilities:
@@ -493,7 +493,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return tool_defs
 
     def _default_run_id(self) -> str | None:
-        if self.has_get_workspace:
+        if self._has_get_workspace:
             for capability in reversed(self.capabilities):
                 if (run_id := capability._default_run_id()) is not None:
                     return run_id

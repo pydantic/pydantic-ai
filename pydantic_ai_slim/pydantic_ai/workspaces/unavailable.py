@@ -2,24 +2,20 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from collections.abc import Mapping
 
 from typing_extensions import Never
-
-from pydantic_ai.exceptions import UserError
 
 from .protocol import SupportsCommands, WorkspaceBackend, WorkspaceCommand, WorkspaceUnavailableError
 
 __all__ = ('UnavailableWorkspace',)
 
 
-class _UnavailableBackend(WorkspaceBackend, SupportsCommands):
+class UnavailableWorkspace(WorkspaceBackend, SupportsCommands):
+    """A `WorkspaceBackend` whose operations raise `WorkspaceUnavailableError` with a configured reason."""
+
     def __init__(self, reason: str):
         self.reason = reason
-
-    @abstractmethod
-    def _error(self) -> Exception: ...
 
     @property
     def ref(self) -> None:
@@ -35,21 +31,18 @@ class _UnavailableBackend(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> Never:
-        raise self._error()
+        raise WorkspaceUnavailableError(self.reason)
 
     async def working_dir(self) -> Never:
-        raise self._error()
+        raise WorkspaceUnavailableError(self.reason)
 
 
-class UnavailableWorkspace(_UnavailableBackend):
-    """A `WorkspaceBackend` whose operations raise `WorkspaceUnavailableError` with a configured reason."""
-
-    def _error(self) -> Exception:
-        return WorkspaceUnavailableError(self.reason)
-
-
-class _UnattachedWorkspace(_UnavailableBackend):  # pyright: ignore[reportUnusedClass]
-    """The workspace of a run that has none attached: using it is a configuration mistake, so it raises `UserError`."""
-
-    def _error(self) -> Exception:
-        return UserError(self.reason)
+NO_WORKSPACE = UnavailableWorkspace(
+    "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('.')]` to the agent, or pass "
+    "`workspace=LocalWorkspaceBackend('.')` to the run method, to use the local machine (unsafe: commands and "
+    'file operations run with the full permissions of this process); attach another capability that supplies a '
+    'workspace through its `get_workspace` hook; or pass a `WorkspaceRef` to connect to an existing environment. '
+    'See https://pydantic.dev/docs/ai/workspace/ for details.'
+)
+"""The backend of a run with no workspace. Unlike an `UnavailableWorkspace` a caller passes, it is not a choice:
+a child run handed it still selects its own workspace."""

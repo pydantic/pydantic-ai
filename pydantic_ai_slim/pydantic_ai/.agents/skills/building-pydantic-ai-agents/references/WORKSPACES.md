@@ -33,7 +33,7 @@ configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`, or
 `workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))` for a read-only run (outside
 durable execution; see below).
-Without an attached workspace, operations raise `UserError`; a capability that needs one checks
+Without an attached workspace, operations raise `WorkspaceUnavailableError`; a capability that needs one checks
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override
 operations, delegate the rest to `self.wrapped`), `ReadOnlyWorkspace` blocks commands and changes,
@@ -59,7 +59,7 @@ workspace wins (capabilities passed to the run are asked before the agent's), so
 while old ones continue where they started. A history ref that no capability recognizes raises
 `UserError` (pass `workspace='new'` to start fresh), unless the agent has no workspace capability at
 all (a summarizer given the history), which ignores it. With no ref and no supplier the run gets an
-unattached placeholder whose operations raise `UserError` explaining how to attach one.
+`UnavailableWorkspace` whose operations raise `WorkspaceUnavailableError` explaining how to attach one.
 `get_workspace` runs before `for_run` (a capability that only a `for_run` contributes is asked
 afterwards, and `for_run` may not change a selection made before it), is synchronous, and must have
 no side effects or I/O. A capability must return `None` for references it does not own. A

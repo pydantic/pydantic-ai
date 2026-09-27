@@ -19,6 +19,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     WrapperWorkspace,
 )
+from pydantic_ai.workspaces.unavailable import NO_WORKSPACE
 
 READ_ONLY_FAILURE = 'The workspace is read-only; the change was refused.'
 """What the model sees when a tool's mutation reaches a read-only workspace."""
@@ -87,6 +88,14 @@ def innermost_backend(workspace: Workspace) -> WorkspaceBackend:
     return current
 
 
+def is_unattached(workspace: Workspace) -> bool:
+    """Whether `workspace` is core's placeholder for a run with no workspace.
+
+    Unlike an `UnavailableWorkspace` passed on purpose, it is not a choice, so it gets a setup hint.
+    """
+    return innermost_backend(workspace) is NO_WORKSPACE
+
+
 def require_workspace(workspace: Workspace, owner: str) -> None:
     """Raise `UserError` when the run has no workspace, naming `owner` and how to attach one.
 
@@ -95,7 +104,7 @@ def require_workspace(workspace: Workspace, owner: str) -> None:
     """
     backend = innermost_backend(workspace)
     # A deliberate refusal carries the caller's reason; an unattached run gets the setup hint.
-    if isinstance(backend, UnavailableWorkspace):
+    if isinstance(backend, UnavailableWorkspace) and not is_unattached(workspace):
         raise UserError(f'`{owner}` cannot use this workspace: {backend.reason}')
     if not workspace.attached:
         raise UserError(
