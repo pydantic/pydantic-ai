@@ -21,6 +21,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import threading
 import types
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -482,6 +483,9 @@ class _HostCommands(FakeCommands):
             # No handle exists yet to own these files if spawning fails.
             await anyio.to_thread.run_sync(lambda: (out.close(), err.close()))
             raise
+        # envd reaps every process it starts; without this, a killed command whose waiter was
+        # cancelled stays a zombie that `kill -0` still reports as alive.
+        threading.Thread(target=process.wait, daemon=True).start()
         handle = _HostCommandHandle(self._control, self._sandbox, process, out, err)
         self.handles.append(handle)
         return handle
