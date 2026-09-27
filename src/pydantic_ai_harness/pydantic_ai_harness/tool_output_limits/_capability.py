@@ -215,6 +215,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 'to keep spills on this machine.'
             )
 
+    def _store_for(self, ctx: RunContext[AgentDepsT]) -> OverflowStore:
+        store = self._store
+        return store.bind(ctx.workspace) if isinstance(store, WorkspaceStore) else store
+
     # --- toolset ---
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
@@ -246,14 +250,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 from_end: Count `offset`/`limit` from the end of the result.
                 pattern: Optional literal substring; only lines containing it are returned.
             """
-            store = self._store
-
-            async def read(handle: str) -> bytes:
-                if isinstance(store, WorkspaceStore):
-                    return await store.read(ctx.workspace, handle)
-                return await store.read(handle)
-
-            return await _read_slice(read, handle, offset, limit, from_end, pattern)
+            return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern)
 
         return FunctionToolset([read_tool_result], id=self.id or 'tool_output_limits')
 
@@ -458,12 +455,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
         key = _handle_key(ctx, call, unit.suffix)
-        store = self._store
         try:
-            if isinstance(store, WorkspaceStore):
-                handle = await store.write(ctx.workspace, key, unit.data)
-            else:
-                handle = await store.write(key, unit.data)
+            handle = await self._store_for(ctx).write(key, unit.data)
         except (UserError, WorkspaceReadOnlyError) as error:
             # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
             # say so rather than degrading quietly.
