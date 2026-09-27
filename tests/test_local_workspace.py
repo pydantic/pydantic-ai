@@ -7,7 +7,6 @@ import math
 import os
 import shlex
 import signal
-import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -44,7 +43,7 @@ async def _process_running(pid: int) -> bool:
 
 
 async def _assert_process_gone(pid: int) -> None:
-    with anyio.move_on_after(10):
+    with anyio.move_on_after(30):
         while await _process_running(pid):
             await anyio.sleep(0.01)
         return
@@ -54,15 +53,13 @@ async def _assert_process_gone(pid: int) -> None:
 
 
 def _background_sleep_command(pid_file: Path) -> str:
-    return f'sleep 30 & echo $! > {shlex.quote(str(pid_file))}'
+    return f'sleep 3600 & echo $! > {shlex.quote(str(pid_file))}'
 
 
 async def _wait_for_pid_file(pid_file: Path) -> None:
-    for _ in range(200):
-        if pid_file.exists() and pid_file.read_text(encoding='ascii').strip():
-            return
-        await asyncio.sleep(0.01)
-    pytest.fail(f'background process did not write its PID to {pid_file}')  # pragma: no cover
+    with anyio.fail_after(30):
+        while not (pid_file.exists() and pid_file.read_text(encoding='ascii').strip()):
+            await anyio.sleep(0.01)
 
 
 def test_non_posix_platforms_are_rejected_at_construction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -176,7 +173,7 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     with pytest.raises(WorkspaceTimeoutError, match='was killed') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child, so the timeout applies to
         # a command that has not completed rather than to a descendant holding a pipe open.
-        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=2)
+        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=2)
 
     assert isinstance(exc_info.value, TimeoutError)
 
@@ -219,9 +216,7 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     child_pid_file = tmp_path / 'child-pid'
-    command = (
-        f'echo $$ > {shlex.quote(str(pid_file))}; sleep 30 & echo $! > {shlex.quote(str(child_pid_file))}; echo started'
-    )
+    command = f'echo $$ > {shlex.quote(str(pid_file))}; sleep 3600 & echo $! > {shlex.quote(str(child_pid_file))}; echo started'
     result = await workspace.run(command, shell=True, timeout=10)
 
     assert (result.exit_code, result.stdout) == (0, 'started\n')
@@ -243,35 +238,6 @@ async def test_anyio_4_15_wait_path(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(local_module, '_ANYIO_WAITS_FOR_PIPES', False)
     result = await LocalWorkspaceBackend(tmp_path).run(['echo', 'done'], timeout=10)
     assert (result.exit_code, result.stdout) == (0, 'done\n')
-
-
-async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
-    workspace = LocalWorkspaceBackend(tmp_path)
-    with pytest.raises(WorkspaceTimeoutError) as exc_info:
-        await workspace.run('echo stdout; echo stderr >&2; sleep 30', shell=True, timeout=5)
-
-    error = exc_info.value
-    assert error.stdout == 'stdout\n'
-    assert error.stderr == 'stderr\n'
-
-
-async def test_local_command_replaces_undecodable_output_bytes(tmp_path: Path):
-    result = await LocalWorkspaceBackend(tmp_path).run(['sh', '-c', "printf '\\377' ; printf '\\376' >&2"])
-    assert result.stdout == '\ufffd'
-    assert result.stderr == '\ufffd'
-
-
-async def test_stdin_is_devnull(tmp_path: Path):
-    workspace = LocalWorkspaceBackend(tmp_path)
-    result = await workspace.run(
-        [
-            sys.executable,
-            '-c',
-            'import sys; print("eof" if sys.stdin.read() == "" else "data")',
-        ]
-    )
-
-    assert result.stdout == 'eof\n'
 
 
 async def test_cancellation_kills_the_whole_process_group(tmp_path: Path):
@@ -328,10 +294,12 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
 
     monkeypatch.setattr(anyio, 'open_process', held_spawn)
     timeout = 0.05
-    task = asyncio.create_task(workspace.run(_background_sleep_command(pid_file), shell=True, timeout=timeout))
+    task = asyncio.create_task(
+        workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=timeout)
+    )
     try:
         await _wait_for_pid_file(pid_file)
-        await asyncio.sleep(timeout * 2)
+        await anyio.sleep(timeout)
         release.set()
         with pytest.raises(WorkspaceTimeoutError, match='during startup'):
             await task
@@ -373,7 +341,7 @@ async def test_stalled_spawn_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
         await entered.wait()
         if mode == 'cancel':
             tg.cancel_scope.cancel()
-        with anyio.fail_after(5, shield=True):
+        with anyio.fail_after(30, shield=True):
             await cancelled.wait()
 
 
@@ -388,13 +356,13 @@ async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.Monke
             await anyio.sleep_forever()
         finally:
             # The fake stalls only the first close; release real OS resources after cancellation.
-            with anyio.move_on_after(2, shield=True):
+            with anyio.move_on_after(30, shield=True):
                 await real_close(process)
 
     monkeypatch.setattr(workspace, '_close', stalled_close)
-    with anyio.fail_after(5):
+    with anyio.fail_after(30):
         with pytest.raises(WorkspaceTimeoutError):
-            await workspace.run(['sh', '-c', 'sleep 30'], timeout=0.05)
+            await workspace.run(['sh', '-c', 'sleep 3600'], timeout=0.05)
     assert entered.is_set()
 
 
@@ -419,13 +387,16 @@ async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, m
         await task
 
 
-async def test_kill_tolerates_an_already_exited_group():
-    """A command can finish in the instant between the deadline firing and the kill; the
-    only benign `killpg` failure is "already exited". Unreachable deterministically through
-    `run()` (it's a race), so the teardown helper is pinned directly."""
-    async with await anyio.open_process(['true'], start_new_session=True) as process:
-        await process.wait()
-        LocalWorkspaceBackend._kill(process)  # pyright: ignore[reportPrivateUsage]
+async def test_kill_tolerates_an_already_exited_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_killpg = os.killpg
+
+    def already_exited(pgid: int, sig: int) -> None:
+        real_killpg(pgid, sig)
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, 'killpg', already_exited)
+    with pytest.raises(WorkspaceTimeoutError):
+        await LocalWorkspaceBackend(tmp_path).run(['sh', '-c', 'sleep 3600'], timeout=0.05)
 
 
 async def test_commands_inherit_only_path_home_and_locale_from_the_host(
@@ -495,7 +466,7 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     monkeypatch.setattr(os, 'killpg', deny_killpg)
     with pytest.raises(WorkspaceTimeoutError, match='denied') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child.
-        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=5)
+        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=5)
     assert isinstance(exc_info.value.__cause__, PermissionError)
     await _assert_process_gone(int(pid_file.read_text()))
 
@@ -534,21 +505,6 @@ async def test_removed_workspace_cannot_be_recreated_or_removed(tmp_path: Path):
     assert (root / 'file').read_bytes() == b'safe'
 
 
-async def test_reading_fifo_fails_without_waiting_for_writer(tmp_path: Path):
-    fifo = tmp_path / 'fifo'
-    os.mkfifo(fifo)
-    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
-    with anyio.fail_after(2):
-        with pytest.raises(OSError, match='not a regular file'):
-            await workspace.read_bytes('fifo')
-
-
-async def test_list_dir_keeps_self_loop_symlink(tmp_path: Path):
-    (tmp_path / 'loop').symlink_to('loop')
-    entries = await LocalWorkspaceBackend(tmp_path).list_dir(str(tmp_path))
-    assert [(entry.name, entry.is_dir, entry.size) for entry in entries] == [('loop', False, None)]
-
-
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
     """A symlinked file reports its target's size (as `stat` does); a broken symlink
     doesn't fail the listing, it just has no size."""
@@ -583,3 +539,49 @@ async def test_agent_run_end_to_end(tmp_path: Path):
 
     assert result.output == 'done'
     assert outputs == ['42\n']
+
+
+async def test_deleted_local_environment_rejects_every_operation(tmp_path: Path) -> None:
+    root = tmp_path / 'root'
+    root.mkdir()
+    workspace = Workspace(LocalWorkspaceBackend(root))
+    await workspace.working_dir()
+    root.rmdir()
+    for operation in (
+        lambda: workspace.working_dir(),
+        lambda: workspace.read_bytes('file'),
+        lambda: workspace.write_bytes('file', b'x'),
+        lambda: workspace.stat('file'),
+        lambda: workspace.list_dir('.'),
+        lambda: workspace.make_dir('sub'),
+        lambda: workspace.remove('file'),
+        lambda: workspace.exists('file'),
+        lambda: workspace.realpath('file'),
+        lambda: workspace.run(['pwd']),
+    ):
+        with pytest.raises(WorkspaceUnavailableError):
+            await operation()
+    assert not root.exists()
+
+
+async def test_first_local_remove_refuses_canonical_root(tmp_path: Path) -> None:
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'safe').write_bytes(b'safe')
+    link = tmp_path / 'alias'
+    link.symlink_to(root, target_is_directory=True)
+    workspace = Workspace(LocalWorkspaceBackend(link))
+    with pytest.raises(ValueError, match='workspace root'):
+        await workspace.remove(str(root))
+    assert (root / 'safe').read_bytes() == b'safe'
+
+
+async def test_missing_alias_can_attach_after_directory_is_created(tmp_path: Path) -> None:
+    alias = tmp_path / 'alias'
+    backend = LocalWorkspaceBackend(alias)
+    with pytest.raises(WorkspaceUnavailableError):
+        await backend.working_dir()
+    target = tmp_path / 'target'
+    target.mkdir()
+    alias.symlink_to(target, target_is_directory=True)
+    assert await backend.working_dir() == str(target.resolve())

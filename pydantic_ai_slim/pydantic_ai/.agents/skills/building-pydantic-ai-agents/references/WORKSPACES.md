@@ -106,7 +106,7 @@ environment and records its ref and working directory, so all units share one en
 `working_dir()`/`resolve()` need no unit. Inside a container `workspace=` takes `None`, `'new'`, a
 `WorkspaceRef`, a previous `result.workspace`, or a live instance whose ref a capability recognizes,
 which is rebuilt through that capability. Any wrapper around it, such as `ReadOnlyWorkspace`, is
-silently dropped, so put policy on the capability (e.g. `LocalWorkspace(..., read_only=True)`). A
+rejected with `UserError`, so put policy on the capability (e.g. `LocalWorkspace(..., read_only=True)`). A
 live instance without a recognized ref raises `UserError`. Workspace calls retry like capability
 operations, so a command or write may repeat if a worker dies mid-call. The deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` wrappers refuse
 workspaces in their container.

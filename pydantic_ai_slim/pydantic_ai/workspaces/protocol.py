@@ -140,7 +140,7 @@ class WorkspaceFileEntry(Protocol):
 
     @property
     def size(self) -> int | None:
-        """Size in bytes, or `None` when the backend doesn't report one (e.g. for directories)."""
+        """Size in bytes for a regular file when known; `None` is allowed (the shell fallback can measure it)."""
         ...
 
 
@@ -262,5 +262,5 @@ class WorkspaceBackend(Protocol):
         ...
 
     async def working_dir(self) -> str:
-        """The default working directory: absolute, symlinks resolved, no `.`/`..` segments."""
+        """The stable working directory for this environment: absolute, symlinks resolved, no `.`/`..` segments."""
         ...

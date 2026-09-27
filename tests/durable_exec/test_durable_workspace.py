@@ -46,6 +46,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileEntry,
+    LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
     WorkspaceBackend,
@@ -405,6 +406,12 @@ async def test_explicit_workspace_argument_inside_the_container() -> None:
         await agent.run('nope', workspace=FakeWorkspace('y', ref=WorkspaceRef(provider='other', id='y')))
     with pytest.raises(UserError, match='belongs on that capability'):
         await agent.run('nope', workspace=ReadOnlyWorkspace(Workspace(FakeWorkspace('policy'))))
+
+
+async def test_explicit_bare_backend_keeps_capability_policy(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path, read_only=True), FakeDurability()])
+    result = await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+    assert result.workspace.read_only
 
 
 async def test_forwarded_durable_workspace_without_a_ref_asks_for_a_fresh_environment() -> None:

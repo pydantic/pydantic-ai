@@ -12162,6 +12162,29 @@ async def test_agent_capability_for_run_called_once_per_run():
     assert for_run_calls == {'agent': 1, 'run': 1}
 
 
+async def test_no_workspace_for_run_keeps_unresolved_root_capability() -> None:
+    class InspectCapability(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            assert ctx.root_capability is None
+            return self
+
+    await Agent(TestModel(), capabilities=[InspectCapability()]).run('Hello')
+
+
+async def test_no_workspace_preserves_history_response_identity() -> None:
+    agent = Agent(TestModel())
+    first = await agent.run('Hello')
+    response = first.all_messages()[-1]
+    second = await agent.run(message_history=first.all_messages())
+    assert second.all_messages()[-1] is response
+
+
+async def test_unattached_workspace_rejects_commands() -> None:
+    result = await Agent(TestModel()).run('Hello')
+    with pytest.raises(UserError, match='No workspace is attached'):
+        await result.workspace.run('pwd')
+
+
 async def test_run_with_unapproved_tool_call_in_history():
     def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise ValueError('The agent should not call the model.')  # pragma: no cover

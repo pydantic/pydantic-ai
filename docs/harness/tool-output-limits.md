@@ -57,9 +57,8 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), To
 ```
 
 The capability registers a single `read_tool_result` tool so the model can page back into any
-spilled payload. Its own returns are exempt from reduction. When the agent's file tool can read
-the spill files, that tool replaces it: see
-[Reading spills with your file tool](#reading-spills-with-your-file-tool).
+spilled payload. Its own returns are exempt from reduction. A file tool can also read workspace spills,
+but its results are subject to the configured reduction bands.
 
 ## Bands: combine the modes
 
@@ -320,21 +319,6 @@ class OverflowStore(Protocol):
     async def write(self, key: str, data: bytes) -> str: ...   # returns a handle
     async def read(self, handle: str) -> bytes: ...
 ```
-
-### Reading spills with your file tool
-
-When the agent also has a file tool that can read the spill files, the model uses that tool
-instead of `read_tool_result`, so it isn't offered two tools that read files. `FileSystem`
-qualifies when `read_file` is registered, `max_read_chars` is at most 50,000, it has no
-`root_dir` of its own, and its patterns allow the spill files. Then:
-
-- `read_tool_result` is not offered, and each spill marker names `read_file` and the file.
-- A `read_file` call on a spill file is exempt from reduction, as `read_tool_result`'s returns
-  are; `max_read_chars` keeps it bounded.
-
-
-Spills kept in a store with its own `workspace`, or in another kind of store, keep
-`read_tool_result`.
 
 ## Usage accounting
 
