@@ -85,6 +85,15 @@ class RealtimeParityCase:
     Where it does, the spoken scenario keeps a silent microphone running so the clock can run out,
     the way a real call would.
     """
+    supports_session_seeding: bool = True
+    """Whether prior history can be seeded into the session before its first turn.
+
+    A hosted-agent platform whose conversation always starts fresh (ElevenLabs Agents: `contextual_update`
+    injects context, not history) has nothing for the seeded-history scenario to run against.
+    """
+    audio_output_sample_rate: int = 24000
+    """The PCM rate the model speaks at. Every model here speaks 24 kHz except an ElevenLabs agent on
+    its default formats, which is 16 kHz both ways."""
 
 
 # Adding a supported model generation is one row. Gateway routes intentionally have their own rows:
@@ -214,6 +223,11 @@ _CASES = [pytest.param((case, case.route), id=case.id) for case in REALTIME_PARI
 _TEXT_CASES = [
     pytest.param((case, case.route), id=case.id) for case in REALTIME_PARITY_CASES if case.drives_turns_with_text
 ]
+_SEEDING_CASES = [
+    pytest.param((case, case.route), id=case.id)
+    for case in REALTIME_PARITY_CASES
+    if case.drives_turns_with_text and case.supports_session_seeding
+]
 
 # Our Azure realtime resource answers 401, so the spoken scenario could not be recorded for it. The
 # row is skipped rather than dropped, so the hole stays visible: record it (and delete this mark)
@@ -298,9 +312,9 @@ async def test_text_tool_round_parity(
     assert profile.get('supports_interruption', False) is case.supports_interruption
     assert bool(profile.get('supported_native_tools', frozenset())) is case.supports_native_tools
     assert profile.get('supports_text_output', True) is case.supports_text_output
-    assert profile.get('supports_session_seeding', False)
+    assert profile.get('supports_session_seeding', False) is case.supports_session_seeding
     assert profile.get('audio_input_sample_rate', 24000) == case.audio_input_sample_rate
-    assert profile.get('audio_output_sample_rate', 24000) == 24000
+    assert profile.get('audio_output_sample_rate', 24000) == case.audio_output_sample_rate
 
     agent = Agent(instructions='Always call get_weather for a weather question, then answer in one short sentence.')
 
@@ -336,14 +350,15 @@ async def test_text_tool_round_parity(
     assert session.usage.output_tokens >= 0
 
 
-@pytest.mark.parametrize('parity_ws_cassette', _TEXT_CASES, indirect=True)
+@pytest.mark.parametrize('parity_ws_cassette', _SEEDING_CASES, indirect=True)
 async def test_history_seeding_parity(
     parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
 ) -> None:
     """Seeded user/assistant text precedes the live turn and affects every provider's answer.
 
-    Driven by a text turn, so it covers the same routes the text tool round does. GPT-Live seeds
-    history too, but has to be asked out loud; `test_openai_live_ws.py::test_history_seeding` covers it.
+    Driven by a text turn, so it covers the routes the text tool round does, less the ones whose
+    sessions cannot be seeded at all. GPT-Live seeds history too, but has to be asked out loud;
+    `test_openai_live_ws.py::test_history_seeding` covers it.
     """
     case, provider, _ = parity_ws_cassette
     model = _model(case, provider, text_output=True)
