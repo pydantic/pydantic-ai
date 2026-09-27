@@ -12,6 +12,7 @@ import shutil
 import signal
 import stat as stat_module
 from collections.abc import Awaitable, Mapping, Sequence
+from contextlib import suppress
 from importlib.metadata import version
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
@@ -311,6 +312,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             await _shielded(spawn(), spawn_deadline)
         except (FileNotFoundError, PermissionError) as error:
             if isinstance(error, FileNotFoundError):
+                # A deleted workspace directory raises `WorkspaceUnavailableError` here.
                 await self._get_working_dir()
             # Like `sh`, a program that is missing (127) or not executable (126) is a normal result.
             # Only the program itself: a missing `cwd` raises the same error types and must still raise.
@@ -454,9 +456,9 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             pass
         except PermissionError as error:
             denial = error
-            process.kill()
-        try:
+            with suppress(ProcessLookupError):
+                process.kill()
+        # Teardown must not hold a cancelled caller indefinitely if a pipe or reap stalls.
+        with suppress(TimeoutError):
             await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
-        except TimeoutError:
-            pass
         return denial
