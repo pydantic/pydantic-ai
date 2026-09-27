@@ -326,6 +326,16 @@ class TestRun:
         with pytest.raises(RuntimeError, match='raw wait failed'):
             await backend.run(['x'])
 
+    @pytest.mark.parametrize('stage', ['stdout_error', 'wait_error'])
+    async def test_a_failed_read_stops_the_started_command(self, fake_modal: FakeModal, stage: str) -> None:
+        # The command keeps running in the sandbox when its output or exit status cannot be read.
+        setattr(fake_modal, stage, RuntimeError('stream lost'))
+        fake_modal.wait_hangs = stage == 'stdout_error'
+        backend = await started()
+        with pytest.raises(RuntimeError, match='stream lost'):
+            await backend.run(['sleep', '30'])
+        assert any('modal-stop' in call.argv for call in fake_modal.sandboxes[0].exec_calls)
+
     async def test_cancel_stops_only_the_command_group(self, fake_modal: FakeModal) -> None:
         fake_modal.wait_hangs = True
         backend = await started()

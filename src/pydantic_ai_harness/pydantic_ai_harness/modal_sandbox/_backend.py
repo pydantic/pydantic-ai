@@ -47,6 +47,7 @@ from pydantic_ai_harness._workspace_provider import (
     command_argv,
     command_deadline,
     safe_credential_reason,
+    stop_shielded,
 )
 
 if TYPE_CHECKING:
@@ -655,6 +656,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         if command_error is not None:
             raise command_error
         if errors:
+            # The process may still be running when its output or exit status cannot be read.
+            await stop_shielded(stop)
             mapped = await _failure(sandbox, errors[0], 'Could not read the command result')
             if mapped is not None:
                 raise mapped from errors[0]

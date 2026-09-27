@@ -143,10 +143,11 @@ class _DelayedAioCall(_AioCallable):
 class _FakeStream:
     """Mimics the whole-output `.read.aio()` surface used by the backend."""
 
-    def __init__(self, data: bytes, hangs: bool = False, delay: float = 0.0) -> None:
+    def __init__(self, data: bytes, hangs: bool = False, delay: float = 0.0, error: Exception | None = None) -> None:
         self._data = data
         self._hangs = hangs
         self._delay = delay
+        self._error = error
         self.read = (
             _HangingAioCall() if hangs else _DelayedAioCall(self._read, delay) if delay else _AioCallable(self._read)
         )
@@ -157,6 +158,8 @@ class _FakeStream:
         if self._delay:
             await anyio.sleep(self._delay)
         await anyio.lowlevel.checkpoint()
+        if self._error is not None:
+            raise self._error
         yield self._data
 
     def _read(self) -> bytes:
@@ -173,8 +176,9 @@ class _FakeProcess:
         wait_hangs: bool,
         stdout_hangs: bool = False,
         stdout_delay: float = 0.0,
+        stdout_error: Exception | None = None,
     ) -> None:
-        self.stdout = _FakeStream(stdout, stdout_hangs, stdout_delay)
+        self.stdout = _FakeStream(stdout, stdout_hangs, stdout_delay, stdout_error)
         self.stderr = _FakeStream(stderr)
         self._returncode = returncode
         self._wait_error = wait_error
@@ -575,6 +579,7 @@ class FakeSandbox:
             self._control.wait_hangs and not probing_fifo,
             self._control.stdout_hangs and not probing_fifo,
             self._control.stdout_delay,
+            self._control.stdout_error,
         )
 
     def _poll(self) -> int | None:
@@ -610,6 +615,8 @@ class FakeModal:
         self.stdout_hangs = False
         # Seconds stdout takes to drain after the process has exited.
         self.stdout_delay = 0.0
+        # Raised by the stdout reader while the process keeps running.
+        self.stdout_error: Exception | None = None
         # When set, sandboxes run commands and file operations on the host under this directory.
         self.host_root: Path | None = None
         self.module = self._build_module()
