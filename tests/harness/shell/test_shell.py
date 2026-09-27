@@ -1754,6 +1754,60 @@ class TestLaunch:
         assert status == (False, 0)
         assert Path(job.output_path).read_text(encoding='utf-8') == 'finished\n'
 
+    async def test_stop_ends_the_command_without_setsid_or_a_group_of_its_own(self, tmp_path: Path) -> None:
+        backend = _NoSetsidInCallersGroup(tmp_path)
+        ts = _shell_toolset(tmp_path)
+        ctx = _run_context(Workspace(backend))
+        pid_file = tmp_path / 'command.pid'
+        command_id = _parse_command_id(
+            await ts.start_command(ctx, f'echo $$ > {pid_file}.tmp; mv {pid_file}.tmp {pid_file}; exec sleep 3600')
+        )
+        with anyio.fail_after(30):
+            while not pid_file.exists():
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        pid = int(pid_file.read_text())
+        try:
+            assert '[stopped]' in await ts.stop_command(ctx, command_id)
+            with anyio.fail_after(30):
+                while _alive(pid):
+                    await anyio.sleep(0.01)  # pragma: lax no cover
+        finally:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+class _NoSetsidInCallersGroup(LocalWorkspaceBackend):
+    """A macOS-like host, with bash as its shell and no `setsid`, running the launcher in the caller's process group."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if not (isinstance(command, str) and 'command -v setsid' in command):
+            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        async with await anyio.open_process(
+            ['bash', '-c', command.replace('command -v setsid', 'false')],
+            cwd=cwd,
+            env={**self._env, **(env or {})},
+        ) as process:
+            assert process.stdout is not None
+            stdout = b''.join([chunk async for chunk in process.stdout])
+            exit_code = await process.wait()
+        return CommandResult(exit_code=exit_code, stdout=stdout.decode(), stderr='')
+
 
 class TestReadBgOutputEdgeCases:
     async def test_missing_logs_read_as_empty(self, shell_dir: Path) -> None:
