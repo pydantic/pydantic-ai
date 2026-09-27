@@ -280,7 +280,7 @@ class TestRun:
             opened.append(stream)
             return stream
 
-        monkeypatch.setattr('tests.e2b_sandbox.fake_e2b.tempfile.TemporaryFile', track)
+        monkeypatch.setattr('tests.harness.e2b_sandbox.fake_e2b.tempfile.TemporaryFile', track)
         with pytest.raises(FileNotFoundError):
             await sandbox.commands.run('true', background=True, cwd=str(tmp_path / 'missing'))
         assert len(opened) == 2
