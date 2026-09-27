@@ -10,6 +10,7 @@ inside a container.
 
 from __future__ import annotations
 
+import errno
 import pickle
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -563,6 +564,31 @@ async def test_output_limit_error_survives_durable_workspace_call() -> None:
     with pytest.raises(WorkspaceOutputLimitError) as raised:
         raise_error(restored.error)
     assert (raised.value.limit, raised.value.stdout, raised.value.stderr) == (42, 'first', 'warning')
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        UnicodeEncodeError('ascii', 'café', 3, 4, 'ordinal not in range'),
+        FileNotFoundError(errno.ENOENT, 'No such file', '/remote/old', None, '/remote/new'),
+        OSError(errno.ENAMETOOLONG, 'File name too long', '/remote/long-name'),
+    ],
+)
+async def test_a_backend_error_keeps_its_details_across_a_durable_call(error: Exception) -> None:
+    class Failing(FakeWorkspace):
+        async def read_bytes(self, path: str) -> bytes:
+            raise error
+
+    result = await execute_call(Workspace(Failing('failing')), WorkspaceCall(method='read_bytes', path='x'))
+    restored = JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result))
+    assert restored.error is not None
+    with pytest.raises(type(error)) as raised:
+        raise_error(restored.error)
+    assert type(raised.value) is type(error)
+    assert (raised.value.args, str(raised.value)) == (error.args, str(error))
+    assert [getattr(raised.value, name, None) for name in ('errno', 'filename', 'filename2')] == [
+        getattr(error, name, None) for name in ('errno', 'filename', 'filename2')
+    ]
 
 
 def test_unexpected_errors_fail_the_unit() -> None:

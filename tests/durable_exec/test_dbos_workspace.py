@@ -2,6 +2,8 @@
 
 Not VCR tests: the behavior under test is where each workspace call runs (a DBOS step, or directly
 inside one) and what a forked re-execution replays, which only the DBOS system database can show.
+The shared scenarios live in `workspace_scenarios.py`; this module runs them in a DBOS workflow and
+adds what only DBOS has.
 """
 
 from __future__ import annotations
@@ -9,19 +11,13 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from pathlib import Path
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext, UserError
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
-from pydantic_ai.durable_exec._workspace import DurableWorkspace
-from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import ReadOnlyWorkspace, WorkspaceReadOnlyError, WorkspaceRef
-
 from ..workspace_fakes import InMemoryProvider
+from .workspace_scenarios import IN_PROCESS_GAPS, SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -61,204 +57,57 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
                 logger.removeFilter(log_filter)
 
 
-provider = InMemoryProvider()
-
-
-class WriteInHook(AbstractCapability[Any]):
-    async def before_run(self, ctx: RunContext[Any]) -> None:
-        assert isinstance(ctx.workspace, DurableWorkspace)
-        await ctx.workspace.write_text('hook.txt', f'hook in {await ctx.workspace.working_dir()}')
-
-
-fresh_agent = Agent(
-    TestModel(call_tools=['read_hook']),
-    name='dbos_workspace',
-    capabilities=[WriteInHook(), provider.capability(), DBOSDurability()],
-)
-
-
-@fresh_agent.tool
-async def read_hook(ctx: RunContext[Any]) -> str:
-    # DBOS runs function tools inline in the workflow, so the tool's call is a step of its own.
-    assert isinstance(ctx.workspace, DurableWorkspace)
-    await ctx.workspace.write_text('tool.txt', 'from the tool')
-    return await ctx.workspace.read_text('hook.txt')
+# Function tools run inline in the workflow, so only a step may reach the environment.
+provider = InMemoryProvider(in_unit=lambda: DBOS.step_id is not None)
+agents = scenario_agents(DBOSDurability, prefix='dbos_', provider=provider)
 
 
 @DBOS.workflow()
-async def fresh_workflow() -> dict[str, Any]:
-    result = await fresh_agent.run('Read the hook file.')
-    ref = result.workspace.ref
-    assert ref is not None
-    return {
-        'output': result.output,
-        'ref': ref.id,
-        'working_dir': await result.workspace.working_dir(),
-        'tool': await result.workspace.read_text('tool.txt'),
-    }
+async def scenario_workflow(name: str, arg: str | None) -> Any:
+    workflow_id = DBOS.workflow_id
+    assert workflow_id is not None
+    return await SCENARIOS[name](agents, arg, workflow_id)
 
 
-async def test_dbos_default_run_id_is_distinct_from_workflow_id(dbos: DBOS) -> None:
-    workflow_id = f'run-id-{uuid.uuid4()}'
-
-    @DBOS.workflow()
-    async def run() -> tuple[str, str]:
-        result = await fresh_agent.run('Read the hook file.')
-        return result.run_id, (await fresh_agent.run('Read the hook file.', run_id='explicit')).run_id
-
-    with SetWorkflowID(workflow_id):
-        generated, explicit = await run()
-    assert generated != workflow_id
-    assert explicit == 'explicit'
+async def run_scenario(name: str, arg: str | None) -> Any:
+    try:
+        return await scenario_workflow(name, arg)
+    except Exception as error:
+        raise ScenarioFailed(type(error).__name__, str(error)) from error
 
 
-async def test_dbos_multiple_turns_in_one_workflow(dbos: DBOS) -> None:
+@pytest.mark.parametrize('check', cases(xfail=IN_PROCESS_GAPS))
+async def test_workspace_scenario(dbos: DBOS, check: Check) -> None:
     provider.reset()
-    agent = Agent(TestModel(), name='dbos_turns', capabilities=[provider.capability(), DBOSDurability()])
-
-    @DBOS.workflow()
-    async def converse() -> tuple[str, str]:
-        first = await agent.run('First.')
-        second = await agent.run('Second.', message_history=first.all_messages())
-        assert first.workspace.ref == second.workspace.ref
-        return first.run_id, second.run_id
-
-    first_id, second_id = await converse()
-    assert first_id != second_id
-    # Outside a workflow, the durable-capable agent keeps a plain random run ID.
-    assert ':' not in (await agent.run('Outside.')).run_id
+    await check(run_scenario, agents)
 
 
-async def test_dbos_workspace_operations_run_as_steps_and_a_fork_replays_them(dbos: DBOS) -> None:
+async def test_dbos_workspace_calls_are_steps_and_a_fork_replays_them(dbos: DBOS) -> None:
     provider.reset()
     workflow_id = f'workspace-{uuid.uuid4()}'
-
     with SetWorkflowID(workflow_id):
-        output = await fresh_workflow()
-
-    assert output == snapshot(
-        {'output': '{"read_hook":"hook in /remote"}', 'ref': 'env-1', 'working_dir': '/remote', 'tool': 'from the tool'}
-    )
-    assert provider.log == snapshot(['create:env-1'])
+        output = await scenario_workflow('fresh', None)
+    assert provider.log == ['create:env-1']
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert [step['function_name'] for step in steps] == snapshot(
         [
-            'dbos_workspace__capability__workspace.call',
-            'dbos_workspace__capability__workspace.call',
-            'dbos_workspace__model.request',
-            'dbos_workspace__capability__workspace.call',
-            'dbos_workspace__capability__workspace.call',
-            'dbos_workspace__model.request',
-            'dbos_workspace__capability__workspace.call',
+            'dbos_fresh__capability__workspace.call',
+            'dbos_fresh__capability__workspace.call',
+            'dbos_fresh__model.request',
+            'dbos_fresh__capability__workspace.call',
+            'dbos_fresh__capability__workspace.call',
+            'dbos_fresh__capability__workspace.call',
+            'dbos_fresh__capability__workspace.call',
+            'dbos_fresh__model.request',
+            'dbos_fresh__capability__workspace.call',
+            'dbos_fresh__capability__workspace.call',
         ]
     )
 
     # Re-execute the workflow function from its last step, the way recovery does: every earlier
     # step replays its recorded output, `ensure` included, so the rebuilt workspace attaches to the
-    # environment the original run created instead of creating another, and the re-executed final
-    # read reaches the file the original run wrote.
+    # environment the original run created instead of creating another.
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
-    forked = await handle.get_result()
-    assert forked == output
-    assert provider.log == snapshot(['create:env-1', 'attach:env-1'])
+    assert await handle.get_result() == output
+    assert provider.log == ['create:env-1', 'attach:env-1']
     assert list(provider.environments) == ['env-1']
-
-
-read_only_agent = Agent(
-    TestModel(call_tools=['try_write']),
-    name='dbos_read_only',
-    capabilities=[provider.capability(read_only=True), DBOSDurability()],
-)
-
-
-@read_only_agent.tool
-async def try_write(ctx: RunContext[Any]) -> str:
-    try:
-        await ctx.workspace.write_text('nope.txt', 'x')
-    except WorkspaceReadOnlyError as error:
-        return f'blocked: {str(error)[:28]}'
-    return 'wrote'  # pragma: no cover
-
-
-@DBOS.workflow()
-async def read_only_workflow() -> str:
-    result = await read_only_agent.run('Try to write.')
-    assert isinstance(result.workspace, DurableWorkspace)
-    assert isinstance(result.workspace.wrapped, ReadOnlyWorkspace)
-    try:
-        await result.workspace.make_dir('sub')
-    except WorkspaceReadOnlyError:
-        return f'{result.output}|blocked after the run'
-    return result.output  # pragma: no cover
-
-
-async def test_dbos_read_only_policy_is_enforced_inside_the_step(dbos: DBOS) -> None:
-    provider.reset()
-    assert await read_only_workflow() == snapshot(
-        '{"try_write":"blocked: This workspace is read-only:"}|blocked after the run'
-    )
-
-
-explicit_agent = Agent(TestModel(), name='dbos_explicit', capabilities=[provider.capability(), DBOSDurability()])
-
-
-@DBOS.workflow()
-async def explicit_workflow(kind: str) -> str:
-    seeded = WorkspaceRef(provider='fake', id='seeded')
-    if kind == 'ref':
-        workspace: Any = seeded
-    elif kind == 'live_with_ref':
-        workspace = provider.backend(seeded)
-    elif kind == 'previous_result':
-        workspace = (await explicit_agent.run('First.', workspace=seeded)).workspace
-    else:
-        workspace = provider.backend(None)
-    result = await explicit_agent.run('Again.', workspace=workspace)
-    return await result.workspace.read_text('seed.txt')
-
-
-@pytest.mark.parametrize('kind', ['ref', 'live_with_ref', 'previous_result'])
-async def test_dbos_explicit_workspace_that_a_capability_recognizes_attaches(dbos: DBOS, kind: str) -> None:
-    provider.reset()
-    provider.environments['seeded'] = {'/remote/seed.txt': b'seed'}
-
-    assert await explicit_workflow(kind) == 'seed'
-    assert list(provider.environments) == ['seeded']
-    assert 'create:' not in ' '.join(provider.log)
-
-
-async def test_dbos_live_workspace_without_a_ref_is_rejected_in_a_workflow(dbos: DBOS) -> None:
-    provider.reset()
-    with pytest.raises(UserError, match='A live workspace cannot be passed to `workspace=` inside a DBOS workflow'):
-        await explicit_workflow('live_fresh')
-    assert provider.environments == {}
-
-
-async def test_dbos_local_workspace_end_to_end(dbos: DBOS, tmp_path: Path) -> None:
-    agent = Agent(
-        TestModel(call_tools=['write_note']),
-        name='dbos_local',
-        capabilities=[LocalWorkspace(tmp_path), DBOSDurability()],
-    )
-
-    @agent.tool
-    async def write_note(ctx: RunContext[Any]) -> str:
-        await ctx.workspace.write_text('note.txt', 'on disk')
-        return (await ctx.workspace.run(['cat', 'note.txt'])).stdout
-
-    @DBOS.workflow()
-    async def local_workflow() -> dict[str, Any]:
-        result = await agent.run('Write the note.')
-        return {
-            'output': result.output,
-            'ref': result.workspace.ref,
-            'working_dir': await result.workspace.working_dir(),
-        }
-
-    output = await local_workflow()
-    assert output == {
-        'output': '{"write_note":"on disk"}',
-        'ref': WorkspaceRef(provider='local', id=str(tmp_path)),
-        'working_dir': str(tmp_path.resolve()),
-    }
-    assert (tmp_path / 'note.txt').read_text() == 'on disk'
