@@ -493,9 +493,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return tool_defs
 
     def _default_run_id(self) -> str | None:
-        for capability in reversed(self.capabilities):
-            if (run_id := capability._default_run_id()) is not None:
-                return run_id
+        if self.has_get_workspace:
+            for capability in reversed(self.capabilities):
+                if (run_id := capability._default_run_id()) is not None:
+                    return run_id
         return None
 
     # --- Run lifecycle hooks ---

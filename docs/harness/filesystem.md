@@ -73,12 +73,12 @@ so they are left out when it can't run commands; `search_files` and
 | `find_files` | Glob search over file names (e.g. `*.py`, `**/*.json`). The pattern is relative to `path`; absolute patterns are rejected. |
 | `create_directory` | Create a directory and any missing parents. |
 | `file_info` | Metadata for a file or directory: size, type, line count, hash, and symlink target, where the workspace provides them. |
+| `list_files` | Opt-in, ripgrep-backed: files under a directory, recursively, sorted by path, with an optional `glob`. |
+| `grep` | Opt-in, ripgrep-backed: content search with `glob`, `file_type`, `ignore_case`, `literal`, and `context` (0 to 20) options; a `path` may name a file or a directory. |
 
 An explicitly unavailable run workspace fails at run start with its configured reason, rather than advice to attach a local workspace.
 
 Missing paths (including directories passed to `read_file`) return `Path not found: <path>` as a tool result, so repeated lookups do not exhaust the model's tool retry budget. Invalid arguments still request a retry.
-| `list_files` | Opt-in, ripgrep-backed: files under a directory, recursively, sorted by path, with an optional `glob`. |
-| `grep` | Opt-in, ripgrep-backed: content search with `glob`, `file_type`, `ignore_case`, `literal`, and `context` (0 to 20) options; a `path` may name a file or a directory. |
 
 For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) rather than `cat` through a shell. Install `rg` and `git` in the sandbox image for fast searches; installing `rg` on the agent host does not install it in a remote workspace. For large or generated trees, use Shell with `rg -n 'pattern' path` and cap its output. Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep`, `list_files`, and `search_files` (after an initial `rg` probe). Filesystem-only backends use slower, bounded file walks. The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. An explicitly named file is searched even when ignored. Searches report output and result caps rather than presenting partial results as complete.
 

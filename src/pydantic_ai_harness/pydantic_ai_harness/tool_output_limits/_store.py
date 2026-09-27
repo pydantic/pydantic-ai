@@ -90,6 +90,10 @@ class WorkspaceStore:
     def __post_init__(self) -> None:
         self._workspace = secondary_workspace(self.workspace, 'WorkspaceStore')
 
+    def bind(self, workspace: Workspace) -> OverflowStore:
+        """Bind a run workspace to the common store interface."""
+        return _BoundWorkspaceStore(self, workspace)
+
     async def write(self, workspace: Workspace, key: str, data: bytes) -> str:
         """Write `data` and return its absolute workspace path as the handle.
 
@@ -108,6 +112,18 @@ class WorkspaceStore:
         if not path.startswith(directory.rstrip('/') + '/'):
             raise PermissionError(f'Handle {handle!r} is outside the store directory.')
         return await workspace.read_bytes(await _confine(workspace, path, handle))
+
+
+@dataclass
+class _BoundWorkspaceStore:
+    store: WorkspaceStore
+    workspace: Workspace
+
+    async def write(self, key: str, data: bytes) -> str:
+        return await self.store.write(self.workspace, key, data)
+
+    async def read(self, handle: str) -> bytes:
+        return await self.store.read(self.workspace, handle)
 
 
 async def _confine(workspace: Workspace, path: str, name: str) -> str:

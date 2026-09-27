@@ -27,7 +27,7 @@ from .protocol import (
     WorkspaceResult,
     validate_timeout,
 )
-from .unavailable import UnavailableWorkspace
+from .unavailable import _UnavailableBackend  # pyright: ignore[reportPrivateUsage]
 
 __all__ = ('Workspace', 'WrapperWorkspace')
 
@@ -81,43 +81,38 @@ class _ShellFilesystem(SupportsFilesystem):
         self._backend = backend
 
     async def read_bytes(self, path: str) -> bytes:
-        quoted_path = shlex.quote(path)
         entry = await self.stat(path)
         if entry.is_dir:
             raise IsADirectoryError(path)
         assert entry.size is not None
-        size = entry.size
+        return await self._read_chunks(shlex.quote(path), entry.size, path, 'read')
+
+    async def _read_chunks(self, source: str, size: int, path: str, what: str) -> bytes:
         data = bytearray()
-        # Bound each command's output; a single base64 stream can exceed remote run() limits.
         for index in range((size + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
             try:
                 result = await self._backend.run(
-                    f'dd if={quoted_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
+                    f'dd if={source} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
                     shell=True,
                 )
             except WorkspaceOutputLimitError as error:
-                raise WorkspaceError(f'shell filesystem read exceeded command output limit for {path!r}') from error
+                operation = 'listing' if what == 'list' else what
+                raise WorkspaceError(
+                    f'shell filesystem {operation} exceeded command output limit for {path!r}'
+                ) from error
             await self._raise_for_error(result, path)
             try:
                 chunk = base64.b64decode(result.stdout)
             except ValueError as error:
-                raise WorkspaceError(f'shell filesystem returned invalid base64 while reading {path!r}') from error
-            expected = min(_SHELL_READ_CHUNK_BYTES, size - len(data))
-            if len(chunk) != expected:
-                raise WorkspaceError(f'shell filesystem returned incomplete output while reading {path!r}')
+                raise WorkspaceError(f'shell filesystem returned invalid base64 while {what}ing {path!r}') from error
+            if len(chunk) != min(_SHELL_READ_CHUNK_BYTES, size - len(data)):
+                raise WorkspaceError(f'shell filesystem returned incomplete output while {what}ing {path!r}')
             data.extend(chunk)
         return bytes(data)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        quoted_path = shlex.quote(path)
-        link = await self._backend.run(
-            f'if test -L {quoted_path}; then readlink -n -- {quoted_path} | base64; fi', shell=True
-        )
-        await self._raise_for_error(link, path)
-        link_target = link.stdout.strip() if link.stdout else None
-        # Stage beside the resolved target, not the link: a copy through the link would truncate
-        # the old target before the transfer can succeed.
-        destination = await self.realpath(path) if link_target is not None else path
+        # Stage beside the resolved target so a failed transfer leaves it intact.
+        destination = await self.realpath(path)
         parent = posixpath.dirname(destination)
         temporary_path = posixpath.join(parent, f'.pydantic-ai-{uuid.uuid4().hex}.tmp')
         decoded_path = f'{temporary_path}.decoded'
@@ -145,21 +140,14 @@ class _ShellFilesystem(SupportsFilesystem):
                 await self._raise_for_error(result, path)
 
             quoted_destination = shlex.quote(destination)
-            # Copy first to preserve mode bits; commit only after decoding succeeds. Check the
-            # original link at commit so a changed link cannot redirect the write elsewhere.
-            link_guard = (
-                f'test -L {quoted_path} && '
-                f'test "$(readlink -n -- {quoted_path} | base64)" = {shlex.quote(link_target)} && '
-                if link_target is not None
-                else ''
-            )
+            # Copy first to preserve mode bits; commit only after decoding succeeds.
             result = await self._backend.run(
                 f'if test -d {quoted_destination}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
                 f'elif test -e {quoted_destination} && ! test -w {quoted_destination}; '
                 f'then status={_SHELL_EXIT_PERMISSION}; else '
                 f'{{ test -f {quoted_destination} && cp {quoted_destination} {quoted_decoded}; }}; '
                 f'base64 -d < {quoted_temporary} > {quoted_decoded} '
-                f'&& {link_guard}mv -f {quoted_decoded} {quoted_destination}; '
+                f'&& mv -f {quoted_decoded} {quoted_destination}; '
                 f'status=$?; fi; rm -f {quoted_temporary} {quoted_decoded}; exit $status',
                 shell=True,
             )
@@ -197,8 +185,7 @@ class _ShellFilesystem(SupportsFilesystem):
         return FileEntry(name=name, path=path, is_dir=False, size=size)
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
-        quoted_path = shlex.quote(path)
-        listing = await self._list_paths(quoted_path, path)
+        listing = await self._list_paths(path)
         # POSIX filenames are bytes; preserve undecodable names for a round trip via os.fsencode.
         entries = listing.decode(errors='surrogateescape').split('\0')
         if any(entry and (entry[0] not in 'd-' or not entry[1:].startswith('/')) for entry in entries):
@@ -209,7 +196,8 @@ class _ShellFilesystem(SupportsFilesystem):
             for entry in sorted((entry for entry in entries if entry), key=lambda entry: entry[1:])
         )
 
-    async def _list_paths(self, quoted_path: str, path: str) -> bytes:
+    async def _list_paths(self, path: str) -> bytes:
+        quoted_path = shlex.quote(path)
         # Keep the scratch file in the environment's temp directory (which needn't be /tmp).
         temporary_path = f'"${{TMPDIR:-/tmp}}/.pydantic-ai-{uuid.uuid4().hex}.list"'
         # `test` and `printf` rather than `find -printf`, which BusyBox and macOS lack.
@@ -239,26 +227,9 @@ class _ShellFilesystem(SupportsFilesystem):
             if not size.strip().isdigit():
                 raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}')
             length = int(size)
-            listing = bytearray()
-            # Each remote command is below the command-output cap, even for a huge directory.
-            for index in range((length + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
-                try:
-                    chunk_result = await self._backend.run(
-                        f'dd if={temporary_path} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
-                        shell=True,
-                    )
-                except WorkspaceOutputLimitError as error:
-                    raise WorkspaceError('shell filesystem listing exceeded command output limit') from error
-                await self._raise_for_error(chunk_result, quoted_path)
-                try:
-                    chunk = base64.b64decode(chunk_result.stdout)
-                except ValueError as error:
-                    raise WorkspaceError('shell filesystem returned invalid base64 while listing') from error
-                if len(chunk) != min(_SHELL_READ_CHUNK_BYTES, length - len(listing)):
-                    raise WorkspaceError('shell filesystem returned incomplete output while listing')
-                listing.extend(chunk)
+            listing = await self._read_chunks(temporary_path, length, path, 'list')
             completed = True
-            return bytes(listing)
+            return listing
         finally:
             # A cancelled command may be killed before its EXIT trap runs. Paged listings also
             # keep the file alive across commands; shield only the bounded cleanup.
@@ -283,8 +254,8 @@ class _ShellFilesystem(SupportsFilesystem):
     async def remove(self, path: str) -> None:
         root = await cast(WorkspaceBackend, self._backend).working_dir()
         # Refuse an ancestor before invoking `rm -rf`; never let removal of `.` destroy the environment.
-        normalized = posixpath.normpath(path)
-        if root == normalized or root.startswith(normalized.rstrip('/') + '/'):
+        target = posixpath.join(await self.realpath(posixpath.dirname(path)), posixpath.basename(path))
+        if root == target or root.startswith(target.rstrip('/') + '/'):
             raise ValueError('cannot remove the workspace root or its ancestor')
         quoted_path = shlex.quote(path)
         result = await self._backend.run(
@@ -357,10 +328,7 @@ class _ShellFilesystem(SupportsFilesystem):
 class Workspace(WorkspaceBackend):
     """The workspace API tools and hooks use as `ctx.workspace`: the backend's operations, relative paths, and text."""
 
-    def __init__(
-        self,
-        backend: WorkspaceBackend,
-    ):
+    def __init__(self, backend: WorkspaceBackend):
         self._backend = backend
 
     @property
@@ -372,19 +340,19 @@ class Workspace(WorkspaceBackend):
     @property
     def read_only(self) -> bool:
         """Whether this workspace refuses commands and file changes, so tools can leave those out."""
-        return False
+        return isinstance(self._backend, Workspace) and self._backend.read_only
 
     @property
     def attached(self) -> bool:
         """Whether this workspace reaches an environment.
 
-        `False` for an [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace], like a run's placeholder.
+        `False` for an [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] and for a run
+        with no workspace attached.
         """
         backend = self._backend
         if isinstance(backend, Workspace):
-            # Through the wrapped workspace, never `backend`, which a durable wrapper refuses in workflow code.
             return backend.attached
-        return not isinstance(backend, UnavailableWorkspace)
+        return not isinstance(backend, _UnavailableBackend)
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -397,7 +365,7 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, SupportsFilesystem):
             return backend
         if isinstance(backend, SupportsCommands):
-            # Do not cache this adapter: the backend may provide native filesystem methods later.
+            # The backend may provide native filesystem methods later.
             return _ShellFilesystem(backend)
         raise UserError(
             'This workspace does not support filesystem operations. Attach a backend that implements '
@@ -515,9 +483,11 @@ class WrapperWorkspace(Workspace):
 
 
 def workspace_layers(workspace: Workspace) -> list[type[object]]:
-    """The policy wrappers around a workspace and its backend type, outermost first."""
+    """The policy wrappers around a workspace and its backend type, outermost first; plain `Workspace` layers are skipped."""
     layers: list[type[object]] = []
-    while isinstance(workspace, WrapperWorkspace):
-        layers.append(type(workspace))
-        workspace = workspace.wrapped
-    return [*layers, type(workspace), type(workspace.backend)]
+    layer: WorkspaceBackend = workspace
+    while isinstance(layer, Workspace):
+        if type(layer) is not Workspace:
+            layers.append(type(layer))
+        layer = layer._backend  # pyright: ignore[reportPrivateUsage]
+    return [*layers, type(layer)]

@@ -466,8 +466,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         A live backend or wrapper cannot cross a durable boundary, so inside the container only its
         identity is kept: a `DurableWorkspace` from a previous result or a parent run unwraps to its
         journaled ref, and any other instance must carry a ref some attached capability recognizes.
-        A caller-side wrapper such as `ReadOnlyWorkspace(...)` is not preserved either way; policy
-        belongs on the capability, which re-applies it on every side of the boundary.
+        Caller-side policy wrappers must match the capability's policy; otherwise the unit would
+        silently lose them.
         """
         ref = workspace.ref
         # A `DurableWorkspace` without a ref never dispatched a unit; asking the capabilities for a
@@ -494,12 +494,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 'belongs on that capability (for example `LocalWorkspace(..., read_only=True)`), not around the '
                 'argument.'
             )
-        # A caller-side read-only wrapper cannot travel to activities; refusing it prevents
-        # a read-only run silently becoming writable on another worker.
-        if not isinstance(workspace, DurableWorkspace) and workspace.read_only and not rebuilt.read_only:
+        supplied = workspace.wrapped if isinstance(workspace, DurableWorkspace) else workspace
+        supplied_layers = workspace_layers(supplied)
+        # A bare backend takes the capability's policy; only a caller-side wrapper can be lost.
+        if len(supplied_layers) > 1 and supplied_layers != workspace_layers(rebuilt):
             raise UserError(
-                f'Under {self.engine_name}, a read-only `workspace=` argument would lose its policy across '
-                'durable units; put read_only on the capability (for example `LocalWorkspace(..., read_only=True)`).'
+                f'Under {self.engine_name}, a `workspace=` policy would be lost across durable units; '
+                'configure its wrapper on the capability instead.'
             )
         return rebuilt
 
@@ -855,10 +856,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
-        # An instructions-only capability contributes no tool activity to register. If a tool
-        # is added later, it could not gain a durable registration retroactively either.
-        if ts_id is None and isinstance(ts, FunctionToolset) and not ts.tools:
-            return ts
         if ts_id is None and isinstance(ts, DynamicToolset):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
