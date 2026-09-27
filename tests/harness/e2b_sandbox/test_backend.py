@@ -632,6 +632,21 @@ class TestWorkingDir:
 
 
 class TestFilesystem:
+    async def test_files_and_commands_share_user(self, fake_e2b: FakeE2B) -> None:
+        backend = await started()
+        sandbox = fake_e2b.sandboxes[0]
+        await backend.make_dir('/tmp/shared')
+        await backend.write_bytes('/tmp/shared/file', b'data')
+        await backend.read_bytes('/tmp/shared/file')
+        await backend.stat('/tmp/shared/file')
+        await backend.list_dir('/tmp/shared')
+        await backend.exists('/tmp/shared/file')
+        await backend.remove('/tmp/shared/file')
+        await backend.run(['true'])
+        assert sandbox.files.users
+        assert sandbox.commands.calls
+        assert {*sandbox.files.users, *(call.user for call in sandbox.commands.calls)} == {'user'}
+
     async def test_upload_does_not_inherit_sdk_request_timeout(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -899,9 +914,9 @@ def test_signal_exit_code_limitation_is_documented() -> None:
     assert 'signal' in docs
 
 
-def test_file_api_privileges_are_documented() -> None:
+def test_file_api_identity_is_documented() -> None:
     docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
-    assert 'File operations run with elevated privileges' in docs
+    assert 'File operations and shell commands both run as the `user` account' in docs
 
 
 def test_ripgrep_template_recipe_is_documented_without_running_a_build() -> None:

@@ -85,7 +85,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-File operations run with elevated privileges in E2B, even when shell commands run as the `user` account. File tools may access paths the shell cannot; do not use Unix permissions alone as a file-tool policy.
+File operations and shell commands both run as the `user` account. Unix permissions apply to both.
 
 A background child that inherits stdout or stderr can keep `run()` waiting for the SDK stream to close after the main command exits. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
 
@@ -126,7 +126,7 @@ Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sa
 
 With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, connect with `e2b.AsyncSandbox.connect(ref.id)` and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then `kill_sandbox(ref)` as below. Do not leave a public preview running longer than necessary.
 
-E2B file reads reject FIFOs rather than waiting for a writer. An ordinary read performs a shell FIFO check before downloading the file. E2B's file API runs with elevated privileges independent of shell permissions and omits looping symlinks from directory listings.
+E2B file reads reject FIFOs rather than waiting for a writer. An ordinary read performs a shell FIFO check before downloading the file. E2B's file API omits looping symlinks from directory listings.
 
 ## Clean up
 

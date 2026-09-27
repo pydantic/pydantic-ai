@@ -94,7 +94,7 @@ def _path_error(error: Exception, path: str) -> OSError | None:
     return None
 
 
-async def _file_entry(sandbox: e2b.AsyncSandbox, entry: e2b.EntryInfo) -> FileEntry:
+async def _file_entry(sandbox: e2b.AsyncSandbox, entry: e2b.EntryInfo, user: str) -> FileEntry:
     """The protocol entry for `entry`, with `is_dir` and `size` following a symlink.
 
     envd describes a symlink with the link's own size and, as `symlink_target`, the path it
@@ -104,7 +104,9 @@ async def _file_entry(sandbox: e2b.AsyncSandbox, entry: e2b.EntryInfo) -> FileEn
     target: e2b.EntryInfo | None = entry
     if entry.symlink_target is not None:
         try:
-            target = await sandbox.files.get_info(posixpath.join(posixpath.dirname(entry.path), entry.symlink_target))
+            target = await sandbox.files.get_info(
+                posixpath.join(posixpath.dirname(entry.path), entry.symlink_target), user=user
+            )
         except e2b.FileNotFoundException:
             target = None
         if target is not None and target.symlink_target is not None:
@@ -193,6 +195,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             raise ValueError('pass either `sandbox` or `ref`, not both')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
         self._sandbox = sandbox
+        self._user = 'user'
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path: the configured one, or the
         # sandbox's default, resolved once with `pwd -P`.
@@ -246,7 +249,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 # a ref the caller can use to clean up the billed sandbox.
                 with anyio.CancelScope(shield=True):
                     async with self._sdk_errors(sandbox.sandbox_id, 'Could not create working_dir', self._working_dir):
-                        await sandbox.files.make_dir(self._working_dir)
+                        await sandbox.files.make_dir(self._working_dir, user=self._user)
         await anyio.lowlevel.checkpoint_if_cancelled()
         return sandbox
 
@@ -308,24 +311,24 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             probe = await self.run(f'test -p {shlex.quote(path)}', shell=True, timeout=_INTERNAL_EXEC_TIMEOUT)
             if probe.exit_code == 0:
                 raise OSError(f'Could not read {path!r}: FIFO reads are not supported')
-            return bytes(await sandbox.files.read(path, 'bytes'))
+            return bytes(await sandbox.files.read(path, 'bytes', user=self._user))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not write {path!r}', path):
             # The SDK's default 60s request bound can interrupt a valid large upload.
-            await sandbox.files.write(path, data, request_timeout=0)  # pyright: ignore[reportUnknownMemberType]
+            await sandbox.files.write(path, data, user=self._user, request_timeout=0)  # pyright: ignore[reportUnknownMemberType]
 
     async def stat(self, path: str) -> FileEntry:
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not stat {path!r}', path):
-            return await _file_entry(sandbox, await sandbox.files.get_info(path))
+            return await _file_entry(sandbox, await sandbox.files.get_info(path, user=self._user), self._user)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not list {path!r}', path):
             # `depth=1` is E2B's non-recursive listing, as the protocol asks.
-            entries = await sandbox.files.list(path, depth=1)
+            entries = await sandbox.files.list(path, depth=1, user=self._user)
             resolved: list[FileEntry | None] = [None] * len(entries)
             failures: list[Exception | None] = [None] * len(entries)
             limit = anyio.Semaphore(16)
@@ -335,7 +338,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 # changing the order returned by the listing.
                 async with limit:
                     try:
-                        resolved[index] = await _file_entry(sandbox, entry)
+                        resolved[index] = await _file_entry(sandbox, entry, self._user)
                     except Exception as error:
                         # Keep each entry's path and the original SDK exception out of
                         # ExceptionGroup; transient failures must retain their identity.
@@ -357,21 +360,21 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def make_dir(self, path: str) -> None:
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not create directory {path!r}', path):
-            await sandbox.files.make_dir(path)
+            await sandbox.files.make_dir(path, user=self._user)
 
     async def remove(self, path: str) -> None:
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not remove {path!r}', path):
             # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
             # reports that as `FileNotFoundError`.
-            if not await sandbox.files.exists(path):
+            if not await sandbox.files.exists(path, user=self._user):
                 raise e2b.FileNotFoundException(path)
-            await sandbox.files.remove(path)
+            await sandbox.files.remove(path, user=self._user)
 
     async def exists(self, path: str) -> bool:
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not check {path!r}', path):
-            return await sandbox.files.exists(path)
+            return await sandbox.files.exists(path, user=self._user)
 
     async def _create(self) -> e2b.AsyncSandbox:
         """Provision a fresh E2B sandbox.
@@ -444,7 +447,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         async with self._setsid_lock:
             if self._setsid is None:
                 async with self._sdk_errors(sandbox.sandbox_id, 'Could not probe E2B command launcher'):
-                    probe = await sandbox.commands.run('command -v setsid >/dev/null 2>&1', background=True, timeout=10)
+                    probe = await sandbox.commands.run(
+                        'command -v setsid >/dev/null 2>&1', background=True, timeout=10, user=self._user
+                    )
                     try:
                         result = await probe.wait()
                         self._setsid = result.exit_code == 0
@@ -499,7 +504,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             )
             try:
                 stopper = await sandbox.commands.run(
-                    f'sh -c {shlex.quote(script)}', background=True, timeout=_SDK_STREAM_UNBOUNDED
+                    f'sh -c {shlex.quote(script)}', background=True, timeout=_SDK_STREAM_UNBOUNDED, user=self._user
                 )
                 await stopper.wait()
             except Exception:
@@ -515,6 +520,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     envs={'LC_ALL': 'C.UTF-8', **(self._env or {}), **(env or {})},
                     cwd=cwd if cwd is not None else self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
+                    user=self._user,
                 )
                 assert handle is not None
                 result = await handle.wait()
@@ -547,8 +553,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             if result is not None:
                 with anyio.move_on_after(0.5, shield=True):
                     try:
-                        await sandbox.files.remove(pgid_file)
-                        await sandbox.files.remove(claim)
+                        await sandbox.files.remove(pgid_file, user=self._user)
+                        await sandbox.files.remove(claim, user=self._user)
                     except Exception:
                         pass
 

@@ -89,6 +89,7 @@ class FakeCommandCall:
     cwd: str | None
     envs: dict[str, str] | None
     timeout: float | None
+    user: str | None
 
 
 @dataclass(frozen=True)
@@ -192,10 +193,9 @@ class FakeCommands:
     ) -> FakeCommandHandle:
         # Closed signature on purpose: the real `run` rejects unknown kwargs, so the fake must
         # too, or a bad kwarg in the backend would only fail in production.
-        del user
         await anyio.lowlevel.checkpoint()
         self._sandbox.check_alive()
-        self.calls.append(FakeCommandCall(cmd, background is True, cwd, envs, timeout))
+        self.calls.append(FakeCommandCall(cmd, background is True, cwd, envs, timeout, user))
         assert background is True, 'the backend always starts commands in the background'
         if self._control.run_error is not None:
             raise self._control.run_error
@@ -242,6 +242,7 @@ class FakeFilesystem:
         self.files: dict[str, bytes] = {}
         self.directories: set[str] = set()
         self.removed: list[str] = []
+        self.users: list[str | None] = []
         # Paths the sandbox user may not touch, the way a root-owned `/etc` refuses envd's user.
         self.denied: set[str] = set()
         # Symlinks by path, each reported with the target a test gives it.
@@ -255,7 +256,8 @@ class FakeFilesystem:
         request_timeout: float | None = None,
         gzip: bool = False,
     ) -> bytearray:
-        del user, request_timeout, gzip
+        self.users.append(user)
+        del request_timeout, gzip
         await self._check(path)
         # The backend only asks for bytes; anything else would be a silent behavior change.
         assert format == 'bytes', f'unexpected read format {format!r}'
@@ -276,7 +278,8 @@ class FakeFilesystem:
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> WriteInfo:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         if path in self.directories:
             # envd's upload answers a directory with a 400 in its own words.
@@ -286,7 +289,8 @@ class FakeFilesystem:
         return WriteInfo(name=posixpath.basename(path), type=FileType.FILE, path=path)
 
     async def get_info(self, path: str, user: str | None = None, request_timeout: float | None = None) -> FakeEntryInfo:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         return self._entry(path)
 
@@ -297,7 +301,8 @@ class FakeFilesystem:
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> list[FakeEntryInfo]:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         assert depth == 1, f'unexpected list depth {depth!r}'
         if not await self._exists(path):
@@ -313,12 +318,14 @@ class FakeFilesystem:
         return [self._entry(child) for child in sorted(children)]
 
     async def exists(self, path: str, user: str | None = None, request_timeout: float | None = None) -> bool:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         return await self._exists(path)
 
     async def make_dir(self, path: str, user: str | None = None, request_timeout: float | None = None) -> bool:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         if path in self.files:
             raise InvalidArgumentException(f'path already exists but it is not a directory: {path}')
@@ -328,7 +335,8 @@ class FakeFilesystem:
         return created
 
     async def remove(self, path: str, user: str | None = None, request_timeout: float | None = None) -> None:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         # envd removes with `os.RemoveAll`, so a missing path is not an error.
         self.removed.append(path)
@@ -446,10 +454,9 @@ class _HostCommands(FakeCommands):
         cwd: str | None = None,
         timeout: float | None = 60,
     ) -> FakeCommandHandle:
-        del user
         await anyio.lowlevel.checkpoint()
         self._sandbox.check_alive()
-        self.calls.append(FakeCommandCall(cmd, background is True, cwd, envs, timeout))
+        self.calls.append(FakeCommandCall(cmd, background is True, cwd, envs, timeout, user))
         assert background is True, 'the backend always starts commands in the background'
         assert self._control.host_root is not None
         # E2B runs `/bin/bash -l -c`; the host drops `-l` so the developer's login files stay out.
@@ -529,7 +536,8 @@ class _HostFilesystem(FakeFilesystem):
         request_timeout: float | None = None,
         gzip: bool = False,
     ) -> bytearray:
-        del user, request_timeout, gzip
+        self.users.append(user)
+        del request_timeout, gzip
         await self._check(path)
         assert format == 'bytes', f'unexpected read format {format!r}'
         with _host_errors(path):
@@ -543,7 +551,8 @@ class _HostFilesystem(FakeFilesystem):
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> WriteInfo:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         with _host_errors(path):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -552,7 +561,8 @@ class _HostFilesystem(FakeFilesystem):
 
     @_host_io
     async def get_info(self, path: str, user: str | None = None, request_timeout: float | None = None) -> FakeEntryInfo:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         with _host_errors(path):
             return self._host_entry(path)
@@ -565,7 +575,8 @@ class _HostFilesystem(FakeFilesystem):
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> list[FakeEntryInfo]:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         assert depth == 1, f'unexpected list depth {depth!r}'
         with _host_errors(path):
@@ -574,13 +585,15 @@ class _HostFilesystem(FakeFilesystem):
 
     @_host_io
     async def exists(self, path: str, user: str | None = None, request_timeout: float | None = None) -> bool:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         return Path(path).exists()
 
     @_host_io
     async def make_dir(self, path: str, user: str | None = None, request_timeout: float | None = None) -> bool:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         created = not Path(path).is_dir()
         Path(path).mkdir(parents=True, exist_ok=True)
@@ -588,7 +601,8 @@ class _HostFilesystem(FakeFilesystem):
 
     @_host_io
     async def remove(self, path: str, user: str | None = None, request_timeout: float | None = None) -> None:
-        del user, request_timeout
+        self.users.append(user)
+        del request_timeout
         await self._check(path)
         # envd's `os.RemoveAll`: recursive, and a missing path is not an error.
         if Path(path).is_dir():
