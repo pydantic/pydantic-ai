@@ -9,7 +9,6 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-
 from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
 from pydantic_ai_harness.e2b_sandbox import _backend
 from pydantic_ai_harness.e2b_sandbox._backend import DEFAULT_SANDBOX_TIMEOUT, E2BSandboxBackend

@@ -23,6 +23,7 @@ from e2b.exceptions import (
     ServiceBusyException,
     TimeoutException,
 )
+
 from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
@@ -30,7 +31,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 from .fake_e2b import FakeCommandHandle, FakeE2B, _HostCommandHandle  # pyright: ignore[reportPrivateUsage]
@@ -524,7 +524,7 @@ class TestRun:
         fake_e2b.run_error = TimeoutException('unavailable')
         fake_e2b.sandbox_is_running = False
         backend = await started()
-        with pytest.raises(WorkspaceUnavailableError, match="'sbx-1' is no longer running: .*`sandbox_timeout`"):
+        with pytest.raises(WorkspaceUnavailableError, match=r"'sbx-1' is no longer running: .*`sandbox_timeout`"):
             await backend.run(['x'])
 
     async def test_an_attached_sandbox_names_itself_when_gone(self, fake_e2b: FakeE2B) -> None:
@@ -760,7 +760,7 @@ class TestFilesystem:
         # The protocol's contract: backends translate their SDK's own missing-file exception
         # into the builtin `FileNotFoundError` every consumer already handles.
         backend = await started()
-        with pytest.raises(FileNotFoundError, match="'/tmp/missing.txt'"):
+        with pytest.raises(FileNotFoundError, match=r"'/tmp/missing.txt'"):
             await getattr(backend, operation)('/tmp/missing.txt')
 
     @pytest.mark.parametrize(

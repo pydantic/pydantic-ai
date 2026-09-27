@@ -31,9 +31,9 @@ from contextlib import asynccontextmanager
 import anyio
 import e2b
 import pytest
-from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pytest_examples import CodeExample
 
+from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import (
     E2BSandboxBackend,
@@ -82,7 +82,7 @@ async def sandbox() -> AsyncIterator[E2BSandboxBackend]:
 async def test_destroy_by_ref_without_connecting() -> None:
     async with _owned() as backend:
         assert backend.ref is not None
-        from pydantic_ai_harness.e2b_sandbox import E2BSandbox  # noqa: PLC0415 - live SDK
+        from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
         await E2BSandbox().destroy(backend.ref)
         assert not await (await backend.get_sandbox()).is_running()

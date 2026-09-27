@@ -11,9 +11,9 @@ from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 
 import pytest
+
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 from .fake_e2b import FakeE2B
@@ -57,7 +57,7 @@ class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover - li
         backend = E2BSandboxBackend(sandbox_timeout=600)
         yield backend
         if backend.ref is not None:
-            import e2b  # noqa: PLC0415 - optional extra, absent on slim installs
+            import e2b
 
             # Returns False when the destroy rule already killed it.
             e2b.Sandbox.kill(backend.ref.id)

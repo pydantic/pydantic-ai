@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 import anyio
 import anyio.lowlevel
 import sniffio
+
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -44,7 +45,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-
 from pydantic_ai_harness._workspace_provider import absolute_path, command_argv, safe_credential_reason, stop_shielded
 
 if TYPE_CHECKING:
