@@ -44,17 +44,22 @@ hang the host with catastrophic backtracking.
 
 Construct an `Agent` with `ToolOutputLimits()` in its `capabilities`. With no arguments it
 uses the default band: spill returns of 10,000 characters or more, with a bounded truncation
-fallback if the store cannot accept the write.
+fallback if the store cannot accept the write. Spills go to the run's
+[workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so attach one
+([Spill store](#spill-store) has other options):
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import ToolOutputLimits
 
-agent = Agent('openai:gpt-4o', capabilities=[ToolOutputLimits()])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), ToolOutputLimits()])
 ```
 
 The capability registers a single `read_tool_result` tool so the model can page back into any
-spilled payload. Its own returns are exempt from reduction.
+spilled payload. Its own returns are exempt from reduction. When the agent's file tool can read
+the spill files, that tool replaces it: see
+[Reading spills with your file tool](#reading-spills-with-your-file-tool).
 
 ## Bands: combine the modes
 
@@ -64,12 +69,14 @@ that fits wins; anything below the smallest threshold passes through.
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import Band, Spill, Summarize, Truncate
 
 agent = Agent(
-    'openai:gpt-4o',
+    'anthropic:claude-opus-5-5',
     capabilities=[
+        LocalWorkspace('.'),
         ToolOutputLimits(
             bands=[
                 Band(over=100_000, action=Spill()),      # huge: keep losslessly, read back on demand
@@ -92,9 +99,9 @@ returns untouched.
 ### Fallbacks with `then`
 
 Every action takes an optional `then`, applied when the action cannot run: a `Spill` whose
-store errors, a `Truncate` / `Summarize` on a binary payload, a `Summarize` whose model call
-raises. `then` chains, so `Summarize(then=Spill(then=Truncate()))` degrades summarize ->
-spill -> truncate.
+store errors (for example, the workspace is read-only), a `Truncate` / `Summarize` on a binary
+payload, a `Summarize` whose model call raises. `then` chains, so
+`Summarize(then=Spill(then=Truncate()))` degrades summarize -> spill -> truncate.
 
 ### Per-tool overrides and filtering
 
@@ -103,12 +110,14 @@ spill -> truncate.
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import Band, Truncate, TruncationStrategy
 
 agent = Agent(
-    'openai:gpt-4o',
+    'anthropic:claude-opus-5-5',
     capabilities=[
+        LocalWorkspace('.'),
         ToolOutputLimits(
             per_tool={
                 'read_file': [Band(over=8_000, action=Truncate(strategy=TruncationStrategy.head))],
@@ -162,6 +171,7 @@ Keep Shell's native `max_output_chars` above the `ToolOutputLimits` thresholds. 
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.tool_output_limits import (
@@ -174,8 +184,9 @@ from pydantic_ai_harness.tool_output_limits import (
 
 tail = Truncate(max_chars=4_000, strategy=TruncationStrategy.tail)
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    'anthropic:claude-opus-5-5',
     capabilities=[
+        LocalWorkspace('.'),
         Shell(allowed_commands=['git', 'rg', 'pytest'], max_output_chars=100_000),
         ToolOutputLimits(
             bands=[],
@@ -260,13 +271,46 @@ returns non-text warns and falls back to compact JSON rather than losing the too
 
 ## Spill store
 
-Spilled payloads go through the narrow `OverflowStore` protocol. The default `LocalFileStore`
-writes one file per `(run_id, tool_call_id, retry)` under a stable root directory and keeps it
-after the run, so a later `read_tool_result` -- in this run or a subsequent agent/run -- can
-still reach it. The handle is backend-addressable (a relative key), not an absolute local
-path, so a durable backend (Temporal, a blob store, or the core `ExecutionEnvironment`
-workspace once #4352 lands) can resolve the same handle in another process. Supply your own
-backend with `store=...`.
+The default `WorkspaceStore` writes each spill as a file in the run's workspace, under
+`.pydantic-ai-harness/tool-output/` in the working directory, which is git-ignored. With a
+sandbox the files live in the sandbox. The handle is the file's absolute path, so a file tool
+such as `FileSystem`'s `read_file` can open it too. `read_tool_result` only opens handles
+inside the store's directory.
+
+To keep spills in a different workspace than the run's, pass a backend:
+
+```python
+from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, WorkspaceStore
+
+spills_elsewhere = ToolOutputLimits(store=WorkspaceStore(workspace=LocalWorkspaceBackend('/var/spills')))
+```
+
+`workspace=` takes a backend, not the `LocalWorkspace` capability. Under a durable engine such
+as Temporal it is written in-process, not through the workflow.
+
+Spilled files are kept for the life of the workspace; they are not pruned by this capability.
+
+A read-only workspace cannot take spills: the spill warns and falls back to its `then` action (a
+bounded truncation by default). When a band can spill and the run has no workspace for the store
+to write to, the run fails at its start. For runs without a workspace, use `LocalFileStore`, which
+writes to the host's temp directory:
+
+```python
+from datetime import timedelta
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.tool_output_limits import LocalFileStore, ToolOutputLimits
+
+store = LocalFileStore(cleanup_after=timedelta(hours=6))  # default: None = keep forever
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ToolOutputLimits(store=store)])
+```
+
+`LocalFileStore` keeps its directory owner-only. Set `cleanup_after` to delete spills older than
+that age.
+
+Any other backend (a blob store, a durable engine's storage) implements the `OverflowStore`
+protocol and is passed as `store=...`:
 
 ```python
 from typing import Protocol
@@ -277,49 +321,20 @@ class OverflowStore(Protocol):
     async def read(self, handle: str) -> bytes: ...
 ```
 
-### Security model (shared root, not isolation)
+### Reading spills with your file tool
 
-The store root is stable and shareable on purpose -- spilled files must be readable by a later
-agent or run -- so security does not come from per-instance isolation. It comes from two
-mechanisms: the root is created with `0700` (owner-only) permissions, and `read` resolves the
-target (following symlinks) and rejects anything that escapes the root via symlink, `..`, or
-an absolute path. Handle segments are also sanitized so a crafted handle cannot traverse out.
+When the agent also has a file tool that can read the spill files, the model uses that tool
+instead of `read_tool_result`, so it isn't offered two tools that read files. `FileSystem`
+qualifies when `read_file` is registered, `max_read_chars` is at most 50,000, it has no
+`root_dir` of its own, and its patterns allow the spill files. Then:
 
-### Cleanup: keep-forever by default, opt-in TTL pruning
+- `read_tool_result` is not offered, and each spill marker names `read_file` and the file.
+- A `read_file` call on a spill file is exempt from reduction, as `read_tool_result`'s returns
+  are; `max_read_chars` keeps it bounded.
 
-By default the store keeps spilled files forever -- deleting on run end would break a later
-agent that still wants to read a spill. To bound disk use, opt into age-based pruning:
 
-```python
-from datetime import timedelta
-
-from pydantic_ai import Agent
-from pydantic_ai_harness import ToolOutputLimits
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
-
-store = LocalFileStore(cleanup_after=timedelta(hours=6))  # default: None = keep forever
-agent = Agent('openai:gpt-4o', capabilities=[ToolOutputLimits(store=store)])
-```
-
-When set, a `write` schedules a background prune (a daemon thread, off the hot path) that
-deletes files whose modification time (`st_mtime`) is older than `cleanup_after`. Pruning is
-non-blocking and non-erroring: any failure is caught and surfaced via `warnings.warn`, never
-propagated into the agent run, so cleanup can never fail a run or block the hot path.
-Last-read time (`st_atime`) is unreliable on `noatime`/`relatime` mounts and is not used.
-
-Prefer external cleanup (cron, a sweeper) over the in-process TTL? Point it at the store root
-and delete by mtime:
-
-```python
-import time
-from pathlib import Path
-
-root = Path('/tmp/pyai_harness_overflow')  # or your configured base_dir
-cutoff = time.time() - 6 * 3600
-for path in root.rglob('*'):
-    if path.is_file() and path.stat().st_mtime < cutoff:
-        path.unlink(missing_ok=True)
-```
+Spills kept in a store with its own `workspace`, or in another kind of store, keep
+`read_tool_result`.
 
 ## Usage accounting
 
@@ -361,8 +376,8 @@ again on replay.
 
 - Distinct from [compaction](compaction.md), which compresses or drops context already inside
   the window; this capability moves large tool outputs out of the window at production time.
-- Consumes core [#4352](https://github.com/pydantic/pydantic-ai/issues/4352) (the canonical
-  queryable-file primitive) through the `OverflowStore` seam once it lands.
+- Writes spills through the run's workspace, so they sit beside the files that
+  [FileSystem](filesystem.md) and [Shell](shell.md) tools act on.
 - Distinct from `ClampOversizedMessages`, which clamps runaway model responses, not tool
   returns.
 

@@ -36,8 +36,8 @@ async def test_write_diff_through_agent(tmp_path: Path, existing: bool) -> None:
         else:
             yield 'done'
 
-    agent = Agent(FunctionModel(stream_function=respond), capabilities=[Coder(tmp_path)])
-    session = Session(agent, deps=None, on_stream_event=renderer.on_stream_event)
+    agent = Agent(FunctionModel(stream_function=respond), capabilities=[Coder()])
+    session = Session(agent, deps=None, workspace=tmp_path, on_stream_event=renderer.on_stream_event)
     await session.prompt('write the file')
     assert path.read_text() == 'new content\n'
     assert '+new content' in output.getvalue()

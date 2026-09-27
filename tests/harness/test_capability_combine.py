@@ -54,6 +54,7 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
@@ -70,6 +71,7 @@ from pydantic_ai_harness import (
     ToolOutputLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.system_reminders import Reminder
 
 pytestmark = pytest.mark.anyio
@@ -155,6 +157,10 @@ class Narrows:
 Policy = Anonymous | Collides | Combines | Narrows | Rejected
 
 
+def _check_skills(merged: Any) -> None:
+    assert [source.directories for source in merged._sources] == [('first',), ('second',)]
+
+
 def _check_memory(merged: Any) -> None:
     assert merged.heading == 'Second'
 
@@ -199,6 +205,11 @@ def _check_sub_agents(merged: Any) -> None:
 
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
+    'Skills': Combines(
+        'one catalog; every library either names stays reachable',
+        lambda: (Skills[Any]('first'), Skills[Any]('second')),
+        _check_skills,
+    ),
     'Memory': Combines(
         'one memory configuration per agent; its toolset registers fixed tool names',
         lambda: (Memory[Any](heading='First'), Memory[Any](heading='Second')),
@@ -263,6 +274,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
+    'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
@@ -282,7 +295,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'RepoContext': Anonymous('one per workspace root'),
     'ReportContextUsage': Anonymous('a passive observer; several callbacks compose'),
-    'Skills': Anonymous('a factory: one deferred capability per skill, each named after the skill'),
     'SlidingWindowCompaction': Anonymous('composes as a tier under `TieredCompaction`'),
     'GoogleWorkspace': Anonymous('one per set of products, and `services` is what names it'),
     'StackOne': Anonymous('one per linked account, and `account_id` is what names it'),
@@ -297,7 +309,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     # -- No default `id`, but two never coexist anyway: their tool names collide. --
     'FileSystem': Collides(
         'its toolset registers `read_file` and friends under fixed names',
-        lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_B))),
+        lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_A.parent))),
     ),
     'AskUser': Collides(
         'its toolset registers `ask_user_question` under a fixed name, and two answerers is a conflict, '
@@ -306,7 +318,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'Shell': Collides(
         'its toolset registers `run_command` and friends under fixed names',
-        lambda cls: (cls(cwd=str(_TMP_A)), cls(cwd=str(_TMP_B))),
+        lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
     ),
     'CapabilityCreation': Collides(
         'its toolset registers `author_capability` and friends under fixed names',
@@ -555,7 +567,7 @@ def test_capability_combine_policy_holds(name: str) -> None:
 async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backend: str) -> None:
     """A `Collides` entry states a fact about the capability, so the fact is checked.
 
-    Each pair here is built with *different* configuration -- two roots, two working directories --
+    Each pair here is built with *different* configuration -- two roots, two timeouts --
     because that is exactly the shape the reasons in this table used to claim was supported. It is
     not: the toolset's tool names are fixed, so the second registration conflicts with the first.
     """
@@ -568,7 +580,7 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
     first, second = policy.make(shipped[name])
     agent = Agent(TestModel(), capabilities=[first, second])
     with pytest.raises(UserError, match='conflicts with existing tool'):
-        await agent.run('hello')
+        await agent.run('hello', workspace=LocalWorkspaceBackend(_TMP_A))
 
 
 @pytest.mark.parametrize(
@@ -603,34 +615,6 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
 
     with pytest.raises(UserError, match=f'disagree on {field_name!r}'):
         SubAgents.combine([first, second])
-
-
-def test_merging_reuses_the_delegates_already_loaded_from_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A merge must not re-read `agent_folders`, because it reads them relative to the *cwd*.
-
-    Both inputs resolved their disk delegates when they were constructed. Re-running
-    `__post_init__` to rebuild the roster would load them again from wherever the process happens
-    to be standing now -- so a merge after a `chdir` could hand the run a different set of
-    delegates than either capability was built with, and re-invoke `tool_resolver` besides.
-    """
-    project = tmp_path / 'project'
-    folder = project / '.agents' / 'agents'  # `<root>/.agents/<agent_folders>/`
-    folder.mkdir(parents=True)
-    (folder / 'helper.md').write_text('---\nname: helper\ndescription: helps\n---\n\nBe helpful.\n', encoding='utf-8')
-    monkeypatch.chdir(project)
-
-    first = SubAgents[Any](agents=[SubAgent(_child('alpha'), description='alpha')])
-    second = SubAgents[Any](agents=[SubAgent(_child('beta'), description='beta')])
-    assert 'helper' in first._by_name, 'the disk delegate is picked up at construction'  # pyright: ignore[reportPrivateUsage]
-
-    # The folder is gone by the time the two are combined, which is what a `chdir` amounts to.
-    monkeypatch.chdir(tmp_path)
-
-    merged = SubAgents.combine([first, second])
-    assert isinstance(merged, SubAgents)
-    assert set(merged._by_name) == {'alpha', 'beta', 'helper'}, (  # pyright: ignore[reportPrivateUsage]
-        'the disk delegate survives the merge because it is reused, not reloaded'
-    )
 
 
 def _child(name: str) -> Agent[Any, str]:

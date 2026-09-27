@@ -9,27 +9,43 @@ managed background processes.
 
 Agents frequently need to run a build, a test suite, a linter, or a quick
 `grep`. Wiring up subprocess handling -- streaming output, timeouts, truncation,
-killing runaway processes, and cleaning up background jobs at the end of a run --
+killing runaway processes, and tracking background jobs across runs --
 is fiddly boilerplate that every agent reinvents.
 
 ## The solution
 
-`Shell` exposes command-execution tools rooted at a working directory, with
-configurable allow/deny lists and automatic cleanup of background processes
-when the agent run ends.
+`Shell` exposes command-execution tools that run in the agent's workspace, with
+configurable allow/deny lists and background processes the model can check and
+stop by ID.
 
 ```python
+from pathlib import Path
+
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Shell
 
+Path('./workspace').mkdir(exist_ok=True)
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[Shell(cwd='./workspace', allowed_commands=['ls', 'cat', 'rg'])],
+    'anthropic:claude-opus-5-5',
+    capabilities=[
+        LocalWorkspace('./workspace'),
+        Shell(allowed_commands=['ls', 'cat', 'rg']),
+    ],
 )
 
 result = agent.run_sync('List the Python files and summarize the largest one.')
 print(result.output)
 ```
+
+## Where commands run
+
+Commands run in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/):
+on your machine with `LocalWorkspace`, or in a sandbox. A run without a
+workspace fails at its start. Commands start in the workspace's working
+directory; to run them in a subdirectory, set it on the workspace:
+`LocalWorkspace('./repo')`. A read-only workspace can't run commands, so
+`Shell` offers no tools for that run.
 
 ## Tools
 
@@ -39,7 +55,7 @@ print(result.output)
 | `start_command` | Launch a long-running command (server, watcher) in the background; returns an ID. |
 | `check_command` | Report the status and accumulated output of a background command. |
 | `stop_command` | Terminate a background command and return its final output. |
-| `shell` | Opt-in: run a command that outlives the run, in `foreground` (wait up to `timeout`, then hand back the still-running process) or `background` mode. Returns the PID and the paths of its output log and JSON status file. |
+| `shell` | Opt-in: run a command in `foreground` (wait up to `timeout`, then hand back the still-running process) or `background` mode. Returns the PID and the paths of its output log and JSON status file. |
 
 Output is labelled with `[stdout]` / `[stderr]` markers and an `[exit code: N]`
 line on non-zero exit. When it exceeds `max_output_chars` the **tail** is kept
@@ -74,14 +90,16 @@ spawn because it holds a NUL byte or contains a character the operating system
 cannot encode. Failures
 the model can do nothing about still abort the run: a host that cannot allocate
 a process, an argument or environment that exceeds the platform's combined
-size limit, and an invalid character in an application-supplied `env`.
+size limit, and an invalid character in an application-supplied `env`. A command that runs past its timeout returns its output so far, ending in
+`[Command timed out after Ns]`. A workspace that is gone ends the run.
 
 > **These checks are best-effort, not a security boundary.** `allowed_commands`
 > is a guardrail against accidents, not a security boundary. Validation checks
 > only the first token, and allowlisted commands such as `python`, `git`, `uv`,
 > and `make` can spawn arbitrary processes. A model that wants to work around
-> the allowlist can. For untrusted work, run the agent inside OS-level isolation
-> such as [`ModalSandbox`](https://pydantic.dev/docs/ai/harness/modal-sandbox/) or a container.
+> the allowlist can. For untrusted work, give the run an isolated workspace,
+> such as a [Modal sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/)
+> or a container, so commands run there instead of on the agent's machine.
 
 ## Limit files written by commands
 
@@ -90,13 +108,10 @@ written by `run_command` and `start_command`, including redirected output and
 background stdout/stderr logs. `None` (the default) adds no limit. This is
 separate from `max_output_chars`, which bounds the returned tool result.
 
-The positive integer is applied as POSIX `RLIMIT_FSIZE` in a child launcher
-before executing the shell. Descendants inherit it; the harness parent's limits
-are unchanged. A lower inherited hard limit takes precedence. Unsupported
-platforms, `persist_cwd=True`, and `tools=['shell']` (the persistent tool) raise
-`ValueError` when the toolset is constructed rather than ignoring the setting.
-Working-directory persistence uses a child-written capture file, which would
-also be subject to the limit.
+The limit covers the command and every process it starts, rounded up to whole
+512-byte or 1 KiB blocks. If the workspace's own limit is lower, the command
+fails with `Unable to apply max_file_bytes.` It can't be combined with
+`persist_cwd=True` or `tools=['shell']`.
 
 A process killed by the file-size signal gets a diagnosed tool result; other
 nonzero exits include the configured limit as context because programs can
@@ -113,31 +128,28 @@ tool-call result carries the failure and limit context.
 
 ## Environment control
 
-By default a spawned command inherits the agent process's full environment. In a
-sandbox that holds LLM API keys, tokens, or other secrets, a command the model
-writes can read them. Two fields control what the subprocess sees:
+A command gets the workspace's environment plus `Shell(env=...)`.
+`LocalWorkspace` passes on your `PATH` and `HOME` and nothing else; a sandbox
+has whatever its provider configures. Two fields shape what `Shell` adds:
 
 | Field | Effect |
 |---|---|
-| `env` | Explicit environment that replaces inheritance for the subprocess's own environment. |
-| `denied_env_patterns` | Glob patterns (`fnmatch`) for variable names stripped from the base environment. Mirrors `denied_commands`. |
+| `env` | Variables added to every command's environment, on top of the workspace's own. |
+| `denied_env_patterns` | Glob patterns (`fnmatch`) for variable names dropped from `env`. Mirrors `denied_commands`. |
 
-`env` prevents inherited variables from appearing in the subprocess's own
-environment (you supply `PATH` and anything else the command needs).
-`denied_env_patterns` is a denylist over the inherited environment -- lighter to
-configure when you only need to drop a few known-sensitive names. The two
-compose: when both are set, patterns also filter the explicit `env`. Leaving
-both unset preserves the inherit-everything default.
+`denied_env_patterns` filters `env` only, so you can build `env` from a larger
+mapping, such as the host environment, and drop sensitive names on the way in.
+Leaving both unset adds nothing.
 
 ```python
 from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, Shell
 
-# Strip provider credentials from the inherited environment.
-Shell(cwd='./repo', denied_env_patterns=LLM_API_KEY_ENV_PATTERNS)
+# Add only the variables commands need.
+Shell(env={'PYTHONUNBUFFERED': '1'})
 
-# Or hand the subprocess a fixed environment, inheriting nothing.
-import os
-Shell(cwd='./repo', env={'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']})
+# Or start from a larger mapping and drop LLM credentials from it (other secrets still pass).
+app_env = {'PYTHONUNBUFFERED': '1', 'ANTHROPIC_API_KEY': 'sk-...'}
+Shell(env=app_env, denied_env_patterns=LLM_API_KEY_ENV_PATTERNS)
 ```
 
 `LLM_API_KEY_ENV_PATTERNS` covers common provider prefixes (`ANTHROPIC_*`,
@@ -146,53 +158,40 @@ Shell(cwd='./repo', env={'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']}
 cover other host secrets (a `LOGFIRE_TOKEN`, a GitHub token, cloud
 credentials), and its prefixes are coarse, so `GOOGLE_*` also strips
 non-credential vars like `GOOGLE_APPLICATION_CREDENTIALS`. Treat it as a
-starting point and add your own patterns. It is not the default: stripping
-environment variables silently would break agents that rely on inherited
-credentials, so it is opt-in.
+starting point and add your own patterns.
 
-`env` is enforced at spawn, not applied as a post-hoc filter on a running
-process: the subprocess starts with exactly the resolved environment (your
-`env`, minus anything `denied_env_patterns` removes from it). Neither control is
-a security boundary. A command running under the same OS identity may still
-read the parent process's environment through system interfaces such as Linux
-procfs, as well as other host files. Use OS-level isolation when commands are
-untrusted. The flip side is that a pattern broad enough to strip `PATH` or
-`HOME`, or an `env` that omits them, can break command resolution. External
-commands may still run via the shell's built-in default `PATH` on some systems,
-but don't rely on it -- set `PATH` explicitly when you replace the environment.
+Neither is a security boundary: with `LocalWorkspace`, a command can still read
+your process's environment and your files. Use a sandbox for untrusted commands.
 
 ## Background processes
 
-`start_command` writes stdout/stderr to temp files and returns a short ID. Use
-`check_command(command_id)` to poll and `stop_command(command_id)` to terminate
-and collect final output. Processes are launched in their own session (`start_new_session`)
-so the whole process group can be signalled -- `SIGTERM`, escalating to
-`SIGKILL` after a grace period.
+`start_command` starts the command in the background inside the workspace and
+returns an ID. Its output is logged under `.pydantic-ai-harness/shell/` in
+the working directory, which is git-ignored. Use `check_command(command_id)` to
+poll and `stop_command(command_id)` to terminate and collect final output: the
+whole process group gets `SIGTERM`, then `SIGKILL` after a grace period. A
+command stopped by `SIGTERM` reports `[exit code: 143]`.
 
-On run end, the toolset's `__aexit__` terminates every still-running background
-process and deletes its temp files. The agent runtime enters toolsets via an
-`AsyncExitStack`, so this cleanup runs whether the run succeeds or raises -- an
-agent that forgets to call `stop_command` won't leak processes.
+A background command is not tied to the run: a conversation spans several
+runs, so a later run on the same workspace can check or stop it by its ID. It
+keeps running until it exits, `stop_command` stops it, or the workspace ends.
 
 ## Persistent commands
 
-The four tools above are run-scoped: their processes die with the run. Name
-`shell` in `tools` to register the persistent tool instead:
+Name `shell` in `tools` to register the persistent tool instead of the four
+tools above:
 
 ```python
 from pydantic_ai_harness import Shell
 
-Shell(cwd='./repo', tools=['shell'])
+Shell(tools=['shell'])
 ```
 
-`shell(command, mode='foreground', timeout=None)` hands the command to a small
-supervisor process started in its own session. The supervisor appends the
-command's combined stdout and stderr to an output log, publishes a JSON status
-file (`{"pid": ..., "exit_code": ...}`, with `exit_code` null until the command
-exits), and reaps the command. The tool returns the supervisor's PID and both
-paths, so the model reads progress with its other tools and stops the process
-with `kill -- -PID` on POSIX or `taskkill /PID <PID> /T /F` on Windows (the
-process group or tree; the result names the right one). Foreground waits up to
+`shell(command, mode='foreground', timeout=None)` starts the command under a
+small supervisor that writes its combined output to a log and its exit status to
+a JSON file (`{"pid": ..., "exit_code": ...}`, `exit_code` null while it runs).
+The tool returns the PID and both paths, so the model reads progress with its
+file tools and stops the command with the `kill` command the result names. Foreground waits up to
 `timeout` seconds (default `default_timeout`, at most `MAX_FOREGROUND_WAIT`,
 270) for the exit status and returns the last 16,000 bytes of the log followed
 by the handles, even if the command is still running; background returns the
@@ -201,21 +200,17 @@ the tail of an over-long result, cannot drop them. The 270-second cap keeps a to
 request timeouts, so a long build or test run does not stall the conversation:
 the model gets the handles back, does other work, and polls the status file.
 
-The command outlives the agent run, the event loop, and (once it has started)
-the calling interpreter, so a server the model starts keeps serving. Nothing
-wakes the agent when the command finishes; the model polls. A foreground call
-that is cancelled (a run cancellation, say) cannot hand back its handles, so it
-kills the supervisor's whole session and removes the log directory instead. A
-log directory that was handed back is never rotated or deleted: the caller owns
-cleaning it up, and a verbose command should bound its own output. A supervisor that exits without
-publishing a status (a broken interpreter, say) surfaces as a retry naming the
-log directory.
+The command outlives the agent run and the event loop, so a server the model
+starts keeps serving for as long as the workspace does. Nothing wakes the agent
+when the command finishes; the model polls. Cancelling a foreground call kills the command. Logs that were handed back are
+never deleted: clean them up yourself, and keep verbose commands' output
+bounded.
 
 `allowed_commands`, `denied_commands`, `denied_operators`, `allow_interactive`,
 `env`, and `denied_env_patterns` apply to `shell` exactly as to `run_command`.
-`persist_cwd` does not: every `shell` command starts in the configured `cwd`,
-whatever `run_command` has tracked. Commands and logs are host-local, not durable
-workflow activities, and are not replay-safe.
+`persist_cwd` does not: every `shell` command starts in the workspace's working
+directory, whatever `run_command` has tracked. Commands and logs live in the workspace; the
+workspace calls that start and poll them are not replay-safe.
 
 Each `shell` call emits progress events in the `shell` namespace, so a UI can
 show output as it arrives without parsing the tool result:
@@ -228,7 +223,7 @@ show output as it arrives without parsing the tool result:
 
 Output events are emitted while a foreground call waits: at most the first
 16,000 bytes of the log per call, in chunks of up to 4,096 bytes, polled every
-50 ms. A background call emits only the started and finished events. `finished`
+50 ms to 1 s. A background call emits only the started and finished events. `finished`
 means the tool stopped waiting, not that the command exited: `exit_code` is
 `None` while no status has been published, and `truncated` says the log held
 more than the events showed. `total_lines` counts logical lines in logs up to
@@ -239,28 +234,34 @@ traces the tool call.
 
 ## Working directory
 
-By default each command runs in `cwd` and `cd` has no lasting effect. Set
+By default each command runs in the workspace's working directory and `cd` has
+no lasting effect. Set
 `persist_cwd=True` to make `cd` sticky across calls: each command is wrapped so
-that after it runs, its final working directory is recorded to a private temp
-file, and that directory is carried into subsequent calls. The path is only
-updated when the command exits `0`, and the record is written out-of-band (not
+that after it runs, its final working directory is recorded to a private file
+inside the workspace, and that directory is carried into subsequent calls. The path is only
+updated when the command exits `0`. If the recorded directory disappears, the next command reports a retry and resets to the workspace working directory. The record is written out-of-band (not
 to stdout) so command output can never spoof the tracked directory.
+
+`stop_command` signals the entire process group, including children left after the wrapper exits, then removes the job's output files.
+
+The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 
 ## Configuration
 
-```python
+```python {names="defined"}
+from pydantic_ai_harness.shell import RUN_SCOPED_TOOL_NAMES, Shell
+
 Shell(
-    cwd='.',                       # str | Path -- working directory
     allowed_commands=[],           # allowlist (mutually exclusive with denied)
     denied_commands=[...],         # denylist (defaults to destructive commands)
     denied_operators=[],           # blocked shell operators
     default_timeout=30.0,          # seconds, per run_command
     max_output_chars=50_000,       # output cap returned to the model
-    max_file_bytes=None,          # POSIX per-file size limit (None = no added limit)
+    max_file_bytes=None,           # per-file size limit for commands (None = no limit)
     persist_cwd=False,             # make cd sticky across calls
     allow_interactive=False,       # allow TTY-style commands
-    env=None,                      # explicit env, replacing inheritance (None = inherit)
-    denied_env_patterns=[],        # glob patterns stripped from the inherited env
+    env=None,                      # variables added to the workspace's environment
+    denied_env_patterns=[],        # glob patterns dropped from env
     tools=RUN_SCOPED_TOOL_NAMES,   # which tools to register ('shell' for persistent commands)
 )
 ```
@@ -275,10 +276,9 @@ greater than zero and at most 270 seconds; that is checked at construction.
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-opus-5-5
 capabilities:
   - Shell:
-      cwd: ./workspace
       allowed_commands: ['ls', 'cat', 'rg', 'pytest']
 ```
 
@@ -290,7 +290,28 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[Shell])
 ```
 
 Pass `custom_capability_types` so the spec loader knows how to instantiate
-`Shell`.
+`Shell`, and attach a workspace to the run (`workspace=` on the run method, or a
+workspace capability in Python).
+
+## Durable execution
+
+`Shell` works under DBOS, Temporal and Prefect durable execution, with these limits:
+
+- Under Temporal, `CommandStartedEvent`, `CommandOutputEvent`, and `CommandFinishedEvent` from
+  the `shell` tool are not delivered live to workflow listeners because the tool runs in an activity ([pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971)).
+- With `persist_cwd=True`, the cwd is kept per run in the workspace under
+  `.pydantic-ai-harness/shell/run-state/`, so it can be restored by another worker.
+  Without an explicit `run_id`, Temporal uses its workflow and execution IDs, DBOS its workflow ID,
+  and Prefect its flow run ID. The file is removed when the agent run completes; interrupted runs
+  retain it for recovery.
+  Commands in the same run should execute in order; simultaneous commands that change cwd
+  can overwrite each other's state.
+- `start_command` uses the run and tool-call IDs to reattach to a job after an activity retry.
+  If the launcher claims the job directory but fails before publishing its handle, a retry
+  reports a pending launch rather than starting a second process. Remove stale job files manually
+  after confirming the process has stopped.
+
+Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
 
 ## Further reading
 

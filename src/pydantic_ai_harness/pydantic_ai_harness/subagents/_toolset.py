@@ -233,8 +233,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         models: Mapping[str, ModelOption] | None = None,
         include_self: bool = False,
         max_depth: int = DEFAULT_MAX_DEPTH,
+        id: str | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._agents: dict[str, SubAgent[AgentDepsT]] = dict(agents)
         self._forward_usage = forward_usage
         self._inherit_tools = inherit_tools
@@ -458,6 +459,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             usage_limits=usage_limits,
             toolsets=toolsets,
             capabilities=capabilities,
+            workspace=ctx.workspace,
             event_stream_handler=self._event_stream_handler,
         )
         token = _depth.set(_depth.get() + 1)

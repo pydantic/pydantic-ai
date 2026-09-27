@@ -12,10 +12,17 @@ import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceRef,
+)
 from pydantic_ai_harness.capability_creation import (
     CapabilityCreation,
     CapabilityCreationToolset,
@@ -484,5 +491,26 @@ class TestEndToEnd:
 
     async def test_capability_creation_tools_wired(self, tmp_path: Path) -> None:
         agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
-        result = await agent.run('go')
+        result = await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert result.output is not None
+
+    @pytest.mark.parametrize('workspace', ['none', 'read-only', 'sandbox'])
+    async def test_refuses_a_workspace_that_is_not_this_machine_and_writable(
+        self, tmp_path: Path, workspace: str
+    ) -> None:
+        backends: dict[str, WorkspaceBackend | None] = {
+            'none': None,
+            'read-only': ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))),
+            'sandbox': _Sandbox(tmp_path),
+        }
+        agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
+        with pytest.raises(UserError, match='imports model-written Python into the agent process'):
+            await agent.run('go', workspace=backends[workspace])
+
+
+class _Sandbox(LocalWorkspaceBackend):
+    """A backend that names a provider other than this machine."""
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        return WorkspaceRef(provider='sandbox', id='box-1')

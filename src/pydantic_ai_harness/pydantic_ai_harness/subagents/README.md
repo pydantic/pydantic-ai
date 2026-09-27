@@ -16,11 +16,11 @@ A single agent that does everything accumulates a large tool set and a long cont
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent, SubAgents
 
-researcher = Agent('anthropic:claude-sonnet-4-6', name='researcher', description='Researches a topic and reports findings')
-writer = Agent('anthropic:claude-sonnet-4-6', name='writer', description='Turns notes into polished prose')
+researcher = Agent('anthropic:claude-opus-5-5', name='researcher', description='Researches a topic and reports findings')
+writer = Agent('anthropic:claude-opus-5-5', name='writer', description='Turns notes into polished prose')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-4-7',
+    'anthropic:claude-opus-5-5',
     capabilities=[SubAgents(agents=[SubAgent(researcher), SubAgent(writer)])],
 )
 
@@ -44,6 +44,7 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 ## Deps, usage, tools, and capabilities
 
 - **Deps are forwarded.** The parent run's `deps` are passed to each sub-agent, so sub-agents share the parent's `AgentDepsT` (enforced by the type signature -- every sub-agent is an `AbstractAgent[AgentDepsT, Any]`).
+- Delegated agents run in the parent's workspace, including wrappers such as `ReadOnlyWorkspace`.
 - **Usage is shared by default.** The parent's `usage` is passed to each sub-agent run, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
 - **Tools can be inherited.** With `inherit_tools=True`, the parent agent's own tools (registered directly or via `toolsets`) are added to each sub-agent run, on top of the sub-agent's own. Tools contributed by the parent's capabilities are not inherited: they are bound to capability instances registered in the parent run, and would arrive without the hooks and instructions they depend on. Use `shared_capabilities` to give sub-agents a capability. This also excludes the delegate tool itself, so a sub-agent can't recurse into further delegation. Off by default.
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
@@ -77,11 +78,11 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import SubAgent, SubAgents
 
-reproducer = Agent('anthropic:claude-sonnet-4-6', instructions='Reproduce the reported bug from a minimal script.')
-librarian = Agent('anthropic:claude-sonnet-4-6', instructions='Find relevant docs, issues, and prior art.')
+reproducer = Agent('anthropic:claude-opus-5-5', instructions='Reproduce the reported bug from a minimal script.')
+librarian = Agent('anthropic:claude-opus-5-5', instructions='Find relevant docs, issues, and prior art.')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-4-7',
+    'anthropic:claude-opus-5-5',
     capabilities=[
         SubAgents(
             agents=[
@@ -112,19 +113,19 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import SubAgent, SubAgents
 from pydantic_ai_harness.subagents import ModelOption
 
-reviewer = Agent('anthropic:claude-sonnet-4-6', name='reviewer', description='Reviews a diff')
-linter = Agent('anthropic:claude-sonnet-4-6', name='linter', description='Runs the linter and reports failures')
+reviewer = Agent('anthropic:claude-opus-5-5', name='reviewer', description='Reviews a diff')
+linter = Agent('anthropic:claude-opus-5-5', name='linter', description='Runs the linter and reports failures')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-4-7',
+    'anthropic:claude-opus-5-5',
     capabilities=[
         SubAgents(
             agents=[SubAgent(reviewer), SubAgent(linter, models=['fast'])],
             models={
                 'fast': 'anthropic:claude-haiku-4-5',
-                'standard': 'anthropic:claude-sonnet-4-6',
+                'standard': 'anthropic:claude-sonnet-5',
                 'deep': ModelOption(
-                    'anthropic:claude-opus-4-7',
+                    'anthropic:claude-opus-5-5',
                     description='hard reasoning, multi-file changes',
                     settings=ModelSettings(thinking='xhigh'),
                 ),
@@ -180,9 +181,9 @@ class ReportDelegations(AbstractCapability):
         print(f'{event.agent_name}: {event.outcome} in {event.duration_seconds:.1f}s')
 
 
-researcher = Agent('anthropic:claude-sonnet-4-6', name='researcher')
+researcher = Agent('anthropic:claude-opus-5-5', name='researcher')
 agent = Agent(
-    'anthropic:claude-opus-4-7',
+    'anthropic:claude-opus-5-5',
     capabilities=[SubAgents(agents=[SubAgent(researcher)]), ReportDelegations()],
 )
 ```
@@ -204,16 +205,20 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgents
 
 orchestrator = Agent(
-    'anthropic:claude-opus-4-7',
-    capabilities=[SubAgents(inherit_tools=True)],  # auto-loads ./.agents/agents/ and ~/.agents/agents/
+    'anthropic:claude-opus-5-5',
+    capabilities=[SubAgents(inherit_tools=True)],  # auto-loads .agents/agents/ from the run's workspace
 )
 ```
 
-`agent_folders` controls where definitions come from. It defaults to `'agents'`, the conventional layout:
+Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from somewhere else, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
 
-- A folder-name `str` (the default `'agents'`): for the project root (cwd) then the home root, load from `<root>/.agents/<name>/`, falling back to `<root>/.claude/<name>/` when `<root>/.agents/` is absent.
-- A sequence of paths loads from exactly those folders, in order.
+`agent_folders` controls which folders are read. It defaults to `'agents'`, the conventional layout:
+
+- A folder-name `str` (the default `'agents'`): load from `.agents/<name>/` under the workspace's working directory, falling back to `.claude/<name>/` when `.agents/` is absent. A run without a workspace skips it.
+- A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
 - `None` disables disk loading, exposing only the explicitly-passed `agents`.
+
+Until this release, the home folder `~/.agents/agents/` was read too, and a path sequence was read from this machine. A run without a workspace still reads a path sequence from this machine, with a deprecation warning; pass `workspace=LocalWorkspaceBackend('.')` to keep that.
 
 ### Definition format
 
@@ -246,7 +251,7 @@ from pydantic_ai_harness.subagents import AgentOverride
 
 SubAgents(
     agent_folders='agents',
-    agent_overrides={'researcher': AgentOverride(model='anthropic:claude-sonnet-4-6', effort='high')},
+    agent_overrides={'researcher': AgentOverride(model='anthropic:claude-opus-5-5', effort='high')},
 )
 ```
 
@@ -256,26 +261,34 @@ Every agent the capability builds runs at a minimum thinking-effort floor. `MINI
 
 A disk agent gets no tools by default (`inherit_tools` is `False`); set `inherit_tools=True` to expose the parent's tools to it through the `inherit_tools` mechanism, in which case its `tools` frontmatter is ignored. To map the frontmatter tool names to specific toolsets instead, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
 
-```python
+```python {names="defined"}
+from collections.abc import Sequence
+
+from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness import SubAgents
 
-def resolve(tool_name: str):
-    return TOOLSETS.get(tool_name)  # -> Sequence[AgentToolset[object]] | None
+TOOLSETS: dict[str, Sequence[AgentToolset[object]]] = {}  # your tool name -> toolsets mapping
+
+
+def resolve(tool_name: str) -> Sequence[AgentToolset[object]] | None:
+    return TOOLSETS.get(tool_name)
 
 SubAgents(agent_folders='agents', tool_resolver=resolve)
 ```
 
 ### Precedence
 
-When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first, then the project folder, then the home folder (and, for an explicit path sequence, earlier paths before later ones). A duplicate name within the explicitly-passed `agents` list is still an error.
+When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first, then earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
 
 ## Configuration
 
-```python
+```python {names="defined"}
+from pydantic_ai_harness import SubAgents
+
 SubAgents(
     agents=(),             # Sequence[SubAgent[AgentDepsT]] -- each pairs an agent with its run controls
     models={},             # Mapping[str, Model | str | ModelOption] -- per-delegation model menu (off when empty)
-    agent_folders='agents',# folder-name str (convention) | Sequence[Path] | None (disable)
+    agent_folders='agents',# folder-name str (convention) | Sequence[str | Path] workspace paths | None (disable)
     agent_overrides={},    # Mapping[str, AgentOverride] -- per-disk-agent model/effort override
     tool_resolver=None,    # Callable[[str], Sequence[AgentToolset[object]] | None] -- disk-agent tool mapping
     forward_usage=True,    # share the parent's usage with sub-agent runs
@@ -285,12 +298,18 @@ SubAgents(
     tool_name='delegate_task',
     tool_retries=2,        # extra delegate-tool attempts after a sub-agent error before aborting (None inherits the agent default)
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
+    workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
     include_self=False,    # also list the running agent itself as the delegate `self`
     max_depth=3,           # delegation levels, counting the top-level run
 )
 ```
 
-```python
+```python {names="defined"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import SubAgent
+
+agent = Agent('anthropic:claude-opus-5-5')
+
 SubAgent(
     agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
     name=None,             # delegate name; defaults to the agent's own `name`

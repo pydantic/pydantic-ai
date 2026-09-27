@@ -7,12 +7,15 @@ from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai_harness._warn import warn_argument_ignored
+from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS
 from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
 from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.filesystem._reader import READ_CHARS
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, MAX_FOREGROUND_WAIT, Shell
+from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
 from pydantic_ai_harness.subagents import SubAgents
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
@@ -28,27 +31,35 @@ class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
         return None
 
 
-MAX_READ_CHARS = 60000
-"""Characters of complete lines per `read_file`, kept under `MAX_OUTPUT_CHARS` so the output cap never cuts a read."""
+MAX_READ_CHARS = READ_CHARS
+"""Characters of complete lines per `read_file`.
+
+Kept under `MAX_OUTPUT_CHARS` so the output cap never cuts a read, and at the limit
+`ToolOutputLimits` asks of a file reader, so an added `ToolOutputLimits` hands its spills to `read_file`.
+"""
 
 MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
 
-def _file_system(workspace: Path, *, unrestricted: bool) -> FileSystem[AgentDepsT]:
-    file_system = FileSystem[AgentDepsT](
-        root_dir=workspace, content_hashes=False, max_read_chars=MAX_READ_CHARS, tools=FILE_TOOL_NAMES
-    )
+def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
+    file_system = FileSystem[AgentDepsT](content_hashes=False, max_read_chars=MAX_READ_CHARS, tools=FILE_TOOL_NAMES)
     if unrestricted:
-        return replace(file_system, root_dir=workspace.anchor, cwd=workspace, protected_patterns=[])
+        # Workspace paths are POSIX, so the filesystem root is `/` whatever the host platform.
+        return replace(file_system, root_dir='/', read_only_patterns=[])
     return file_system
 
 
 class Coder(CombinedCapability[AgentDepsT]):
-    """Autonomous local coding with six tools, delegation, and context management.
+    """Autonomous coding with six tools, delegation, and context management, in the run's workspace.
 
-    Commands are unrestricted and can outlive runs. Use an OS sandbox for
-    untrusted work. Additional instructions supplement the default guidance.
+    Files and commands go through `ctx.workspace`, and the project directory is
+    its working directory: attach `LocalWorkspace('.')` for a local checkout, or
+    a sandbox provider's capability for untrusted work, alongside `Coder()`. A
+    run without a workspace fails at its start. Commands are unrestricted and
+    can outlive runs. Additional instructions supplement the default guidance.
+    `unrestricted_filesystem=True` lets the file tools reach the whole
+    workspace filesystem rather than only the working directory.
     `repo_context=False` leaves out the bundled `RepoContext`, for hosts that
     bind their own and would otherwise load the instruction files twice.
 
@@ -61,28 +72,38 @@ class Coder(CombinedCapability[AgentDepsT]):
 
     def __init__(
         self,
-        workspace: str | Path = '.',
+        workspace: str | Path | None = None,
         *,
         instructions: str | None = None,
         unrestricted_filesystem: bool = False,
         repo_context: bool = True,
         sub_agents: bool = True,
     ) -> None:
-        root = Path(workspace).resolve()
+        if workspace is not None:
+            warn_argument_ignored(
+                'Coder',
+                'workspace',
+                "the project directory is the workspace's working directory; attach "
+                f'`LocalWorkspace({str(workspace)!r})` (or a sandbox) alongside `Coder()`.',
+                stacklevel=3,
+            )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
-            Capability[AgentDepsT](instructions=INSTRUCTIONS + ('\n' + instructions if instructions else '')),
-            _file_system(root, unrestricted=unrestricted_filesystem),
+            RequireWorkspace[AgentDepsT]('Coder'),
+            # The id also names its (empty) function toolset, which durable execution requires.
+            Capability[AgentDepsT](
+                id='coder_instructions', instructions=INSTRUCTIONS + ('\n' + instructions if instructions else '')
+            ),
+            _file_system(unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](
-                cwd=root,
                 denied_commands=[],
                 default_timeout=MAX_FOREGROUND_WAIT,
                 allow_interactive=True,
-                denied_env_patterns=LLM_API_KEY_ENV_PATTERNS,
+                # No env patterns: the workspace, not the host process, supplies the command environment.
                 tools=['shell'],
             ),
         ]
         if repo_context:
-            capabilities.append(RepoContext[AgentDepsT](workspace_dir=root, expose_inventory_tool=False))
+            capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
         if sub_agents:
             capabilities.append(SubAgents[AgentDepsT](include_self=True, agent_folders=None))
         capabilities += [

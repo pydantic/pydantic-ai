@@ -1,7 +1,9 @@
 # Run Coder on Terminal-Bench 2.1 with Harbor
 
 This playbook runs the exported `pydantic_ai_harness.coder:coder_agent`
-(`Agent(capabilities=[Coder()])`) inside Harbor's disposable task containers.
+(`Coder()` in a `LocalWorkspace` for the directory the agent process starts in,
+with only `PATH` and `HOME` passed to commands) inside Harbor's disposable task
+containers.
 Harbor installs the agent, supplies the task instruction, runs the verifier,
 and collects results. Installing harness on the host does not change the
 harness installed inside those containers.

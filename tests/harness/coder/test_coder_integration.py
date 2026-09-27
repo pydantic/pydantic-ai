@@ -104,5 +104,8 @@ async def test_coder_completes_task(tmp_path: Path) -> None:
             '{"incidents": [{"title": "public", "severity": "warning"}]}\n',
         },
     )
-    output = await call(workspace, 'shell', {'command': f'{shlex.quote(sys.executable)} -m pytest -q'})
+    # Plugin autoload off: the repo's own `-p no:` settings don't reach this nested run, and two
+    # installed plugins both register `--record-mode`.
+    command = f'PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 {shlex.quote(sys.executable)} -m pytest -q'
+    output = await call(workspace, 'shell', {'command': command})
     assert '3 passed' in output

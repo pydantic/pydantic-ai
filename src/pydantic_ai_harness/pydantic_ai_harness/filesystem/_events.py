@@ -3,10 +3,11 @@
 Each event carries two path fields:
 
 - `path`: normalized and relative to the emitting filesystem's root, never an
-  absolute host path, so it is safe to echo to the model or a UI.
-- `root_dir`: the absolute, symlink-resolved root the `path` is relative to,
-  so a subscriber can locate the file (`Path(root_dir) / path`) without
-  assuming it shares the emitter's root.
+  absolute path, so it is safe to echo to the model or a UI.
+- `root_dir`: the root the `path` is relative to, as an absolute POSIX path
+  inside the run's workspace (normalized as text, not symlink-resolved), so a
+  subscriber can locate the file (`posixpath.join(root_dir, path)`) in that
+  workspace without assuming it shares the emitter's root.
 
 A diff in an event is a unified diff cut at `MAX_EVENT_DIFF_CHARS` with a
 `truncated` flag, so an event stream that is persisted or forwarded to a UI
@@ -106,8 +107,8 @@ class FileChangeRequestEvent(
 
     Fires after the path has passed the access checks and, for a write or
     edit, after the conflict check, so a listener only sees changes that
-    would otherwise go ahead; a write re-checks under its open descriptor,
-    so a file replaced in the meantime can still fail after it was announced.
+    would otherwise go ahead; a write re-reads the file just before writing,
+    so a file changed in the meantime can still fail after it was announced.
     A cancelled change is not applied and the model gets `cancel_reason` as
     the tool result.
 

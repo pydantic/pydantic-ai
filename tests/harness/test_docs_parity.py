@@ -366,7 +366,7 @@ def _blown_out_block(path: Path) -> str:
     text = path.read_text(encoding='utf-8')
     assert _BLOWN_OUT_MARKER in text, f'{path.relative_to(_ROOT)} lost its blown-out keep-in-sync marker'
     after = text.split(_BLOWN_OUT_MARKER, 1)[1]
-    match = re.search(r'```python\n(.*?)```', after, flags=re.DOTALL)
+    match = re.search(r'```python[^\n]*\n(.*?)```', after, flags=re.DOTALL)
     assert match, f'{path.relative_to(_ROOT)} has no python block after the blown-out marker'
     return match.group(1)
 
@@ -382,10 +382,9 @@ def test_blown_out_example_is_identical_across_surfaces(surface: str) -> None:
 
 def test_blown_out_example_matches_coder_defaults() -> None:
     block = _blown_out_block(_ROOT / _BLOWN_OUT_SURFACES[0])
-    assert "capabilities=[Coder('.')]" in block
-    assert "name='coder'" in block
+    assert "capabilities=[LocalWorkspace('.'), Coder()]" in block
     example = (_ROOT / 'examples/coding_agent.py').read_text(encoding='utf-8')
-    assert "name='coder'" in example and 'capabilities=[Coder(workspace or Path.cwd())]' in example
+    assert "name='coder'" in example and "capabilities=[LocalWorkspace(workspace or '.'), Coder()]" in example
 
 
 @pytest.mark.parametrize('surface', ['README.md', 'docs/index.md'])

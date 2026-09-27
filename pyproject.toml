@@ -459,7 +459,10 @@ strict = true
 addopts = "-p no:cassetter"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
-markers = ["modal_live: runs against a real Modal control plane; needs credentials"]
+markers = [
+    "modal_live: runs against a real Modal control plane; needs credentials",
+    "e2b_live: runs against a real E2B sandbox; needs credentials",
+]
 filterwarnings = [
     "error",
     # Experimental harness capabilities warn on import by design; tests assert it where it matters.

@@ -7,6 +7,7 @@ you multiple-choice questions mid-run through the built-in `ask_user` plugin;
 see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
+On Windows, CLAI does not provide an agent workspace or repository context yet.
 Context management is the built-in `compaction` plugin,
 [described below](#compacting-the-conversation).
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
@@ -31,8 +32,9 @@ Python 3.10+ is required.
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
-Relative paths use the launch workspace. Use a custom agent with `Coder()` to
-retain workspace-scoped file tools.
+CLAI attaches the launch directory as the agent's workspace, so relative paths
+and commands start there. Commands get CLAI's environment minus LLM provider API
+keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools.
 
 Tool calls show a single-line summary followed by a blank line by default.
 Tool names are pink; their arguments and bullet markers are muted grey. Shell output, exit details and
@@ -1193,15 +1195,17 @@ the host clock (through `datetime`), and no network. The model writes one snippe
 is still writing.
 
 The sandbox's `pathlib` only reaches what the file tools may reach. `pathlib`
-calls on a mount skip the `FileSystem` checks, so CLAI mounts the `FileSystem`
-working directory at its real path only when a mount can enforce the same limits:
+calls on a mount skip the `FileSystem` checks, so CLAI mounts the workspace's
+working directory at its real path only when a mount can enforce the same limits.
+A plugin that supplies a sandbox workspace gets no mount: the host directory is
+not the filesystem the file tools act on there.
 
 - **Read-write:** `read_file` and `write_file` registered, no patterns, and not
   `read_only`. This is the built-in `coder` plugin's default. `pathlib` can also
   delete and rename files there, which `write_file` cannot do but could already
   replace the content of.
 - **Read-only:** `read_file` registered but `write_file` missing, `read_only`, or
-  `protected_patterns` set.
+  `read_only_patterns` set.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, no
   `FileSystem`, more than one, or a plugin that adds a capability function or
   `DynamicCapability` (which could supply one at run time). File access then

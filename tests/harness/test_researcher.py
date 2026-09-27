@@ -6,6 +6,7 @@ pytest.importorskip('markdownify')
 import pydantic_ai_harness.researcher
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability, WebFetch, WebSearch
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 from pydantic_ai_harness.researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher, researcher_agent
@@ -17,6 +18,14 @@ def test_researcher_constructs_agent() -> None:
     agent = Agent(TestModel(), capabilities=[Researcher()])
 
     assert isinstance(agent, Agent)
+
+
+def test_researcher_run_needs_a_workspace() -> None:
+    # Spills go to the run's workspace, so a run without one fails at its start, naming `Researcher`.
+    agent = Agent(TestModel(), capabilities=[Researcher()])
+
+    with pytest.raises(UserError, match='`Researcher` needs a workspace'):
+        agent.run_sync('go')
 
 
 def test_researcher_agent_is_model_less_and_composed() -> None:
@@ -35,12 +44,13 @@ def test_researcher_unknown_export() -> None:
 def test_researcher_members_are_transparent() -> None:
     researcher = Researcher()
 
-    assert [type(capability) for capability in researcher.capabilities] == [
-        Capability,
-        WebSearch,
-        WebFetch,
-        SubAgents,
-        ToolOutputLimits,
+    assert [type(capability).__name__ for capability in researcher.capabilities] == [
+        'RequireWorkspace',
+        'Capability',
+        'WebSearch',
+        'WebFetch',
+        'SubAgents',
+        'ToolOutputLimits',
     ]
     capability = next(capability for capability in researcher.capabilities if isinstance(capability, Capability))
     assert capability.get_instructions() == [DEFAULT_RESEARCHER_INSTRUCTIONS]

@@ -10,9 +10,11 @@ import pytest
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.agent import WrapperAgent
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
@@ -300,3 +302,83 @@ async def test_restore_interrupted_frontier_preserves_existing_results(tmp_path:
     assert len(returns) == 2
     assert returns[0].content == 'already completed'
     assert {part.tool_call_id for part in returns} == {'a', 'b'}
+
+
+async def test_resume_from_another_directory_runs_in_this_session_directory(tmp_path: Path) -> None:
+    working_dirs: list[str] = []
+
+    class RecordWorkingDir(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            working_dirs.append(await ctx.workspace.working_dir())
+
+    agent = Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[RecordWorkingDir()])
+    conversations = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    original, elsewhere = tmp_path / 'original', tmp_path / 'elsewhere'
+    original.mkdir()
+    elsewhere.mkdir()
+    first = Session(agent, deps=None, conversations=conversations, workspace=original)
+    await first.prompt('first')
+    second = Session(agent, deps=None, conversations=conversations, workspace=elsewhere)
+    await second.resume(first.summary.id, allow_other_workspace=True)
+    await second.prompt('second')
+    await second.prompt('third')
+    assert working_dirs == [str(original.resolve()), str(elsewhere.resolve()), str(elsewhere.resolve())]
+
+
+async def test_a_sandbox_on_the_agent_itself_replaces_the_session_directory(tmp_path: Path) -> None:
+    working_dirs: list[str] = []
+    sandbox = tmp_path / 'sandbox'
+    sandbox.mkdir()
+
+    class Sandbox(AbstractCapability[None]):
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return LocalWorkspaceBackend(sandbox)
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            working_dirs.append(await ctx.workspace.working_dir())
+
+    agent = Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[Sandbox()])
+    await Session(agent, deps=None, workspace=tmp_path).prompt('go')
+    assert working_dirs == [str(sandbox.resolve())]
+
+
+async def test_an_agent_without_a_capability_tree_gets_the_session_directory(tmp_path: Path) -> None:
+    working_dirs: list[str] = []
+
+    class Probe(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            working_dirs.append(await ctx.workspace.working_dir())
+
+    class OpaqueAgent(WrapperAgent[None, str]):
+        @property
+        def root_capability(self) -> CombinedCapability[None]:
+            raise NotImplementedError
+
+    agent = OpaqueAgent(Agent(TestModel(custom_output_text='answer'), deps_type=type(None)))
+    await Session(agent, deps=None, workspace=tmp_path, plugins=[Probe()]).prompt('go')
+    assert working_dirs == [str(tmp_path.resolve())]
+
+
+async def test_a_plugin_that_supplies_the_workspace_replaces_the_session_directory(tmp_path: Path) -> None:
+    working_dirs: list[str] = []
+    sandbox = tmp_path / 'sandbox'
+    sandbox.mkdir()
+
+    class SandboxPlugin(AbstractCapability[None]):
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return LocalWorkspaceBackend(sandbox)
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            working_dirs.append(await ctx.workspace.working_dir())
+
+    def no_capability(ctx: RunContext[None]) -> None:
+        return None
+
+    session = Session(
+        Agent(TestModel(custom_output_text='answer'), deps_type=type(None)),
+        deps=None,
+        workspace=tmp_path,
+        plugins=[no_capability, SandboxPlugin()],
+    )
+    await session.prompt('go')
+    assert working_dirs == [str(sandbox.resolve())]

@@ -5,8 +5,9 @@ Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydanti
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
-Relative paths use the launch workspace. Use a custom agent with `Coder()` to
-retain workspace-scoped file tools. Shell output is displayed dimly.
+CLAI attaches the launch directory as the agent's workspace, so relative paths
+and commands start there. Commands get CLAI's environment minus LLM provider API
+keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools. Shell output is displayed dimly.
 
 ## Word deletion
 

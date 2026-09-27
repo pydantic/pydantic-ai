@@ -2,19 +2,32 @@
 
 from __future__ import annotations
 
+import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeGuard
 
-from pydantic_ai import FunctionToolset
+from pydantic_ai import FunctionToolset, Tool
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnContent, UserContent
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnContent,
+    ToolReturnPart,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._usage import reserved_usage_limits
+from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
+from pydantic_ai_harness.filesystem._reader import READ_CHARS, find_file_reader
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -33,10 +46,13 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import LocalFileStore, OverflowStore
+from pydantic_ai_harness.tool_output_limits._store import OverflowStore, WorkspaceStore
 
 READ_TOOL_NAME = 'read_tool_result'
 """Name of the registered read-back tool. Its own returns are exempt from reduction."""
+
+_READ_TOOL_HINT = f'Read it with {READ_TOOL_NAME}('
+"""How a spill marker naming `read_tool_result` phrases its instruction; looked for again in history."""
 
 _DEFAULT_THRESHOLD = 10_000
 """Default band threshold (characters) -- below this, returns pass through untouched."""
@@ -50,6 +66,15 @@ errors, and structure. Respond ONLY with the summary, no preamble.
 {output}
 </output>\
 """
+
+
+def _spills(action: Action | None) -> bool:
+    """Whether `action`, or a fallback it chains to, spills to the store."""
+    while action is not None:
+        if isinstance(action, Spill):
+            return True
+        action = None if isinstance(action, Passthrough) else action.then
+    return False
 
 
 def _default_bands() -> list[Band]:
@@ -100,6 +125,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         from pydantic_ai import Agent
         from pydantic_ai_harness.tool_output_limits import (
             Band,
+            LocalFileStore,
             ToolOutputLimits,
             Spill,
             Summarize,
@@ -115,6 +141,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                         Band(over=20_000, action=Summarize()),
                         Band(over=5_000, action=Truncate()),
                     ],
+                    store=LocalFileStore(),
                 )
             ],
         )
@@ -136,8 +163,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     tokenizer: Callable[[str], int] | None = None
     """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to a ~4-char heuristic."""
 
-    store: OverflowStore | None = None
-    """Backend for spilled payloads. Defaults to a `LocalFileStore`."""
+    store: OverflowStore | WorkspaceStore | None = None
+    """Backend for spilled payloads.
+
+    Defaults to a `WorkspaceStore` in the run's workspace. When the bands can spill and no store
+    has a workspace to write to, the run fails at its start: attach a workspace, or pass
+    `store=LocalFileStore()` to keep spills on this machine.
+    """
 
     strip_ansi: bool = False
     """Strip ANSI escape sequences from text returns before measuring and reducing."""
@@ -157,12 +189,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
     id: str | None = 'tool_output_limits'
 
-    _store: OverflowStore = field(init=False, repr=False)
+    _store: OverflowStore | WorkspaceStore = field(init=False, repr=False)
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
+    _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._store = self.store if self.store is not None else LocalFileStore()
+        self._store = self.store if self.store is not None else WorkspaceStore()
         self._bands = self._prepare_bands(self.bands)
         self._per_tool = {name: self._prepare_bands(bands) for name, bands in self.per_tool.items()}
 
@@ -174,11 +207,33 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 raise ValueError('Band.over must be non-negative.')
         return sorted(bands, key=lambda b: b.over, reverse=True)
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Fail the run at its start when a band can spill but no store has a workspace to write to."""
+        store = self._store
+        if (
+            isinstance(store, WorkspaceStore)
+            and store.workspace is None
+            and not ctx.workspace.attached
+            and any(_spills(band.action) for bands in (self._bands, *self._per_tool.values()) for band in bands)
+        ):
+            raise UserError(
+                "`ToolOutputLimits` spills oversized tool output to the run's workspace, but none is attached "
+                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileStore()` "
+                'to keep spills on this machine.'
+            )
+
     # --- toolset ---
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Register the `read_tool_result` tool for reading spilled payloads on demand."""
-        store = self._store
+        """Register the `read_tool_result` tool for reading spilled payloads on demand.
+
+        Built once, so durable execution sees the toolset it registered.
+        """
+        if self._toolset is None:
+            self._toolset = self._make_toolset()
+        return self._toolset
+
+    def _make_toolset(self) -> AgentToolset[AgentDepsT]:
 
         async def read_tool_result(
             ctx: RunContext[AgentDepsT],
@@ -198,9 +253,35 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 from_end: Count `offset`/`limit` from the end of the result.
                 pattern: Optional literal substring; only lines containing it are returned.
             """
-            return await _read_slice(store, handle, offset, limit, from_end, pattern)
+            store = self._store
 
-        return FunctionToolset([read_tool_result])
+            async def read(handle: str) -> bytes:
+                if isinstance(store, WorkspaceStore):
+                    return await store.read(ctx.workspace, handle)
+                return await store.read(handle)
+
+            return await _read_slice(read, handle, offset, limit, from_end, pattern)
+
+        return FunctionToolset(
+            [Tool(read_tool_result, prepare=self._offer_read_tool)], id=self.id or 'tool_output_limits'
+        )
+
+    async def _offer_read_tool(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
+        """Offer `read_tool_result` unless an active file tool reads this run's spills.
+
+        Once a spill marker has named `read_tool_result`, it stays offered for the rest of the run,
+        so a file tool loaded later can't strand that marker.
+        """
+        location = _spill_location(self._store)
+        if (
+            location is None
+            or _named_read_tool(ctx.messages)
+            # Any file in the spill directory stands for all of them; a spill the reader turns out not to
+            # reach gets a marker naming `read_tool_result`, which brings the tool back from the next step.
+            or find_file_reader(ctx, posixpath.join(location, 'spill'), max_chars=_MAX_READ_CHARS) is None
+        ):
+            return tool_def
+        return None
 
     # --- reduction ---
 
@@ -215,7 +296,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if call.tool_name == READ_TOOL_NAME:
+        if call.tool_name == READ_TOOL_NAME or await self._reads_a_spill(ctx, call, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original
@@ -403,13 +484,43 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
         key = _handle_key(ctx, call, unit.suffix)
+        store = self._store
         try:
-            handle = await self._store.write(key, unit.data)
+            if isinstance(store, WorkspaceStore):
+                handle = await store.write(ctx.workspace, key, unit.data)
+            else:
+                handle = await store.write(key, unit.data)
+        except (UserError, WorkspaceReadOnlyError) as error:
+            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
+            # say so rather than degrading quietly.
+            warnings.warn(f'ToolOutputLimits: could not spill a {call.tool_name!r} result: {error}', stacklevel=2)
+            return await self._fallback(ctx, call, action.then, unit)
         except Exception:
             return await self._fallback(ctx, call, action.then, unit)
 
-        preview = _build_spill_preview(handle, unit, action.preview_chars, over_tokens=self.over_tokens)
+        reader = await self._spill_reader(ctx, handle)
+        preview = _build_spill_preview(handle, unit, action.preview_chars, over_tokens=self.over_tokens, reader=reader)
         return preview, handle
+
+    async def _spill_reader(self, ctx: RunContext[AgentDepsT], handle: str) -> str | None:
+        """The file tool that reads the spill at `handle`, or `None` to point at `read_tool_result`."""
+        if _spill_location(self._store) is None:
+            return None
+        relative = posixpath.relpath(handle, await ctx.workspace.working_dir())
+        return find_file_reader(ctx, relative, max_chars=_MAX_READ_CHARS)
+
+    async def _reads_a_spill(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, args: dict[str, Any]) -> bool:
+        """Whether `call` is a file tool reading one of this run's spills, which is bounded already."""
+        location = _spill_location(self._store)
+        path = args.get('path')
+        if (
+            location is None
+            or not isinstance(path, str)
+            or find_file_reader(ctx, posixpath.join(location, 'spill'), max_chars=_MAX_READ_CHARS) != call.tool_name
+        ):
+            return False
+        relative = posixpath.relpath(await ctx.workspace.resolve(path), await ctx.workspace.working_dir())
+        return relative.startswith(location + '/')
 
     async def _summarize_action(
         self,
@@ -526,6 +637,30 @@ def _select_action(bands: Sequence[Band], size: int) -> Action | None:
     return None
 
 
+def _spill_location(store: OverflowStore | WorkspaceStore) -> str | None:
+    """Where spills go in the run's workspace, relative to its working directory.
+
+    `None` for anywhere a file tool of the run can't be relied on to reach: another kind of store,
+    or a store with its own workspace.
+    """
+    if not isinstance(store, WorkspaceStore) or store.workspace is not None:
+        return None
+    return posixpath.join(METADATA_DIR, 'tool-output')
+
+
+def _named_read_tool(messages: Sequence[ModelMessage]) -> bool:
+    """Whether a spill marker in `messages` told the model to use `read_tool_result`."""
+    # A marker is the text of a tool's return value, or of the content it adds as a user prompt.
+    return any(
+        isinstance(part, ToolReturnPart | UserPromptPart)
+        and isinstance(part.content, str)
+        and _READ_TOOL_HINT in part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
 def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
     """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
 
@@ -571,7 +706,9 @@ def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
     return {str(key): source[key] for key in source}
 
 
-def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool) -> str:
+def _build_spill_preview(
+    handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, reader: str | None = None
+) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
         size_desc = f'{len(unit.data):,} bytes (binary)'
@@ -585,11 +722,13 @@ def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_t
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    header = (
-        f'[Tool output too large ({size_desc}); stored to handle {handle!r}. '
-        f'Read it with read_tool_result(handle={handle!r}, offset=0, limit=200, '
-        f'from_end=False, pattern=None).]'
-    )
+    if reader is None:
+        header = (
+            f'[Tool output too large ({size_desc}); stored to handle {handle!r}. '
+            f'{_READ_TOOL_HINT}handle={handle!r}, offset=0, limit=200, from_end=False, pattern=None).]'
+        )
+    else:
+        header = f'[Tool output too large ({size_desc}); saved to the file {handle!r}. Read it with `{reader}`.]'
     parts = [header]
     if sketch:
         parts.append(f'shape: {sketch}')
@@ -610,12 +749,12 @@ def _head_tail_preview(text: str, preview_chars: int) -> str:
 _MAX_READ_LINES = 1_000
 """Hard cap on lines returned by one `read_tool_result` call."""
 
-_MAX_READ_CHARS = 50_000
+_MAX_READ_CHARS = READ_CHARS
 """Hard cap on characters returned by one `read_tool_result` call."""
 
 
 async def _read_slice(
-    store: OverflowStore,
+    read: Callable[[str], Awaitable[bytes]],
     handle: str,
     offset: int,
     limit: int,
@@ -635,13 +774,16 @@ async def _read_slice(
     limit = min(limit, _MAX_READ_LINES)
 
     try:
-        data = await store.read(handle)
-    except OSError:
+        data = await read(handle)
+    except WorkspaceError as error:
+        raise_tool_failure(error)
+    except (OSError, UserError):
         # Return, not raise: a wrong handle (e.g. the model passing a tool-call id) or a
         # result that is no longer stored must not consume a tool retry and escalate to a
         # fatal `UnexpectedModelBehavior`. Guide the model to a valid handle instead. The
         # exception is intentionally not echoed -- a store's error can carry the resolved
-        # filesystem path or other backend detail the model has no need for.
+        # filesystem path or other backend detail the model has no need for. `UserError` is a
+        # run with no workspace attached, where no workspace spill can exist.
         return (
             f'[No stored tool result for handle {handle!r}. Use the exact handle string from a '
             '"[Tool output too large ... stored to handle ...]" marker; if the result is no longer '
