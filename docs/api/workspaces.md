@@ -21,6 +21,7 @@
             - WorkspaceError
             - WorkspaceUnavailableError
             - WorkspaceTimeoutError
+            - WorkspaceOutputLimitError
             - WorkspaceReadOnlyError
 
 # `pydantic_ai.workspaces.conformance`
