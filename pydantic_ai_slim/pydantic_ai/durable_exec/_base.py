@@ -56,7 +56,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces import Workspace, WrapperWorkspace
+from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -446,17 +447,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             self._check_construction_workspace(ctx, workspace)
         return DurableWorkspace(workspace, durability=self, ctx=ctx)
 
-    @staticmethod
-    def _workspace_layers(workspace: Workspace) -> list[type[object]]:
-        layers: list[type[object]] = []
-        while True:
-            if type(workspace) is not Workspace:
-                layers.append(type(workspace))
-            backend = workspace._backend  # pyright: ignore[reportPrivateUsage]
-            if not isinstance(backend, Workspace):
-                return [*layers, type(backend)]
-            workspace = backend
-
     def _check_construction_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace) -> None:
         """Reject a run-level workspace a unit on another worker would not rebuild.
 
@@ -465,7 +455,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         assert self._agent is not None
         construction = select_workspace(self._agent.root_capability, ctx, ref=workspace.ref)
-        if construction is None or self._workspace_layers(construction) != self._workspace_layers(workspace):
+        if construction is None or workspace_layers(construction) != workspace_layers(workspace):
             raise UserError(
                 f'Under {self.engine_name}, the workspace comes from the capabilities the agent is built with, '
                 'because each durable unit rebuilds it from them. This run selected a different workspace; '
@@ -509,9 +499,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 'argument.'
             )
         supplied = workspace.wrapped if isinstance(workspace, DurableWorkspace) else workspace
-        if (ref is not None or not isinstance(workspace, DurableWorkspace)) and self._workspace_layers(
-            supplied
-        ) != self._workspace_layers(rebuilt):
+        if isinstance(supplied, WrapperWorkspace) and workspace_layers(supplied) != workspace_layers(rebuilt):
             raise UserError(
                 f'Under {self.engine_name}, a `workspace=` policy would be lost across durable units; '
                 'configure its wrapper on the capability instead.'
