@@ -18,6 +18,8 @@ from pydantic_ai_harness.stackone import StackOne
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+pytestmark = pytest.mark.anyio
+
 
 def tool_call_names(messages: list[ModelMessage]) -> set[str]:
     return {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolCallPart)}

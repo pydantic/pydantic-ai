@@ -40,6 +40,13 @@ __all__ = ('IsDatetime', 'IsInstance', 'IsNow', 'IsPartialDict', 'IsStr', 'agent
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal
+    startup failure into a hang. https://github.com/pydantic/pydantic-ai/issues/8821"""
+    return False
+
+
 @pytest.fixture(autouse=True)
 def recording_plugin_in_subprocesses(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep child pytest processes on the same recording plugin as this suite."""
@@ -48,19 +55,19 @@ def recording_plugin_in_subprocesses(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def test_model() -> TestModel:
-    """A fresh ``TestModel`` instance for each test."""
+    """A fresh `TestModel` instance for each test."""
     return TestModel()
 
 
 @pytest.fixture
 def test_agent(test_model: TestModel) -> Agent[None, str]:
-    """A minimal agent wired to ``TestModel`` for capability tests."""
+    """A minimal agent wired to `TestModel` for capability tests."""
     return Agent(test_model, name='test-agent')
 
 
 @pytest.fixture
 def tmp_dir(tmp_path: Path) -> Path:
-    """Convenience alias for ``tmp_path`` (useful for store / session tests)."""
+    """Convenience alias for `tmp_path` (useful for store / session tests)."""
     return tmp_path
 
 
