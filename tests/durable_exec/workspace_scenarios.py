@@ -281,11 +281,11 @@ async def local(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict
 
 
 async def amnesiac(agents: ScenarioAgents, arg: str | None, engine_id: str) -> str:
-    return (await agents.amnesiac.run('Nothing to do.')).output  # pragma: no cover
+    return (await agents.amnesiac.run('Nothing to do.')).output
 
 
 async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> str:
-    return (await agents.uncaught.run('Nothing to do.')).output  # pragma: no cover
+    return (await agents.uncaught.run('Nothing to do.')).output
 
 
 SCENARIOS: dict[str, Scenario] = {
