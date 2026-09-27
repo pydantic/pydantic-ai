@@ -46,6 +46,7 @@ publish() {{
 }}
 trap : TERM
 publish null
+while [ ! -e "$dir/launch.ready" ]; do sleep 0.1 2> /dev/null || sleep 1; done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
@@ -75,23 +76,17 @@ else
   pid=$!; group=-
   if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
-i=0
-while [ ! -e "$dir/status.json" ] && [ "$i" -lt 20 ]; do sleep 0.1 2> /dev/null || sleep 1; i=$((i + 1)); done
-printf '{"pid": %s, "exit_code": null}' "$pid" > "$dir/status.launch" && ln "$dir/status.launch" "$dir/status.json" 2> /dev/null
-rm -f "$dir/status.launch"
+while [ ! -e "$dir/status.json" ]; do sleep 0.1 2> /dev/null || sleep 1; done
+: > "$dir/launch.ready"
 echo "$pid $group" > "$dir/handle"
 echo "$pid $group"
 """
 """Start the wrapper detached and print `<pid> <process group or ->`, also kept in the job's `handle` file.
 
-Before returning, the launcher waits (up to about two seconds) for the wrapper to publish its
-status, which it does only after `setsid` has detached it: some workspaces kill the launching
-command's whole process group as soon as it exits, which would take a wrapper that has not
-detached yet with it. `sleep 1` stands in where `sleep` takes only whole seconds.
-
-The launcher also publishes the running status, so the handles it returns name a status file
-that exists even when the wait runs out; `ln` refuses to replace one the wrapper already
-published, including a final one.
+Before returning, the launcher waits for the wrapper to publish its status after `setsid`
+has detached it: some workspaces kill the launching process group as soon as it exits.
+The workspace run is bounded by `CONTROL_TIMEOUT`. `sleep 1` stands in where `sleep`
+takes only whole seconds.
 
 Without `setsid`, the job stays in the launcher's process group. That group is only the job's
 to signal when the workspace started the launcher as a group leader (the local workspace starts
@@ -218,9 +213,16 @@ class Job:
 
     async def size(self, path: str) -> int:
         try:
-            return (await self.workspace.stat(path)).size or 0
+            size = (await self.workspace.stat(path)).size
         except FileNotFoundError:
             return 0
+        if size is not None:
+            return size
+        # The backend's `stat` reports no size; count the bytes in the workspace instead.
+        result = await self.workspace.run(f'wc -c < {shlex.quote(path)}', shell=True, timeout=CONTROL_TIMEOUT)
+        if result.exit_code != 0 or not result.stdout.strip().isdigit():
+            raise WorkspaceError(result.stderr.strip() or f'Unable to size job log {path!r}.')
+        return int(result.stdout)
 
     async def read(self, path: str, offset: int, length: int) -> bytes:
         """Up to `length` bytes of `path` from `offset`, read inside the workspace so only they cross the wire."""

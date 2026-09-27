@@ -2206,6 +2206,29 @@ class TestWorkspaceBackends:
         assert await toolset.create_directory('made', workspace=workspace) == 'Created directory: made'
         assert (fs_root / 'made').is_dir()
 
+    async def test_filesystem_only_backend_lists_a_file_without_a_size(self, fs_root: Path) -> None:
+        class NoSizes(FilesystemOnlyWorkspace):
+            async def stat(self, path: str) -> FileEntry:
+                return replace(await super().stat(path), size=None)
+
+        toolset = FileSystem[None](root_dir=fs_root).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        assert 'hello.txt  (size unknown)' in await toolset.list_directory('.', workspace=NoSizes(fs_root))
+
+    async def test_filesystem_only_backend_checks_paths_as_text(
+        self, fs_root: Path, tmp_path_factory: pytest.TempPathFactory
+    ) -> None:
+        # Without `realpath`, `..` is still refused but a symlink leading outside is not followed.
+        outside = tmp_path_factory.mktemp('outside')
+        (outside / 'secret.txt').write_text('secret\n')
+        (fs_root / 'out').symlink_to(outside)
+        toolset = FileSystem[None](root_dir=fs_root).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        workspace = FilesystemOnlyWorkspace(fs_root)
+        with pytest.raises(ModelRetry):
+            await toolset.read_file(f'../{outside.name}/secret.txt', workspace=workspace)
+        assert 'secret' in await toolset.read_file('out/secret.txt', workspace=workspace)
+
     async def test_filesystem_only_backend_resolves_a_relative_root(self, fs_root: Path) -> None:
         # The default root is the workspace's working directory, asked of the backend itself.
         toolset = FileSystem[None]().get_toolset()

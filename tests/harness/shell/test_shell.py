@@ -11,6 +11,7 @@ import signal
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, NoReturn
@@ -30,6 +31,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
+    FileEntry,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
@@ -621,13 +623,29 @@ class TestSameRunConcurrentCwd:
         ctx.run_id = 'parallel-run'
         # Both commands start at the root; the slower completion publishes its cwd last.
         results: list[str] = []
+        b_finished = anyio.Event()
 
-        async def run(command: str) -> None:
-            results.append(await persist_toolset.run_command(ctx, command))
+        async def run_a() -> None:
+            results.append(
+                await persist_toolset.run_command(
+                    ctx, 'touch started-a; while [ ! -f release-a ]; do sleep 0.01; done; cd subdir'
+                )
+            )
+
+        async def run_b() -> None:
+            results.append(
+                await persist_toolset.run_command(
+                    ctx, 'touch started-b; while [ ! -f started-a ]; do sleep 0.01; done; cd other'
+                )
+            )
+            b_finished.set()
 
         async with anyio.create_task_group() as tg:
-            tg.start_soon(run, 'touch started-a; while [ ! -f started-b ]; do sleep 0.01; done; cd subdir; sleep 0.2')
-            tg.start_soon(run, 'touch started-b; while [ ! -f started-a ]; do sleep 0.01; done; cd other')
+            tg.start_soon(run_a)
+            tg.start_soon(run_b)
+            with anyio.fail_after(60):
+                await b_finished.wait()
+            (shell_dir / 'release-a').touch()
         assert len(results) == 2 and all('[exit code:' not in result for result in results)
         assert str(shell_dir / 'subdir') in await persist_toolset.run_command(ctx, 'pwd')
 
@@ -886,6 +904,13 @@ class TestRunCommand:
         )
         result = await ts.run_command(_ctx(shell_dir), 'sleep 10', timeout_seconds=0.5)
         assert 'timed out after 0.5s' in result
+
+    async def test_run_command_clamps_timeout_to_activity_budget(self, shell_dir: Path) -> None:
+        ts = _shell_toolset(shell_dir)
+        ctx = _ctx(shell_dir)
+        with patch.object(ctx.workspace, 'run', wraps=ctx.workspace.run) as run:
+            await ts.run_command(ctx, 'echo ok', timeout_seconds=600)
+        assert run.call_args.kwargs['timeout'] == 270
 
     async def test_persist_cwd_disabled_no_update(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -1700,11 +1725,14 @@ class TestLaunch:
         # A `setsid` that detaches only after a delay: the launcher must wait for it before exiting.
         bin_dir = tmp_path / 'bin'
         bin_dir.mkdir()
+        gate = tmp_path / 'gate'
+        os.mkfifo(gate)
         slow_setsid = bin_dir / 'setsid'
         slow_setsid.write_text(
             f'#!{sys.executable}\n'
-            'import os, sys, time\n'
-            'time.sleep(0.5)\n'
+            'import os, sys\n'
+            f'open({str(tmp_path / "ready")!r}, "w").close()\n'
+            f'with open({str(gate)!r}, "rb") as fifo: fifo.read(1)\n'
             'os.setsid()\n'
             'os.execvp(sys.argv[1], sys.argv[1:])\n'
         )
@@ -1712,9 +1740,22 @@ class TestLaunch:
         backend = _KillGroupOnExit(tmp_path, env={'PATH': f'{bin_dir}:{os.environ["PATH"]}'})
         ts = _shell_toolset(tmp_path)
         ctx = _run_context(Workspace(backend))
-        command_id = _parse_command_id(await ts.start_command(ctx, 'echo finished'))
-        job = await _job(ts, ctx, command_id)
-        with anyio.fail_after(5):
+        launched = anyio.Event()
+        ids: list[str] = []
+
+        async def launch() -> None:
+            ids.append(_parse_command_id(await ts.start_command(ctx, 'echo finished')))
+            launched.set()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(launch)
+            with anyio.fail_after(60):
+                while not (tmp_path / 'ready').exists():
+                    await anyio.sleep(0.01)
+                await anyio.to_thread.run_sync(gate.write_bytes, b'go')
+                await launched.wait()
+        job = await _job(ts, ctx, ids[0])
+        with anyio.fail_after(60):
             while (status := await job.status())[0]:
                 await anyio.sleep(0.05)  # pragma: lax no cover
         assert status == (False, 0)
@@ -1752,6 +1793,27 @@ class TestReadBgOutputEdgeCases:
         finally:
             stdout_log.chmod(0o600)
             await ts.stop_command(_ctx(shell_dir), command_id)
+
+
+class _NoStatSizes(LocalWorkspaceBackend):
+    """A backend whose `stat` reports no file sizes, as the workspace protocol allows."""
+
+    async def stat(self, path: str) -> FileEntry:
+        return replace(await super().stat(path), size=None)
+
+
+class TestJobLogSizes:
+    async def test_log_is_counted_in_the_workspace_when_stat_has_no_size(self, shell_dir: Path) -> None:
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_NoStatSizes(shell_dir)))
+        job = await _job(ts, ctx, _parse_command_id(await ts.start_command(ctx, 'echo finished')))
+        with anyio.fail_after(5):
+            while (await job.status())[0]:
+                await anyio.sleep(0.05)  # pragma: lax no cover
+        assert await job.size(job.output_path) == len(b'finished\n')
+        assert await job.tail(job.output_path, 100) == b'finished\n'
+        with pytest.raises(WorkspaceError, match='Is a directory'):
+            await job.size(job.directory)
 
 
 class TestJobStatusEdgeCases:
