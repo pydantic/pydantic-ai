@@ -22,8 +22,10 @@ from typing import Protocol, runtime_checkable
 
 import anyio.to_thread
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
-from pydantic_ai_harness._workspace import METADATA_DIR, metadata_dir, secondary_workspace
+from pydantic_ai.workspaces.unavailable import NO_WORKSPACE
+from pydantic_ai_harness._workspace import METADATA_DIR, is_unattached, metadata_dir, secondary_workspace
 
 
 @runtime_checkable
@@ -96,19 +98,27 @@ class WorkspaceStore:
         """Bind a run workspace to the common store interface."""
         return _BoundWorkspaceStore(self, workspace)
 
+    def _target(self, workspace: Workspace) -> Workspace:
+        workspace = self._workspace or workspace
+        # With no workspace attached nothing can be stored: `UserError` lets callers warn or guide
+        # the model, where core's placeholder would raise `WorkspaceUnavailableError` and end the run.
+        if is_unattached(workspace):
+            raise UserError(NO_WORKSPACE.reason)
+        return workspace
+
     async def write(self, workspace: Workspace, key: str, data: bytes) -> str:
         """Write `data` and return its absolute workspace path as the handle.
 
         `workspace` is the run's; the store's own `workspace`, when set, is used instead.
         """
-        workspace = self._workspace or workspace
+        workspace = self._target(workspace)
         path = posixpath.join(await metadata_dir(workspace, 'tool-output'), *_segments(key))
         await workspace.write_bytes(await _confine(workspace, path, key), data)
         return path
 
     async def read(self, workspace: Workspace, handle: str) -> bytes:
         """Read a payload back; a handle outside the store directory raises `PermissionError`."""
-        workspace = self._workspace or workspace
+        workspace = self._target(workspace)
         directory = await metadata_dir(workspace, 'tool-output')
         path = posixpath.normpath(posixpath.join(directory, handle))
         if not path.startswith(directory.rstrip('/') + '/'):
