@@ -553,6 +553,11 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                         pass
 
 
+async def kill_sandbox(sandbox_id: str) -> None:
+    """Kill a sandbox by ID without connecting: connecting would resume a paused sandbox and bill it."""
+    await e2b.AsyncSandbox.kill(sandbox_id)
+
+
 async def _is_running(sandbox: e2b.AsyncSandbox) -> bool:
     """Ask E2B's health probe whether the sandbox runs; a probe that fails counts as running.
 

@@ -70,8 +70,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
         """Kill a sandbox by ID, including paused sandboxes, without attaching."""
         if ref.provider != 'e2b':
             raise ValueError(f'Expected an E2B workspace ref, got {ref.provider!r}')
-        # The SDK's ID-only DELETE works for paused sandboxes; connect would resume and bill them.
-        await _backend.e2b.AsyncSandbox.kill(ref.id)
+        await _backend.kill_sandbox(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
