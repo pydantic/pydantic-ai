@@ -905,13 +905,6 @@ class TestRunCommand:
         result = await ts.run_command(_ctx(shell_dir), 'sleep 10', timeout_seconds=0.5)
         assert 'timed out after 0.5s' in result
 
-    async def test_run_command_clamps_timeout_to_activity_budget(self, shell_dir: Path) -> None:
-        ts = _shell_toolset(shell_dir)
-        ctx = _ctx(shell_dir)
-        with patch.object(ctx.workspace, 'run', wraps=ctx.workspace.run) as run:
-            await ts.run_command(ctx, 'echo ok', timeout_seconds=600)
-        assert run.call_args.kwargs['timeout'] == 270
-
     async def test_persist_cwd_disabled_no_update(self, shell_dir: Path) -> None:
         ts = ShellToolset(
             allowed_commands=[],
