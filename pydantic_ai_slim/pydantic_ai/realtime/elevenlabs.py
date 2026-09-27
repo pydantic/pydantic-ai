@@ -35,7 +35,7 @@ import asyncio
 import base64
 import json
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Collection, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -77,7 +77,7 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
+from ._utils import inject_trace_context, require_pcm_audio
 from .codec import (
     AudioDelta,
     InputTranscript,
@@ -131,9 +131,10 @@ class ElevenLabsRealtimeModelSettings(RealtimeModelSettings, total=False):
     matching override toggle to be enabled in the agent's Security tab; the connect-time preflight
     raises [`UserError`][pydantic_ai.exceptions.UserError] naming the toggle otherwise.
 
-    Of the shared settings, `output_modality='text'` maps to the `conversation.text_only` override,
-    and `tool_choice` allow-lists restrict the tool set the preflight checks (or syncs); a call to any
-    other tool is rejected on receipt with an error result, whatever the sync mode. `max_tokens`,
+    Of the shared settings, `output_modality='text'` maps to the `conversation.text_only` override.
+    `tool_choice` is unsupported and raises for any value other than `'auto'`: the agent's client
+    tools are workspace state rather than a per-conversation set, so a restriction could not be
+    enforced on the wire; restrict the run's tools with a filtered toolset instead. `max_tokens`,
     `parallel_tool_calls`, and `thinking` have no per-conversation surface on the agent WebSocket and
     are silently ignored, per the shared settings contract. `turn_detection` cannot be configured
     (ElevenLabs' server-side turn model is always on), `input_transcription_model=None` cannot be
@@ -169,7 +170,8 @@ class ElevenLabsRealtimeModelSettings(RealtimeModelSettings, total=False):
       session doesn't define; ElevenLabs-side webhook/MCP/system tools are left untouched). This
       mutates workspace state shared by every conversation with the agent, which is why it is opt-in.
     - `'off'`: skip the check and trust the agent's configuration (e.g. for read-scoped API keys).
-      Calls to tools the session does not advertise are still rejected on receipt.
+      A call to a tool the session does not define reaches the tool manager like any other call and
+      is answered with the standard unknown-tool error, which lands in the session's history.
     """
     elevenlabs_config_override: dict[str, Any]
     """Raw values deep-merged last into `conversation_config_override`, the escape hatch mirroring
@@ -1085,6 +1087,15 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                 'ElevenLabs Agents cannot disable input transcription per conversation (ASR drives the '
                 'agent pipeline), so `input_transcription_model=None` cannot be honored. Remove the setting.'
             )
+        if (tool_choice := settings.get('tool_choice')) is not None and tool_choice != 'auto':
+            # The agent's client tools are workspace state, not a per-conversation set, so nothing on
+            # the wire can hold the agent to a restriction; enforcing it on receipt would filter calls
+            # above the tool manager, which the realtime codec contract forbids.
+            raise UserError(
+                f'ElevenLabs Agents do not support `tool_choice` (got {tool_choice!r}): the tools an agent can '
+                'call are configured on the agent, not per conversation. Remove the setting and restrict the '
+                "run's tools with a filtered toolset or `prepare_tools` instead."
+            )
 
     @staticmethod
     def _requested_overrides(
@@ -1162,18 +1173,14 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         settings = cast('ElevenLabsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         self._check_settings(settings)
         instructions = get_instructions(messages, model_request_parameters) or ''
-        # `'none'` and allow-list tool choices restrict the advertised set (like Gemini); declarative
-        # `'auto'`/`'required'` have no per-conversation surface and are dropped by the resolution.
-        advertised_tools, _ = resolve_advertised_tools(
-            model_request_parameters.function_tools, settings.get('tool_choice')
-        )
+        tools = model_request_parameters.function_tools or []
 
         # One REST round-trip yields the override-permission allowlist, the client tools, and the
         # agent's auth mode, so every fail-loudly check happens before the socket is dialed.
         agent = await self._fetch_agent()
         tool_sync = settings.get('elevenlabs_tool_sync', 'error')
         if tool_sync == 'error':
-            if mismatches := _tool_mismatches(advertised_tools, agent.client_tools):
+            if mismatches := _tool_mismatches(tools, agent.client_tools):
                 details = '\n'.join(f'- {mismatch}' for mismatch in mismatches)
                 raise UserError(
                     f'The tools of the ElevenLabs agent {self.agent_id!r} do not match this agent run:\n'
@@ -1182,7 +1189,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                     "sync them from Pydantic AI, or set `elevenlabs_tool_sync='off'` to trust the agent."
                 )
         elif tool_sync == 'sync':
-            await self._sync_tools(agent, advertised_tools)
+            await self._sync_tools(agent, tools)
         elif tool_sync == 'off':
             pass
         else:
@@ -1222,7 +1229,6 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                 ws,
                 conversation_id=metadata.conversation_id,
                 text_output=settings.get('output_modality', 'audio') == 'text',
-                allowed_tool_names={tool.name for tool in advertised_tools},
             )
         finally:
             if ws is not None:
@@ -1241,18 +1247,11 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         *,
         conversation_id: str | None = None,
         text_output: bool = False,
-        allowed_tool_names: Collection[str] | None = None,
     ) -> None:
         self._ws = ws
         self._conversation_id = conversation_id
         self._context_limit_tokens: int | None = None
         self._text_output = text_output
-        # The names this run advertised (its function tools after `tool_choice`). The hosted agent's
-        # tools are configured in the dashboard, not per conversation, so `tool_choice` can only be
-        # enforced on the receiving side: a `client_tool_call` naming anything else is rejected
-        # before it reaches the session's tool manager. `None` (direct construction) means
-        # unrestricted; `connect()` always passes the advertised set.
-        self._allowed_tool_names = None if allowed_tool_names is None else frozenset(allowed_tool_names)
         # Calls the agent fired without expecting a result (`expects_response=false`): the session
         # still settles them locally, but their `ToolResult` must never go back on the wire.
         self._fire_and_forget_tool_call_ids: set[str] = set()
@@ -1328,32 +1327,6 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         else:
             raise UserError(f'{_PROVIDER_LABEL} does not support {type(content).__name__} input.')
 
-    async def _reject_tool_call(self, call: _ClientToolCallPayload) -> RealtimeSessionErrorEvent:
-        """Refuse a call to a tool this run did not advertise, telling the agent so it can recover.
-
-        Reached when the agent's dashboard tools are wider than the run's tool set: always possible
-        with `elevenlabs_tool_sync='off'`, and after a dashboard edit that races the preflight in the
-        other modes. The call never becomes a `ToolCall`, so the session's tool manager (which knows
-        every tool of the run, `tool_choice` or not) never sees it. The turn is not marked open:
-        nothing was produced locally, and the agent's spoken recovery opens it on its own.
-        """
-        if call.expects_response:
-            await self._send_event(
-                {
-                    'type': 'client_tool_result',
-                    'tool_call_id': call.tool_call_id,
-                    'result': f'Tool {call.tool_name!r} is not available in this conversation.',
-                    'is_error': True,
-                }
-            )
-        return RealtimeSessionErrorEvent(
-            message=(
-                f'Rejected {_PROVIDER_LABEL} call to tool {call.tool_name!r}: this run does not advertise it '
-                '(not defined, or excluded by `tool_choice`).'
-            ),
-            recoverable=True,
-        )
-
     def _render_tool_output(self, result: ToolResult) -> str:
         """Fold a tool result's text attachments into its string output; media cannot be delivered."""
         output = result.output
@@ -1427,8 +1400,10 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             return [delta]
         if event_type == 'client_tool_call':
             call = _ClientToolCallEvent.model_validate(data).client_tool_call
-            if self._allowed_tool_names is not None and call.tool_name not in self._allowed_tool_names:
-                return [await self._reject_tool_call(call)]
+            # Every call goes through, including one naming a tool this run does not define (possible
+            # with `elevenlabs_tool_sync='off'`, or after a dashboard edit that races the preflight):
+            # the session's tool manager answers it with the standard unknown-tool error, so the call
+            # and its outcome land in history and reach consumers like any other.
             self._response_open = True
             if not call.expects_response:
                 self._fire_and_forget_tool_call_ids.add(call.tool_call_id)

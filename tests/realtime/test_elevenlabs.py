@@ -17,19 +17,25 @@ from contextlib import AbstractAsyncContextManager, contextmanager
 from typing import Any
 from unittest import mock
 
+import anyio
 import httpx2
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryAudio,
     BinaryContent,
     CachePoint,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
+    RetryPromptPart,
     TextContent,
+    ToolCallPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import RealtimeError, RealtimeModelProfile
@@ -632,11 +638,24 @@ async def test_server_side_tools_do_not_participate_in_the_check() -> None:
             pass
 
 
-async def test_tool_choice_none_restricts_the_advertised_set() -> None:
-    # `tool_choice='none'` advertises no tools, so an agent with none configured matches.
+@pytest.mark.parametrize('tool_choice', ['none', 'required', ['get_weather']], ids=['none', 'required', 'allow-list'])
+async def test_tool_choice_raises_before_any_rest_call(tool_choice: Any) -> None:
+    # The agent's client tools are workspace state, not a per-conversation set, so no `tool_choice`
+    # can be enforced on the wire; rather than filter calls above the tool manager, the setting is
+    # refused up front, before the preflight spends a request.
+    recorder = RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE]))
+    model = _model(recorder)
+    settings = ElevenLabsRealtimeModelSettings(tool_choice=tool_choice)
+    with pytest.raises(UserError, match='do not support `tool_choice`'):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
+            pass  # pragma: no cover
+    assert recorder.requests == []
+
+
+async def test_tool_choice_auto_is_the_default_and_accepted() -> None:
     ws = FakeWebSocket([HANDSHAKE_FRAME])
-    model = _model(RestRecorder(agent_json()))
-    settings = ElevenLabsRealtimeModelSettings(tool_choice='none')
+    model = _model(RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE])))
+    settings = ElevenLabsRealtimeModelSettings(tool_choice='auto')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -651,9 +670,32 @@ async def test_tool_sync_off_trusts_the_agent() -> None:
             pass
 
 
-async def test_tool_sync_off_still_enforces_tool_choice_on_incoming_calls() -> None:
-    # `'off'` skips the preflight, so the agent keeps `get_weather` attached even though the run
-    # excluded it with `tool_choice='none'`; the connection rejects the call instead of executing it.
+class HeldOpenWebSocket(FakeWebSocket):
+    """A `FakeWebSocket` whose server stays silent after the scripted frames instead of closing.
+
+    The session settles tool calls in the background, so a test that needs their outcome to reach the
+    consumer must not have the socket report a close the moment the last frame is read.
+    """
+
+    def __init__(self, incoming: Sequence[dict[str, Any] | str]) -> None:
+        super().__init__(incoming)
+        self._closing = asyncio.Event()
+
+    async def recv(self) -> str:
+        if not self._incoming:
+            await self._closing.wait()
+        return await super().recv()
+
+    async def close(self) -> None:
+        self._closing.set()
+        await super().close()
+
+
+async def test_tool_sync_off_hands_undefined_tool_calls_to_the_tool_manager() -> None:
+    # `'off'` skips the preflight, so the agent keeps `get_weather` attached while the run defines no
+    # tool at all. The call is not filtered in the codec: it reaches the session's tool manager,
+    # which answers with the standard unknown-tool error, and both the call and its outcome are
+    # visible in history and to consumers, exactly as on every other provider.
     call_frame: dict[str, Any] = {
         'type': 'client_tool_call',
         'client_tool_call': {
@@ -663,18 +705,43 @@ async def test_tool_sync_off_still_enforces_tool_choice_on_incoming_calls() -> N
             'expects_response': True,
         },
     }
-    ws = FakeWebSocket([HANDSHAKE_FRAME, call_frame])
+    # The agent recovers in speech; `agent_response` closes the turn so the call is finalized into
+    # history before the consumer stops.
+    reply_frame: dict[str, Any] = {
+        'type': 'agent_response',
+        'agent_response_event': {'agent_response': 'I cannot look that up right now.'},
+    }
+    ws = HeldOpenWebSocket([HANDSHAKE_FRAME, call_frame, reply_frame])
     model = _model(RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE])))
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off', tool_choice='none')
+    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off')
+    agent: Agent[None, str] = Agent()
+    events: list[Any] = []
     with patched_connect(ws):
-        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings) as connection:
-            events = await collect_codec_events(connection)
-    [error] = events
-    assert isinstance(error, RealtimeSessionErrorEvent)
-    assert error.recoverable
-    assert "call to tool 'get_weather'" in error.message
-    [result] = [frame for frame in ws.sent_frames() if frame.get('type') == 'client_tool_result']
-    assert result['is_error'] is True
+        async with agent.realtime(model, model_settings=settings).session() as session:
+            with anyio.fail_after(10):
+                async for event in session:  # pragma: no branch
+                    events.append(event)
+                    if isinstance(event, FunctionToolResultEvent):
+                        break
+
+    [result] = [event for event in events if isinstance(event, FunctionToolResultEvent)]
+    assert isinstance(result.part, RetryPromptPart)
+    assert 'Unknown tool name' in str(result.part.content)
+    assert 'get_weather' in str(result.part.content)
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    # The call is a `ToolCallPart` in history, and the unknown-tool text went back to the agent as
+    # the call's result so it can recover in speech (the codec channel carries no error flag).
+    calls = [
+        part
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert [(call.tool_name, call.tool_call_id) for call in calls] == [('get_weather', 'call_1')]
+    [wire_result] = [frame for frame in ws.sent_frames() if frame.get('type') == 'client_tool_result']
+    assert wire_result['tool_call_id'] == 'call_1'
+    assert 'Unknown tool name' in wire_result['result']
 
 
 async def test_tool_sync_creates_updates_and_repoints() -> None:
@@ -1810,39 +1877,19 @@ def _tool_call_frame(tool_name: str, *, expects_response: bool = True) -> dict[s
     }
 
 
-async def test_client_tool_call_outside_the_advertised_set_is_rejected() -> None:
-    # The agent's dashboard tools can be wider than the run's (`tool_choice`-filtered) tool set,
-    # so a call naming anything else is answered with an error result and never reaches the session.
-    ws = FakeWebSocket([])
-    connection = ElevenLabsRealtimeConnection(ws, allowed_tool_names={'get_weather'})  # type: ignore[arg-type]
-    events = await connection._map_event(_tool_call_frame('delete_order'))  # pyright: ignore[reportPrivateUsage]
-    assert events == [
-        RealtimeSessionErrorEvent(
-            message=(
-                "Rejected ElevenLabs Agents call to tool 'delete_order': this run does not advertise it "
-                '(not defined, or excluded by `tool_choice`).'
-            ),
-            recoverable=True,
-        )
+async def test_client_tool_calls_are_never_filtered_in_the_codec() -> None:
+    # The codec does not know or care which tools the run defines: policy lives in the session's tool
+    # manager, so a call to any name maps to a `ToolCall`, with nothing answered on the wire.
+    connection, ws = _connection()
+    assert await connection._map_event(_tool_call_frame('delete_order')) == [  # pyright: ignore[reportPrivateUsage]
+        ToolCall(tool_call_id='call_1', tool_name='delete_order', args='{}')
     ]
-    assert ws.sent_frames() == [
-        {
-            'type': 'client_tool_result',
-            'tool_call_id': 'call_1',
-            'result': "Tool 'delete_order' is not available in this conversation.",
-            'is_error': True,
-        }
-    ]
-    # An advertised tool still maps to a `ToolCall`.
-    [call] = await connection._map_event(_tool_call_frame('get_weather'))  # pyright: ignore[reportPrivateUsage]
+    assert ws.sent == []
+    # A fire-and-forget call to an undefined tool is tracked like any other: the tool manager's
+    # error result for it stays off the wire too.
+    [call] = await connection._map_event(_tool_call_frame('log_event', expects_response=False))  # pyright: ignore[reportPrivateUsage]
     assert isinstance(call, ToolCall)
-
-
-async def test_rejected_fire_and_forget_tool_call_sends_nothing() -> None:
-    ws = FakeWebSocket([])
-    connection = ElevenLabsRealtimeConnection(ws, allowed_tool_names=set())  # type: ignore[arg-type]
-    [error] = await connection._map_event(_tool_call_frame('log_event', expects_response=False))  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(error, RealtimeSessionErrorEvent)
+    await connection.send(ToolResult(tool_call_id='call_1', output='Unknown tool name: log_event'))
     assert ws.sent == []
 
 

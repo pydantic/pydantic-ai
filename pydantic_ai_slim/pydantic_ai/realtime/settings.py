@@ -93,15 +93,14 @@ class RealtimeModelSettings(TypedDict, total=False):
     call (`'required'` or a list of tool names): applied to every response, including the one after a
     tool result, it would never let the model answer. Use `ToolOrOutput` to restrict the tools instead.
     Gemini has no declarative tool-choice configuration, so `'required'` is ignored and allow-lists
-    restrict availability without requiring a tool call.
-    ElevenLabs tools live on the hosted agent rather than being advertised per session, so `'none'`
-    and allow-lists restrict the set its connect-time tool reconciliation checks or syncs (see the
-    `elevenlabs_tool_sync` setting).
+    restrict availability without requiring a tool call. ElevenLabs raises for any value other than
+    `'auto'`: a hosted agent's tools are configured on the agent, not per conversation, so a
+    restriction could not be enforced.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI,
+    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI, and
     OpenAI GPT-Live, which raises for `'required'` and lists of tool names: a session applies the
     choice to every response, including the one after a tool result, so a forced call never lets the
-    model answer, and ElevenLabs (`'none'` and allow-lists only).
+    model answer.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
