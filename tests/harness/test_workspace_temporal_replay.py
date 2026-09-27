@@ -9,6 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -115,7 +116,12 @@ async def test_temporal_history_replays_veto_and_background_job_once(tmp_path: P
     assert '[status: ' in result[2]
     assert _vetoes == ['blocked.txt']
     assert not (tmp_path / 'blocked.txt').exists()
-    assert (tmp_path / 'launches.txt').read_text().splitlines() == ['once']
+    # The launch runs in the background and may still be starting when the workflow ends.
+    launches = tmp_path / 'launches.txt'
+    with anyio.fail_after(30):
+        while not (launches.exists() and launches.read_text()):
+            await anyio.sleep(0.01)
+    assert launches.read_text().splitlines() == ['once']
     await Replayer(workflows=[ReplayWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner).replay_workflow(
         history
     )
