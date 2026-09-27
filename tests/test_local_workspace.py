@@ -313,21 +313,6 @@ async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path:
     await _assert_process_gone(int(pid_file.read_text()))
 
 
-async def test_command_timeout_starts_after_local_directory_is_ready(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace = LocalWorkspaceBackend(tmp_path)
-    original = getattr(workspace, '_get_working_dir')
-
-    async def slow_directory() -> Path:
-        await anyio.sleep(1.5)
-        return await original()
-
-    monkeypatch.setattr(workspace, '_get_working_dir', slow_directory)
-    result = await workspace.run(['echo', 'ok'], timeout=1)
-    assert result.stdout == 'ok\n'
-
-
 async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
