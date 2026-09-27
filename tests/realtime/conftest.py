@@ -302,12 +302,13 @@ def elevenlabs_ws_cassette(
     """An `ElevenLabsProvider` whose agent WebSocket is backed by a cassette.
 
     The REST preflight around the WebSocket records through ordinary HTTP VCR (`pytest.mark.vcr`),
-    which uses the module-named cassette subdirectory, so the WebSocket cassette lives under its own
-    subdirectory to avoid the filename collision (mirroring the WebRTC sideband fixtures).
+    which uses the module-named cassette subdirectory, so the WebSocket frames live under their own
+    subdirectory to avoid the filename collision, the same split the WebRTC sideband fixtures use.
+    The WebSocket is the primary transport here, not a sideband, hence the name.
     """
     if not elevenlabs_imports_successful():  # pragma: no cover
         pytest.skip('websockets not installed')
-    with _ws_cassette(request, 'elevenlabs', subdir='test_elevenlabs_ws_sideband') as cassette:
+    with _ws_cassette(request, 'elevenlabs', subdir='test_elevenlabs_ws_frames') as cassette:
         yield ElevenLabsProvider(api_key=elevenlabs_api_key), cassette
 
 

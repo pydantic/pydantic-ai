@@ -93,8 +93,9 @@ _WS_CASSETTE_SUFFIX = '_ws'
 # A WebRTC sideband test records a second, WebSocket cassette under a dedicated `<module>_sideband`
 # subdirectory so it doesn't collide with the module-named subdirectory holding its HTTP VCR cassette
 # (the SDP offer relay). Both belong to the same test in `<module>.py`, so attribute the sideband
-# subdirectory back to that module.
-_SIDEBAND_CASSETTE_SUFFIX = '_sideband'
+# subdirectory back to that module. `<module>_frames` is the same split for a provider whose WebSocket
+# is the primary transport and whose REST preflight records the HTTP VCR cassette (ElevenLabs).
+_SECONDARY_CASSETTE_SUFFIXES = ('_sideband', '_frames')
 
 
 def _collect_all_tests_from_file(path: Path) -> set[str]:
@@ -125,8 +126,10 @@ def get_all_cassettes() -> dict[str, set[str]]:
         for subdir in cassette_dir.iterdir():
             if subdir.is_dir():
                 test_stem = subdir.name
-                if test_stem.endswith(_SIDEBAND_CASSETTE_SUFFIX):
-                    test_stem = test_stem[: -len(_SIDEBAND_CASSETTE_SUFFIX)]
+                for suffix in _SECONDARY_CASSETTE_SUFFIXES:
+                    if test_stem.endswith(suffix):
+                        test_stem = test_stem[: -len(suffix)]
+                        break
                 # Handle double extensions like .xai.yaml (xAI uses gRPC/protobuf, not HTTP)
                 cassette_names = {f.stem[:-4] if f.stem.endswith('.xai') else f.stem for f in subdir.glob('*.yaml')}
                 cassettes.setdefault(test_stem, set()).update(cassette_names)

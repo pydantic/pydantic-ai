@@ -67,6 +67,9 @@ with try_import() as imports_successful:
         ElevenLabsRealtimeModelSettings,
     )
 
+with try_import() as openai_imports_successful:
+    from pydantic_ai.providers.openai import OpenAIProvider
+
 pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
 
 AGENT_ID = 'agent_0101test'
@@ -316,9 +319,8 @@ def test_profile() -> None:
     )
 
 
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 def test_rejects_non_elevenlabs_provider() -> None:
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     with pytest.raises(UserError, match='requires an `ElevenLabsProvider`'):
         ElevenLabsRealtimeModel(AGENT_ID, provider=OpenAIProvider(api_key='k'))  # type: ignore[arg-type]
 
