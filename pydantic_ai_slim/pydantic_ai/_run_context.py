@@ -340,7 +340,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Provides access to tool validation and execution, including tracing and
     capability hooks. Useful for toolsets that need to dispatch tool calls
-    programmatically (e.g. code execution workspaces).
+    programmatically (e.g. code execution sandboxes).
 
     Not available in `TemporalRunContext` — it is not serializable across
     Temporal activity boundaries.
