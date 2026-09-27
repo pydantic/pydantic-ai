@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent
@@ -277,7 +278,10 @@ class TestSkills:
         spec.write_text(spec_text, encoding='utf-8')
         run = _Run()
 
-        agent = Agent.from_file(spec, custom_capability_types=[Skills], model=_model(run, None))
+        # `from_file` reads the spec synchronously; keep it off the event loop.
+        agent = await anyio.to_thread.run_sync(
+            lambda: Agent.from_file(spec, custom_capability_types=[Skills], model=_model(run, None))
+        )
         await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
 
         assert run.instructions == _catalog('- from-spec: Help with the task.')

@@ -20,6 +20,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import anyio.to_thread
+
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._workspace import METADATA_DIR, metadata_dir, secondary_workspace
 
@@ -193,14 +195,21 @@ class LocalFileStore:
             pass
 
     async def write(self, key: str, data: bytes) -> str:
+        # Disk I/O runs in a worker thread so it never blocks the event loop.
+        await anyio.to_thread.run_sync(self._write, key, data)
+        self._schedule_cleanup()
+        return key
+
+    def _write(self, key: str, data: bytes) -> None:
         self._ensure_root()
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-        self._schedule_cleanup()
-        return key
 
     async def read(self, handle: str) -> bytes:
+        return await anyio.to_thread.run_sync(self._read, handle)
+
+    def _read(self, handle: str) -> bytes:
         target = self._path(handle).resolve()
         root = self._root.resolve()
         if not target.is_relative_to(root):
