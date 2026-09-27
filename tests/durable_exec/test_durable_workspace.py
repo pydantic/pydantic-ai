@@ -35,7 +35,6 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.durable_exec._workspace import (
     WORKSPACE_OPERATION_ID,
     DurableWorkspace,
-    ReraisedWorkspaceCallError,
     WorkspaceCall,
     WorkspaceCallError,
     WorkspaceCallResult,
@@ -545,16 +544,10 @@ def test_error_table_round_trips_every_kind(error: Exception) -> None:
     data = error_as_data(error)
     assert data is not None
     restored = JSON_CODEC.load(WorkspaceCallError, JSON_CODEC.dump(WorkspaceCallError, data))
-    with pytest.raises(type(error)) as raised:
+    with pytest.raises(Exception) as raised:
         raise_error(restored)
-    assert type(raised.value).__name__ == type(error).__name__
+    assert type(raised.value) is type(error)
     assert str(raised.value) == str(error)
-    # A builtin also carries the marker Temporal fails the workflow on, and pickles back to the plain builtin.
-    if isinstance(raised.value, ReraisedWorkspaceCallError):
-        assert not isinstance(error, (WorkspaceError, UserError))
-        assert type(pickle.loads(pickle.dumps(raised.value))) is type(error)
-    else:
-        assert type(raised.value) is type(error)
     if isinstance(error, WorkspaceTimeoutError):
         assert isinstance(raised.value, WorkspaceTimeoutError)
         assert (raised.value.stdout, raised.value.stderr) == ('partial', 'err')
@@ -591,7 +584,7 @@ async def test_a_backend_error_keeps_its_details_across_a_durable_call(error: Ex
     assert restored.error is not None
     with pytest.raises(type(error)) as raised:
         raise_error(restored.error)
-    assert isinstance(raised.value, ReraisedWorkspaceCallError)
+    assert type(raised.value) is type(error)
     assert (raised.value.args, str(raised.value)) == (error.args, str(error))
     assert [getattr(raised.value, name, None) for name in ('errno', 'filename', 'filename2')] == [
         getattr(error, name, None) for name in ('errno', 'filename', 'filename2')

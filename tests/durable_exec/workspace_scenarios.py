@@ -288,26 +288,9 @@ async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> s
     return (await agents.uncaught.run('Nothing to do.')).output  # pragma: no cover
 
 
-async def uncaught_command(agents: ScenarioAgents, arg: str | None, engine_id: str) -> None:
-    # Not a file error: every error a workspace call re-raises in workflow code must fail the run.
-    await (await agents.plain.run('Nothing to do.')).workspace.run('echo hi')
-
-
 SCENARIOS: dict[str, Scenario] = {
     scenario.__name__: scenario
-    for scenario in (
-        fresh,
-        multi_turn,
-        two_agents,
-        run_id,
-        read_only,
-        explicit,
-        binary,
-        local,
-        amnesiac,
-        uncaught,
-        uncaught_command,
-    )
+    for scenario in (fresh, multi_turn, two_agents, run_id, read_only, explicit, binary, local, amnesiac, uncaught)
 }
 
 
@@ -440,7 +423,6 @@ CASES: dict[str, Check] = {
     'local': check_local,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),
     'uncaught': partial(check_failure, 'uncaught', 'FileNotFoundError', '/remote/missing.txt'),
-    'uncaught_command': partial(check_failure, 'uncaught_command', 'TypeError', 'needs `shell=True`'),
 }
 
 
