@@ -59,6 +59,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
+from .conversation import Utterance, load_utterance, speak_continuously
 from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
@@ -303,6 +304,78 @@ async def test_audio_in_server_vad_turn(
     assert spoken == snapshot(
         [('user', 'Hello, my name is Marcelo.'), ('assistant', 'Hello Marcelo. How can I help you?')]
     )
+
+
+# Long enough for the agent to be into its story, short enough that it is still being generated, so
+# the interruption lands before `agent_response` closes the turn.
+_SILENCE_BEFORE_BARGE_IN = 2.0
+_SILENCE_AFTER_BARGE_IN = 8.0
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply(
+    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """Speaking over a reply that is still being generated.
+
+    Recorded fact: when the barge-in lands before the reply text is complete, the server sends
+    `interruption` and then an `agent_response` already cut down to what the user heard (`Elias...`),
+    with no `agent_response_correction` at all; the correction frame belongs to a barge-in during
+    playback of a finished reply. So the interrupted response is finalized with the truncated text as
+    its transcript, marked interrupted, and carries no correction, and the next turn is unaffected.
+    """
+    provider, cassette = elevenlabs_ws_cassette
+    model = ElevenLabsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider)
+    agent = Agent(
+        instructions='You are a voice assistant. Asked for a story, tell it at length straight away, without questions.'
+    )
+    rate = 16000
+    story = load_utterance(assets_path, Utterance('tell_me_a_long_story', keyword='story'), rate)
+    goodbye = load_utterance(assets_path, Utterance('stop_and_say_goodbye', keyword='goodbye'), rate)
+
+    async with agent.realtime(model).session() as session:
+        await speak_continuously(
+            session,
+            [story],
+            sample_rate=rate,
+            silence_after=_SILENCE_BEFORE_BARGE_IN,
+            before_send=cassette.before_audio_send,
+            pace=realtime_recording,
+        )
+        await speak_continuously(
+            session,
+            [goodbye],
+            sample_rate=rate,
+            silence_after=_SILENCE_AFTER_BARGE_IN,
+            before_send=cassette.before_audio_send,
+            pace=realtime_recording,
+        )
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    messages = session.all_messages()
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert len(responses) == 2
+    story_response, goodbye_response = responses
+    assert story_response.state == 'interrupted'
+    assert story_response.provider_details == {'conversation_id': IsStr()}
+    story_part = story_response.parts[-1]
+    assert isinstance(story_part, SpeechPart)
+    assert story_part.transcript == snapshot('Elias...')
+    assert goodbye_response.state != 'interrupted'
+    assert goodbye_response.provider_details == {'conversation_id': IsStr()}
+    goodbye_part = goodbye_response.parts[-1]
+    assert isinstance(goodbye_part, SpeechPart) and goodbye_part.transcript == snapshot('Goodbye.')
+    spoken = [
+        (part.speaker, part.transcript)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, SpeechPart) and part.speaker == 'user'
+    ]
+    assert len(spoken) == 2
+    assert 'story' in (spoken[0][1] or '').lower() and 'goodbye' in (spoken[1][1] or '').lower()
 
 
 async def test_text_output_modality_returns_text(

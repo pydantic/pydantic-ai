@@ -82,8 +82,13 @@ def _gemini_realtime_audio(frame: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _is_audio_send(frame: dict[str, Any]) -> bool:
-    """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, or Gemini protocol."""
-    return frame.get('type') in _AUDIO_APPEND_TYPES or _gemini_realtime_audio(frame) is not None
+    """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, Gemini, or ElevenLabs protocol."""
+    return (
+        frame.get('type') in _AUDIO_APPEND_TYPES
+        or _gemini_realtime_audio(frame) is not None
+        # ElevenLabs: the one client frame without a `type`.
+        or isinstance(frame.get('user_audio_chunk'), str)
+    )
 
 
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:

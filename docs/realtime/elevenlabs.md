@@ -204,11 +204,13 @@ Telephony (`ulaw_8000`) agents are not supported.
   response's audio has streamed; in text-only mode the text additionally streams as incremental
   deltas ahead of it. Synthesis outruns playback, so a whole spoken response is typically delivered
   (audio included) while the user is still hearing its first words.
-- After a barge-in, the server truncates the stored transcript itself and reports the corrected
-  text, which the session keeps on the interrupted response's `provider_details` under
-  `corrected_agent_response` when the response was still streaming. A barge-in during playback of
-  an already-delivered response surfaces only as an interruption event: the session's history keeps
-  the full generated text even though the user heard less of it.
+- After a barge-in, the server truncates the stored transcript itself. Interrupted while the reply
+  is still being generated, it sends the reply already cut down to what the user heard, so the
+  response is finalized with that truncated transcript and marked interrupted. Interrupted during
+  playback of a reply it had already delivered, it reports the cut as an `agent_response_correction`
+  instead: history keeps the full generated text even though the user heard less of it, and the
+  correction is kept on the response's `provider_details` under `corrected_agent_response` only
+  when it still arrives before the response was finalized.
 - [`send(text, respond=False)`](turns.md#text-turns) is delivered as a `contextual_update`: the
   agent reads it from its next turn on, without stopping what it is saying or replying to it. It is
   context, not history, so it does not seed the conversation (see the feature table).

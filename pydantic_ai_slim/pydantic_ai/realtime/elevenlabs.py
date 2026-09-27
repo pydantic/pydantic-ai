@@ -1490,8 +1490,10 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             # `tentative_user_transcript` enabled in `client_events`.
             return [InputTranscript(text=payload.user_transcript, is_final=True)]
         if event_type == 'interruption':
-            # The user barged in; the server stops streaming audio and follows up immediately with an
-            # `agent_response_correction` (verified live). Only an interruption that lands while the
+            # The user barged in and the server stops streaming audio. Recorded live: while the reply
+            # is still being generated, the `agent_response` that follows is already cut down to what
+            # was heard (no correction frame); during playback of a finished reply, the server sends
+            # an `agent_response_correction` instead. Only an interruption that lands while the
             # response is still open marks the turn interrupted: during playback the turn has already
             # been finalized by `agent_response`, and the flag must not leak into the next turn.
             if self._response_open:
