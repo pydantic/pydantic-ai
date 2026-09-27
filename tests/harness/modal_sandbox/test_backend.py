@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
-import time
 import types
 from pathlib import Path
 from typing import Any
@@ -718,14 +717,20 @@ class TestFilesystem:
         sandbox = fake_modal.sandboxes[0]
         original = sandbox.filesystem.stat.aio
 
+        simultaneous = anyio.Event()
+        calls = 0
+
         async def slow_stat(path: str) -> FileInfo:
-            await anyio.sleep(0.02)
+            nonlocal calls
+            calls += 1
+            if calls >= 2:
+                simultaneous.set()
+            await simultaneous.wait()
             return await original(path)
 
         sandbox.filesystem.stat.aio = slow_stat
-        start = time.monotonic()
-        entries = await backend.list_dir(str(tmp_path))
-        assert time.monotonic() - start < 0.25
+        with anyio.fail_after(10):
+            entries = await backend.list_dir(str(tmp_path))
         assert len(entries) == 21
 
     async def test_symlink_loop_stops_at_first_revisit(self, fake_modal: FakeModal, tmp_path: Path) -> None:

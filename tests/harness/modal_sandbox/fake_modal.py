@@ -29,7 +29,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+import anyio
 import anyio.lowlevel
+import anyio.to_thread
 
 StreamData = bytes | str
 # A responder maps (argv, timeout) to (stdout, stderr, exit_code).
@@ -105,6 +107,11 @@ class _HostExec(_AioCallable):
     async def aio(self, *args: Any, **kwargs: Any) -> Any:
         # subprocess.run blocks; let stop exec and cancellation run while the host command waits.
         return await asyncio.to_thread(self._fn, *args, **kwargs)
+
+
+class _HostAioCallable(_AioCallable):
+    async def aio(self, *args: Any, **kwargs: Any) -> Any:
+        return await anyio.to_thread.run_sync(lambda: self._fn(*args, **kwargs))
 
 
 class _HangingExec(_AioCallable):
@@ -373,12 +380,12 @@ class _HostFilesystem:
     """
 
     def __init__(self) -> None:
-        self.read_bytes = _AioCallable(self._read_bytes)
-        self.write_bytes = _AioCallable(self._write_bytes)
-        self.list_files = _AioCallable(self._list_files)
-        self.stat = _AioCallable(self._stat)
-        self.make_directory = _AioCallable(self._make_directory)
-        self.remove = _AioCallable(self._remove)
+        self.read_bytes = _HostAioCallable(self._read_bytes)
+        self.write_bytes = _HostAioCallable(self._write_bytes)
+        self.list_files = _HostAioCallable(self._list_files)
+        self.stat = _HostAioCallable(self._stat)
+        self.make_directory = _HostAioCallable(self._make_directory)
+        self.remove = _HostAioCallable(self._remove)
 
     def _read_bytes(self, remote_path: str) -> bytes:
         with _host_errors(remote_path):
