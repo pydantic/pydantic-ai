@@ -7,6 +7,7 @@ import importlib.abc
 import importlib.util
 import subprocess
 import sys
+import time
 import types
 from importlib.machinery import ModuleSpec
 from pathlib import Path
@@ -222,6 +223,24 @@ class TestRun:
         fake_modal.stdout_delay = 1.1
         backend = await started()
         assert (await backend.run(['kill-self'], timeout=1)).exit_code == 137
+
+    async def test_output_drain_is_bounded_by_the_command_deadline(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The command exits with one second of its deadline left, and a descendant keeps stdout open.
+        elapsed = 0.0
+
+        def exits_late(argv: list[str], timeout: int | None) -> tuple[str, str, int]:
+            nonlocal elapsed
+            elapsed = 59.0
+            return '', '', 0
+
+        monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=lambda: time.monotonic() + elapsed))
+        fake_modal.responder = exits_late
+        fake_modal.stdout_hangs = True
+        backend = await started()
+        with anyio.fail_after(30), pytest.raises(WorkspaceTimeoutError):
+            await backend.run(['spawn-daemon'], timeout=60)
 
     @pytest.mark.parametrize('stage', ['exec_error', 'wait_error'])
     async def test_an_sdk_timeout_error_is_not_a_command_timeout(self, fake_modal: FakeModal, stage: str) -> None:

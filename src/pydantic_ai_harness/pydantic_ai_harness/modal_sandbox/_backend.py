@@ -648,8 +648,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 command_error = error
                 group.cancel_scope.cancel()
             else:
-                # Once the process exits, output can drain past its command deadline.
-                with anyio.move_on_after(None if timeout is None else max(2, timeout)) as drain_scope:
+                # Once the process exits, output gets a short grace past its command deadline to drain.
+                remaining = None if timeout is None else timeout - (time.monotonic() - started_at)
+                with anyio.move_on_after(None if remaining is None else max(2, remaining)) as drain_scope:
                     await done_event.wait()
                 if drain_scope.cancelled_caught:
                     group.cancel_scope.cancel()
