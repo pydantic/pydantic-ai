@@ -62,6 +62,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import TypeVar
 
 import anyio
+import anyio.to_thread
 import httpx
 from websockets.exceptions import InvalidHandshake, InvalidMessage
 
@@ -286,7 +287,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 token = os.getenv('SPRITE_TOKEN')
                 if not token:
                     raise WorkspaceUnavailableError(_AUTH_MESSAGE)
-                client = AsyncSpritesClient(token=token)
+                # The client computes its headers on first construction, reading `/proc` on Linux.
+                client = await anyio.to_thread.run_sync(lambda: AsyncSpritesClient(token=token))
                 self._client = client
 
             ref = self._ref
