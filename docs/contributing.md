@@ -31,7 +31,7 @@ If the fix could reasonably go more than one way, or you're unsure it's actually
 
 Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness) for the full distinction.
 
-**If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable API, we can talk about upstreaming to harness or core.
+**If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](docs/extensibility.md#publishing-capability-packages). Once a capability has real users and a stable API, we can talk about upstreaming to harness or core.
 
 If it does belong in core:
 
@@ -90,7 +90,7 @@ How we weigh priorities:
 - **User demand** -- features that more users need get priority. Champion-backed features with production use cases outrank speculative additions.
 - **Provider significance** -- work that affects frontier providers (Anthropic, OpenAI, Google) or providers we know are heavily used gets priority. A model integration for a niche provider will wait; a fix for Anthropic won't.
 - **Roadmap alignment** -- features that align with our current focus areas get priority. Right now that includes the capabilities/hooks API, provider-adaptive tools, and the [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) capability library.
-- **Capabilities over core** -- features that could live as a [capability](capabilities/overview.md) should go to [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
+- **Capabilities over core** -- features that could live as a [capability](docs/capabilities/overview.md) should go to [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
 
 ## If your PR or issue has gone quiet
 
@@ -205,6 +205,6 @@ To avoid an excessive workload for the maintainers of Pydantic AI, we can't acce
 - To add a new model with an extra dependency, that dependency needs > 500k monthly downloads from PyPI consistently over 3 months or more
 - To add a new model which uses another model's logic internally and has no extra dependencies, that model's GitHub org needs > 20k stars in total
 - For any other model that's just a custom URL and API key, we're happy to add a one-paragraph description with a link and instructions on the URL to use
-- For any other model that requires more logic, we recommend you release your own Python package `pydantic-ai-xxx`, which depends on [`pydantic-ai-slim`](install.md#slim-install) and implements a model that inherits from our [`Model`][pydantic_ai.models.Model] ABC
+- For any other model that requires more logic, we recommend you release your own Python package `pydantic-ai-xxx`, which depends on [`pydantic-ai-slim`](docs/install.md#slim-install) and implements a model that inherits from our [`Model`][pydantic_ai.models.Model] ABC
 
 If you're unsure about adding a model, please [create an issue](https://github.com/pydantic/pydantic-ai/issues).
