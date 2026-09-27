@@ -30,13 +30,13 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(working_dir='/workspace'), Coder()])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
 `Coder`'s shell and file tools now run in the sandbox, not on your machine. With `Coder`, `RepoContext` creates the sandbox when the run starts, even without a tool call. Use `Coder(repo_context=False)` for lazy creation. It keeps running, and billing, after the run ends; see [Clean up](#clean-up).
 
-A new sandbox lives for up to 24 hours, Modal's maximum; pass `ModalSandbox(sandbox_timeout=3600)` to end it sooner. A first use may take several minutes while Modal builds or pulls an image. If Modal cannot start the sandbox, for example because the image does not exist, the first tool call raises an error that says why.
+A new sandbox lives for up to 24 hours, Modal's maximum; pass `ModalSandbox(sandbox_timeout=3600)` to end it sooner. Commands start in the image user's home directory (`/root` on the default image). A first use may take several minutes while Modal builds or pulls an image. If Modal cannot start the sandbox, for example because the image does not exist, the first tool call raises an error that says why.
 
 ## Continue in the same sandbox
 
@@ -45,7 +45,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(working_dir='/workspace'), Coder()])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 
 followup = agent.run_sync(
@@ -91,7 +91,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(working_dir='/workspace'), Coder()])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ref = result.workspace.ref  # store this, e.g. in your database
@@ -149,7 +149,7 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
     raise error
 
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(working_dir='/workspace'), Coder(), hooks])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder(), hooks])
 ```
 
 ## Configuration
@@ -161,7 +161,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(working_di
 | `create_app_if_missing` | Create that app if it doesn't exist. Default: `True`. |
 | `sandbox_timeout` | Seconds a new sandbox lives before Modal stops it (10-86,400). Default: `86_400` (24 hours, Modal's maximum). |
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: the image's. The default Debian slim image runs as the root user from `/`; use relative paths with an explicit `working_dir=` for portable code. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: the image user's home directory (`/root` on the default Debian slim image), or the image's working directory if it has none. |
 | `defer_loading` | `defer_loading=True` is unsupported: workspace selection happens at run setup. |
 | `env` | Environment variables every command gets. Nothing from your machine's environment reaches the sandbox. |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |

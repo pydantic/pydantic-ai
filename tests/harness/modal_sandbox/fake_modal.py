@@ -490,7 +490,12 @@ class FakeSandbox:
         if self.shutting_down:
             raise FakeConflictError('Modal Sandbox is shutting down.')
         assert self._control.host_root is not None
-        variables = {**os.environ, **{key: value for key, value in (env or {}).items() if value is not None}}
+        # The sandbox's home is the host root, so a command that starts in `~` stays inside it.
+        variables = {
+            **os.environ,
+            'HOME': str(self._control.host_root),
+            **{key: value for key, value in (env or {}).items() if value is not None},
+        }
         cwd = workdir or self.workdir or str(self._control.host_root)
         try:
             process = subprocess.Popen(

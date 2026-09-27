@@ -136,7 +136,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     """Seconds without activity after which Modal terminates a newly created sandbox; `None` never does."""
 
     working_dir: str | None = None
-    """Absolute directory commands start in and relative paths resolve against; the image's when `None`."""
+    """Absolute directory commands start in and relative paths resolve against; the image user's home
+    directory when `None`."""
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""

@@ -168,15 +168,13 @@ def test_capability_takes_the_base_class_options_and_the_creation_settings() -> 
     assert capability.get_instructions() is None
 
 
-def test_modal_docs_name_default_user_and_directory() -> None:
+def test_modal_docs_name_default_directory() -> None:
     for path in (
         Path('docs/harness/modal-sandbox.md'),
         Path('src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md'),
     ):
         text = path.read_text()
-        assert 'root user' in text
-        assert 'relative paths' in text
-        assert "working_dir='/workspace'" in text
+        assert 'home directory (`/root` on the default' in text
 
 
 def test_modal_docs_distinguish_command_timeout_from_sandbox_lifetime() -> None:
@@ -190,7 +188,7 @@ def test_modal_docs_distinguish_command_timeout_from_sandbox_lifetime() -> None:
         assert 'does not apply to attached sandboxes' in text
 
 
-def test_modal_coder_examples_explain_eager_creation_and_set_working_dir() -> None:
+def test_modal_coder_examples_explain_eager_creation() -> None:
     for path in (
         Path('docs/harness/modal-sandbox.md'),
         Path('src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md'),
@@ -198,7 +196,7 @@ def test_modal_coder_examples_explain_eager_creation_and_set_working_dir() -> No
         text = path.read_text()
         assert 'Coder(repo_context=False)' in text
         assert 'when the run starts' in text
-        assert "ModalSandbox(working_dir='/workspace')" in text
+        assert 'ModalSandbox(), Coder()' in text
 
 
 def test_modal_capability_repr_does_not_expose_env_secrets() -> None:

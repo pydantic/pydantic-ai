@@ -202,7 +202,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         idle_timeout: Seconds without activity after which Modal terminates a newly created
             sandbox; `None` (the default) never terminates it for being idle.
         working_dir: Absolute directory commands start in and relative paths resolve against,
-            applied to every command, including in an attached sandbox; the image's when `None`.
+            applied to every command, including in an attached sandbox. `None` (the default) is
+            the image user's home directory, or the image's working directory when it has none.
         env: Environment variables every command gets; a command's own `env` is layered on top.
     """
 
@@ -567,7 +568,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         start_script = (
             'test ! -e "$1" || { rm -f "$1"; exit 143; }; pid_file=$2; echo $$ > "$pid_file"; '
             'if test -e "$1"; then rm -f "$pid_file" "$1"; exit 143; fi; '
-            'shift 2; "$@" </dev/null; status=$?; rm -f "$pid_file"; exit "$status"'
+            'shift 2; '
+            # Without a configured directory, start in the image user's home, as a shell login would.
+            + ('cd ~ 2>/dev/null; ' if workdir is None else '')
+            + '"$@" </dev/null; status=$?; rm -f "$pid_file"; exit "$status"'
         )
         wrapped = [
             *(['setsid', '-w'] if isolated else []),
