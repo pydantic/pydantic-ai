@@ -107,11 +107,7 @@ def providers_for(
     selected: list[str] = []
     for name, packages in PROVIDERS.items():
         own = (f'{_HARNESS}/{name}_sandbox/', f'docs/harness/{name}-sandbox.md', f'tests/harness/{name}_sandbox/')
-        if (
-            shared
-            or any(_touches(path, own) for path in files)
-            or moved & set(packages)
-        ):
+        if shared or any(_touches(path, own) for path in files) or moved & set(packages):
             selected.append(name)
     allowed = set(PROVIDERS if present is None else present)
     return [name for name in selected if name in allowed]

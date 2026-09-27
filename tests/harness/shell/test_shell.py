@@ -626,10 +626,18 @@ class TestSameRunConcurrentCwd:
         b_finished = anyio.Event()
 
         async def run_a() -> None:
-            results.append(await persist_toolset.run_command(ctx, 'touch started-a; while [ ! -f release-a ]; do sleep 0.01; done; cd subdir'))
+            results.append(
+                await persist_toolset.run_command(
+                    ctx, 'touch started-a; while [ ! -f release-a ]; do sleep 0.01; done; cd subdir'
+                )
+            )
 
         async def run_b() -> None:
-            results.append(await persist_toolset.run_command(ctx, 'touch started-b; while [ ! -f started-a ]; do sleep 0.01; done; cd other'))
+            results.append(
+                await persist_toolset.run_command(
+                    ctx, 'touch started-b; while [ ! -f started-a ]; do sleep 0.01; done; cd other'
+                )
+            )
             b_finished.set()
 
         async with anyio.create_task_group() as tg:
