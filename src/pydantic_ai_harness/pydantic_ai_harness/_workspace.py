@@ -94,9 +94,8 @@ def require_workspace(workspace: Workspace, owner: str) -> None:
     the first tool call.
     """
     backend = innermost_backend(workspace)
-    # The unattached placeholder subclasses UnavailableWorkspace; only the concrete
-    # backend represents a deliberate refusal with a reason supplied by the caller.
-    if type(backend) is UnavailableWorkspace:
+    # A deliberate refusal carries the caller's reason; an unattached run gets the setup hint.
+    if isinstance(backend, UnavailableWorkspace):
         raise UserError(f'`{owner}` cannot use this workspace: {backend.reason}')
     if not workspace.attached:
         raise UserError(
