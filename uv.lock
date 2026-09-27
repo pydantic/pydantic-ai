@@ -1713,6 +1713,15 @@ wheels = [
 ]
 
 [[package]]
+name = "client-signals"
+version = "0.4.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/dd/5002f106210ebb4772171e80f206c395e1ac38532c7d601a883903b9b7e6/client_signals-0.4.4.tar.gz", hash = "sha256:1fc1846b9992706349a10c10886f0f326bc56eeedd9af612c41cf9ff1a89562d", size = 3851, upload-time = "2026-08-05T14:46:53.105Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/76/e8f0947c8a26ec9fd0ccc960ed3875aec55035afb19bd6c08e9eac574861/client_signals-0.4.4-py3-none-any.whl", hash = "sha256:672551d797c004cfc9d5ae87ed0dca4ba5a64fc35d1edcf1218cc11f12fdfb25", size = 4347, upload-time = "2026-08-05T14:46:52.186Z" },
+]
+
+[[package]]
 name = "cloudpickle"
 version = "3.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -6295,8 +6304,7 @@ memory = [
     { name = "cachetools" },
 ]
 redis = [
-    { name = "redis", version = "7.1.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-    { name = "redis", version = "8.1.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
+    { name = "redis" },
 ]
 
 [[package]]
@@ -6567,7 +6575,7 @@ dev = [
     { name = "pytest-recording" },
     { name = "pytest-split" },
     { name = "pytest-xdist" },
-    { name = "redis", version = "8.1.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "redis" },
     { name = "sqlparse" },
     { name = "tavily-python" },
     { name = "trio" },
@@ -6817,6 +6825,9 @@ skills = [
 slack = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
+sprites = [
+    { name = "sprites-py" },
+]
 stackone = [
     { name = "fastmcp" },
     { name = "pydantic-ai-slim", extra = ["mcp"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
@@ -6870,11 +6881,12 @@ requires-dist = [
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
+    { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "stackone", "temporal", "youdotcom"]
+provides-extras = ["acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -7637,7 +7649,7 @@ dependencies = [
     { name = "prometheus-client", marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "py-key-value-aio", extra = ["memory", "redis"], marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "python-json-logger", marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-    { name = "redis", version = "7.1.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "redis", marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "rich", version = "14.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version >= '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "rich", version = "14.3.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version < '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "taskgroup", marker = "(python_full_version < '3.11' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version >= '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
@@ -7673,7 +7685,7 @@ dependencies = [
     { name = "prometheus-client", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "py-key-value-aio", extra = ["memory", "redis"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "python-json-logger", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "redis", version = "8.1.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
+    { name = "redis", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or extra != 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "rich", version = "14.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11' and extra == 'group-11-pydantic-ai-dev') or (python_full_version < '3.11' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "rich", version = "14.3.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.11' and extra == 'group-11-pydantic-ai-dev') or (python_full_version >= '3.11' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version < '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "taskgroup", marker = "(python_full_version < '3.11' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11' and extra == 'group-11-pydantic-ai-dev') or (python_full_version < '3.11' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
@@ -11121,38 +11133,10 @@ wheels = [
 
 [[package]]
 name = "redis"
-version = "7.1.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version == '3.14.*'",
-    "python_full_version == '3.13.*'",
-    "python_full_version == '3.12.*'",
-    "python_full_version == '3.11.*'",
-    "python_full_version < '3.11'",
-]
-dependencies = [
-    { name = "async-timeout", marker = "(python_full_version < '3.11.3' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version >= '3.11.3' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.11.3' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/43/c8/983d5c6579a411d8a99bc5823cc5712768859b5ce2c8afe1a65b37832c81/redis-7.1.0.tar.gz", hash = "sha256:b1cc3cfa5a2cb9c2ab3ba700864fb0ad75617b41f01352ce5779dabf6d5f9c3c", size = 4796669, upload-time = "2025-11-19T15:54:39.961Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/f0/8956f8a86b20d7bb9d6ac0187cf4cd54d8065bc9a1a09eb8011d4d326596/redis-7.1.0-py3-none-any.whl", hash = "sha256:23c52b208f92b56103e17c5d06bdc1a6c2c0b3106583985a76a18f83b265de2b", size = 354159, upload-time = "2025-11-19T15:54:38.064Z" },
-]
-
-[[package]]
-name = "redis"
 version = "8.1.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version == '3.14.*'",
-    "python_full_version == '3.13.*'",
-    "python_full_version == '3.12.*'",
-    "python_full_version == '3.11.*'",
-    "python_full_version < '3.11'",
-]
 dependencies = [
-    { name = "async-timeout", marker = "(python_full_version < '3.11.3' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.11.3' and extra == 'group-11-pydantic-ai-dev') or (python_full_version < '3.11.3' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "async-timeout", marker = "python_full_version < '3.11.3' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
 wheels = [
@@ -12081,6 +12065,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/47/2c/0a5f6f8ee0d5589e48c7640213ed5175d52cf540a06725b628cc1a45d6ce/soupsieve-2.8.4.tar.gz", hash = "sha256:e121fd02e975c695e4e9e8774a5ee35d74714b59307868dcc5319ad2d9e3328e", size = 121110, upload-time = "2026-05-24T13:55:57.154Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/f5/0c41cb68dcae6b7de4fac4188a3a9589e21fb31df21ea3a2e888db95e6c9/soupsieve-2.8.4-py3-none-any.whl", hash = "sha256:e7e6b0769c8f51ed59acab6e994b00621096cfb1c640a7509295987388fbaf65", size = 37304, upload-time = "2026-05-24T13:55:55.406Z" },
+]
+
+[[package]]
+name = "sprites-py"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "client-signals" },
+    { name = "httpx" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b7/aa/59651ae30695871953bc35b5e482cba8117ca1091139db95ad06650aa2d6/sprites_py-0.7.1.tar.gz", hash = "sha256:c45596f3994376eb25dd7c4f988b3a6893dd8218502bacd7eedf2b20888d8456", size = 68034, upload-time = "2026-09-17T15:50:31.057Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/d9/a9d793f87c0691c228b3687ba87a585c89edfbe03c6ac538e8761056ab4a/sprites_py-0.7.1-py3-none-any.whl", hash = "sha256:23774f8111c9a4fbb7007f8e305677734eb7616bebb6c668c394788399ff38a8", size = 61828, upload-time = "2026-09-17T15:50:29.788Z" },
 ]
 
 [[package]]
