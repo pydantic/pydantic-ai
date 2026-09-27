@@ -479,6 +479,9 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # On 3.14 coverage reads a module's source while the test runs; when Temporal's workflow sandbox
+    # interrupts that read, the file is left for the garbage collector to close. Only matches `.py` files.
+    "ignore:unclosed file <_io.BufferedReader name='[^']*\\.py'>:ResourceWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
     "ignore:The 'default' attribute with value 'UTC' was provided.*:UserWarning",
     # This is because of cohere.
