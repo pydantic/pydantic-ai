@@ -9,6 +9,7 @@ import httpx
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._workspace import workspace_path
 
 _REMOTE_BASE = 'https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs'
@@ -48,9 +49,12 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         *,
         local_docs_path: Path | None,
         cache: dict[PydanticAIDocsTopic, str] | None,
+        workspace: Workspace | None = None,
     ) -> None:
         super().__init__()
         self._local_docs_path = local_docs_path
+        # The capability's own workspace; `None` reads from the run's.
+        self._workspace = workspace
         # Shared with the run-scoped capability; `None` disables caching entirely.
         self._cache = cache
         self.add_function(self.read_pyai_docs, name='read_pyai_docs')
@@ -81,10 +85,11 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         """Return the local checkout's markdown for `topic`, or `None` to fall back to remote."""
         if self._local_docs_path is None:
             return None
+        workspace = self._workspace or ctx.workspace
         local_path = self._local_docs_path / f'{topic.value}.md'
-        path = await ctx.workspace.resolve(workspace_path(local_path))
+        path = await workspace.resolve(workspace_path(local_path))
         try:
-            return await ctx.workspace.read_text(path)
+            return await workspace.read_text(path)
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             return None
 
