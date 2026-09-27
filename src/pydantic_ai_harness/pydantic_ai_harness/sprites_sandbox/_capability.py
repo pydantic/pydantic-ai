@@ -15,7 +15,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_working_dir
-from pydantic_ai_harness.sprites_sandbox._backend import SpritesSandboxBackend
+from pydantic_ai_harness.sprites_sandbox._backend import SpritesSandboxBackend, new_client
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
@@ -81,7 +81,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
             token = os.getenv('SPRITE_TOKEN')
             if not token:
                 raise ValueError('SPRITE_TOKEN is required to delete a Sprite')
-            async with AsyncSpritesClient(token=token) as client:
+            async with await new_client(token) as client:
                 await client.destroy_sprite(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

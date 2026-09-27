@@ -111,6 +111,14 @@ _AUTH_MESSAGE = (
 )
 
 
+async def new_client(token: str) -> AsyncSpritesClient:
+    """An `AsyncSpritesClient`, built off the event loop.
+
+    The client computes its headers on first construction, reading `/proc` on Linux.
+    """
+    return await anyio.to_thread.run_sync(lambda: AsyncSpritesClient(token=token))
+
+
 async def _cleanup_call(call: Callable[[], Awaitable[object]], *, timeout: float) -> Exception | None:
     """Run one teardown RPC shielded from cancellation and bounded by `timeout`.
 
@@ -287,8 +295,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 token = os.getenv('SPRITE_TOKEN')
                 if not token:
                     raise WorkspaceUnavailableError(_AUTH_MESSAGE)
-                # The client computes its headers on first construction, reading `/proc` on Linux.
-                client = await anyio.to_thread.run_sync(lambda: AsyncSpritesClient(token=token))
+                client = await new_client(token)
                 self._client = client
 
             ref = self._ref
