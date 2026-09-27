@@ -158,10 +158,12 @@ before writing cleanup.
   per run so two concurrent runs cannot share `_cwd` or `_background`
   (`shell/_toolset.py`). Prefer that when the state is genuinely per run.
 - A lock created in `__init__` binds to whichever backend and loop constructs
-  it. `aws_lambda/_bridge.py` creates `asyncio.Lock()` in `__init__`
-  deliberately because the bridge is asyncio-only and single-loop by contract;
-  anything that can run under Trio or across loops uses the deferred pattern
-  above.
+  it. `aws_lambda/_bridge.py` creates its lock in `__init__` deliberately
+  because the bridge is asyncio-only and single-loop by contract; anything that
+  can run under Trio or across loops uses the deferred pattern above. The lock is
+  `anyio.Lock(fast_acquire=True)`: the root lint bans `asyncio.Lock`, and
+  `fast_acquire` keeps its behaviour of not yielding to the event loop when the
+  lock is free.
 
 ### Testing it
 

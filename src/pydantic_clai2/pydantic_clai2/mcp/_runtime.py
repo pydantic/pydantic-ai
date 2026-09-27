@@ -221,7 +221,7 @@ class MCPServers:
     def log(self, name: str, message: str) -> None:
         """Append a lifecycle line to the server's log, next to its captured stderr."""
         self.store.logs.mkdir(parents=True, exist_ok=True)
-        with self.log_path(name).open('a') as file:
+        with self.log_path(name).open('a', encoding='utf-8') as file:
             file.write(f'{datetime.now().isoformat(timespec="seconds")} [clai] {message}\n')
 
     def log_path(self, name: str) -> Path:

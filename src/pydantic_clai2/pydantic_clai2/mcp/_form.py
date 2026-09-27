@@ -375,7 +375,7 @@ def edit_in_editor(initial: str) -> str | None:
     path = Path(name)
     try:
         editor = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
-        with os.fdopen(handle, 'w') as file:
+        with os.fdopen(handle, 'w', encoding='utf-8') as file:
             file.write(initial)
         print('\x1b[2J\x1b[H', end='', flush=True, file=sys.__stdout__)
         if subprocess.call([*editor, name]) != 0:
