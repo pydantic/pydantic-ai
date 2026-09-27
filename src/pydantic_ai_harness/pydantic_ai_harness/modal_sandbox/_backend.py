@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import anyio
+import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -274,7 +275,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             if (sandbox := self._sandbox) is not None:
                 return sandbox
             try:
-                importlib.import_module('modal')
+                # Importing Modal reads `~/.modal.toml`. The import binds nothing to this loop:
+                # Modal runs its clients on its own event-loop thread.
+                await anyio.to_thread.run_sync(importlib.import_module, 'modal')
             except ImportError as e:
                 raise UserError(_MISSING_MODAL) from e
             ref = self._ref

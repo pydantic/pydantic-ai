@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.abc
+import importlib.util
 import subprocess
+import sys
 import types
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import Any
 
 import anyio
 import pytest
+from blockbuster import BlockBuster
 
+import pydantic_ai_harness
 from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
@@ -463,6 +469,34 @@ class TestCreate:
         backend = ModalSandboxBackend()
         sandbox = await backend.get_sandbox()
         assert backend.ref == WorkspaceRef(provider='modal', id=sandbox.object_id)
+        assert fake_modal.owned_creates == 1
+
+    async def test_cold_modal_import_stays_off_the_event_loop(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Importing the real SDK reads `~/.modal.toml`; this import does the same kind of read.
+        config = tmp_path / '.modal.toml'
+        config.write_text('')
+
+        class ColdModal(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+            def find_spec(self, fullname: str, path: object, target: object = None) -> ModuleSpec | None:
+                return importlib.util.spec_from_loader(fullname, self) if fullname == 'modal' else None
+
+            def create_module(self, spec: ModuleSpec) -> types.ModuleType:
+                return fake_modal.module
+
+            def exec_module(self, module: types.ModuleType) -> None:
+                config.read_text()
+
+        monkeypatch.delitem(sys.modules, 'modal')
+        monkeypatch.setattr(sys, 'meta_path', [ColdModal(), *sys.meta_path])
+        # The suite-wide detector does not scan harness code, so scan it here.
+        detector = BlockBuster(pydantic_ai_harness)
+        detector.activate()
+        try:
+            await ModalSandboxBackend().get_sandbox()
+        finally:
+            detector.deactivate()
         assert fake_modal.owned_creates == 1
 
     async def test_native_task_cancellation_records_in_flight_creation(self, fake_modal: FakeModal) -> None:
