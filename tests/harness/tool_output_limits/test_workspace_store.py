@@ -5,10 +5,11 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -191,6 +192,25 @@ class TestDefaultStore:
             return 'x' * 1_000
 
         with pytest.warns(UserWarning, match="could not spill a 'big_tool' result"):
+            result = await agent.run('go')
+
+        [part] = _returns(result.all_messages(), 'big_tool')
+        assert isinstance(part.content, str) and 'truncated' in part.content
+
+    async def test_spill_without_a_workspace_warns_and_falls_back(self):
+        # A deferred-loaded capability skips `before_run`, so the spill itself meets the missing workspace.
+        class Deferred(ToolOutputLimits):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                pass
+
+        limits = Deferred(bands=[Band(over=100, action=Spill(then=Truncate(max_chars=150)))])
+        agent = Agent(FunctionModel(_call_big_tool), capabilities=[limits])
+
+        @agent.tool_plain
+        def big_tool() -> str:
+            return 'x' * 1_000
+
+        with pytest.warns(UserWarning, match=r"could not spill a 'big_tool' result: No workspace is attached"):
             result = await agent.run('go')
 
         [part] = _returns(result.all_messages(), 'big_tool')

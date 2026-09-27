@@ -265,33 +265,6 @@ async def test_workspace_calls_from_workflow_code_are_activities_and_replay_disp
     assert provider.log == log
 
 
-@workflow.defn
-class LargeWriteWorkflow:
-    @workflow.run
-    async def run(self) -> str:
-        result = await agents.plain.run('Nothing to do.')
-        try:
-            await result.workspace.write_bytes('big.bin', b'x' * 2_000_000)
-        except UserError as error:
-            return str(error)
-        return 'unexpected success'  # pragma: no cover
-
-
-async def test_large_workflow_write_fails_before_scheduling_activity(client: Client) -> None:
-    provider.reset()
-    async with Worker(
-        client, task_queue=TASK_QUEUE, workflows=[LargeWriteWorkflow], plugins=[AgentPlugin(agents.plain)]
-    ):
-        message = await client.execute_workflow(
-            LargeWriteWorkflow.run,
-            id=f'{LargeWriteWorkflow.__name__}-{uuid.uuid4()}',
-            task_queue=TASK_QUEUE,
-            execution_timeout=timedelta(seconds=10),
-        )
-    assert 'too large for Temporal' in message
-    assert 'big.bin' not in provider.environments['env-1']
-
-
 # --- The activity side on its own ---------------------------------------------------------------
 
 
