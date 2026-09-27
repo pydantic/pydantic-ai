@@ -378,8 +378,15 @@ jobs:
           SKIP: no-commit-to-branch,format,lint,typecheck,check-cassettes
           UV_NO_SYNC: "1"
 
+      # `test_examples.py` skips `docs/harness/`; the harness's own doc tests check those pages
+      # (snippets, install commands, README parity), so a harness docs change runs them here too.
       - name: Test documentation snippets
-        run: uv run --no-sync pytest tests/test_examples.py -n logical --dist=loadgroup
+        run: >-
+          uv run --no-sync pytest -n logical --dist=loadgroup
+          tests/test_examples.py
+          tests/harness/test_doc_snippets.py
+          tests/harness/test_docs_installation.py
+          tests/harness/test_docs_parity.py
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
