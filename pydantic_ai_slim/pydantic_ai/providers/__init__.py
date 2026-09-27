@@ -213,6 +213,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .crusoe import CrusoeProvider
 
         return CrusoeProvider
+    elif provider == 'elevenlabs':
+        from .elevenlabs import ElevenLabsProvider
+
+        return ElevenLabsProvider
     elif provider == 'xai':
         from .xai import XaiProvider
 
