@@ -18,7 +18,7 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspaceRef,
 )
-from pydantic_ai.workspaces.testing import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 
 from .workspace_fakes import (
     FakeWorkspace,
