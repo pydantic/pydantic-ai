@@ -1,0 +1,96 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Answer in one short sentence. Use the get_weather tool for any weather
+            question.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_6101m3hcvh3mf7rvre396927kp1k
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: user_message
+    text: What is the weather in Berlin?
+- kind: message
+  direction: received
+  at: 0.734
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_f1c04867b8e14113888865529dcf9c08
+      parameters:
+        city: Berlin
+      event_id: 1
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: sent
+  at: 0.734
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_f1c04867b8e14113888865529dcf9c08
+    result: 'Unknown tool name: ''get_weather''. No tools available.
+
+
+      Fix the errors and try again.'
+    is_error: false
+- kind: message
+  direction: received
+  at: 0.859
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_f1c04867b8e14113888865529dcf9c08
+      tool_type: client
+      is_error: false
+      is_blocked: false
+      event_id: 1
+      is_called: true
+      status: success
+    type: agent_tool_response
+- kind: message
+  direction: received
+  at: 1.375
+  data:
+    audio_event:
+      audio_base_64: /v8IAAYAAgAEAP///f/4//j/+f/5//r/AgADAAAAAgAE
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.422
+  data:
+    audio_event:
+      audio_base_64: UP0A/en8F/0F/a38efyk/EH88/uq+xL7pPpd+nT6Qvo1
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.422
+  data:
+    agent_response_event:
+      agent_response: I am sorry, I cannot get the weather in Berlin.
+      event_id: 1
+      response_id: 618928bd-2512-4d3e-b216-23de5d108a5e
+      in_response_to_ids:
+      - f15d0f15-b6ed-4960-a41e-7fb7206935ef
+      response_type: text
+      attachments: []
+    type: agent_response

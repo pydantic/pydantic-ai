@@ -49,6 +49,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     RealtimeSessionErrorEvent,
+    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -205,6 +206,59 @@ async def test_tool_round_and_followup_turn(
     assert session.usage.details == {}
     assert session.context_window_used == _TURN_TWO_CONTEXT_TOKENS / _CONTEXT_LIMIT_TOKENS
     assert all(isinstance(message, ModelResponse) and message.usage.input_tokens == 0 for message in messages[1::2])
+
+
+async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
+    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+) -> None:
+    """With the preflight off, the agent calls a tool this run never defined.
+
+    Nothing filters the call in the codec: the session's tool manager answers it with its standard
+    unknown-tool error, the call and the error land in history like any other round, the error text
+    goes back to the agent as the tool result, and the agent recovers in speech.
+    """
+    provider, cassette = elevenlabs_ws_cassette
+    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off')
+    model = ElevenLabsRealtimeModel(AGENT_ID, provider=provider, settings=settings)
+    agent = Agent(instructions=INSTRUCTIONS)
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the weather in Berlin?')
+        with anyio.fail_after(90):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent) and any(
+                    isinstance(seen, FunctionToolResultEvent) for seen in events
+                ):
+                    break
+
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    results = [event for event in events if isinstance(event, FunctionToolResultEvent)]
+    assert len(results) >= 1
+    for result in results:
+        assert isinstance(result.part, RetryPromptPart)
+        assert 'Unknown tool name' in str(result.part.content) and 'get_weather' in str(result.part.content)
+    # The tool manager's error text is what the agent received, as an ordinary result (the codec's
+    # `ToolResult` carries no error flag).
+    wire_results = sent_frames_containing(cassette, 'client_tool_result')
+    assert len(wire_results) == len(results)
+    assert all('Unknown tool name' in frame['result'] for frame in wire_results)
+
+    messages = session.all_messages()
+    calls = [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert [call.tool_name for call in calls] == ['get_weather'] * len(results)
+    retries = [part for message in messages for part in message.parts if isinstance(part, RetryPromptPart)]
+    assert len(retries) == len(results)
+    final = messages[-1]
+    assert isinstance(final, ModelResponse)
+    assert isinstance(final.parts[-1], SpeechPart) and final.parts[-1].transcript
 
 
 async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette]) -> None:
