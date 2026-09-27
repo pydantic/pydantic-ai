@@ -17,12 +17,14 @@ class HarnessDeprecationWarning(UserWarning):
 
     Inherits from `UserWarning` instead of `DeprecationWarning` so that deprecations are
     visible by default at runtime, matching Pydantic AI's `PydanticAIDeprecationWarning`.
-    Silence every harness deprecation at once with::
+    Silence every harness deprecation at once with:
 
-        import warnings
-        from pydantic_ai_harness import HarnessDeprecationWarning
+    ```python
+    import warnings
+    from pydantic_ai_harness import HarnessDeprecationWarning
 
-        warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
+    warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
+    ```
     """
 
 

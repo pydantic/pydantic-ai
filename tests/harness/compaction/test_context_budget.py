@@ -1623,4 +1623,4 @@ class TestSummarizerMustWriteText:
         assert any(isinstance(part, SystemPromptPart) and 'Summary.' in part.content for part in first.parts)
 
 
-pytestmark = pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')
+pytestmark = [pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'), pytest.mark.anyio]

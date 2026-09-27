@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import detach_dbos_logging
+
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -17,6 +19,8 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.compaction import SummarizingCompaction
+
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-dbos')]
 
 
 @pytest.fixture
@@ -37,6 +41,7 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
+        detach_dbos_logging()
 
 
 def _history() -> list[ModelMessage]:

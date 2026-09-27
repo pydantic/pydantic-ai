@@ -1261,14 +1261,14 @@ class TestS3MediaStoreWithMockTransport:
         assert path == f'/my-bucket/runs/{digest}.bin'
 
 
-@pytest.mark.skipif(  # pragma: no cover
+@pytest.mark.skipif(  # pragma: lax no cover
     not all(
         os.environ.get(k)
         for k in ('S3_ENDPOINT', 'S3_BUCKET_NAME', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_REGION')
     ),
     reason='live S3/R2 env vars not set',
 )
-class TestS3MediaStoreLive:  # pragma: no cover
+class TestS3MediaStoreLive:  # pragma: lax no cover
     """Live integration against the configured S3 endpoint (e.g. R2).
 
     Activated only when all five S3_* env vars are set. Reads creds out of

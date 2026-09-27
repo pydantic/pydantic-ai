@@ -10,6 +10,8 @@ from prompt_toolkit.keys import Keys
 
 from pydantic_clai2.prompt_keys import PromptKeys
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

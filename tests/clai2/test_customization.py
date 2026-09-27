@@ -17,10 +17,12 @@ from pydantic_clai2 import Session
 from pydantic_clai2._app import create_agent
 from pydantic_clai2.customization import customization_guide, read_clai_customization_guide
 
+pytestmark = pytest.mark.anyio
+
 
 async def test_default_agent_does_not_read_guide_for_normal_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     def unexpected_read(*args: object, **kwargs: object) -> str:
-        raise AssertionError('Guide must not be read until requested')
+        raise AssertionError('Guide must not be read until requested')  # pragma: no cover
 
     monkeypatch.setattr('pydantic_clai2.customization.files', unexpected_read)
     agent = create_agent()
@@ -57,7 +59,7 @@ async def test_instruction_order_puts_the_hint_between_guidance_and_repository(t
     (tmp_path / 'AGENTS.md').write_text('# House rules\n')
 
     async def decline(request: AskUserRequest, /) -> AskUserResponse:
-        return AskUserResponse(cancelled=True)
+        return AskUserResponse(cancelled=True)  # pragma: no cover
 
     agent = create_agent()
     model = TestModel(call_tools=[], custom_output_text='hello')

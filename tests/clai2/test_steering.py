@@ -8,7 +8,6 @@ import anyio
 import pytest
 from rich.console import Console
 from rich.text import Text
-from test_live_prompt import editor
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -20,6 +19,9 @@ from pydantic_clai2._session import Session
 from pydantic_clai2.live_prompt import LivePrompt
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.test_live_prompt import editor
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize('supplied_handler', [False, True])
@@ -95,7 +97,7 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         assert Text.from_ansi(live.frame()[-1]).plain == 'ready'
 
         def idle(text: str) -> bool:
-            return False
+            return False  # pragma: no cover
 
         live.steer = idle
         live.buffer.replace('idle prompt')
@@ -107,8 +109,8 @@ async def test_bare_clear_queues_as_a_command_that_steering_skips() -> None:
     attempted: list[str] = []
 
     def steer(text: str) -> bool:
-        attempted.append(text)
-        return True
+        attempted.append(text)  # pragma: no cover
+        return True  # pragma: no cover
 
     async with editor() as (live, _, _):
         live.steer = steer

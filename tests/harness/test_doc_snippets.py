@@ -46,7 +46,7 @@ from _pytest.mark import ParameterSet
 from pytest_examples import CodeExample, find_examples
 from ruff.__main__ import find_ruff_bin
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parents[2]
 _HARNESS = 'pydantic_ai_harness'
 
 
@@ -110,12 +110,12 @@ def _doc_snippets() -> Iterable[ParameterSet]:
     # `find_examples` yields only Python fenced blocks and wants paths relative to
     # the cwd, so pin it to the repo root (matches `test_skill_examples.py`).
     os.chdir(_ROOT)
-    readmes = sorted(str(p.relative_to(_ROOT)) for p in _ROOT.glob(f'{_HARNESS}/**/README.md'))
-    for ex in find_examples(*readmes, 'docs'):
+    readmes = sorted(str(p.relative_to(_ROOT)) for p in _ROOT.glob(f'src/{_HARNESS}/{_HARNESS}/**/README.md'))
+    for ex in find_examples(*readmes, 'docs/harness'):
         yield pytest.param(ex, id=f'{ex.path}:{ex.start_line}')
 
 
-@pytest.mark.parametrize('example', _doc_snippets())
+@pytest.mark.parametrize('example', list(_doc_snippets()))
 def test_doc_snippet_valid(example: CodeExample) -> None:
     if example.prefix_settings().get('test', '').startswith('skip'):
         pytest.skip('illustrative signature block; not runnable Python')
@@ -206,7 +206,7 @@ def test_name_checked_snippets_discovered() -> None:
     )
 
 
-@pytest.mark.parametrize('example', _name_checked_snippets())
+@pytest.mark.parametrize('example', list(_name_checked_snippets()))
 def test_name_checked_snippet_binds_every_name(example: CodeExample) -> None:
     problems = _undefined_names(example)
     assert not problems, (

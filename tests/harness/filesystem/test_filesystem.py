@@ -33,6 +33,8 @@ from pydantic_ai_harness.filesystem._toolset import (
     _sanitize_recoverable_error,  # pyright: ignore[reportPrivateUsage]
 )
 
+pytestmark = pytest.mark.anyio
+
 
 def _reported_hash(result: str) -> str:
     """Extract the content hash a tool reports, from a `[hash:xxxx]` suffix."""
@@ -1786,7 +1788,7 @@ class TestFileSystemCapability:
 
     @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self, tmp_path: Path, anyio_backend: object) -> None:
-        if str(anyio_backend) != 'asyncio':
+        if str(anyio_backend) != 'asyncio':  # pragma: no cover -- only asyncio runs here
             pytest.skip('Agent.run requires asyncio event loop')
         (tmp_path / 'test.txt').write_text('hello agent\n')
         model = TestModel(custom_output_text='done', call_tools=[])

@@ -18,6 +18,8 @@ from pydantic_ai.messages import (
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_clai2 import StreamRenderer
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:
