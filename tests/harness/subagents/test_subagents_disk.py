@@ -10,6 +10,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -17,7 +18,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import (
     MINIMUM_EFFORT_FLOOR,
     AgentOverride,
@@ -192,14 +192,11 @@ class TestDiskLoading:
         with pytest.raises(TypeError, match='takes a workspace backend'):
             SubAgents(workspace=LocalWorkspace('.'))  # pyright: ignore[reportArgumentType]
 
-    async def test_explicit_folders_without_a_workspace_are_read_from_this_machine(self, tmp_path: Path) -> None:
+    async def test_explicit_folders_without_a_workspace_fail_the_run(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'worker.md', 'Work.')
         cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
-        with pytest.warns(HarnessDeprecationWarning, match=r"workspace=LocalWorkspaceBackend\('\.'\)"):
-            listing = await _listing(cap, None)
-        assert listing is not None and '- worker' in listing
-        # Warned once per capability, not once per run.
-        assert await _listing(cap, None) == listing
+        with pytest.raises(UserError, match='`SubAgents` needs a workspace'):
+            await _listing(cap, None)
 
     async def test_undecodable_file_is_skipped_with_warning(self, tmp_path: Path) -> None:
         # A non-UTF-8 `.md` file must not abort loading: every valid definition in the folder still loads.
