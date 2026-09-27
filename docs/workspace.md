@@ -274,8 +274,8 @@ class RootedWrites(WrapperWorkspace):
 ```
 
 This is a preflight check, not a security boundary against concurrent symlink changes; use an
-isolated backend for untrusted commands. On a filesystem-only backend, `realpath` only normalizes
-text and cannot resolve symlinks, so do not use it to implement a symlink-aware jail.
+isolated backend for untrusted commands. On a backend without commands or `SupportsRealpath`,
+`realpath` only normalizes text; see [Resolving symlinks](#resolving-symlinks).
 
 ## Choosing a run's workspace
 
@@ -455,10 +455,35 @@ A backend is the object that talks to one environment; `Workspace` wraps it to g
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both. With commands only,
 `ctx.workspace` derives the file operations through the shell. With a filesystem only, file tools work
 and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular files (not FIFOs or devices). They transfer large files and directory listings in bounded chunks, but shell-derived file operations are slower than native provider file APIs. Local and shell-derived file operations refuse to remove the workspace root or an ancestor, and local writes do not recreate a removed workspace directory. `LocalWorkspace` continues only in a ref naming its configured directory exactly as written, so a ref spelled through a symlink is declined.
-With both, they must reach the same environment.
-Implement [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] if your platform can resolve
-symlinks natively; with commands only, `realpath` uses the shell, and with neither, symlinks aren't
-resolved, so a root-directory check such as the harness `FileSystem`'s is textual only.
+With both, they must reach the same environment. A filesystem-only backend whose storage can hold
+symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#resolving-symlinks).
+
+### Resolving symlinks
+
+`Workspace.realpath(path)` answers "which file would this path really open?". Code that keeps an agent
+inside a directory needs that answer, because a symlink can make a path that looks inside lead
+outside. For example, with a check that only allows paths under `/app`:
+
+- `/app/data -> /secrets`: `/app/data/key` looks inside, but opens `/secrets/key`.
+- `/app/envlink -> .env`: a rule that denies `.env` by name misses `/app/envlink`.
+- `/app/a/link -> /secrets`: `/app/a/link/../key` normalizes as text to `/app/a/key`, but opens
+  `/key`, because `..` climbs from the link's target.
+
+Backends answer it in one of three ways:
+
+- `LocalWorkspaceBackend` uses `os.path.realpath`.
+- A backend with commands but without [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath]
+  gets a shell fallback that follows links with `readlink`, in one command.
+- A backend with neither only gets the path normalized as text. That is exact for storage that
+  cannot hold symlinks, such as an object store. Where symlinks can exist, a path check such as the
+  harness `FileSystem`'s `root_dir` then sees only the text, and each example above leads outside.
+
+A `SupportsRealpath` implementation behaves like `os.path.realpath(path, strict=False)`: it follows
+links in the existing components, resolves a relative link target from the link's directory, applies
+`..` after following a link, keeps missing components as written, and returns an absolute, normalized
+path. On a link loop it must not hang: it either raises `OSError` or returns a path inside the
+directory holding the loop. The check and the later file operation are separate calls, so a link
+swapped in between them is not caught; for untrusted code, rely on the sandbox, not on path checks.
 
 This backend gives each environment its own directory under `base_dir`:
 

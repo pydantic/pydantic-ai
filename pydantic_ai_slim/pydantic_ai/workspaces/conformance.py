@@ -430,8 +430,28 @@ class WorkspaceBackendSuite:
             if (await commands.run(['ln', '-s', target, link])).exit_code != 0 or not await workspace.exists(link):
                 pytest.skip('the environment cannot create symlinks with `ln -s`')
             assert await workspace.realpath(posixpath.join(link, 'missing')) == posixpath.join(target, 'missing')
+            a = posixpath.join(root, 'a')
+            await workspace.make_dir(a)
+            await workspace.make_dir(posixpath.join(a, 'b'))
+            for name, target_name in (('rel', 'b'), ('up', '../out'), ('loop1', 'loop2'), ('loop2', 'loop1')):
+                result = await commands.run(['ln', '-s', target_name, posixpath.join(a, name)])
+                assert result.exit_code == 0
+            assert await workspace.realpath(posixpath.join(a, 'rel', 'missing')) == posixpath.join(a, 'b', 'missing')
+            assert await workspace.realpath(posixpath.join(a, 'up', 'missing')) == posixpath.join(
+                root, 'out', 'missing'
+            )
+            assert await workspace.realpath(posixpath.join(a, 'rel', '..')) == a
+            assert await workspace.realpath(posixpath.join(a, 'up', '..')) == root
+            with anyio.fail_after(30):
+                try:
+                    loop_path = await workspace.realpath(posixpath.join(a, 'loop1', 'q'))
+                except OSError:
+                    pass
+                else:
+                    assert loop_path.startswith(a + '/')
             assert (await workspace.stat(link)).is_dir
             assert {entry.name: entry.is_dir for entry in await workspace.list_dir(root)} == {
+                'a': True,
                 'link': True,
                 'target': True,
             }

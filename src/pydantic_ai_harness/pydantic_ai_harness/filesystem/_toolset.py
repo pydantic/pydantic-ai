@@ -1145,12 +1145,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 size = entry.size
                 if size is None:
                     stat = await self._stat(scope, entry.path)
-                    if stat is None or stat.size is None:
-                        # A dangling symlink, or an entry deleted mid-walk: it has
-                        # no size to report, so leave it out of the listing.
+                    if stat is None:
+                        # A dangling symlink or an entry deleted mid-walk: leave it out.
                         continue
                     size = stat.size
-                line = f'{rel}  ({size} bytes)'
+                line = f'{rel}  (size unknown)' if size is None else f'{rel}  ({size} bytes)'
             # Only a listing that actually dropped an entry is marked truncated,
             # so one that merely fills the cap reads as complete.
             if len(entries) >= self._max_list_results:
