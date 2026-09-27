@@ -1560,9 +1560,21 @@ async def test_shell_remove_refuses_canonical_root_via_alias(tmp_path: Path) -> 
     root = tmp_path / 'root'
     root.mkdir()
     (root / 'safe').write_bytes(b'safe')
+    alias_parent = tmp_path / 'alias_parent'
+    alias_parent.symlink_to(tmp_path, target_is_directory=True)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root)))
+    with pytest.raises(ValueError, match='workspace root'):
+        await workspace.remove(str(alias_parent / 'root'))
+    assert (root / 'safe').read_bytes() == b'safe'
+
+
+async def test_shell_remove_symlink_to_root_only_removes_link(tmp_path: Path) -> None:
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'safe').write_bytes(b'safe')
     alias = tmp_path / 'alias'
     alias.symlink_to(root, target_is_directory=True)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root)))
-    with pytest.raises(ValueError, match='workspace root'):
-        await workspace.remove(str(alias))
+    await workspace.remove(str(alias))
+    assert not alias.is_symlink()
     assert (root / 'safe').read_bytes() == b'safe'
