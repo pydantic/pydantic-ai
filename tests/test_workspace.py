@@ -1456,6 +1456,16 @@ async def test_no_prompt_history_response_is_copied_before_stamping_workspace_re
     assert response.workspace_ref == backend.ref
 
 
+async def test_no_prompt_unavailable_history_ref_is_copied() -> None:
+    ref = WorkspaceRef(provider='missing', id='remote')
+    original = ModelResponse(parts=[TextPart('finished')], workspace_ref=ref)
+    result = await Agent(TestModel()).run(message_history=[original])
+
+    assert result.response is not original
+    assert original.workspace_ref == ref
+    assert result.response.workspace_ref == ref
+
+
 async def test_no_prompt_pending_tool_call_history_is_copied_before_execution() -> None:
     original = ModelResponse(parts=[ToolCallPart('probe', {})])
     history = [ModelRequest(parts=[UserPromptPart('go')]), original]

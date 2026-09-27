@@ -653,7 +653,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 if self.user_prompt is None:
                     # The response may later be stamped with the run's workspace ref; don't mutate the caller's copy.
-                    if ctx.deps.workspace.attached:
+                    if ctx.deps.workspace.attached or ctx.deps.workspace_ref is not None:
                         last_message = replace(last_message)
                         messages[-1] = last_message
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
