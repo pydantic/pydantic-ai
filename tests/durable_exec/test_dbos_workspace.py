@@ -125,6 +125,8 @@ async def test_dbos_multiple_turns_in_one_workflow(dbos: DBOS) -> None:
 
     first_id, second_id = await converse()
     assert first_id != second_id
+    # Outside a workflow, the durable-capable agent keeps a plain random run ID.
+    assert ':' not in (await agent.run('Outside.')).run_id
 
 
 async def test_dbos_workspace_operations_run_as_steps_and_a_fork_replays_them(dbos: DBOS) -> None:

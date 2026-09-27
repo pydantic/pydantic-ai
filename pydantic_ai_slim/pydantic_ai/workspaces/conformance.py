@@ -10,7 +10,7 @@ from __future__ import annotations
 import posixpath
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import anyio
 import pytest
@@ -195,7 +195,7 @@ class WorkspaceBackendSuite:
             pid = (await workspace.read_text(pid_file)).strip()
             with anyio.fail_after(60):
                 while (await _commands(backend).run(['sh', '-c', 'kill -0 "$1"', 'sh', pid])).exit_code == 0:
-                    await anyio.sleep(0.05)
+                    await anyio.sleep(0.05)  # pragma: lax no cover - depends on how fast the process dies
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         result = await _commands(backend).run(['sh', '-c', 'printf %s "$CONFORMANCE"'], env={'CONFORMANCE': 'value'})
@@ -236,7 +236,7 @@ class WorkspaceBackendSuite:
                 assert backend.ref == ref
         finally:
             for path in paths:
-                if await workspace.exists(path):
+                with suppress(FileNotFoundError):
                     await workspace.remove(path)
 
     async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None:
@@ -340,7 +340,7 @@ class WorkspaceBackendSuite:
         async with _scratch_dir(workspace) as root:
             loop = posixpath.join(root, 'loop')
             if (await commands.run(['ln', '-s', 'loop', loop])).exit_code != 0:
-                pytest.skip('the environment cannot create symlinks with `ln -s`')
+                pytest.skip('the environment cannot create symlinks with `ln -s`')  # pragma: no cover
             entries = await workspace.list_dir(root)
             assert [(entry.name, entry.is_dir) for entry in entries] == [('loop', False)]
 
@@ -354,7 +354,7 @@ class WorkspaceBackendSuite:
         async with _scratch_dir(workspace) as root:
             fifo = posixpath.join(root, 'fifo')
             if (await commands.run(['mkfifo', fifo])).exit_code != 0:
-                pytest.skip('the environment does not provide `mkfifo`')
+                pytest.skip('the environment does not provide `mkfifo`')  # pragma: no cover
             with anyio.fail_after(30):
                 with pytest.raises(OSError):
                     await workspace.read_bytes(fifo)
@@ -376,7 +376,7 @@ class WorkspaceBackendSuite:
             pytest.skip('in-memory fake has no permissions')
         commands = _commands(backend)
         if (await commands.run(['id', '-u'])).stdout.strip() == '0':
-            pytest.skip('root bypasses filesystem permissions')
+            pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
             file = posixpath.join(root, 'unreadable')
@@ -426,7 +426,7 @@ class WorkspaceBackendSuite:
             target, link = posixpath.join(root, 'target'), posixpath.join(root, 'link')
             await workspace.make_dir(target)
             if (await commands.run(['ln', '-s', target, link])).exit_code != 0 or not await workspace.exists(link):
-                pytest.skip('the environment cannot create symlinks with `ln -s`')
+                pytest.skip('the environment cannot create symlinks with `ln -s`')  # pragma: no cover
             assert await workspace.realpath(posixpath.join(link, 'missing')) == posixpath.join(target, 'missing')
             a = posixpath.join(root, 'a')
             await workspace.make_dir(a)
@@ -461,7 +461,7 @@ class WorkspaceBackendSuite:
             target, link = posixpath.join(root, 'target'), posixpath.join(root, 'link')
             await workspace.write_bytes(target, b'old')
             if (await commands.run(['ln', '-s', target, link])).exit_code != 0 or not await workspace.exists(link):
-                pytest.skip('the environment cannot create symlinks with `ln -s`')
+                pytest.skip('the environment cannot create symlinks with `ln -s`')  # pragma: no cover
             await workspace.write_bytes(link, b'new')
             assert await workspace.read_bytes(target) == b'new'
             assert await workspace.realpath(link) == target

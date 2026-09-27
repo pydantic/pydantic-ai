@@ -119,6 +119,8 @@ async def test_prefect_multiple_turns_in_one_flow() -> None:
     first_id, second_id = await converse()
     assert first_id != second_id
     assert attempts == [(first_id, second_id)] * 2
+    # Outside a flow, the durable-capable agent keeps a plain random run ID.
+    assert ':' not in (await agent.run('Outside.')).run_id
 
 
 async def test_prefect_workspace_operations_run_as_tasks_and_a_flow_retry_replays_them() -> None:

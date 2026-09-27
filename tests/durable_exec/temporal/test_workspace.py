@@ -150,6 +150,8 @@ def test_workspace_run_activity_has_time_for_command_and_cleanup() -> None:
     config = ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
     assert workspace_run_activity_config(config, 120).get('start_to_close_timeout') == timedelta(seconds=150)
     assert workspace_run_activity_config(config, None).get('start_to_close_timeout') == timedelta(hours=1)
+    longer = ActivityConfig(start_to_close_timeout=timedelta(hours=2))
+    assert workspace_run_activity_config(longer, 120).get('start_to_close_timeout') == timedelta(hours=2)
     assert config.get('start_to_close_timeout') == timedelta(seconds=60)
 
 
@@ -294,6 +296,8 @@ async def test_temporal_multiple_turns_in_one_workflow(client: Client) -> None:
             MultiTurnWorkflow.run, id=f'multi-turn-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
     assert first_id != second_id
+    # Outside a workflow, the durable-capable agent keeps a plain random run ID.
+    assert ':' not in (await binary_agent.run('Outside.')).run_id
 
 
 async def test_temporal_default_run_id_is_distinct_from_execution_id(client: Client) -> None:
@@ -494,7 +498,7 @@ class LargeWriteWorkflow:
             await result.workspace.write_bytes('big.bin', b'x' * 2_000_000)
         except UserError as error:
             return str(error)
-        return 'unexpected success'
+        return 'unexpected success'  # pragma: no cover
 
 
 async def test_large_workflow_write_fails_before_scheduling_activity(client: Client) -> None:

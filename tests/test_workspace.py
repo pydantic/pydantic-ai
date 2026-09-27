@@ -235,8 +235,7 @@ async def test_shell_listing_uses_configured_temporary_directory(tmp_path: Path)
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'find ' in command:
-                assert '/tmp/.pydantic-ai-' not in command
+            assert '/tmp/.pydantic-ai-' not in str(command)
             result = await super().run(command, shell=shell, cwd=cwd, env={'TMPDIR': str(temporary)}, timeout=timeout)
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
@@ -292,11 +291,8 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'find ' in command:
-                listing = b'-/workspace/file-\xff\0'
-                return FakeWorkspaceResult(stdout=f'{len(listing)}\n{base64.b64encode(listing).decode()}')
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            listing = b'-/workspace/file-\xff\0'
+            return FakeWorkspaceResult(stdout=f'{len(listing)}\n{base64.b64encode(listing).decode()}')
 
     workspace = Workspace(ByteListingBackend(LocalWorkspaceBackend(tmp_path)))
     assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
@@ -304,7 +300,7 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
 
 async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> None:
     if os.geteuid() == 0:
-        pytest.skip('root bypasses filesystem permissions')
+        pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
     (tmp_path / 'unreadable').write_bytes(b'x')
     (tmp_path / 'unreadable').chmod(0)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
@@ -566,10 +562,7 @@ async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'wc -c' in command:
-                return FakeWorkspaceResult(stdout='not-a-size')
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return FakeWorkspaceResult(stdout='not-a-size')
 
     workspace = Workspace(InvalidStatBackend(LocalWorkspaceBackend(tmp_path)))
     (tmp_path / 'data.bin').write_bytes(b'data')
@@ -611,9 +604,27 @@ async def test_shell_read_rejects_output_damaged_in_transit(
         await Workspace(DamagingBackend(LocalWorkspaceBackend(tmp_path))).read_bytes('data.bin')
 
 
-@pytest.mark.parametrize('operation', ['list_dir', 'realpath'])
-async def test_shell_metadata_rejects_truncated_valid_base64(tmp_path: Path, operation: str) -> None:
-    class TruncatedBackend(RunOnlyWorkspaceBackend):
+def _truncate(stdout: str) -> str:
+    """Drop the end of valid base64, which can still decode to a plausible value."""
+    return stdout.strip()[:-4]
+
+
+def _bad_padding(stdout: str) -> str:
+    return '4\nAAA'
+
+
+@pytest.mark.parametrize(
+    ('operation', 'corrupt', 'error'),
+    [
+        ('list_dir', _truncate, 'incomplete output'),
+        ('realpath', _truncate, 'incomplete output'),
+        ('realpath', _bad_padding, 'invalid real path'),
+    ],
+)
+async def test_shell_metadata_rejects_damaged_base64(
+    tmp_path: Path, operation: str, corrupt: Callable[[str], str], error: str
+) -> None:
+    class DamagedBackend(RunOnlyWorkspaceBackend):
         async def run(
             self,
             command: str | Sequence[str],
@@ -624,16 +635,12 @@ async def test_shell_metadata_rejects_truncated_valid_base64(tmp_path: Path, ope
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            if isinstance(command, str) and ('find ' in command or 'readlink -n' in command):
-                return FakeWorkspaceResult(
-                    exit_code=result.exit_code, stdout=result.stdout.strip()[:-4], stderr=result.stderr
-                )
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=corrupt(result.stdout), stderr=result.stderr)
 
     (tmp_path / 'directory').mkdir()
     (tmp_path / 'directory' / 'long-name.txt').write_text('x')
-    workspace = Workspace(TruncatedBackend(LocalWorkspaceBackend(tmp_path)))
-    with pytest.raises(WorkspaceError, match='incomplete output'):
+    workspace = Workspace(DamagedBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(WorkspaceError, match=error):
         if operation == 'list_dir':
             await workspace.list_dir('directory')
         else:

@@ -161,13 +161,17 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._ensure_alive()
             # O_NONBLOCK lets us inspect FIFOs and devices without opening a blocking stream.
             fd = os.open(self._path(path), os.O_RDONLY | os.O_NONBLOCK)
-            with os.fdopen(fd, 'rb') as file:
+            # Check before wrapping: `os.fdopen` would reject a directory without closing the fd.
+            try:
                 mode = os.fstat(fd).st_mode
                 if stat_module.S_ISDIR(mode):
                     raise IsADirectoryError(path)
                 if not stat_module.S_ISREG(mode):
                     raise OSError(f'not a regular file: {path!r}')
-                return file.read()
+                with open(fd, 'rb', closefd=False) as file:
+                    return file.read()
+            finally:
+                os.close(fd)
 
         return await run_in_executor(read)
 
@@ -178,9 +182,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
             except FileExistsError as error:
-                if any(parent.is_file() for parent in target.parents):
-                    raise NotADirectoryError(path) from error
-                raise
+                # Only the parent itself existing as a file gets here; deeper ones raise `NotADirectoryError`.
+                raise NotADirectoryError(path) from error
             target.write_bytes(data)
 
         await run_in_executor(write)
@@ -226,12 +229,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         def make() -> None:
             target = self._path(path)
             self._ensure_alive()
-            try:
-                target.mkdir(parents=True, exist_ok=True)
-            except FileExistsError as error:
-                if any(parent.is_file() for parent in target.parents):
-                    raise NotADirectoryError(path) from error
-                raise
+            target.mkdir(parents=True, exist_ok=True)
 
         await run_in_executor(make)
 
@@ -383,8 +381,6 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         stdout_pipe, stderr_pipe = process.stdout, process.stderr
         assert stdout_pipe is not None and stderr_pipe is not None
         remaining = None if absolute_deadline is None else absolute_deadline - anyio.current_time()
-        if remaining is not None and remaining <= 0:
-            raise TimeoutError
         exit_code: int | None = None
         overflowed = False
 
