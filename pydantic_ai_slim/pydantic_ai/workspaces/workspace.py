@@ -340,7 +340,7 @@ class Workspace(WorkspaceBackend):
     @property
     def read_only(self) -> bool:
         """Whether this workspace refuses commands and file changes, so tools can leave those out."""
-        return False
+        return isinstance(self._backend, Workspace) and self._backend.read_only
 
     @property
     def attached(self) -> bool:
@@ -483,9 +483,11 @@ class WrapperWorkspace(Workspace):
 
 
 def workspace_layers(workspace: Workspace) -> list[type[object]]:
-    """The policy wrappers around a workspace and its backend type, outermost first."""
+    """The policy wrappers around a workspace and its backend type, outermost first; plain `Workspace` layers are skipped."""
     layers: list[type[object]] = []
-    while isinstance(workspace, WrapperWorkspace):
-        layers.append(type(workspace))
-        workspace = workspace.wrapped
-    return [*layers, type(workspace), type(workspace.backend)]
+    layer: WorkspaceBackend = workspace
+    while isinstance(layer, Workspace):
+        if type(layer) is not Workspace:
+            layers.append(type(layer))
+        layer = layer._backend  # pyright: ignore[reportPrivateUsage]
+    return [*layers, type(layer)]

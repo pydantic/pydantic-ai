@@ -56,7 +56,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.workspaces import Workspace, WrapperWorkspace
+from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
@@ -495,7 +495,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 'argument.'
             )
         supplied = workspace.wrapped if isinstance(workspace, DurableWorkspace) else workspace
-        if isinstance(supplied, WrapperWorkspace) and workspace_layers(supplied) != workspace_layers(rebuilt):
+        supplied_layers = workspace_layers(supplied)
+        # A bare backend takes the capability's policy; only a caller-side wrapper can be lost.
+        if len(supplied_layers) > 1 and supplied_layers != workspace_layers(rebuilt):
             raise UserError(
                 f'Under {self.engine_name}, a `workspace=` policy would be lost across durable units; '
                 'configure its wrapper on the capability instead.'

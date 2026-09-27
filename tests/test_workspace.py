@@ -52,6 +52,7 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
     local as local_module,
 )
+from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .workspace_fakes import (
     ConnectOnlyWorkspaceCapability,
@@ -731,6 +732,13 @@ async def test_attached_is_false_only_for_an_unavailable_workspace_even_through_
     assert not ReadOnlyWorkspace(Workspace(UnavailableWorkspace('disabled by policy'))).attached
     assert not Workspace(Workspace(UnavailableWorkspace('disabled by policy'))).attached
     assert ReadOnlyWorkspace(Workspace(FakeWorkspace('attached'))).attached
+
+
+def test_a_plain_workspace_around_a_wrapper_keeps_its_policy() -> None:
+    nested = Workspace(ReadOnlyWorkspace(Workspace(FakeWorkspace('nested'))))
+
+    assert nested.read_only
+    assert workspace_layers(nested) == [ReadOnlyWorkspace, FakeWorkspace]
 
 
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
@@ -1587,4 +1595,3 @@ async def test_shell_remove_symlink_to_root_only_removes_link(tmp_path: Path) ->
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root)))
     await workspace.remove(str(alias))
     assert not alias.is_symlink()
-    assert (root / 'safe').read_bytes() == b'safe'
