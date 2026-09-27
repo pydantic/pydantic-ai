@@ -414,15 +414,16 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # identifiers from the environment it passes on.
         args = _ending_with(marker, capture, _with_env(command_argv(command, shell), {**self._env, **(env or {})}))
 
-        # Acquiring the Sprite has its own bound; the deadline is the command's alone.
+        # Acquiring the Sprite has its own bound; the command's deadline starts after it and covers
+        # the `cwd` check.
         sandbox = await self.get_sandbox()
+        deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
         if directory is not None and _check_cwd:
             # Sprites exec silently ignores a nonexistent `dir`; reject it before running user work.
-            check = await self.run(['test', '-d', directory], timeout=_INTERNAL_EXEC_TIMEOUT, _check_cwd=False)
+            check = await self.run(['test', '-d', directory], timeout=timeout, _check_cwd=False)
             if check.exit_code != 0:
                 raise FileNotFoundError(directory)
         exec_command = _ExecCommand(sandbox.command(*args, cwd=directory))
-        deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
         code = -1
         interrupted = False
         try:

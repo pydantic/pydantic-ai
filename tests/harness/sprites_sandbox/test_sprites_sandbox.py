@@ -6,6 +6,7 @@ import signal
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import anyio
 import client_signals.core
@@ -408,6 +409,27 @@ class TestSpritesSandbox:
 
         assert (await task).stdout == 'ok\n'
         assert deadlines[-1] >= acquired_at + 60
+
+    async def test_run_deadline_covers_the_working_directory_check(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        connect = transport.connect
+        commands: list[list[str]] = []
+
+        async def held_check(url: str, **kwargs: Any) -> Any:
+            command = parse_qs(urlsplit(url).query)['cmd'][5:]
+            commands.append(command)
+            if command[:2] == ['test', '-d']:
+                await anyio.Event().wait()  # Held until the deadline cancels it.
+            return await connect(url, **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', held_check)
+        backend = SpritesSandboxBackend(working_dir=str(tmp_path))
+        await backend.get_sandbox()
+        with anyio.fail_after(60):
+            with pytest.raises(WorkspaceTimeoutError, match=r'after 0.2 seconds'):
+                await backend.run(['echo', 'ran'], timeout=0.2)
+        assert ['echo', 'ran'] not in commands
 
     async def test_failed_acquisition_keeps_the_client_for_a_retry(self, transport: SpriteTransport) -> None:
         transport.get_error = SpriteError('lookup failed')
