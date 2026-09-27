@@ -124,11 +124,6 @@ def recorded_workspace_ref(workspace: Workspace, carried: WorkspaceRef | None) -
     A run without an attached workspace (none selected, or an `UnavailableWorkspace`) records `carried`, the
     conversation's ref, so a turn that couldn't touch the workspace doesn't lose it for the next one.
     """
-    from .workspaces import Workspace
-    from .workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
-
-    if type(workspace) is Workspace and isinstance(workspace.backend, _UnattachedWorkspace):
-        return carried
     return workspace.ref if workspace.attached else carried
 
 

@@ -400,6 +400,8 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
+        if isinstance(command, str) != shell:
+            raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
         await self._files()
         return FakeWorkspaceResult(stdout=f'ran:{" ".join(command)}')
 

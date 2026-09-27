@@ -27,7 +27,7 @@ from .protocol import (
     WorkspaceResult,
     validate_timeout,
 )
-from .unavailable import UnavailableWorkspace
+from .unavailable import _UnavailableBackend  # pyright: ignore[reportPrivateUsage]
 
 __all__ = ('Workspace', 'WrapperWorkspace')
 
@@ -346,12 +346,13 @@ class Workspace(WorkspaceBackend):
     def attached(self) -> bool:
         """Whether this workspace reaches an environment.
 
-        `False` for an [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace], like a run's placeholder.
+        `False` for an [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] and for a run
+        with no workspace attached.
         """
         backend = self._backend
         if isinstance(backend, Workspace):
             return backend.attached
-        return not isinstance(backend, UnavailableWorkspace)
+        return not isinstance(backend, _UnavailableBackend)
 
     @property
     def ref(self) -> WorkspaceRef | None:

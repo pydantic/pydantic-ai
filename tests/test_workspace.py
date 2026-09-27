@@ -1234,7 +1234,7 @@ async def test_declining_capability_leaves_the_run_workspace_unavailable() -> No
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        assert isinstance(ctx.workspace.backend, UnavailableWorkspace)
+        assert not ctx.workspace.attached
         await ctx.workspace.run(['true'])
         return 'unreachable'  # pragma: no cover
 
@@ -1552,7 +1552,7 @@ async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
     # This capability only attaches: with no ref it declines and the run gets the unavailable default.
     without_ref: AgentRunResult[Any] = await Agent(TestModel(), capabilities=[capability]).run('go')
 
-    assert isinstance(without_ref.workspace.backend, UnavailableWorkspace)
+    assert not without_ref.workspace.attached
     assert capability.ids == ['existing']
 
 
