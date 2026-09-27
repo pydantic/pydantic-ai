@@ -14,7 +14,6 @@ import anyio
 from pydantic_ai.exceptions import UserError
 
 from .protocol import (
-    CommandResult,
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
@@ -83,20 +82,11 @@ class _ShellFilesystem(SupportsFilesystem):
 
     async def read_bytes(self, path: str) -> bytes:
         quoted_path = shlex.quote(path)
-        # Classify the path in the same command: `base64 < directory` succeeds with empty output
-        # on macOS and fails generically on GNU, and every call is a round trip on a remote backend.
-        result = await self._backend.run(
-            f'if test -d {quoted_path}; then exit {_SHELL_EXIT_IS_DIRECTORY}; '
-            f'elif test -f {quoted_path}; then '
-            f'test -r {quoted_path} || exit {_SHELL_EXIT_PERMISSION}; wc -c < {quoted_path}; '
-            f'elif test -e {quoted_path}; then exit {_SHELL_EXIT_NOT_REGULAR}; '
-            f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
-            shell=True,
-        )
-        await self._raise_for_error(result, path, missing=True)
-        if not result.stdout.strip().isdigit():
-            raise WorkspaceError(f'shell filesystem returned an invalid size while reading {path!r}')
-        size = int(result.stdout)
+        entry = await self.stat(path)
+        if entry.is_dir:
+            raise IsADirectoryError(path)
+        assert entry.size is not None
+        size = entry.size
         data = bytearray()
         # Bound each command's output; a single base64 stream can exceed remote run() limits.
         for index in range((size + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
@@ -201,17 +191,14 @@ class _ShellFilesystem(SupportsFilesystem):
         name = posixpath.basename(posixpath.normpath(path))
         if output == 'directory':
             return FileEntry(name=name, path=path, is_dir=True, size=None)
-        try:
-            size = int(output)
-        except ValueError as error:
-            raise WorkspaceError(f'shell filesystem returned an invalid size for {path!r}: {output!r}') from error
+        if not output.isdigit():
+            raise WorkspaceError(f'shell filesystem returned an invalid size for {path!r}: {output!r}')
+        size = int(output)
         return FileEntry(name=name, path=path, is_dir=False, size=size)
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
         quoted_path = shlex.quote(path)
-        result = await self._list_paths(quoted_path)
-        await self._raise_for_error(result, path, missing=True)
-        listing = self._decode_sized_output(result.stdout, path, 'directory listing')
+        listing = await self._list_paths(quoted_path, path)
         # POSIX filenames are bytes; preserve undecodable names for a round trip via os.fsencode.
         entries = listing.decode(errors='surrogateescape').split('\0')
         if any(entry and (entry[0] not in 'd-' or not entry[1:].startswith('/')) for entry in entries):
@@ -222,7 +209,7 @@ class _ShellFilesystem(SupportsFilesystem):
             for entry in sorted((entry for entry in entries if entry), key=lambda entry: entry[1:])
         )
 
-    async def _list_paths(self, quoted_path: str) -> WorkspaceResult:
+    async def _list_paths(self, quoted_path: str, path: str) -> bytes:
         # Keep the scratch file in the environment's temp directory (which needn't be /tmp).
         temporary_path = f'"${{TMPDIR:-/tmp}}/.pydantic-ai-{uuid.uuid4().hex}.list"'
         # `test` and `printf` rather than `find -printf`, which BusyBox and macOS lack.
@@ -243,13 +230,14 @@ class _ShellFilesystem(SupportsFilesystem):
                 'else printf "PAGED\\n"; trap - EXIT HUP INT TERM; fi',
                 shell=True,
             )
+            completed = True
             size, separator, encoded = result.stdout.partition('\n')
-            if result.exit_code != 0 or not separator or encoded.strip() != 'PAGED':
-                completed = True
-                return result
+            await self._raise_for_error(result, path, missing=True)
+            if not separator or encoded.strip() != 'PAGED':
+                return self._decode_sized_output(result.stdout, path, 'directory listing')
             paged = True
             if not size.strip().isdigit():
-                raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {quoted_path!r}')
+                raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}')
             length = int(size)
             listing = bytearray()
             # Each remote command is below the command-output cap, even for a huge directory.
@@ -270,7 +258,7 @@ class _ShellFilesystem(SupportsFilesystem):
                     raise WorkspaceError('shell filesystem returned incomplete output while listing')
                 listing.extend(chunk)
             completed = True
-            return CommandResult(exit_code=0, stdout=f'{size}\n{base64.b64encode(listing).decode()}', stderr='')
+            return bytes(listing)
         finally:
             # A cancelled command may be killed before its EXIT trap runs. Paged listings also
             # keep the file alive across commands; shield only the bounded cleanup.
