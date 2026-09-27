@@ -45,7 +45,6 @@ SHARED = (
     'pydantic_ai_slim/pydantic_ai/workspaces/',
     'pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py',
     f'{_HARNESS}/_workspace.py',
-    f'{_HARNESS}/_workspace_provider.py',
     f'{_HARNESS}/_warn.py',
     f'{_HARNESS}/shell/',
     f'{_HARNESS}/filesystem/',
@@ -108,11 +107,9 @@ def providers_for(
     selected: list[str] = []
     for name, packages in PROVIDERS.items():
         own = (f'{_HARNESS}/{name}_sandbox/', f'docs/harness/{name}-sandbox.md', f'tests/harness/{name}_sandbox/')
-        # The E2B search smoke test lives with FileSystem, outside the provider test directory.
         if (
             shared
             or any(_touches(path, own) for path in files)
-            or (name == 'e2b' and 'tests/harness/filesystem/test_search_live.py' in files)
             or moved & set(packages)
         ):
             selected.append(name)
