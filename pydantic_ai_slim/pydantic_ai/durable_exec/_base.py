@@ -57,7 +57,6 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import Workspace
-from pydantic_ai.workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -404,9 +403,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         workspace = ctx.workspace
         if isinstance(workspace, DurableWorkspace):
             return workspace.wrapped
-        if workspace.attached and not (
-            type(workspace) is Workspace and isinstance(workspace.backend, _UnattachedWorkspace)
-        ):
+        if workspace.attached:
             return workspace
         assert ctx.root_capability is not None
         resolved = select_workspace(ctx.root_capability, ctx, ref=params.ref)
@@ -432,7 +429,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             not self.in_durable_context
             or in_durable_unit()
             or not workspace.attached
-            or (type(workspace) is Workspace and isinstance(workspace.backend, _UnattachedWorkspace))
         ):
             return workspace
         if self._bound_workspace_operation is None:

@@ -24,8 +24,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
-from pydantic_ai.workspaces import Workspace
-from pydantic_ai.workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -612,11 +610,7 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         return self.wrapped.id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if (
-            self._lifecycle == 'enter-outside-durable'
-            and type(ctx.workspace) is Workspace
-            and isinstance(ctx.workspace.backend, _UnattachedWorkspace)
-        ):
+        if self._lifecycle == 'enter-outside-durable' and not ctx.workspace.attached:
             return self
         wrapped = await self.wrapped.for_run(ctx)
         if wrapped is self.wrapped:
@@ -628,11 +622,7 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         return replacement
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if (
-            self._lifecycle == 'enter-outside-durable'
-            and type(ctx.workspace) is Workspace
-            and isinstance(ctx.workspace.backend, _UnattachedWorkspace)
-        ):
+        if self._lifecycle == 'enter-outside-durable' and not ctx.workspace.attached:
             return self
         wrapped = await self.wrapped.for_run_step(ctx)
         if wrapped is self.wrapped:
