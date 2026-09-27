@@ -62,12 +62,6 @@ def _no_real_modal(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPat
     yield
 
 
-@pytest.fixture(autouse=True)
-def _fresh_missing_tools_warning(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Re-arm the once-per-process warning so each test sees it independently of test order."""
-    monkeypatch.setattr('pydantic_ai_harness.modal_sandbox._capability._warned_no_workspace_tools', False)
-
-
 @pytest.fixture
 def anyio_backend() -> str:
     return 'asyncio'

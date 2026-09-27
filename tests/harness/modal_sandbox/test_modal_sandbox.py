@@ -456,16 +456,24 @@ def test_workdir_and_working_dir_together_are_refused() -> None:
         ModalSandbox(workdir='/a', working_dir='/b')
 
 
-async def test_agent_without_workspace_tools_warns_once_per_process(fake_modal: FakeModal) -> None:
+async def test_each_agent_without_workspace_tools_warns_once(fake_modal: FakeModal) -> None:
     # `ModalSandbox(image=...)` alone was the documented usage when the capability had its own
     # tools; it still builds, so the warning is what tells the user the model lost the sandbox.
-    agent = Agent(TestModel(), capabilities=[ModalSandbox(image='python:3.13-slim')])
+    # Under Python's default filter, which shows a message from one location only once, every
+    # affected agent must still be told.
+    first = Agent(TestModel(), name='first', capabilities=[ModalSandbox(image='python:3.13-slim')])
+    second = Agent(TestModel(), name='second', capabilities=[ModalSandbox(image='python:3.13-slim')])
     with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('default')
+        await first.run('go')
+        await second.run('go')
+        # Under `always`, only the instance itself can keep a repeat run quiet.
         warnings.simplefilter('always')
-        await agent.run('go')
-        await agent.run('go again')
+        await first.run('go again')
     messages = [str(warning.message) for warning in caught if issubclass(warning.category, UserWarning)]
-    assert len(messages) == 1
+    assert len(messages) == 2
+    assert "this run of agent 'first' has no `Shell` or `FileSystem` tool" in messages[0]
+    assert "this run of agent 'second' has no `Shell` or `FileSystem` tool" in messages[1]
     assert messages[0].startswith("`ModalSandbox` supplies the Modal sandbox as the run's `ctx.workspace`")
     assert 'ModalSandbox(warn_if_no_tools=False)' in messages[0]
     assert messages[0].endswith('#upgrading-from-the-previous-modalsandbox')

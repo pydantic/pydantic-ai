@@ -83,14 +83,17 @@ _WORKSPACE_TOOL_NAMES = frozenset(
     }
 )
 
-_NO_WORKSPACE_TOOLS_MESSAGE = (
-    "`ModalSandbox` supplies the Modal sandbox as the run's `ctx.workspace` and registers no tools of its own, "
-    'and this run has no `Shell` or `FileSystem` tool. Add `Coder()`, or `Shell()` and/or `FileSystem()`, '
-    'alongside it. If your own code or tools use `ctx.workspace`, pass `ModalSandbox(warn_if_no_tools=False)` '
-    f'to silence this warning. See {UPGRADE_DOCS_URL}'
-)
 
-_warned_no_workspace_tools = False
+def _no_workspace_tools_message(agent_name: str | None) -> str:
+    # Naming the agent keeps the text distinct per agent, so Python's default warning filter, which
+    # shows a given message from a given location once, does not hide the warning for a second agent.
+    run = 'this run' if agent_name is None else f'this run of agent {agent_name!r}'
+    return (
+        "`ModalSandbox` supplies the Modal sandbox as the run's `ctx.workspace` and registers no tools of its own, "
+        f'and {run} has no `Shell` or `FileSystem` tool. Add `Coder()`, or `Shell()` and/or `FileSystem()`, '
+        'alongside it. If your own code or tools use `ctx.workspace`, pass `ModalSandbox(warn_if_no_tools=False)` '
+        f'to silence this warning. See {UPGRADE_DOCS_URL}'
+    )
 
 
 def _legacy_argument_message(names: list[str]) -> str:
@@ -143,13 +146,16 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
 
     warn_if_no_tools: bool = True
-    """Warn once per process when none of a run's tools has a `Shell` or `FileSystem` tool name.
+    """Warn, once per `ModalSandbox` instance, when none of a run's tools has a `Shell` or `FileSystem` tool name.
 
     Only tool names are checked, so custom tools that reach the sandbox under other names do not count.
 
     Set it to `False` for agents that reach the sandbox only from their own tools or hooks.
     This flag and its warning go away in the stable harness release.
     """
+
+    _warned_no_tools: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this instance has already warned that the run has no workspace tools."""
 
     def __init__(
         self,
@@ -202,6 +208,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.working_dir = working_dir
         self.env = env
         self.warn_if_no_tools = warn_if_no_tools
+        self._warned_no_tools = False
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
@@ -237,17 +244,17 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # The previous `ModalSandbox` registered its own tools, so `ModalSandbox(image=...)` on its
         # own still builds but now leaves the model without the sandbox. This is the earliest hook
-        # that sees the run's tools; it warns once per process and never changes the tools.
-        global _warned_no_workspace_tools
+        # that sees the run's tools; it warns once per instance and never changes the tools.
         if (
             self.warn_if_no_tools
-            and not _warned_no_workspace_tools
+            and not self._warned_no_tools
             and not any(
                 tool.name == name or tool.name.endswith(f'_{name}')
                 for tool in tool_defs
                 for name in _WORKSPACE_TOOL_NAMES
             )
         ):
-            _warned_no_workspace_tools = True
-            warnings.warn(_NO_WORKSPACE_TOOLS_MESSAGE, UserWarning, stacklevel=2)
+            self._warned_no_tools = True
+            agent_name = ctx.agent.name if ctx.agent is not None else None
+            warnings.warn(_no_workspace_tools_message(agent_name), UserWarning, stacklevel=2)
         return tool_defs
