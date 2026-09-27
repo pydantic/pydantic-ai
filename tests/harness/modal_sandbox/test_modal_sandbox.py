@@ -227,7 +227,7 @@ def test_previous_constructor_arguments_are_refused_with_guidance(legacy: dict[s
     # The previous `ModalSandbox` bundled its own tools; each of its arguments now points at
     # where that setting lives, rather than failing as an unknown keyword.
     with pytest.raises(UserError) as exc_info:
-        ModalSandbox(**legacy)  # pyright: ignore[reportArgumentType]
+        ModalSandbox(**legacy)
     message = str(exc_info.value)
     (name,) = legacy
     assert message.startswith(f'`ModalSandbox` no longer accepts `{name}`.')

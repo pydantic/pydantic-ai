@@ -431,7 +431,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 app = await modal.App.lookup.aio(self._app_name, create_if_missing=self._create_app_if_missing)
                 if self._image is None:
                     # Built on create, not at import: Modal caches it per workspace after the first build.
-                    built = modal.Image.debian_slim(python_version='3.12').apt_install('git', 'ripgrep')  # pyright: ignore[reportUnknownMemberType]
+                    built = modal.Image.debian_slim(python_version='3.12').apt_install('git', 'ripgrep')
                 elif isinstance(self._image, str):
                     built = modal.Image.from_registry(self._image)  # pyright: ignore[reportUnknownMemberType]
                 else:
