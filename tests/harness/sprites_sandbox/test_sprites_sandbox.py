@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import anyio
+import anyio.lowlevel
 import client_signals.core
 import httpx
 import pytest
@@ -384,13 +385,16 @@ class TestSpritesSandbox:
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         transport.names.add('remote')
-        transport.release_get = asyncio.Event()
-        acquiring = anyio.Event()
+        acquired_at: list[float] = []
         deadlines: list[float] = []
         get, connect = transport.get, transport.connect
 
         async def observed_get(*args: Any, **kwargs: Any) -> Any:
-            acquiring.set()
+            started = anyio.current_time()
+            # Held until the clock has moved on, so a deadline taken before acquisition lands earlier.
+            while anyio.current_time() == started:
+                await anyio.lowlevel.checkpoint()
+            acquired_at.append(anyio.current_time())
             return await get(*args, **kwargs)
 
         async def observed_connect(*args: Any, **kwargs: Any) -> Any:
@@ -400,15 +404,9 @@ class TestSpritesSandbox:
         monkeypatch.setattr(transport, 'get', observed_get)
         monkeypatch.setattr('sprites.websocket.connect', observed_connect)
         backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'))
-        task = asyncio.create_task(backend.run(['echo', 'ok'], timeout=60))
-        await acquiring.wait()
-        # Only makes the clock move on; a deadline set before acquisition then lands earlier.
-        await anyio.sleep(0.01)
-        acquired_at = anyio.current_time()
-        transport.release_get.set()
 
-        assert (await task).stdout == 'ok\n'
-        assert deadlines[-1] >= acquired_at + 60
+        assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
+        assert deadlines[-1] >= acquired_at[0] + 60
 
     async def test_run_deadline_covers_the_working_directory_check(
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
