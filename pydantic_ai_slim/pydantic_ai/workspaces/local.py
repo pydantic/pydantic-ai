@@ -250,10 +250,18 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         await run_in_executor(remove)
 
     async def exists(self, path: str) -> bool:
-        return await run_in_executor(lambda: (self._ensure_alive(), self._path(path).exists())[1])
+        def check() -> bool:
+            self._ensure_alive()
+            return self._path(path).exists()
+
+        return await run_in_executor(check)
 
     async def realpath(self, path: str) -> str:
-        return await run_in_executor(lambda: (self._ensure_alive(), os.path.realpath(self._path(path)))[1])
+        def resolve() -> str:
+            self._ensure_alive()
+            return os.path.realpath(self._path(path))
+
+        return await run_in_executor(resolve)
 
     async def run(
         self,

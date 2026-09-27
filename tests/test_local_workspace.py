@@ -296,7 +296,9 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
 
     monkeypatch.setattr(anyio, 'open_process', held_spawn)
     timeout = 0.05
-    task = asyncio.create_task(workspace.run(_background_sleep_command(pid_file), shell=True, timeout=timeout))
+    task = asyncio.create_task(
+        workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=timeout)
+    )
     try:
         await _wait_for_pid_file(pid_file)
         with anyio.CancelScope(deadline=anyio.current_time() + timeout, shield=True):

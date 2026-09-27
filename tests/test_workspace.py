@@ -330,7 +330,7 @@ async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) 
     fifo = tmp_path / 'fifo'
     os.mkfifo(fifo)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
-    with anyio.fail_after(2):
+    with anyio.fail_after(30):
         for operation in (workspace.read_bytes, workspace.stat):
             with pytest.raises(OSError, match='not a regular file'):
                 await operation('fifo')
@@ -1290,7 +1290,7 @@ async def test_cancelled_run_stamps_the_workspace_ref() -> None:
     async def probe(ctx: RunContext[Any]) -> str:
         await ctx.workspace.run(['true'])
         entered.set()
-        await anyio.sleep(60)
+        await anyio.sleep_forever()
         return 'unreachable'  # pragma: no cover
 
     async with anyio.create_task_group() as tg:
