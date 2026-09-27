@@ -1748,7 +1748,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         pre_run_root = base_capability
         selected = None
-        if workspace is not None or any(cap.has_get_workspace for cap in (base_capability, *extra_capabilities)):
+        if workspace is not None or any(cap._has_get_workspace for cap in (base_capability, *extra_capabilities)):  # pyright: ignore[reportPrivateUsage]
             # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
             _, pre_run_layer, pre_run_root = _compose_run_capabilities([base_capability], extra_capabilities)
             if explicit is not None:
@@ -1815,7 +1815,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # A workspace capability that exists only after `for_run` (a capability function's) is asked now.
         # One selected before `for_run` is final: `for_run` may have used it.
         initial_ctx.root_capability = run_capability
-        if explicit is None and not model_layers_unchanged and run_capability.has_get_workspace:
+        if explicit is None and not model_layers_unchanged and run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             candidate = select_workspace(
                 run_capability, initial_ctx, ref=offered_ref, run_layer=resolved_caps.run_layer
             )
@@ -1838,7 +1838,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _raise_for_unresolved_workspace(
                 workspace,
                 history_ref=historical_workspace_ref,
-                has_resolvers=pre_run_root.has_get_workspace or run_capability.has_get_workspace,
+                has_resolvers=pre_run_root._has_get_workspace or run_capability._has_get_workspace,  # pyright: ignore[reportPrivateUsage]
             )
 
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
@@ -3604,7 +3604,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
-        if run_capability.has_get_workspace:
+        if run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             # Realtime does not select a workspace yet; don't suggest attaching a capability that is already here.
             run_context.workspace = Workspace(UnavailableWorkspace('Realtime sessions do not support workspaces yet.'))
         # Read back off the resolved tree, as `iter` does, so an `Instrumentation` only a `for_run`
@@ -4621,7 +4621,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     """
     owners: dict[str, type[AbstractCapability[Any]]] = {}
     for cap in capabilities:
-        if cap.defer_loading is True and cap.has_get_workspace:
+        if cap.defer_loading is True and cap._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             raise exceptions.UserError(
                 f"`{type(cap).__name__}` supplies the run's workspace, which is chosen when the run starts, so it "
                 "can't be deferred. Remove `defer_loading=True`."

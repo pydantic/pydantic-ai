@@ -584,7 +584,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return []
 
     @property
-    def has_get_workspace(self) -> bool:
+    def _has_get_workspace(self) -> bool:
         """Whether this capability or a wrapped capability overrides `get_workspace`."""
         return type(self).get_workspace is not AbstractCapability.get_workspace
 
