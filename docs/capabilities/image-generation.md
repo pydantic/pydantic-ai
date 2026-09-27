@@ -172,6 +172,63 @@ direct model raises it. Using
 [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. See
 [error handling](../image-generation.md#error-handling) for the direct API's exceptions.
 
+## Retrieving the Generated Image
+
+An image this capability generates reaches the model as the result of a tool call, so it lands in the message history as
+a `ToolReturnPart` holding a [`BinaryImage`][pydantic_ai.messages.BinaryImage] — not on the model's own response.
+Because the run usually ends on the model's text response, `result.response.images` is empty even though an image was
+generated:
+
+```python
+result = agent.run_sync('Generate an illustration of a cafe. Then write alt text for it.')
+result.output           # the alt text
+result.response.images  # [] — the image was produced earlier, by the capability's tool
+```
+
+Collect the generated images by walking the run's messages and keeping the parts whose content is a `BinaryImage`:
+
+```python
+from pydantic_ai import BinaryImage
+
+images = [
+    part.content
+    for message in result.all_messages()
+    for part in message.parts
+    if isinstance(getattr(part, 'content', None), BinaryImage)
+]
+```
+
+Each item is a [`BinaryImage`][pydantic_ai.messages.BinaryImage], so `Path('cafe.png').write_bytes(images[0].data)`
+saves it to disk.
+
+### Asking for the image as the run's output
+
+Setting `output_type=BinaryImage` makes the image the run's `output` instead, with no history walk:
+
+```python
+agent = Agent(
+    'openai:gpt-5-mini',
+    capabilities=[ImageGeneration(native=False, local=image_generator)],
+    output_type=BinaryImage,
+)
+
+result = agent.run_sync('Generate an illustration of a cafe.')
+result.output  # BinaryImage
+```
+
+That changes what the run returns: `output` is the image rather than text, so a run that also needs the model's words —
+alt text, a caption, an explanation — has to ask for them separately. Image output is additionally gated on the
+conversational model's profile: when the model request is prepared, a model that does not report
+`supports_image_output` raises [`UserError`][pydantic_ai.exceptions.UserError]. That matters here because
+`native=False` with a local generator is exactly what you configure when the conversational model cannot generate images
+itself — the configuration on which asking for the image as the run's output is refused. On that configuration, walk
+the message history instead.
+
+| You want | Do this |
+| --- | --- |
+| The agent generates an image and carries on in text | Leave `output_type` unset; collect `BinaryImage` parts from `result.all_messages()` |
+| The image is the whole point of the run | `output_type=BinaryImage`, on a model whose profile supports image output |
+
 ## Agent Specs
 
 Direct model names such as `fallback_image_model='openai:gpt-image-1.5'` can be represented in JSON or YAML agent
