@@ -189,7 +189,31 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
 )
 """Subclasses before their bases: an error crosses as the first of these it is an instance of."""
-_EXPECTED_ERRORS_BY_NAME = {error_type.__name__: error_type for error_type in _EXPECTED_ERRORS}
+
+
+class ReraisedWorkspaceCallError(Exception):
+    """Marks a builtin error that a workspace call raised in a durable unit, re-raised in workflow code.
+
+    `raise_error` re-raises a builtin as a subclass of it and this marker, with the builtin's name, so a
+    hook still catches it as that builtin. Temporal lists the marker as a workflow-failure type instead of
+    the builtins, which would change how every workflow's own errors fail.
+    """
+
+
+def _reraisable(builtin: type[Exception]) -> type[Exception]:
+    def __reduce__(self: Exception) -> tuple[Any, ...]:
+        # Pickles as the plain builtin (DBOS pickles a failed workflow's error): this class isn't importable.
+        return (builtin, *cast(tuple[Any, ...], builtin.__reduce__(self))[1:])
+
+    namespace = {'__module__': __name__, '__qualname__': builtin.__qualname__, '__reduce__': __reduce__}
+    # Pyright sees `builtin` only as `Exception`, which can't precede the marker; every real builtin can.
+    return type(builtin.__name__, (builtin, ReraisedWorkspaceCallError), namespace)  # pyright: ignore[reportGeneralTypeIssues]
+
+
+_EXPECTED_ERRORS_BY_NAME = {
+    error_type.__name__: error_type if issubclass(error_type, (WorkspaceError, UserError)) else _reraisable(error_type)
+    for error_type in _EXPECTED_ERRORS
+}
 
 
 def error_as_data(error: Exception) -> WorkspaceCallError | None:
@@ -231,17 +255,17 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
 
 
 def raise_error(error: WorkspaceCallError) -> Never:
-    """Re-raise an error that crossed a durable boundary as data, with its original type."""
+    """Re-raise an error that crossed a durable boundary as data, as its original type."""
     error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[error.type])
     if error_type is WorkspaceOutputLimitError:
         assert error.limit is not None
         raise WorkspaceOutputLimitError(error.message, limit=error.limit, stdout=error.stdout, stderr=error.stderr)
     if error_type is WorkspaceTimeoutError:
         raise WorkspaceTimeoutError(error.message, stdout=error.stdout, stderr=error.stderr)
-    if error_type is UnicodeEncodeError:
+    if issubclass(error_type, UnicodeEncodeError):
         assert error.encoding is not None and error.object is not None
         assert error.start is not None and error.end is not None and error.reason is not None
-        raise UnicodeEncodeError(error.encoding, error.object, error.start, error.end, error.reason)
+        raise error_type(error.encoding, error.object, error.start, error.end, error.reason)
     if issubclass(error_type, OSError) and not issubclass(error_type, WorkspaceError):
         if error.errno is None:
             # Some backends raise FileNotFoundError(path), without OS error fields.
@@ -390,11 +414,12 @@ class DurableWorkspace(WrapperWorkspace):
                 return
             if ctx is not None:
                 self._ctx = ctx
-            result = await self._dispatch(WorkspaceCall(method='ensure'), ref=self.wrapped.ref)
+            ref = self.wrapped.ref
+            result = await self._dispatch(WorkspaceCall(method='ensure'), ref=ref)
             assert result.ref is not None
-            if self.wrapped.ref != result.ref:
-                # A fresh environment: rebuild the selection on its ref, so this side attaches to what
-                # the unit created instead of creating another on first use.
+            if ref != result.ref:
+                # A fresh environment: rebuild the selection on its ref, so a recovered run can reach it.
+                # In-process engines created it on this very backend, so they only need the check.
                 ctx = self._run_context()
                 assert ctx.root_capability is not None
                 rebuilt = select_workspace(ctx.root_capability, ctx, ref=result.ref)
@@ -404,7 +429,8 @@ class DurableWorkspace(WrapperWorkspace):
                         f'{result.ref.provider!r}, which the run just created. A `get_workspace` hook that '
                         'creates an environment must also recognize its ref.'
                     )
-                self._backend = rebuilt
+                if self.wrapped.ref != result.ref:
+                    self._backend = rebuilt
             self._ref = result.ref
             self._working_dir = result.text
 

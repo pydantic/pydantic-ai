@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import timedelta
 from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
 from temporalio import activity, workflow
@@ -88,17 +87,6 @@ class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
-def workspace_run_activity_config(config: ActivityConfig, timeout: float | None) -> ActivityConfig:
-    """Leave enough time for acquisition, command execution, and stopping the process."""
-    # Without a command deadline, use a finite activity ceiling instead of the 60s default.
-    required = timedelta(seconds=timeout + 30) if timeout is not None else timedelta(hours=1)
-    configured = config.get('start_to_close_timeout')
-    if configured is None or configured < required:
-        config = config.copy()
-        config['start_to_close_timeout'] = required
-    return config
-
-
 class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
     def __init__(
         self,
@@ -128,8 +116,6 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
                     'Workspace write is too large for Temporal (default 2MB activity payload limit). '
                     'Move the file transfer into a tool, or configure external payload storage.'
                 )
-        if isinstance(params, WorkspaceCallParams) and params.call.method == 'run':
-            activity_config = workspace_run_activity_config(activity_config, params.call.timeout)
         model_name = ''
         if isinstance(operation_id, ModelRequestId):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name

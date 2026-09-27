@@ -97,6 +97,7 @@ from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
 
 if TYPE_CHECKING:
@@ -12179,9 +12180,9 @@ async def test_no_workspace_preserves_history_response_identity() -> None:
     assert second.all_messages()[-1] is response
 
 
-async def test_unattached_workspace_rejects_commands() -> None:
+async def test_no_workspace_rejects_commands() -> None:
     result = await Agent(TestModel()).run('Hello')
-    with pytest.raises(UserError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
         await result.workspace.run('pwd')
 
 

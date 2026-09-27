@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse, TextPart
@@ -38,6 +39,8 @@ async def test_override_workspace_precedence(tmp_path: Path) -> None:
             provider='local', id=str(explicit)
         )
     assert (await agent.run('go')).workspace.ref == WorkspaceRef(provider='local', id=str(original))
+    with WrapperAgent(agent).override(workspace=replacement_backend):
+        assert (await agent.run('go')).workspace.ref == replacement_backend.ref
 
 
 @pytest.mark.parametrize('invalid', [{'provider': 'local', 'id': '/tmp'}, '/tmp', Path('/tmp'), 'old', 42])

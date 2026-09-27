@@ -147,9 +147,6 @@ class _FilesystemProviderBackend:
     async def exists(self, path: str) -> bool:
         return await self.backend.exists(path)
 
-    async def realpath(self, path: str) -> str:
-        return await self.backend.realpath(path)
-
 
 class TestProviderBackend(WorkspaceBackendSuite):
     @pytest.fixture
