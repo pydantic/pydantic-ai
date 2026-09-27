@@ -166,7 +166,7 @@ parameter's description only when the local schema declares one.
 | Session seeding | Unsupported | The conversation WebSocket has no history-seeding channel |
 | Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
 | Native tools | Unsupported | Server-side tools live on the agent, outside the session |
-| Usage | Limited parameter support | Context tokens only, and only with `context_usage` in the agent's `client_events` (off by default); no output tokens or credits on the socket, cost appears post-hoc on the conversations API |
+| Usage | Limited parameter support | Context tokens only, and only with `context_usage` in the agent's `client_events` (off by default); no output tokens or credits on the socket, so `usage.cost` is always `None` and `cost_limit` never trips; cost appears post-hoc on the conversations API |
 | Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable; pin it via `profile={'context_window': ...}`, or read the live value from `ElevenLabsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`; `session.context_window_used` is updated from the same reports |
 | Session duration | Limited parameter support | Capped by the agent's `max_duration_seconds` (600 s by default, up to 7,200 s, set on the agent, not per conversation); the conversation ends at the cap |
 | State-restoring reconnect | Unsupported | Conversations cannot be resumed, at the cap or after a drop; `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
@@ -220,6 +220,9 @@ Telephony (`ulaw_8000`) agents are not supported.
   and the ratio of the two is what
   [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used]
   returns after each report.
+  No price is known for the platform, so [`usage.cost`][pydantic_ai.usage.RunUsage.cost] is always
+  `None`; a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] warns that it cannot be enforced and
+  never trips on this provider.
   Look up conversation cost post-hoc via the ElevenLabs conversations API: every finalized
   [`ModelResponse`][pydantic_ai.messages.ModelResponse] carries the server-assigned id in
   `provider_details['conversation_id']`, so it survives into persisted history, and a consumer
