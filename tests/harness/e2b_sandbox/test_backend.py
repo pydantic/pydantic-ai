@@ -105,8 +105,7 @@ class TestCreate:
         call = fake_e2b.create_calls[-1]
         # The most E2B's Hobby plan allows, pausing rather than killing at the end of it.
         assert (call.template, call.timeout, call.envs, call.lifecycle) == (None, 3_600, None, {'on_timeout': 'pause'})
-        # Passed explicitly: it decides whether the sandbox is reachable without its token.
-        assert (call.secure, call.allow_internet_access) == (True, True)
+        assert call.allow_internet_access is True
 
     @pytest.mark.parametrize(
         ('error', 'message'),

@@ -402,7 +402,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                         template=self._template,
                         timeout=self._sandbox_timeout,
                         envs=dict(self._env) if self._env is not None else None,
-                        secure=True,
                         allow_internet_access=self._allow_internet_access,
                         # Pause at the end of the lifetime instead of killing, so the files survive.
                         lifecycle={'on_timeout': 'pause'},
