@@ -7,7 +7,6 @@ subprocesses — it **isolates nothing**.
 from __future__ import annotations as _annotations
 
 import asyncio
-import logging
 import os
 import shutil
 import signal
@@ -57,7 +56,6 @@ _ANYIO_WAITS_FOR_PIPES = tuple(int(part) for part in version('anyio').split('.')
 _EXIT_POLL_INTERVAL = 0.005
 _SPAWN_GRACE = 2.0
 _REAP_GRACE = 2.0
-logger = logging.getLogger(__name__)
 
 
 def _waits_for_pipes() -> bool:
@@ -90,7 +88,6 @@ async def _shielded(awaitable: Awaitable[None], deadline: float) -> None:
     # An outer cancellation takes precedence over the child's safety deadline.
     await anyio.sleep(0)
     if timed_out:
-        logger.warning('Local workspace subprocess operation exceeded its safety deadline')
         raise TimeoutError('local workspace subprocess operation exceeded its grace period')
 
 
@@ -136,21 +133,16 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         """`WorkspaceRef(provider='local', id=<absolute working_dir>)`, available from construction."""
         return self._ref
 
-    async def _get_working_dir(self) -> Path:
-        # Symlinks resolved (macOS `/var`, `link/..`), so paths match what the kernel reports to commands.
+    def _ensure_alive(self) -> Path:
         if self._resolved_working_dir is None:
+            self._resolved_working_dir = self._working_dir.resolve()
+        root = self._resolved_working_dir
+        if not root.is_dir():
+            raise WorkspaceUnavailableError(f'local workspace directory {self._working_dir!s} does not exist')
+        return root
 
-            def resolve() -> Path:
-                resolved = self._working_dir.resolve()
-                if not resolved.is_dir():
-                    raise WorkspaceUnavailableError(
-                        f'local workspace directory {self._working_dir.as_posix()!r} does not exist; the '
-                        'caller creates the directory before the run, and nothing recreates a removed one'
-                    )
-                return resolved
-
-            self._resolved_working_dir = await run_in_executor(resolve)
-        return self._resolved_working_dir
+    async def _get_working_dir(self) -> Path:
+        return await run_in_executor(self._ensure_alive)
 
     async def working_dir(self) -> str:
         return str(await self._get_working_dir())
@@ -166,6 +158,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     async def read_bytes(self, path: str) -> bytes:
         def read() -> bytes:
+            self._ensure_alive()
             # O_NONBLOCK lets us inspect FIFOs and devices without opening a blocking stream.
             fd = os.open(self._path(path), os.O_RDONLY | os.O_NONBLOCK)
             with os.fdopen(fd, 'rb') as file:
@@ -178,16 +171,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
         return await run_in_executor(read)
 
-    def _check_root(self, target: Path) -> None:
-        root = self._resolved_working_dir or self._working_dir
-        if target == root or root in target.parents:
-            if not root.is_dir():
-                raise WorkspaceUnavailableError(f'local workspace directory {root!s} does not exist')
-
     async def write_bytes(self, path: str, data: bytes) -> None:
         def write() -> None:
             target = self._path(path)
-            self._check_root(target)
+            self._ensure_alive()
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
             except FileExistsError as error:
@@ -200,15 +187,18 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     async def stat(self, path: str) -> FileEntry:
         def stat() -> FileEntry:
+            self._ensure_alive()
             target = self._path(path)
-            size = target.stat().st_size
-            is_dir = target.is_dir()
+            info = target.stat()
+            size = info.st_size
+            is_dir = stat_module.S_ISDIR(info.st_mode)
             return FileEntry(name=target.name, path=path, is_dir=is_dir, size=None if is_dir else size)
 
         return await run_in_executor(stat)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         def list_entries() -> list[FileEntry]:
+            self._ensure_alive()
             entries: list[FileEntry] = []
             # `os.scandir`, not `Path.iterdir`: each `DirEntry` carries the type and stat data the
             # directory read already returned, so an ordinary entry costs one syscall instead of
@@ -235,7 +225,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def make_dir(self, path: str) -> None:
         def make() -> None:
             target = self._path(path)
-            self._check_root(target)
+            self._ensure_alive()
             try:
                 target.mkdir(parents=True, exist_ok=True)
             except FileExistsError as error:
@@ -248,7 +238,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def remove(self, path: str) -> None:
         def remove() -> None:
             target = self._path(path)
-            root = self._resolved_working_dir or self._working_dir
+            root = self._ensure_alive()
             # Never allow a recursive delete to take the workspace itself or its parents.
             if not target.is_symlink() and target.resolve() in (root, *root.parents):
                 raise ValueError('cannot remove the workspace root or its ancestor')
@@ -260,14 +250,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         await run_in_executor(remove)
 
     async def exists(self, path: str) -> bool:
-        return await run_in_executor(self._path(path).exists)
+        return await run_in_executor(lambda: (self._ensure_alive(), self._path(path).exists())[1])
 
     async def realpath(self, path: str) -> str:
-        return await run_in_executor(os.path.realpath, self._path(path))
-
-    async def _check_environment_alive(self) -> None:
-        if not await run_in_executor((self._resolved_working_dir or self._working_dir).is_dir):
-            raise WorkspaceUnavailableError(f'local workspace directory {self._working_dir!s} does not exist')
+        return await run_in_executor(lambda: (self._ensure_alive(), os.path.realpath(self._path(path)))[1])
 
     async def run(
         self,
@@ -291,7 +277,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         elif shell:
             raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
 
-        working_dir = cwd if cwd is not None else await self._get_working_dir()
+        root = await self._get_working_dir()
+        working_dir = cwd if cwd is not None else root
         # Directory preparation is not command time; process startup still counts, so a
         # process spawned after the deadline is terminated by the existing cleanup path.
         absolute_deadline = None if timeout is None else anyio.current_time() + timeout
@@ -316,12 +303,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             spawn_deadline = min(anyio.current_time() + _SPAWN_GRACE, absolute_deadline or float('inf'))
             await _shielded(spawn(), spawn_deadline)
         except (FileNotFoundError, PermissionError) as error:
-            if isinstance(error, FileNotFoundError) and not await run_in_executor(
-                (self._resolved_working_dir or self._working_dir).is_dir
-            ):
-                raise WorkspaceUnavailableError(
-                    f'local workspace directory {self._working_dir!s} does not exist'
-                ) from error
+            if isinstance(error, FileNotFoundError):
+                await self._get_working_dir()
             # Like `sh`, a program that is missing (127) or not executable (126) is a normal result.
             # Only the program itself: a missing `cwd` raises the same error types and must still raise.
             if isinstance(command, str) or error.filename != command[0]:
@@ -340,7 +323,6 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 and absolute_deadline is not None
                 and anyio.current_time() >= absolute_deadline
             ):
-                logger.warning('Local workspace command exceeded its deadline during subprocess startup')
                 raise WorkspaceTimeoutError(f'command timed out after {timeout} seconds during startup') from error
             raise
         running_process = process
@@ -374,7 +356,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise
         # A process can still finish after its working directory is deleted; don't report
         # that as an ordinary exit from a live workspace.
-        await self._check_environment_alive()
+        await self._get_working_dir()
         return CommandResult(
             exit_code=exit_code,
             stdout=stdout_buffer.decode('utf-8', errors='replace'),
@@ -457,28 +439,17 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         await process.aclose()
 
     async def _terminate(self, process: anyio.abc.Process) -> PermissionError | None:
-        """Kill the process group and reap it; return the error if killing the group was denied."""
-        try:
-            self._kill(process)
-        except PermissionError as denial:
-            return denial
-        finally:
-            try:
-                # Teardown must not hold a cancelled caller indefinitely if a pipe/reap stalls.
-                await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
-            except TimeoutError:
-                logger.warning('Timed out reaping local workspace process group %s after kill', process.pid)
-        return None
-
-    @staticmethod
-    def _kill(process: anyio.abc.Process) -> None:
-        # If the group kill is denied, kill the direct child but still raise because its children may survive.
+        """Kill the process group and reap it; return a group-kill denial."""
+        denial = None
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        except PermissionError:
-            try:
-                process.kill()
-            finally:
-                raise
+        except PermissionError as error:
+            denial = error
+            process.kill()
+        try:
+            await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
+        except TimeoutError:
+            pass
+        return denial
