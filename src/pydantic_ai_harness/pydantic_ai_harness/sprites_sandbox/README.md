@@ -77,11 +77,11 @@ async def run_python(ctx: RunContext, code: str) -> str:
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 
-When a command times out, plain `&` children of that command end with it. A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.sprites.dev/working-with-sprites/services/).
+A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.sprites.dev/working-with-sprites/services/).
 
 ## What a timeout stops
 
-A command timeout starts after the Sprite is ready. The backend closes that command's exec connection and asks Sprites to stop it after one second; it does not delete the Sprite. The command's process group, especially children of a shell, is not yet guaranteed to have stopped. If stopping is uncertain, inspect the Sprite or delete it explicitly. `timeout=None` removes the command deadline, not the Sprite's idle pause or transport limits.
+A command timeout starts after the Sprite is ready. The backend closes that command's exec connection and asks Sprites to stop it after one second; it does not delete the Sprite. Stopping is best effort: the command's process group, plain `&` children of a shell included, is not guaranteed to have stopped. If stopping is uncertain, inspect the Sprite or delete it explicitly. `timeout=None` removes the command deadline, not the Sprite's idle pause or transport limits.
 
 A background child that inherits stdout or stderr keeps `run()` waiting until that child exits, because Sprites reports the exit status only after the output stream closes. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
 
