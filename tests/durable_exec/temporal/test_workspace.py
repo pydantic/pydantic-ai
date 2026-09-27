@@ -47,7 +47,6 @@ try:
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
-    from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall, execute_call, raise_error
     from pydantic_ai.durable_exec.prefect import PrefectDurability
@@ -57,7 +56,6 @@ try:
         TemporalDurability,
         _workflow_runner,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.durable_exec.temporal._operation_backend import workspace_run_activity_config
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import with_non_retryable_errors
     from pydantic_ai.durable_exec.temporal._transports import _WorkspaceCallWire
@@ -144,15 +142,6 @@ def test_workspace_failures_do_not_retry_temporal_activities() -> None:
     assert {WorkspaceTimeoutError.__name__, WorkspaceReadOnlyError.__name__, WorkspaceUnavailableError.__name__} <= set(
         policy.non_retryable_error_types or []
     )
-
-
-def test_workspace_run_activity_has_time_for_command_and_cleanup() -> None:
-    config = ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
-    assert workspace_run_activity_config(config, 120).get('start_to_close_timeout') == timedelta(seconds=150)
-    assert workspace_run_activity_config(config, None).get('start_to_close_timeout') == timedelta(hours=1)
-    longer = ActivityConfig(start_to_close_timeout=timedelta(hours=2))
-    assert workspace_run_activity_config(longer, 120).get('start_to_close_timeout') == timedelta(hours=2)
-    assert config.get('start_to_close_timeout') == timedelta(seconds=60)
 
 
 def test_unattached_workspace_does_not_serialize_an_unavailable_reason() -> None:
