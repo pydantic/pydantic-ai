@@ -11,6 +11,7 @@ import shlex
 import uuid
 import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -125,8 +126,12 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         }
         for name in SHELL_TOOL_NAMES:
             if name in self._tools:
-                metadata = command_metadata if name in ('run_command', 'start_command', PERSISTENT_TOOL_NAME) else None
-                self.add_function(registrations[name], name=name, metadata=metadata)
+                metadata: dict[str, Any] = (
+                    command_metadata.copy() if name in ('run_command', 'start_command', PERSISTENT_TOOL_NAME) else {}
+                )
+                if name in ('run_command', PERSISTENT_TOOL_NAME):
+                    metadata['temporal'] = {'start_to_close_timeout': timedelta(seconds=MAX_FOREGROUND_WAIT + 30)}
+                self.add_function(registrations[name], name=name, metadata=metadata or None)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh instance per run when `persist_cwd` tracks a cwd, so each run has its own.
