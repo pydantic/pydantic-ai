@@ -1,8 +1,8 @@
 """Detached jobs: commands started inside the run's workspace that outlive the call that started them.
 
 `Job.launch` runs a short POSIX `sh` launcher through `workspace.run`. The launcher starts a
-wrapper shell in its own session (`setsid` when the workspace has it, else `nohup` in the
-launcher's process group) and returns once the wrapper is running. The wrapper publishes `status.json` --
+wrapper shell in its own session (`setsid` when the workspace has it, else `nohup` in a
+process group of its own or the launcher's) and returns once the wrapper is running. The wrapper publishes `status.json` --
 `{"pid": <wrapper pid>, "exit_code": null}` -- before running the command, appends the
 command's output to log files next to it, and publishes the exit code when the command ends.
 Each job's files live in one owner-only directory below `.pydantic-ai-harness/shell` in the
@@ -72,9 +72,12 @@ if command -v setsid > /dev/null 2>&1; then
   setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=$pid
 else
+  set -m 2> /dev/null
   nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=-
-  if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
+  for leader in $pid $$; do
+    if [ "$(ps -o pgid= -p $leader 2> /dev/null | tr -d ' ')" = "$leader" ]; then group=$leader; break; fi
+  done
 fi
 while [ ! -e "$dir/status.json" ]; do sleep 0.1 2> /dev/null || sleep 1; done
 : > "$dir/launch.ready"
@@ -88,10 +91,12 @@ has detached it: some workspaces kill the launching process group as soon as it 
 The workspace run is bounded by `CONTROL_TIMEOUT`. `sleep 1` stands in where `sleep`
 takes only whole seconds.
 
-Without `setsid`, the job stays in the launcher's process group. That group is only the job's
-to signal when the workspace started the launcher as a group leader (the local workspace starts
-every command in a new session); otherwise the group may hold the workspace's own processes, so
-it is reported as `-` and only the wrapper's PID is signalled.
+Without `setsid`, `set -m` asks the shell to start the wrapper in a process group of its own;
+bash does this without a terminal, dash does not. Failing that, the job stays in the launcher's
+process group, which is only the job's to signal when the workspace started the launcher as a
+group leader (the local workspace starts every command in a new session). Otherwise the group may
+hold the workspace's own processes, so it is reported as `-` and only the wrapper's PID is
+signalled, which does not stop the command.
 """
 
 

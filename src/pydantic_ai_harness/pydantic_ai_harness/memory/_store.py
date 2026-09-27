@@ -530,9 +530,12 @@ class FileStore:
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             return None
 
+    async def _operations(self, workspace: Workspace, root: str) -> str:
+        return await self._confine(workspace, root, posixpath.join(root, _OPERATIONS_NAME), _OPERATIONS_NAME)
+
     @staticmethod
-    async def _receipts(workspace: Workspace, root: str) -> list[_Receipt]:
-        raw = await FileStore._content(workspace, posixpath.join(root, _OPERATIONS_NAME))
+    async def _receipts(workspace: Workspace, operations: str) -> list[_Receipt]:
+        raw = await FileStore._content(workspace, operations)
         if raw is None:
             return []
         try:
@@ -543,9 +546,9 @@ class FileStore:
             return []
 
     @staticmethod
-    async def _save(workspace: Workspace, root: str, receipts: list[_Receipt]) -> None:
+    async def _save(workspace: Workspace, operations: str, receipts: list[_Receipt]) -> None:
         kept = [asdict(receipt) for receipt in receipts[-_MAX_RECEIPTS:]]
-        await workspace.write_text(posixpath.join(root, _OPERATIONS_NAME), json.dumps(kept))
+        await workspace.write_text(operations, json.dumps(kept))
 
     async def _settle(self, workspace: Workspace, root: str, receipts: list[_Receipt], path: str) -> bool:
         """Finish or drop receipts for `path` left pending by an interrupted mutation; return whether any changed.
@@ -555,7 +558,9 @@ class FileStore:
         """
         changed = False
         for receipt in [receipt for receipt in receipts if not receipt.done and receipt.path == path]:
-            content = await self._content(workspace, self._target(root, path))
+            content = await self._content(
+                workspace, await self._confine(workspace, root, self._target(root, path), path)
+            )
             version = None if content is None else content_version(content)
             changed = True
             if version == receipt.version:
@@ -582,7 +587,7 @@ class FileStore:
         if content is None:
             return None
         version = content_version(content)
-        receipts = await self._receipts(workspace, root)
+        receipts = await self._receipts(workspace, await self._operations(workspace, root))
         operation_id = next(
             (
                 receipt.id
@@ -602,12 +607,13 @@ class FileStore:
         workspace = self._workspace()
         async with self._lock:
             root = await self._root(workspace)
-            receipts = await self._receipts(workspace, root)
+            operations = await self._operations(workspace, root)
+            receipts = await self._receipts(workspace, operations)
             receipt = self._find(receipts, operation)
             if receipt is None:
                 return None
             if not receipt.done and await self._settle(workspace, root, receipts, receipt.path):
-                await self._save(workspace, root, receipts)
+                await self._save(workspace, operations, receipts)
             return receipt.mutation() if receipt.done else None
 
     async def _mutate(
@@ -623,16 +629,17 @@ class FileStore:
             root = await self._root(workspace)
             target = self._target(root, path)
             await self._confine(workspace, root, target, path)
-            receipts = await self._receipts(workspace, root)
+            operations = await self._operations(workspace, root)
+            receipts = await self._receipts(workspace, operations)
             settled = await self._settle(workspace, root, receipts, path)
             if operation is not None and (receipt := self._find(receipts, operation)) is not None:
                 if settled:
-                    await self._save(workspace, root, receipts)
+                    await self._save(workspace, operations, receipts)
                 return receipt.mutation()
             current = await self._content(workspace, target)
             if (None if current is None else content_version(current)) != expected_version:
                 if settled:
-                    await self._save(workspace, root, receipts)
+                    await self._save(workspace, operations, receipts)
                 raise MemoryConflictError(
                     f'memory path {path!r} changed before it could be {"written" if kind == "write" else "deleted"}'
                 )
@@ -650,16 +657,16 @@ class FileStore:
                     False,
                 )
                 receipts.append(receipt)
-                await self._save(workspace, root, receipts)
+                await self._save(workspace, operations, receipts)
             elif settled:
-                await self._save(workspace, root, receipts)
+                await self._save(workspace, operations, receipts)
             if content is not None:
                 await workspace.write_text(target, content)
             elif current is not None:
                 await workspace.remove(target)
             if receipt is not None:
                 receipt.done = True
-                await self._save(workspace, root, receipts)
+                await self._save(workspace, operations, receipts)
             return MemoryMutation(version=version, replayed=False, existed=current is not None)
 
     async def write(
