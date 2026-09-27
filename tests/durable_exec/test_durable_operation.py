@@ -1507,9 +1507,7 @@ async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself() ->
     )
     for method in ('for_run', 'for_run_step'):
         replacement = await getattr(durable, method)(ctx)
-        assert isinstance(replacement, DurableFunctionToolset)
-        assert replacement is not durable and replacement.id == leaf.id
-        assert replacement.id == 'replacing'
+        assert replacement is durable
 
 
 async def test_legacy_validation_fallbacks_remain_inline() -> None:
