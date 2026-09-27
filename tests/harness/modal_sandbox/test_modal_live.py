@@ -118,9 +118,14 @@ async def test_cancel_kills_term_ignoring_child() -> None:
     marker = uuid.uuid4().hex
     async with owned_backend() as backend:
         script = (
-            'import signal,time,pathlib; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
-            f'pathlib.Path("/tmp/{marker}.ready").touch(); time.sleep(4); '
-            f'pathlib.Path("/tmp/{marker}.late").touch()'
+            'import os,signal,time,pathlib; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+            f'pathlib.Path("/tmp/{marker}.tmp").write_text(str(os.getpid())); '
+            f'os.rename("/tmp/{marker}.tmp", "/tmp/{marker}.ready"); time.sleep(600)'
+        )
+        # `kill -0` includes zombies; read the process state from /proc instead.
+        alive = (
+            f'import os; s="/proc/"+open("/tmp/{marker}.ready").read()+"/stat"; '
+            'print(os.path.exists(s) and open(s).read().split()[2] != "Z")'
         )
         task = asyncio.create_task(backend.run(['python', '-c', script], timeout=None))
         try:
@@ -130,8 +135,9 @@ async def test_cancel_kills_term_ignoring_child() -> None:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            await anyio.sleep(5)
-            assert not await backend.exists(f'/tmp/{marker}.late')
+            with anyio.fail_after(30):
+                while (await backend.run(['python', '-c', alive], timeout=15)).stdout.strip() != 'False':
+                    await anyio.sleep(0.1)
         finally:
             if not task.done():
                 task.cancel()
@@ -178,7 +184,10 @@ async def test_a_terminated_sandbox_is_unavailable() -> None:
 async def test_an_expired_sandbox_is_unavailable() -> None:
     """A sandbox past its `sandbox_timeout` is gone, both to its owner and to a reattach."""
     async with owned_backend(sandbox_timeout=10) as owner:
-        await anyio.sleep(30)
+        native = await owner.get_sandbox()
+        with anyio.fail_after(120):
+            while await native.poll.aio() is None:
+                await anyio.sleep(1)
         with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
             await owner.run(['true'], timeout=30)
         with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
