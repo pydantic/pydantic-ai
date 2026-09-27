@@ -628,9 +628,7 @@ def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
     return {str(key): source[key] for key in source}
 
 
-def _build_spill_preview(
-    handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool
-) -> str:
+def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
         size_desc = f'{len(unit.data):,} bytes (binary)'

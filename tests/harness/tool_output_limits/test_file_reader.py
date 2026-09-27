@@ -22,17 +22,14 @@ async def test_read_tool_result_offered_with_file_system(tmp_path: Path) -> None
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         offered.append({tool.name for tool in info.function_tools})
-        returns = [
-            part
-            for message in messages
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
         if read := [part for part in returns if part.tool_name == READ_TOOL_NAME]:
             return ModelResponse(parts=[TextPart(str(read[0].content))])
         if spilled := [part for part in returns if part.tool_name == 'big_tool']:
             assert spilled[0].metadata is not None
-            return ModelResponse(parts=[ToolCallPart(READ_TOOL_NAME, {'handle': spilled[0].metadata['overflow_handle']})])
+            return ModelResponse(
+                parts=[ToolCallPart(READ_TOOL_NAME, {'handle': spilled[0].metadata['overflow_handle']})]
+            )
         return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
     agent = Agent(
