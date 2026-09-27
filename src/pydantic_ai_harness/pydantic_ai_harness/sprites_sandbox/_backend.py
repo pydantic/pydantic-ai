@@ -58,7 +58,8 @@ import os
 import posixpath
 import re
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from typing import TypeVar
 
 import anyio
@@ -270,6 +271,10 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._client = client
         self._owns_client = client is None
         self._lock = anyio.Lock()
+        # Set while nothing will call `aclose()`: the owned client then closes when the last
+        # operation in flight ends, so a dropped backend leaves no open connection behind.
+        self._close_after_operation = False
+        self._operations = 0
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -381,7 +386,21 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # Finished even when the caller (a run being cancelled) is cancelled meanwhile.
         await _run_to_completion(close)
 
+    @asynccontextmanager
+    async def _operation(self) -> AsyncGenerator[None, None]:
+        self._operations += 1
+        try:
+            yield
+        finally:
+            self._operations -= 1
+            if self._operations == 0 and self._close_after_operation:
+                await self.aclose()
+
     async def working_dir(self) -> str:
+        async with self._operation():
+            return await self._working_dir_unscoped()
+
+    async def _working_dir_unscoped(self) -> str:
         if self._resolved_working_dir is None:
             result = await self.run(['pwd', '-P'], timeout=_INTERNAL_EXEC_TIMEOUT)
             printed = result.stdout.removesuffix('\n')
@@ -404,6 +423,28 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         timeout: float | None = None,
         _capture_stderr: bool = True,
         _check_cwd: bool = True,
+    ) -> CommandResult:
+        async with self._operation():
+            return await self._run(
+                command,
+                shell=shell,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                _capture_stderr=_capture_stderr,
+                _check_cwd=_check_cwd,
+            )
+
+    async def _run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool,
+        cwd: str | None,
+        env: Mapping[str, str] | None,
+        timeout: float | None,
+        _capture_stderr: bool,
+        _check_cwd: bool,
     ) -> CommandResult:
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
@@ -497,6 +538,10 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return output
 
     async def write_bytes(self, path: str, data: bytes) -> None:
+        async with self._operation():
+            await self._write_bytes(path, data)
+
+    async def _write_bytes(self, path: str, data: bytes) -> None:
         # Not through a command: the exec API sends argv in the URL, which caps a command at about 40 KB.
         sandbox = await self.get_sandbox()
         target = sandbox.filesystem() / path
@@ -528,22 +573,28 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     # The other file operations are the ones Pydantic AI derives from `run` for a command-only backend.
     async def read_bytes(self, path: str) -> bytes:
-        return await _ShellFilesystem(self).read_bytes(path)
+        async with self._operation():
+            return await _ShellFilesystem(self).read_bytes(path)
 
     async def stat(self, path: str) -> FileEntry:
-        return await _ShellFilesystem(self).stat(path)
+        async with self._operation():
+            return await _ShellFilesystem(self).stat(path)
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
-        return await _ShellFilesystem(self).list_dir(path)
+        async with self._operation():
+            return await _ShellFilesystem(self).list_dir(path)
 
     async def make_dir(self, path: str) -> None:
-        await _ShellFilesystem(self).make_dir(path)
+        async with self._operation():
+            await _ShellFilesystem(self).make_dir(path)
 
     async def remove(self, path: str) -> None:
-        await _ShellFilesystem(self).remove(path)
+        async with self._operation():
+            await _ShellFilesystem(self).remove(path)
 
     async def exists(self, path: str) -> bool:
-        return await _ShellFilesystem(self).exists(path)
+        async with self._operation():
+            return await _ShellFilesystem(self).exists(path)
 
 
 def _ending_with(marker: str, capture: str, args: list[str]) -> list[str]:

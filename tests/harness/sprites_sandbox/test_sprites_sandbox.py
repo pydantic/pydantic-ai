@@ -174,14 +174,37 @@ class TestSpritesSandbox:
         @agent.tool
         async def write(ctx: RunContext[object]) -> str:
             await ctx.workspace.write_bytes('result.bin', b'\x00\xff\n')
+            await ctx.workspace.run(['true'])
             return 'written'
 
         result = await agent.run('write')
-        assert transport.close_calls == 1
+        # The run keeps one client across its operations and closes it at the end.
+        assert (len(transport.clients), transport.close_calls) == (1, 1)
 
+        # After the run nothing would close the backend, so each operation closes its own client.
         assert await result.workspace.read_bytes('result.bin') == b'\x00\xff\n'
-        assert len(transport.clients) == 2
+        assert (len(transport.clients), transport.close_calls) == (2, 2)
         assert len(transport.names) == 1
+
+    async def test_backend_used_outside_a_run_closes_its_client_after_each_operation(
+        self, transport: SpriteTransport
+    ) -> None:
+        # What a Temporal activity does: rebuild the backend from the ref, use it, and drop it.
+        backend = SpritesSandbox[None]().get_workspace(context(), ref=None)
+        assert isinstance(backend, SpritesSandboxBackend)
+        note = str(transport.root / 'note.txt')
+        await backend.write_bytes(note, b'hi')
+        assert (len(transport.clients), transport.close_calls) == (1, 1)
+
+        attached = SpritesSandbox[None]().get_workspace(context(), ref=backend.ref)
+        assert isinstance(attached, SpritesSandboxBackend)
+        # One operation, however many commands it runs (here the `cwd` check and the command), and
+        # concurrent operations share one client, closed once the last of them ends.
+        first, second = await asyncio.gather(
+            attached.run(['cat', 'note.txt'], cwd=str(transport.root)), attached.exists(note)
+        )
+        assert (first.stdout, second) == ('hi', True)
+        assert (len(transport.clients), transport.close_calls) == (2, 2)
 
     async def test_cancelled_run_still_closes_the_owned_client(self, transport: SpriteTransport) -> None:
         agent = Agent(TestModel(), capabilities=[SpritesSandbox()])

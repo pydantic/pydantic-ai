@@ -27,6 +27,13 @@ class _SuppliedBackend(SpritesSandboxBackend):
     def __init__(self, *, run_id: str | None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.run_id = run_id
+        # Until a run claims it, nothing closes this backend: Temporal builds one per activity and
+        # drops it, so its own client closes after each operation instead.
+        self._close_after_operation = True
+
+    def claim(self, owned: bool) -> None:
+        """Keep the client open across operations while the run that closes it is in progress."""
+        self._close_after_operation = not owned
 
 
 @dataclass(kw_only=True)
@@ -98,11 +105,16 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        # Only the backend this run built: one passed in as `workspace=`, such as a parent run's
+        # handed to a subagent, belongs to the run that built it and may still be in use.
+        backend = innermost_backend(ctx.workspace)
+        owned = backend if isinstance(backend, _SuppliedBackend) and backend.run_id == ctx.run_id else None
+        if owned is not None:
+            owned.claim(True)
         try:
             return await handler()
         finally:
-            # Only the backend this run built: one passed in as `workspace=`, such as a parent run's
-            # handed to a subagent, belongs to the run that built it and may still be in use.
-            backend = innermost_backend(ctx.workspace)
-            if isinstance(backend, _SuppliedBackend) and backend.run_id == ctx.run_id:
-                await backend.aclose()
+            if owned is not None:
+                # `result.workspace` outlives the run, with no one left to close it.
+                owned.claim(False)
+                await owned.aclose()
