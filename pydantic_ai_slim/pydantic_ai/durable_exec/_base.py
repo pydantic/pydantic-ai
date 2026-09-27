@@ -370,7 +370,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         Only then, so an agent without a workspace keeps its exact persisted operation names.
         """
         self._bound_workspace_operation = None
-        if not agent.root_capability.has_get_workspace:
+        if not agent.root_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             return
 
         async def handler(params: WorkspaceCallParams) -> WorkspaceCallResult:

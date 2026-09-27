@@ -79,19 +79,17 @@ To hand the work to another agent, or start a fresh conversation in the same fil
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import ReadOnlyWorkspace
 from pydantic_ai_harness.coder import Coder
 
 coder = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), Coder()])
-reviewer = Agent(
-    'anthropic:claude-opus-5-5',
-    capabilities=[Coder(instructions='Review the uncommitted change and run the tests. Do not edit files.')],
-)
+reviewer = Agent('anthropic:claude-opus-5-5', capabilities=[Coder(instructions='Review the code for bugs.')])
 
 result = coder.run_sync('Add a --verbose flag to the CLI.')
-review = reviewer.run_sync('Review the change.', workspace=result.workspace)
+review = reviewer.run_sync('Review the new --verbose flag.', workspace=ReadOnlyWorkspace(result.workspace))
 ```
 
-The reviewer works in the workspace you pass. With a sandbox, this is how several agents share one isolated machine. [`SubAgents`](subagents.md) needs nothing extra: each delegate runs in the parent's workspace.
+The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#hand-the-workspace-to-another-agent) lets it read the files but refuses commands and file changes, so it gets no shell or editing tools; pass `result.workspace` itself to let it change them. With a sandbox, this is how several agents share one isolated machine. [`SubAgents`](subagents.md) needs nothing extra: each delegate runs in the parent's workspace.
 
 ## Composition
 

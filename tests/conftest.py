@@ -451,7 +451,7 @@ def _configure_blockbuster(
     from blockbuster import BlockBuster
 
     bb = BlockBuster(
-        ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        ['pydantic_ai', 'pydantic_ai_harness', 'pydantic_graph', 'pydantic_evals', 'clai'],
         excluded_modules=excluded_modules or None,
     )
     for func, filename, functions in exemptions:

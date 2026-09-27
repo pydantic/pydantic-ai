@@ -218,7 +218,7 @@ Definitions are read at the start of every run from the run's [workspace](https:
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
 - `None` disables disk loading, exposing only the explicitly-passed `agents`.
 
-Until this release, the home folder `~/.agents/agents/` was read too, and a path sequence was read from this machine. A run without a workspace still reads a path sequence from this machine, with a deprecation warning; pass `workspace=LocalWorkspaceBackend('.')` to keep that.
+Until this release, the folders were read from this machine, including the home folder `~/.agents/agents/`. A run without a workspace now fails at its start when given a path sequence, and warns once when it skips a conventional folder that exists in the current directory or the home directory, naming the folder and the fix: add `LocalWorkspace('.')` to the agent or pass `workspace=LocalWorkspaceBackend('.')` for the current directory, or `workspace=LocalWorkspaceBackend(Path.home())` for the home folder. Pass `agent_folders=None` to turn discovery off.
 
 ### Definition format
 

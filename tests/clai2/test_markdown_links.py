@@ -13,6 +13,8 @@ from pydantic_clai2 import StreamRenderer
 from pydantic_clai2._rendering import LinkOutput
 from pydantic_clai2.prompt_surface import PromptSurface
 
+pytestmark = pytest.mark.anyio
+
 URL = 'https://github.com/pydantic/pydantic-ai-harness/pull/1006'
 OPEN = f'\x1b]8;;{URL}\x1b\\'
 CLOSE = '\x1b]8;;\x1b\\'
@@ -63,7 +65,7 @@ async def test_abort_mid_label_does_not_leave_a_hyperlink() -> None:
 
     class Output(io.StringIO):
         def write(self, text: str) -> int:
-            if '\x1b]8;;https://' in text:
+            if '\x1b]8;;https://' in text:  # pragma: no branch
                 started.set()
             return super().write(text)
 

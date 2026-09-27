@@ -19,6 +19,8 @@ from pydantic_clai2.plugins import PluginHost, TurnEnd, TurnOutcome, TurnStart
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def sent(monkeypatch: pytest.MonkeyPatch) -> list[str]:

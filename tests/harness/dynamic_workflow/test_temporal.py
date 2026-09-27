@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal')]
 
 TEMPORAL_PORT = 7247  # avoid conflict with the code_mode and spend suites
 TASK_QUEUE = 'pydantic-ai-harness-dynamic-workflow-queue'

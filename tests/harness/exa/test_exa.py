@@ -29,6 +29,8 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, Tool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

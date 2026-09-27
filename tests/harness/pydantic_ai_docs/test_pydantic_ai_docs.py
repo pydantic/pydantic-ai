@@ -10,6 +10,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -246,6 +247,34 @@ class TestThroughAgent:
 
         with pytest.raises(UserError, match='`PydanticAIDocs` needs a workspace'):
             await agent.run('go')
+
+    @pytest.mark.parametrize('with_run_workspace', [True, False])
+    async def test_own_workspace_replaces_the_runs(self, tmp_path: Path, with_run_workspace: bool) -> None:
+        for root, content in ((tmp_path / 'docs', '# Docs checkout'), (tmp_path / 'run', '# Run workspace')):
+            root.mkdir()
+            (root / 'capabilities.md').write_text(content, encoding='utf-8')
+
+        def call_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_pyai_docs', {'topic': 'capabilities'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        docs = PydanticAIDocs(local_docs_path=Path('.'), workspace=LocalWorkspaceBackend(tmp_path / 'docs'))
+        agent = Agent(FunctionModel(call_then_finish), capabilities=[docs])
+        run_workspace = LocalWorkspaceBackend(tmp_path / 'run') if with_run_workspace else None
+        result = await agent.run('go', workspace=run_workspace)
+
+        returns = [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'read_pyai_docs'
+        ]
+        assert returns == ['# Docs checkout']
+
+    def test_workspace_capability_is_refused(self) -> None:
+        with pytest.raises(TypeError, match='takes a workspace backend'):
+            PydanticAIDocs(workspace=LocalWorkspace('.'))  # pyright: ignore[reportArgumentType]
 
     async def test_no_local_path_needs_no_workspace(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('PYDANTIC_AI_HARNESS_DOCS_PATH', raising=False)

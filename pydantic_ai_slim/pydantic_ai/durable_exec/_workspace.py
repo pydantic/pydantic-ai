@@ -390,11 +390,12 @@ class DurableWorkspace(WrapperWorkspace):
                 return
             if ctx is not None:
                 self._ctx = ctx
-            result = await self._dispatch(WorkspaceCall(method='ensure'), ref=self.wrapped.ref)
+            ref = self.wrapped.ref
+            result = await self._dispatch(WorkspaceCall(method='ensure'), ref=ref)
             assert result.ref is not None
-            if self.wrapped.ref != result.ref:
-                # A fresh environment: rebuild the selection on its ref, so this side attaches to what
-                # the unit created instead of creating another on first use.
+            if ref != result.ref:
+                # A fresh environment: rebuild the selection on its ref, so a recovered run can reach it.
+                # In-process engines created it on this very backend, so they only need the check.
                 ctx = self._run_context()
                 assert ctx.root_capability is not None
                 rebuilt = select_workspace(ctx.root_capability, ctx, ref=result.ref)
@@ -404,7 +405,8 @@ class DurableWorkspace(WrapperWorkspace):
                         f'{result.ref.provider!r}, which the run just created. A `get_workspace` hook that '
                         'creates an environment must also recognize its ref.'
                     )
-                self._backend = rebuilt
+                if self.wrapped.ref != result.ref:
+                    self._backend = rebuilt
             self._ref = result.ref
             self._working_dir = result.text
 

@@ -102,6 +102,8 @@ try:
 except ImportError:  # pragma: no cover
     logfire_installed = False
 
+pytestmark = pytest.mark.anyio
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -759,7 +761,7 @@ class TestCompaction:
 
     @pytest.mark.anyio
     async def test_summary_model_settings_override_model_defaults_without_mutation(self, anyio_backend: str):
-        if anyio_backend != 'asyncio':
+        if anyio_backend != 'asyncio':  # pragma: no cover -- only asyncio runs here
             pytest.skip('pydantic-ai Agent execution uses asyncio')
         observed_settings: list[ModelSettings | None] = []
 

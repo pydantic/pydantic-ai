@@ -14,31 +14,13 @@ from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
-from pydantic_ai.workspaces.unavailable import (
-    UnavailableWorkspace,
-    _UnattachedWorkspace,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.workspaces.unavailable import NO_WORKSPACE, UnavailableWorkspace
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
-
-
-class _UnrestoredWorkspace(_UnattachedWorkspace):
-    """The placeholder `TemporalRunContext.__init__` installs until the activity's workspace is restored.
-
-    A distinct type, so `deserialize_run_context` can tell it from a workspace a custom subclass
-    already set (which wins) and from an `UnavailableWorkspace` an application passed on purpose.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            'No workspace is attached to this run. Attach one to the agent through a capability such as '
-            "`LocalWorkspace('.')`; inside a Temporal activity, `RunContext.workspace` is rebuilt "
-            "from the run's serialized `WorkspaceRef` through the agent's capabilities."
-        )
 
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
@@ -116,7 +98,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     """
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
-        kwargs.setdefault('workspace', Workspace(_UnrestoredWorkspace()))
+        kwargs.setdefault('workspace', Workspace(NO_WORKSPACE))
         self.__dict__ = {**kwargs, 'deps': deps}
         for old_name, new_name in _RENAMED_FIELDS:
             # Keyed on presence, not truthiness: `capability_active` is `None` for every activity
@@ -269,7 +251,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             # The durable wrapper forbids `.backend` in workflow code; inspect its original
             # workspace only to preserve an explicit unavailable reason without a ref.
             workspace = ctx.workspace.wrapped if isinstance(ctx.workspace, DurableWorkspace) else ctx.workspace
-            if isinstance(workspace.backend, UnavailableWorkspace):
+            if isinstance(workspace.backend, UnavailableWorkspace) and workspace.backend is not NO_WORKSPACE:
                 serialized['workspace_unavailable_reason'] = workspace.backend.reason
         return serialized
 
@@ -321,7 +303,7 @@ def _restore_workspace(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> 
     """
     workspace = ctx.__dict__.get('workspace')
     ref = ctx.__dict__.get('workspace_ref')
-    if not isinstance(workspace, Workspace) or not isinstance(workspace.backend, _UnrestoredWorkspace):
+    if not isinstance(workspace, Workspace) or workspace.backend is not NO_WORKSPACE:
         return
     if not isinstance(ref, WorkspaceRef):
         if (reason := ctx.__dict__.get('workspace_unavailable_reason')) is not None:
@@ -330,7 +312,7 @@ def _restore_workspace(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> 
     restored = select_workspace(agent.root_capability, ctx, ref=ref)
     if restored is None:
         restored = Workspace(
-            _UnattachedWorkspace(
+            UnavailableWorkspace(
                 f'No capability on agent {agent.name!r} can supply workspace {ref.id!r} from provider '
                 f'{ref.provider!r} inside this Temporal activity: every `get_workspace` returned `None`. The '
                 'worker must be constructed with the same workspace capabilities as the workflow.'

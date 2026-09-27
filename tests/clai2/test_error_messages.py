@@ -7,7 +7,6 @@ import pytest
 from httpx2 import Request
 from openai import APIConnectionError
 from rich.console import Console
-from test_app_edges import inputs
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -19,6 +18,9 @@ from pydantic_clai2 import chat, headless
 from pydantic_clai2.config import Settings
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.test_app_edges import inputs
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize('mode', ['interactive', 'headless'])
