@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -86,8 +87,7 @@ _WORKSPACE_TOOL_NAMES = frozenset(
 
 
 def _no_workspace_tools_message(agent_name: str | None) -> str:
-    # Naming the agent keeps the text distinct per agent, so Python's default warning filter, which
-    # shows a given message from a given location once, does not hide the warning for a second agent.
+    # Naming the agent tells the user which of several agents lacks the tools.
     run = 'this run' if agent_name is None else f'this run of agent {agent_name!r}'
     return (
         "`ModalSandbox` supplies the Modal sandbox as the run's `ctx.workspace` and registers no tools of its own, "
@@ -257,5 +257,15 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         ):
             self._warned_no_tools = True
             agent_name = ctx.agent.name if ctx.agent is not None else None
-            warnings.warn(_no_workspace_tools_message(agent_name), UserWarning, stacklevel=2)
+            # Python's default filter shows a message from one location once per process, which would
+            # hide this from a second unnamed agent. Without a registry, `warn_explicit` keeps no such
+            # record; the flag above already limits it to once per instance. Attributed like `stacklevel=2`.
+            caller = sys._getframe(1)  # pyright: ignore[reportPrivateUsage]
+            warnings.warn_explicit(
+                _no_workspace_tools_message(agent_name),
+                UserWarning,
+                caller.f_code.co_filename,
+                caller.f_lineno,
+                module_globals=caller.f_globals,
+            )
         return tool_defs
