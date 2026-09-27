@@ -274,6 +274,9 @@ navigation:
           - page: "Modal Sandbox"
             path: "harness/modal-sandbox.md"
             slug: "harness/modal-sandbox"
+          - page: "Sprites Sandbox"
+            path: "harness/sprites-sandbox.md"
+            slug: "harness/sprites-sandbox"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
