@@ -450,10 +450,12 @@ def parity_ws_cassette(
     xai_api_key: str,
     azure_config: tuple[str, str],
     gateway_api_key: str | None,
+    elevenlabs_api_key: str,
 ) -> Iterator[tuple[Any, Provider[Any], RealtimeCassette]]:
     """Build an indirectly parametrized parity-matrix provider before placeholder keys take effect."""
     case, route = cast('tuple[Any, str]', request.param)
     provider_name: ProviderName
+    subdir: str | None = None
     if route == 'openai':
         provider = OpenAIProvider(api_key=openai_api_key)
         provider_name = 'openai'
@@ -478,12 +480,20 @@ def parity_ws_cassette(
     elif route == 'gateway-openai':
         provider = _gateway_realtime_provider('openai', gateway_api_key)
         provider_name = 'openai'
+    elif route == 'elevenlabs':
+        if not elevenlabs_imports_successful():  # pragma: no cover
+            pytest.skip('websockets not installed')
+        provider = ElevenLabsProvider(api_key=elevenlabs_api_key)
+        provider_name = 'elevenlabs'
+        # The REST preflight records through HTTP VCR under the module-named subdirectory, so the
+        # WebSocket frames take their own, as in `elevenlabs_ws_cassette`.
+        subdir = 'test_parity_ws_frames'
     else:
         assert route == 'gateway-google'
         provider = _gateway_realtime_provider('google', gateway_api_key)
         provider_name = 'gemini'
 
-    with _ws_cassette(request, provider_name) as cassette:
+    with _ws_cassette(request, provider_name, subdir=subdir) as cassette:
         yield case, provider, cassette
 
 

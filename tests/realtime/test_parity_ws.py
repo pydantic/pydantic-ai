@@ -12,6 +12,7 @@ only the normalized event, message, part, usage, and profile contracts users can
 
 from __future__ import annotations as _annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime.azure import AzureRealtimeModel
+    from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel, ElevenLabsRealtimeModelSettings
     from pydantic_ai.realtime.google import GoogleRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
@@ -54,8 +56,13 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 
-_Route = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'gateway-openai', 'gateway-google']
-_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'google']
+_Route = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'gateway-openai', 'gateway-google', 'elevenlabs']
+_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'elevenlabs']
+
+# ElevenLabs wraps a hosted agent, so its "model name" is the id of the dev agent the cassettes were
+# recorded against (deleted after recording; the id is not a secret and pins the recorded REST paths).
+# Point `ELEVENLABS_TEST_AGENT_ID` at an agent with a `get_weather` client tool to re-record.
+_ELEVENLABS_AGENT_ID = os.environ.get('ELEVENLABS_TEST_AGENT_ID', 'agent_2001m3hcjcrkfs1awbmpqytnqvew')
 
 
 @dataclass(frozen=True)
@@ -211,6 +218,20 @@ REALTIME_PARITY_CASES = [
         supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
         audio_input_sample_rate=16000,
     ),
+    RealtimeParityCase(
+        id='elevenlabs',
+        model_kind='elevenlabs',
+        model_name=_ELEVENLABS_AGENT_ID,
+        route='elevenlabs',
+        supports_image_input=False,
+        supports_manual_turn_control=False,
+        supports_interruption=False,
+        supports_native_tools=False,
+        supports_text_output=True,  # the toggle-gated `text_only` override
+        audio_input_sample_rate=16000,
+        supports_session_seeding=False,
+        audio_output_sample_rate=16000,
+    ),
 ]
 
 # A real microphone never stops. Server VAD only needs a beat of silence to hear the end of speech,
@@ -219,30 +240,35 @@ REALTIME_PARITY_CASES = [
 _TRAILING_SILENCE_FRAMES = 10
 _INFERRED_BOUNDARY_SILENCE_FRAMES = 120
 
-_CASES = [pytest.param((case, case.route), id=case.id) for case in REALTIME_PARITY_CASES]
+
+def _marks(case: RealtimeParityCase, *, spoken: bool = False) -> tuple[pytest.MarkDecorator, ...]:
+    """The marks a row needs: ElevenLabs' REST preflight records through HTTP VCR next to the WebSocket cassette.
+
+    Our Azure realtime resource answers 401, so the spoken scenarios could not be recorded for it. Its
+    row is skipped rather than dropped, so the hole stays visible: record it (and delete this mark) once
+    the Azure key works again. Azure's text scenario still runs from its existing recording.
+    """
+    marks: list[pytest.MarkDecorator] = []
+    if case.route == 'elevenlabs':
+        marks.append(pytest.mark.vcr)
+    if spoken and case.route == 'azure':
+        marks.append(pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded'))
+    return tuple(marks)
+
+
+_CASES = [pytest.param((case, case.route), id=case.id, marks=_marks(case)) for case in REALTIME_PARITY_CASES]
 _TEXT_CASES = [
-    pytest.param((case, case.route), id=case.id) for case in REALTIME_PARITY_CASES if case.drives_turns_with_text
+    pytest.param((case, case.route), id=case.id, marks=_marks(case))
+    for case in REALTIME_PARITY_CASES
+    if case.drives_turns_with_text
 ]
 _SEEDING_CASES = [
-    pytest.param((case, case.route), id=case.id)
+    pytest.param((case, case.route), id=case.id, marks=_marks(case))
     for case in REALTIME_PARITY_CASES
     if case.drives_turns_with_text and case.supports_session_seeding
 ]
-
-# Our Azure realtime resource answers 401, so the spoken scenario could not be recorded for it. The
-# row is skipped rather than dropped, so the hole stays visible: record it (and delete this mark)
-# once the Azure key works again. Azure's text scenario still runs from its existing recording.
 _AUDIO_CASES = [
-    pytest.param(
-        (case, case.route),
-        id=case.id,
-        marks=(
-            pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded')
-            if case.route == 'azure'
-            else ()
-        ),
-    )
-    for case in REALTIME_PARITY_CASES
+    pytest.param((case, case.route), id=case.id, marks=_marks(case, spoken=True)) for case in REALTIME_PARITY_CASES
 ]
 
 
@@ -274,6 +300,14 @@ def _model(
     if case.model_kind == 'xai':
         assert isinstance(provider, XaiProvider)
         return XaiRealtimeModel(case.model_name, provider=provider, settings=settings)
+    if case.model_kind == 'elevenlabs':
+        # The hosted agent's tools are workspace state, so one dev agent (with `get_weather` attached)
+        # serves every scenario, the tool-free ones included, with the connect-time tool comparison
+        # off. That comparison is the provider's own contract, pinned by its cassette tests.
+        elevenlabs_settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off')
+        if text_output and case.supports_text_output:
+            elevenlabs_settings['output_modality'] = 'text'
+        return ElevenLabsRealtimeModel(case.model_name, provider=provider, settings=elevenlabs_settings)
     return GoogleRealtimeModel(case.model_name, provider=provider, settings=settings)
 
 
@@ -447,20 +481,9 @@ async def test_audio_tool_round_parity(
 
 
 def _conversation_cases(*, include: Callable[[RealtimeParityCase], bool]) -> list[Any]:
-    """The parity cases a spoken-conversation scenario runs on, as picked by `include`.
-
-    Our Azure realtime resource answers 401, so these scenarios could not be recorded for it. Its row is
-    skipped rather than dropped, so the hole stays visible: record it (and delete this mark) once the
-    Azure key works again.
-    """
+    """The parity cases a spoken-conversation scenario runs on, as picked by `include`."""
     return [
-        pytest.param(
-            (case, case.route),
-            id=case.id,
-            marks=pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded')
-            if case.route == 'azure'
-            else (),
-        )
+        pytest.param((case, case.route), id=case.id, marks=_marks(case, spoken=True))
         for case in REALTIME_PARITY_CASES
         if include(case)
     ]
