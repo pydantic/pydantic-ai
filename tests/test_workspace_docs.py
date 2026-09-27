@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def test_first_quickstart_runs_main(tmp_path: Path) -> None:
     page = (Path(__file__).resolve().parents[1] / 'docs' / 'workspace.md').read_text()
@@ -138,6 +140,7 @@ def test_timeout_security_and_platform_guidance() -> None:
 
 
 def test_temporal_command_retry_requires_explicit_policy() -> None:
+    pytest.importorskip('temporalio')
     from temporalio.common import RetryPolicy
 
     from pydantic_ai.durable_exec.temporal import TemporalDurability
