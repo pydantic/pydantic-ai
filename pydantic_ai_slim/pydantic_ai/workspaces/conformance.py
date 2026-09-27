@@ -172,7 +172,7 @@ class WorkspaceBackendSuite:
 
     async def test_timeout_raises_workspace_timeout_error(self, backend: WorkspaceBackend) -> None:
         with pytest.raises(WorkspaceTimeoutError):
-            await _commands(backend).run(['sh', '-c', 'sleep 30'], timeout=1.0)
+            await _commands(backend).run(['sh', '-c', 'sleep 3600'], timeout=1.0)
 
     async def test_cancellation_stops_foreground_work(
         self, backend: WorkspaceBackend, has_real_posix_shell: bool
@@ -184,7 +184,7 @@ class WorkspaceBackendSuite:
             pid_file = posixpath.join(root, 'pid')
 
             async def command() -> None:
-                await _commands(backend).run(['sh', '-c', 'echo $$ > "$1"; exec sleep 30', 'sh', pid_file])
+                await _commands(backend).run(['sh', '-c', 'echo $$ > "$1"; exec sleep 3600', 'sh', pid_file])
 
             async with anyio.create_task_group() as tg:
                 tg.start_soon(command)

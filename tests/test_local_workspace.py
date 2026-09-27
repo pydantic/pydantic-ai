@@ -53,7 +53,7 @@ async def _assert_process_gone(pid: int) -> None:
 
 
 def _background_sleep_command(pid_file: Path) -> str:
-    return f'sleep 30 & echo $! > {shlex.quote(str(pid_file))}'
+    return f'sleep 3600 & echo $! > {shlex.quote(str(pid_file))}'
 
 
 async def _wait_for_pid_file(pid_file: Path) -> None:
@@ -173,7 +173,7 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     with pytest.raises(WorkspaceTimeoutError, match='was killed') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child, so the timeout applies to
         # a command that has not completed rather than to a descendant holding a pipe open.
-        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=2)
+        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=2)
 
     assert isinstance(exc_info.value, TimeoutError)
 
@@ -217,7 +217,7 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     pid_file = tmp_path / 'pid'
     child_pid_file = tmp_path / 'child-pid'
     command = (
-        f'echo $$ > {shlex.quote(str(pid_file))}; sleep 30 & echo $! > {shlex.quote(str(child_pid_file))}; echo started'
+        f'echo $$ > {shlex.quote(str(pid_file))}; sleep 3600 & echo $! > {shlex.quote(str(child_pid_file))}; echo started'
     )
     result = await workspace.run(command, shell=True, timeout=10)
 
@@ -297,12 +297,11 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
     monkeypatch.setattr(anyio, 'open_process', held_spawn)
     timeout = 0.05
     task = asyncio.create_task(
-        workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=timeout)
+        workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=timeout)
     )
     try:
         await _wait_for_pid_file(pid_file)
-        with anyio.CancelScope(deadline=anyio.current_time() + timeout, shield=True):
-            await anyio.sleep_until(anyio.current_effective_deadline())
+        await anyio.sleep(timeout)
         release.set()
         with pytest.raises(WorkspaceTimeoutError, match='during startup'):
             await task
@@ -365,7 +364,7 @@ async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(workspace, '_close', stalled_close)
     with anyio.fail_after(30):
         with pytest.raises(WorkspaceTimeoutError):
-            await workspace.run(['sh', '-c', 'sleep 30'], timeout=0.05)
+            await workspace.run(['sh', '-c', 'sleep 3600'], timeout=0.05)
     assert entered.is_set()
 
 
@@ -391,12 +390,15 @@ async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, m
 
 
 async def test_kill_tolerates_an_already_exited_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_killpg = os.killpg
+
     def already_exited(pgid: int, sig: int) -> None:
+        real_killpg(pgid, sig)
         raise ProcessLookupError
 
     monkeypatch.setattr(os, 'killpg', already_exited)
     with pytest.raises(WorkspaceTimeoutError):
-        await LocalWorkspaceBackend(tmp_path).run(['sh', '-c', 'sleep 30'], timeout=0.05)
+        await LocalWorkspaceBackend(tmp_path).run(['sh', '-c', 'sleep 3600'], timeout=0.05)
 
 
 async def test_commands_inherit_only_path_home_and_locale_from_the_host(
@@ -466,7 +468,7 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     monkeypatch.setattr(os, 'killpg', deny_killpg)
     with pytest.raises(WorkspaceTimeoutError, match='denied') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child.
-        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=5)
+        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=5)
     assert isinstance(exc_info.value.__cause__, PermissionError)
     await _assert_process_gone(int(pid_file.read_text()))
 
