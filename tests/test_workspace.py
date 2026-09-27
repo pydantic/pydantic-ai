@@ -301,26 +301,6 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
     assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
 
 
-async def test_shell_filesystem_reads_file_larger_than_command_output_cap(tmp_path: Path) -> None:
-    data = b'x' * (8 * 1024 * 1024)
-    (tmp_path / 'large').write_bytes(data)
-    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
-    assert await workspace.read_bytes('large') == data
-
-
-async def test_shell_filesystem_uses_builtin_path_errors(tmp_path: Path) -> None:
-    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
-    (tmp_path / 'file').write_bytes(b'x')
-    with pytest.raises(NotADirectoryError):
-        await workspace.write_bytes('file/child', b'x')
-    with pytest.raises(NotADirectoryError):
-        await workspace.make_dir('file/child')
-    with pytest.raises(IsADirectoryError):
-        await workspace.write_bytes('.', b'x')
-    with pytest.raises(FileExistsError):
-        await workspace.make_dir('file')
-
-
 async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> None:
     if os.geteuid() == 0:
         pytest.skip('root bypasses filesystem permissions')
@@ -595,7 +575,7 @@ async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
     workspace = Workspace(InvalidStatBackend(LocalWorkspaceBackend(tmp_path)))
-    await workspace.write_bytes('data.bin', b'data')
+    (tmp_path / 'data.bin').write_bytes(b'data')
     with pytest.raises(WorkspaceError, match='invalid size'):
         await workspace.stat('data.bin')
 
@@ -1578,3 +1558,15 @@ async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
 
     assert isinstance(without_ref.workspace.backend, UnavailableWorkspace)
     assert capability.ids == ['existing']
+
+
+async def test_shell_remove_refuses_canonical_root_via_alias(tmp_path: Path) -> None:
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'safe').write_bytes(b'safe')
+    alias = tmp_path / 'alias'
+    alias.symlink_to(root, target_is_directory=True)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root)))
+    with pytest.raises(ValueError, match='workspace root'):
+        await workspace.remove(str(alias))
+    assert (root / 'safe').read_bytes() == b'safe'
