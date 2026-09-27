@@ -104,7 +104,7 @@ def test_store_round_trip_is_private_and_fails_loudly(tmp_path: Path) -> None:
     assert not store.delete('ghost')
     store.put('local', StdioServer(type='stdio', command='python'))
     assert list(MCPStore(tmp_path / 'config').load().servers) == ['local']
-    if sys.platform != 'win32':
+    if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
     assert '"enabled"' not in store.path.read_text(), 'defaults are not written'
     assert store.delete('local')

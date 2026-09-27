@@ -70,7 +70,7 @@ async def test_login(mode: str) -> None:
             if mode == 'eof':
                 raise EOFError
             await asyncio.Future[None]()
-            raise AssertionError('unreachable')
+            raise AssertionError('unreachable')  # pragma: no cover
         finally:
             prompt_closed.set()
 

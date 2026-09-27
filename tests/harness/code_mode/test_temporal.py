@@ -187,7 +187,10 @@ def _workflow_os(*, name: str, args: tuple[object, ...], kwargs: dict[str, objec
     return _request_id.get()
 
 
-def _remote_code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+# Only the skipped relay test uses this model (#8824).
+def _remote_code_mode_model(
+    messages: list[ModelRequest | ModelResponse], info: AgentInfo
+) -> ModelResponse:  # pragma: lax no cover
     """Model that adds with a tool, sleeps, and reads the workflow's contextvar through `os_access`."""
     returns = [
         part

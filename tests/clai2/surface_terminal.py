@@ -24,7 +24,7 @@ class SurfaceTerminal(io.StringIO):
 
     def resize(self, *, width: int, height: int, bottom_anchored: bool = False) -> None:
         """Resize without moving old UI rows to the new screen bottom."""
-        if bottom_anchored:
+        if bottom_anchored:  # pragma: lax no cover
             delta = height - self.height
             if delta > 0:
                 restored = self.history[-delta:]
