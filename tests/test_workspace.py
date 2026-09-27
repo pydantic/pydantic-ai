@@ -751,7 +751,7 @@ def test_a_plain_workspace_around_a_wrapper_keeps_its_policy() -> None:
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
-    with pytest.raises(UserError, match=r"LocalWorkspace\('\.'\).*https://pydantic\.dev/docs/ai/workspace/"):
+    with pytest.raises(WorkspaceUnavailableError, match=r"LocalWorkspace\('\.'\).*https://pydantic\.dev/docs/ai/workspace/"):
         await ctx.workspace.run(['true'])
 
 
@@ -963,7 +963,7 @@ async def test_historical_workspace_ref_without_capability_stays_unavailable() -
 
     @agent.tool
     async def probe(ctx: RunContext[None]) -> str:
-        with pytest.raises(UserError, match='No workspace is attached'):
+        with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
             await ctx.workspace.run(['true'])
         return 'unavailable'
 
@@ -984,14 +984,14 @@ async def test_a_result_still_round_trips_through_json_when_a_workspace_was_used
     restored = adapter.validate_json(adapter.dump_json(result))
 
     assert restored == result
-    with pytest.raises(UserError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
         await restored.workspace.run(['true'])
 
 
 async def test_a_result_built_outside_a_run_explains_that_no_workspace_is_attached() -> None:
     result = AgentRunResult[str]('output')
 
-    with pytest.raises(UserError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
         await result.workspace.run(['true'])
 
 
@@ -1253,7 +1253,7 @@ async def test_declining_capability_leaves_the_run_workspace_unavailable() -> No
         await ctx.workspace.run(['true'])
         return 'unreachable'  # pragma: no cover
 
-    with pytest.raises(UserError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
         await agent.run('go')
     assert capability.calls == 1
 

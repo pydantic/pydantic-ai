@@ -1375,20 +1375,12 @@ def select_workspace(
 ) -> Workspace | None:
     """The workspace the capabilities supply for `ref`, as a `Workspace`, or `None` if none does.
 
-    The capabilities passed to the run (`run_layer`, part of `capability`) are asked before the agent's,
-    like every other run argument overrides the agent's; within each, the first to return one wins.
+    The run's own capabilities (`run_layer`, part of `capability`) are asked first, as every other run
+    argument overrides the agent's; then `capability`, where the first to return one wins.
     """
-    if run_layer is None:
+    selected = run_layer.get_workspace(ctx, ref=ref) if run_layer is not None else None
+    if selected is None:
         selected = capability.get_workspace(ctx, ref=ref)
-    else:
-        run_leaves = {id(leaf) for leaf in leaf_capabilities(run_layer)}
-        branches = _combination_roots(capability)
-        from_run = [branch for branch in branches if any(id(leaf) in run_leaves for leaf in leaf_capabilities(branch))]
-        ordered = [*from_run, *(branch for branch in branches if all(branch is not run for run in from_run))]
-        selected = next(
-            (workspace for branch in ordered if (workspace := branch.get_workspace(ctx, ref=ref)) is not None),
-            None,
-        )
     if ref is not None and selected is not None and selected.ref is not None and selected.ref != ref:
         # A resolver must not replace an expired or unauthorized environment with a fresh one.
         raise UserError(f'Workspace resolver returned a different workspace than requested: {ref!r}')

@@ -49,9 +49,9 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
             flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
             cache_key = (*cache_key, sequence)
 
+        @task
         async def operation(operation_name: str, *logical_inputs: object) -> object:
             return await body()
 
-        registered = task(operation)
         options = config or {}
-        return await registered.with_options(name=name, **options)(name, *cache_key)
+        return await operation.with_options(name=name, **options)(name, *cache_key)

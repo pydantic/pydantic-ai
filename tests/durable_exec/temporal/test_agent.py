@@ -94,6 +94,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceReadOnlyError,
     WorkspaceRef,
+    WorkspaceUnavailableError,
 )
 
 from ..._inline_snapshot import snapshot
@@ -2747,7 +2748,7 @@ async def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
     assert replace(decoded).workspace is decoded.workspace
     assert decoded.workspace.ref is None
     # Without a worker agent to rebuild it through, the ref cannot become a workspace.
-    with pytest.raises(UserError, match=r'No workspace is attached to this run'):
+    with pytest.raises(WorkspaceUnavailableError, match=r'No workspace is attached to this run'):
         await decoded.workspace.run(['pwd'])
 
 

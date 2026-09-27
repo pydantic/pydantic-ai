@@ -27,7 +27,7 @@ from .protocol import (
     WorkspaceResult,
     validate_timeout,
 )
-from .unavailable import _UnavailableBackend  # pyright: ignore[reportPrivateUsage]
+from .unavailable import UnavailableWorkspace
 
 __all__ = ('Workspace', 'WrapperWorkspace')
 
@@ -81,6 +81,7 @@ class _ShellFilesystem(SupportsFilesystem):
         self._backend = backend
 
     async def read_bytes(self, path: str) -> bytes:
+        # The size bounds the read, so a file growing meanwhile can't make it run on.
         entry = await self.stat(path)
         if entry.is_dir:
             raise IsADirectoryError(path)
@@ -89,6 +90,7 @@ class _ShellFilesystem(SupportsFilesystem):
 
     async def _read_chunks(self, source: str, size: int, path: str, what: str) -> bytes:
         data = bytearray()
+        # One command per chunk keeps each command's output under the backend's output limit.
         for index in range((size + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
             try:
                 result = await self._backend.run(
@@ -101,10 +103,12 @@ class _ShellFilesystem(SupportsFilesystem):
                     f'shell filesystem {operation} exceeded command output limit for {path!r}'
                 ) from error
             await self._raise_for_error(result, path)
+            # base64 carries arbitrary bytes through a text-only command output.
             try:
                 chunk = base64.b64decode(result.stdout)
             except ValueError as error:
                 raise WorkspaceError(f'shell filesystem returned invalid base64 while {what}ing {path!r}') from error
+            # A short chunk means the transfer lost data or the file shrank; never return a partial file.
             if len(chunk) != min(_SHELL_READ_CHUNK_BYTES, size - len(data)):
                 raise WorkspaceError(f'shell filesystem returned incomplete output while {what}ing {path!r}')
             data.extend(chunk)
@@ -352,7 +356,7 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if isinstance(backend, Workspace):
             return backend.attached
-        return not isinstance(backend, _UnavailableBackend)
+        return not isinstance(backend, UnavailableWorkspace)
 
     @property
     def ref(self) -> WorkspaceRef | None:

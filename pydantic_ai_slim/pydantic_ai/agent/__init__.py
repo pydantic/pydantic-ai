@@ -133,7 +133,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
-from ..workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
+from ..workspaces.unavailable import NO_WORKSPACE
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
     AbstractAgent,
@@ -1736,32 +1736,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
         requested_ref = workspace if isinstance(workspace, WorkspaceRef) else None
         # `'new'` asks for a fresh environment, so the ref in history is not offered.
-        # The automatic unattached placeholder is not an explicit refusal: a child can
-        # choose its own capability. A caller-built `UnavailableWorkspace` remains explicit.
+        # A run's automatic `NO_WORKSPACE` is not an explicit refusal: a child can choose its own
+        # capability. A caller-built `UnavailableWorkspace` remains explicit.
         # Do not inspect `.backend` on `DurableWorkspace`: workflow-side backend access is forbidden.
-        is_unattached = type(workspace) is Workspace and isinstance(workspace.backend, _UnattachedWorkspace)
+        is_unattached = type(workspace) is Workspace and workspace.backend is NO_WORKSPACE
         offered_ref = historical_workspace_ref if workspace is None or is_unattached else requested_ref
         explicit = (
             None
             if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef) or is_unattached
             else workspace
         )
-        pre_run_layers = [base_capability, *extra_capabilities]
         pre_run_root = base_capability
         selected = None
-        if workspace is not None or any(cap.has_get_workspace for cap in pre_run_layers):
+        if workspace is not None or any(cap.has_get_workspace for cap in (base_capability, *extra_capabilities)):
             # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
-            pre_run_layers = _combine_layer_duplicates([base_capability], extra_capabilities)
-            pre_run_root = _compose_layers(pre_run_layers)
+            _, pre_run_layer, pre_run_root = _compose_run_capabilities([base_capability], extra_capabilities)
             if explicit is not None:
                 selected = explicit if isinstance(explicit, Workspace) else Workspace(explicit)
             else:
-                selected = select_workspace(
-                    pre_run_root,
-                    initial_ctx,
-                    ref=offered_ref,
-                    run_layer=pre_run_layers[1] if len(pre_run_layers) > 1 else None,
-                )
+                selected = select_workspace(pre_run_root, initial_ctx, ref=offered_ref, run_layer=pre_run_layer)
             if selected is not None:
                 initial_ctx.workspace = pre_run_root._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
                     replace(initial_ctx, root_capability=pre_run_root), selected, explicit=explicit is not None
@@ -3240,10 +3233,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # namesake outright -- `run(capabilities=[WebSearch(allowed_domains=[...])])` states what
         # this run may reach, and merging it into the agent's list would widen the restriction it
         # was passed to impose.
-        combined_layers = _combine_layer_duplicates(
+        agent_layer, run_layer, run_capability = _compose_run_capabilities(
             resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras
         )
-        run_capability = _compose_layers(combined_layers)
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
         # capability whose `id` differs from the one that was validated, so the resolved tree is
@@ -3291,12 +3283,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # instance. Conflicting definitions sharing a `unique_id` *within* a layer are ambiguous;
         # last-wins *across* layers is the intentional override mechanism. Instrumentation
         # contributes no native tools.
-        base_native_tools = list(combined_layers[0].get_native_tools())
+        base_native_tools = list(agent_layer.get_native_tools())
         _validate_native_tool_ids(
             base_native_tools,
             source='override spec capabilities' if base_is_override else 'agent capabilities',
         )
-        extra_native_tools = list(combined_layers[1].get_native_tools()) if len(combined_layers) > 1 else []
+        extra_native_tools = list(run_layer.get_native_tools()) if run_layer is not None else []
         _validate_native_tool_ids(extra_native_tools, source='run capabilities')
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
@@ -3313,7 +3305,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             toolsets=toolsets,
             resolved_layers=resolved_layers,
-            run_layer=combined_layers[1] if len(combined_layers) > 1 else None,
+            run_layer=run_layer,
         )
 
     def _get_instructions(
@@ -4524,22 +4516,22 @@ def _run_instrumentation_settings(
     return instrumentations[-1].settings if instrumentations else default
 
 
-def _combine_layer_duplicates(
+def _compose_run_capabilities(
     agent_layer: Sequence[AbstractCapability[AgentDepsT]], run_layer: Sequence[AbstractCapability[AgentDepsT]]
-) -> list[AbstractCapability[AgentDepsT]]:
-    """Resolve the duplicates within each non-empty layer, giving one capability per layer."""
-    return [
-        _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
-        for layer in (agent_layer, run_layer)
-        if layer
-    ]
+) -> tuple[AbstractCapability[AgentDepsT], AbstractCapability[AgentDepsT] | None, AbstractCapability[AgentDepsT]]:
+    """The agent layer, the run layer (`None` if empty) and the run's root, duplicates within each layer combined.
 
+    In the root, a run capability overrides its agent-level namesake.
+    """
 
-def _compose_layers(layers: list[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-    """Compose the layers into the run's root, so a run's capability overrides the agent's namesake."""
-    if len(layers) == 1:
-        return layers[0]
-    return _combine_duplicate_capabilities(CombinedCapability(layers), [[layer] for layer in layers])
+    def combine(layer: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        return _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
+
+    agent = combine(agent_layer)
+    if not run_layer:
+        return agent, None, agent
+    run = combine(run_layer)
+    return agent, run, _combine_duplicate_capabilities(CombinedCapability([agent, run]), [[agent], [run]])
 
 
 def _raise_for_unresolved_workspace(

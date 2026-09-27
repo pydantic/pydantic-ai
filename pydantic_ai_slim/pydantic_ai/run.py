@@ -25,7 +25,7 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
-    unattached_workspace,
+    no_workspace,
 )
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .output import OutputDataT
@@ -739,7 +739,7 @@ class AgentRunResult(Generic[OutputDataT]):
         """
         # Set by `AgentRun.result`; see there.
         workspace = self.__dict__.get('_workspace')
-        return workspace if workspace is not None else unattached_workspace()
+        return workspace if workspace is not None else no_workspace()
 
     @model_validator(mode='before')
     @classmethod
