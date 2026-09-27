@@ -45,7 +45,7 @@ hash, so a symlinked `AGENTS.md -> CLAUDE.md` or two ancestors sharing identical
 content load once.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no
-walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/daytona'`), not the agent host's `Path.home()`.
+walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
 
 ### 2. Asset inventory (on by default)
 

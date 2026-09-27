@@ -14,10 +14,10 @@ from ._docs_examples import python_blocks, run_block
 @pytest.mark.parametrize(
     'page',
     [
-        'docs/shell.md',
-        'docs/filesystem.md',
-        'pydantic_ai_harness/shell/README.md',
-        'pydantic_ai_harness/filesystem/README.md',
+        'docs/harness/shell.md',
+        'docs/harness/filesystem.md',
+        'src/pydantic_ai_harness/pydantic_ai_harness/shell/README.md',
+        'src/pydantic_ai_harness/pydantic_ai_harness/filesystem/README.md',
     ],
 )
 def test_first_example_creates_its_workspace(page: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
