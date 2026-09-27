@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gc
 import os
+import warnings
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +38,20 @@ __all__ = ('IsDatetime', 'IsInstance', 'IsNow', 'IsPartialDict', 'IsStr', 'agent
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
+
+
+@pytest.fixture
+def collect_coroutines_temporal_dropped() -> Iterator[None]:
+    """Collect, inside the test that caused them, the coroutines Temporal's eviction leaves unawaited.
+
+    Evicting a workflow natively cancels its pending tasks, and anyio 4.14+ intentionally leaves an
+    unstarted task's coroutine unawaited when that happens. Python warns when the garbage collector
+    finds one, which would otherwise fail whichever test happened to be running at that moment.
+    """
+    yield
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message=r"coroutine '.*' was never awaited", category=RuntimeWarning)
+        gc.collect()
 
 
 @pytest.fixture
