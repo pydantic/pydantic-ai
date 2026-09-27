@@ -359,28 +359,36 @@ agent = Agent(
 
 Tools use `ctx.workspace` as they would in a plain run. On Temporal, a tool that must run
 its orchestration in the workflow (for example, to approve a file change before writing) can
-set `metadata={'temporal': False}` on its tool definition; workspace operations it calls still
-run as durable activities. Without an explicit `run_id`, durable runs use a per-run ID derived
-from the Temporal execution run ID, DBOS workflow ID, or Prefect flow run ID.
-This keeps a run's workspace state addressable after a worker restart or flow retry.
+set `metadata={'temporal': False}` on its tool definition; workspace calls it makes still run as
+activities.
 
-- Every run creates or attaches its environment at its start, even if no tool uses it. Retries,
-  replays and recovery then reattach to that same environment.
-- Workspace calls retry like tools do, so a command or write may run again if a worker dies mid-call.
-  A timed-out or unavailable workspace and deterministic file errors (including OS path errors) are not
-  retried automatically. A provider control-plane stall before a command starts is a transient failure;
-  configure command retries through `TemporalDurability(activity_config={'retry_policy': RetryPolicy(maximum_attempts=3)})`,
-  importing `RetryPolicy` from `temporalio.common`. `activity_config` applies to all activities,
-  including workspace commands; `toolset_activity_config` only overrides activities for a named toolset.
-  Temporal gives command activities
-  their requested timeout plus time for startup and stopping; `timeout=None` uses a one-hour activity
-  ceiling, not an unlimited Temporal activity.
+- Inside a workflow or flow, a run creates or attaches its environment when it starts, even if no
+  tool uses it; retries, replays and recovery reattach to that same environment. Plain runs stay
+  lazy. If a worker dies after creating the environment but before that is recorded, the retry can
+  create a second one.
+- Without an explicit `run_id`, a run inside a workflow or flow gets an ID derived from the Temporal
+  execution run ID, the DBOS workflow ID or the Prefect flow run ID, so its workspace state stays
+  addressable after a worker restart or flow retry.
+- A workspace call may run again if a worker dies mid-call. Calls made inside a tool retry with that
+  tool. Calls made in workflow code use the engine's own settings (Temporal `activity_config`, DBOS
+  `mcp_step_config`; Prefect runs them once), and only infrastructure failures are retried there, never
+  workspace or file errors. Timeouts, read-only refusals and a lost environment are never retried.
+- On Temporal, a command run from workflow code gets an activity timeout of its own `timeout` plus
+  30 seconds, or one hour for `timeout=None`, unless `activity_config` sets a longer one. A command
+  run inside a tool is bounded by that tool's activity timeout, 60 seconds by default; raise it with
+  `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. If you set `activity_config`,
+  keep a `start_to_close_timeout` in it, for example
+  `activity_config={'start_to_close_timeout': timedelta(seconds=60), 'retry_policy': RetryPolicy(maximum_attempts=3)}`.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
   capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
-  read-only policy; a capability passed to the run that changes the workspace also raises `UserError`. Put policy on the
-  agent's capability instead, such as `LocalWorkspace(..., read_only=True)`.
-- `workspace.backend` is not available in workflow code. Reach the provider's own API from a tool.
-- The deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers refuse a workspace.
+  read-only policy, and so does a live workspace that has no ref yet or a capability passed to the run
+  that changes the workspace. Put policy on the agent's capability instead, such as
+  `LocalWorkspace(..., read_only=True)`.
+- `workspace.backend` is not available in workflow code, which includes DBOS function tools and
+  Temporal tools with `metadata={'temporal': False}`. Reach the provider's own API from a tool that
+  runs as an activity or task.
+- Inside a workflow or flow, the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers
+  refuse a workspace; use the durability capability instead.
 
 The engine guides cover the rest, such as matching capabilities across Temporal workers.
 
