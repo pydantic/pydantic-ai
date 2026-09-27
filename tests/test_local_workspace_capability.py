@@ -176,21 +176,15 @@ async def test_own_ref_is_claimed_whatever_the_spelling_of_home(
     assert isinstance(result.workspace.backend, LocalWorkspaceBackend)
 
 
-@pytest.mark.parametrize('blockbuster_enabled', [False])
-@pytest.mark.parametrize('read_only', [False, True])
-async def test_local_ref_with_symlink_spelling_attaches_to_same_directory(
-    tmp_path: Path, blockbuster_enabled: bool, read_only: bool
-) -> None:
+async def test_local_ref_with_symlink_spelling_is_declined(tmp_path: Path) -> None:
     root = tmp_path / 'root'
     root.mkdir()
-    (tmp_path / 'alias').symlink_to(root)
-    agent = Agent(TestModel(), capabilities=[LocalWorkspace(root, read_only=read_only)])
-    for spelling in (tmp_path / 'alias', tmp_path / 'root' / '..' / 'root'):
-        ref = WorkspaceRef(provider='local', id=str(spelling))
-        result = await agent.run('go', message_history=[ModelResponse(parts=[TextPart('old')], workspace_ref=ref)])
-        assert await result.workspace.working_dir() == str(root.resolve())
-        assert result.workspace.ref == WorkspaceRef(provider='local', id=str(root))
-        assert result.workspace.read_only is read_only
+    alias = tmp_path / 'alias'
+    alias.symlink_to(root)
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(root)])
+
+    with pytest.raises(UserError, match="none of the agent's workspace capabilities recognized it"):
+        await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(alias)))
 
 
 async def test_local_ref_for_another_directory_is_never_followed(tmp_path: Path) -> None:

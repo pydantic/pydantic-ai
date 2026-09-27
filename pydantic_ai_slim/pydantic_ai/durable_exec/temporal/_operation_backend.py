@@ -144,9 +144,6 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         elif isinstance(operation_id, ToolsetCallToolId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'call tool: {operation_id.toolset_id}:{tool_name}'
-            if tool_name in ('shell', 'run_command'):
-                # Shell can wait 270s before its own stop/cleanup; the default 60s kills the activity first.
-                activity_config = workspace_run_activity_config(activity_config, 270)
         elif isinstance(operation_id, ToolsetValidateToolArgumentsId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'validate tool args: {operation_id.toolset_id}:{tool_name}'

@@ -11,6 +11,7 @@ import signal
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, NoReturn
 from unittest.mock import patch
@@ -82,6 +83,26 @@ def _shell_toolset(
         persist_cwd=False,
         allow_interactive=False,
     )
+
+
+@pytest.mark.anyio
+async def test_command_tools_declare_temporal_budget(tmp_path: Path) -> None:
+    toolset = _shell_toolset(tmp_path)
+    persistent = ShellToolset(
+        allowed_commands=[],
+        denied_commands=[],
+        denied_operators=[],
+        default_timeout=10,
+        max_output_chars=50_000,
+        persist_cwd=False,
+        allow_interactive=False,
+        tools=['shell'],
+    )
+    for name, owner in (('run_command', toolset), ('shell', persistent)):
+        tools = await owner.get_tools(_ctx(tmp_path))
+        metadata = tools[name].tool_def.metadata
+        assert metadata is not None
+        assert metadata['temporal'] == {'start_to_close_timeout': timedelta(seconds=300)}
 
 
 def _raise_oserror(code: int, message: str) -> Callable[..., Awaitable[NoReturn]]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import json
 import re
+import sys
 import warnings
 from collections.abc import Generator
 from datetime import timedelta
@@ -217,6 +218,12 @@ class ShellRestartWorkflow(PydanticAIWorkflow):
         return [str(p.content) for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
 
 
+# Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14.
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason='temporalio sandbox is incompatible with Python 3.14 '
+    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
+)
 @pytest.mark.anyio
 async def test_temporal_new_worker_keeps_shell_cwd(tmp_path: Path) -> None:
     global _restart_ready, _restart_continue

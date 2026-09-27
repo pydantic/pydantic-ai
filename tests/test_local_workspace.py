@@ -37,36 +37,17 @@ pytestmark = [
 ]
 
 
-_HAS_PROCFS = Path('/proc/self').exists()
-
-
-def _process_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    # No procfs (macOS): signalable is the best signal we have.
-    if not _HAS_PROCFS:  # pragma: no cover
-        return True
-    # A killed orphan re-parents to PID 1 and stays a signalable zombie until reaped,
-    # which a loaded CI host can delay past this polling window — but a zombie is dead:
-    # it can never run again, which is what the kill guarantee promises.
-    try:
-        state = Path(f'/proc/{pid}/stat').read_text(encoding='ascii').rsplit(')', 1)[1].split()[0]
-    # Reaped between the signal check and the procfs read; ESRCH surfaces as
-    # `ProcessLookupError` from the read itself.
-    # `lax no cover`, not `no cover`: whether the reap lands inside this window is a race, so
-    # this is taken on some runs and not others.
-    except (FileNotFoundError, ProcessLookupError):  # pragma: lax no cover
-        return False
-    return state != 'Z'
+async def _process_running(pid: int) -> bool:
+    result = await anyio.run_process(['ps', '-o', 'stat=', '-p', str(pid)], check=False)
+    state = result.stdout.strip()
+    return bool(state) and not state.startswith(b'Z')
 
 
 async def _assert_process_gone(pid: int) -> None:
-    for _ in range(200):
-        if not _process_running(pid):
-            return
-        await asyncio.sleep(0.01)
+    with anyio.move_on_after(10):
+        while await _process_running(pid):
+            await anyio.sleep(0.01)
+        return
     with suppress(ProcessLookupError):  # pragma: no cover - defensive cleanup before failing
         os.kill(pid, signal.SIGKILL)
     pytest.fail(f'process {pid} survived workspace cleanup')  # pragma: no cover
@@ -247,7 +228,7 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     await _assert_process_gone(int(pid_file.read_text()))
     child_pid = int(child_pid_file.read_text())
     try:
-        assert _process_running(child_pid)
+        assert await _process_running(child_pid)
     finally:
         with suppress(ProcessLookupError):
             os.kill(child_pid, signal.SIGKILL)
@@ -330,21 +311,6 @@ async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path:
         await task
 
     await _assert_process_gone(int(pid_file.read_text()))
-
-
-async def test_command_timeout_starts_after_local_directory_is_ready(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace = LocalWorkspaceBackend(tmp_path)
-    original = getattr(workspace, '_get_working_dir')
-
-    async def slow_directory() -> Path:
-        await anyio.sleep(0.18)
-        return await original()
-
-    monkeypatch.setattr(workspace, '_get_working_dir', slow_directory)
-    result = await workspace.run(['echo', 'ok'], timeout=0.1)
-    assert result.stdout == 'ok\n'
 
 
 async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

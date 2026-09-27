@@ -681,6 +681,26 @@ async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> 
         await workspace.list_dir('.')
 
 
+async def test_shell_list_dir_rejects_invalid_paged_size(tmp_path: Path) -> None:
+    class InvalidSizeBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            if isinstance(command, str) and 'find ' in command:
+                return FakeWorkspaceResult(stdout='bad-size\nPAGED\n')
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    with pytest.raises(WorkspaceError, match='invalid directory listing'):
+        await Workspace(InvalidSizeBackend(LocalWorkspaceBackend(tmp_path))).list_dir('.')
+
+
 async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None:
     class FailedFindBackend(RunOnlyWorkspaceBackend):
         async def run(
