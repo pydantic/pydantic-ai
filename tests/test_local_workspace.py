@@ -216,9 +216,7 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     child_pid_file = tmp_path / 'child-pid'
-    command = (
-        f'echo $$ > {shlex.quote(str(pid_file))}; sleep 3600 & echo $! > {shlex.quote(str(child_pid_file))}; echo started'
-    )
+    command = f'echo $$ > {shlex.quote(str(pid_file))}; sleep 3600 & echo $! > {shlex.quote(str(child_pid_file))}; echo started'
     result = await workspace.run(command, shell=True, timeout=10)
 
     assert (result.exit_code, result.stdout) == (0, 'started\n')

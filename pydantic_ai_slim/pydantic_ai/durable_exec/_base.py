@@ -426,11 +426,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         workspace is returned untouched, so a durable-capable agent used as a plain agent keeps the
         very object it selected.
         """
-        if (
-            not self.in_durable_context
-            or in_durable_unit()
-            or not workspace.attached
-        ):
+        if not self.in_durable_context or in_durable_unit() or not workspace.attached:
             return workspace
         if self._bound_workspace_operation is None:
             raise UserError(
