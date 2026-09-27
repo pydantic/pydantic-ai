@@ -160,8 +160,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     - a folder-name `str` (the default `'agents'` is the conventional layout): load
       from `.agents/<name>/` under the workspace's working directory, falling back to
       `.claude/<name>/` when `.agents/` is absent. Skipped when the run has no workspace,
-      with a `HarnessDeprecationWarning` when this process's working directory has that
-      folder, which earlier releases read.
+      with a `HarnessDeprecationWarning` when this process's working directory or the home
+      directory has that folder, which earlier releases read.
     - a sequence of paths in the workspace, absolute or relative to its working
       directory: load from exactly those folders, in order. A run with no workspace
       fails at its start; pass `workspace=LocalWorkspaceBackend('.')` to read them from
@@ -436,22 +436,39 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         self._run_toolset = self._make_toolset()
 
     async def _warn_host_folder_ignored(self, name: str) -> None:
-        """Warn when this machine has the convention folder earlier releases read without a workspace.
+        """Warn when this machine has a convention folder earlier releases read without a workspace.
 
-        Those releases read it relative to the process's working directory, so a run without a
-        workspace would otherwise lose its delegates silently.
+        Those releases read it under the process's working directory, then under the home
+        directory, so a run without a workspace would otherwise lose those delegates silently.
         """
-        cwd = await anyio.Path.cwd()
-        root = cwd / '.agents' if await (cwd / '.agents').is_dir() else cwd / '.claude'
-        folder = root / name
-        if str(folder) in self._warned_host_folders or not await folder.is_dir():
+        cwd, home = await anyio.Path.cwd(), await anyio.Path.home()
+        project = home_folder = None
+        for root in (cwd, home):
+            folder = (root / '.agents' if await (root / '.agents').is_dir() else root / '.claude') / name
+            if not await folder.is_dir():
+                continue
+            if root == cwd:
+                project = folder
+            else:
+                home_folder = folder
+        found = [str(folder) for folder in (project, home_folder) if folder is not None]
+        if not found or set(found) <= self._warned_host_folders:
             return
-        self._warned_host_folders.add(str(folder))
+        self._warned_host_folders.update(found)
+        if home_folder is None:
+            fix = (
+                "add `LocalWorkspace('.')` to the agent's capabilities, or pass "
+                "`SubAgents(workspace=LocalWorkspaceBackend('.'))`"
+            )
+        elif project is None:
+            fix = 'pass `SubAgents(workspace=LocalWorkspaceBackend(Path.home()))`'
+        else:
+            # One workspace reaches both: a local one reads absolute paths anywhere on this machine.
+            fix = f"add `LocalWorkspace('.')` to the agent's capabilities and pass `SubAgents(agent_folders={found!r})`"
+        folders = ' and '.join(f'`{folder}`' for folder in found)
         warnings.warn(
-            f'`SubAgents` did not load the agent definitions in `{folder}` on this machine: definitions '
-            "are now read through the run's workspace, and this run has none. "
-            "Add `LocalWorkspace('.')` to the agent's capabilities, or pass "
-            "`SubAgents(workspace=LocalWorkspaceBackend('.'))`, to keep loading them; "
+            f'`SubAgents` did not load the agent definitions in {folders} on this machine: definitions '
+            f"are now read through the run's workspace, and this run has none. To keep loading them, {fix}; "
             'pass `SubAgents(agent_folders=None)` to turn discovery off and silence this warning.',
             category=HarnessDeprecationWarning,
             stacklevel=2,
