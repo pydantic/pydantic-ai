@@ -610,6 +610,12 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         return self.wrapped.id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        if (
+            self._lifecycle == 'enter-outside-durable'
+            and not (ctx.root_capability is not None and ctx.root_capability.has_get_workspace)
+            and not ctx.workspace.ref
+        ):
+            return self
         wrapped = await self.wrapped.for_run(ctx)
         if wrapped is self.wrapped:
             return self
@@ -620,6 +626,12 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         return replacement
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        if (
+            self._lifecycle == 'enter-outside-durable'
+            and not (ctx.root_capability is not None and ctx.root_capability.has_get_workspace)
+            and not ctx.workspace.ref
+        ):
+            return self
         wrapped = await self.wrapped.for_run_step(ctx)
         if wrapped is self.wrapped:
             return self

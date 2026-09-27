@@ -57,7 +57,7 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import Workspace
-from pydantic_ai.workspaces.workspace import workspace_layers
+from pydantic_ai.workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -404,7 +404,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         workspace = ctx.workspace
         if isinstance(workspace, DurableWorkspace):
             return workspace.wrapped
-        if workspace.attached:
+        if workspace.attached and not (
+            type(workspace) is Workspace and isinstance(workspace.backend, _UnattachedWorkspace)
+        ):
             return workspace
         assert ctx.root_capability is not None
         resolved = select_workspace(ctx.root_capability, ctx, ref=params.ref)
@@ -426,7 +428,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         workspace is returned untouched, so a durable-capable agent used as a plain agent keeps the
         very object it selected.
         """
-        if not self.in_durable_context or in_durable_unit() or not workspace.attached:
+        if (
+            not self.in_durable_context
+            or in_durable_unit()
+            or not workspace.attached
+            or (type(workspace) is Workspace and isinstance(workspace.backend, _UnattachedWorkspace))
+        ):
             return workspace
         if self._bound_workspace_operation is None:
             raise UserError(
@@ -443,6 +450,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             self._check_construction_workspace(ctx, workspace)
         return DurableWorkspace(workspace, durability=self, ctx=ctx)
 
+    @staticmethod
+    def _workspace_layers(workspace: Workspace) -> list[type[object]]:
+        layers: list[type[object]] = []
+        while True:
+            if type(workspace) is not Workspace:
+                layers.append(type(workspace))
+            backend = workspace._backend  # pyright: ignore[reportPrivateUsage]
+            if not isinstance(backend, Workspace):
+                return [*layers, type(backend)]
+            workspace = backend
+
     def _check_construction_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace) -> None:
         """Reject a run-level workspace a unit on another worker would not rebuild.
 
@@ -451,7 +469,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         assert self._agent is not None
         construction = select_workspace(self._agent.root_capability, ctx, ref=workspace.ref)
-        if construction is None or workspace_layers(construction) != workspace_layers(workspace):
+        if construction is None or self._workspace_layers(construction) != self._workspace_layers(workspace):
             raise UserError(
                 f'Under {self.engine_name}, the workspace comes from the capabilities the agent is built with, '
                 'because each durable unit rebuilds it from them. This run selected a different workspace; '
@@ -466,8 +484,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         A live backend or wrapper cannot cross a durable boundary, so inside the container only its
         identity is kept: a `DurableWorkspace` from a previous result or a parent run unwraps to its
         journaled ref, and any other instance must carry a ref some attached capability recognizes.
-        A caller-side wrapper such as `ReadOnlyWorkspace(...)` is not preserved either way; policy
-        belongs on the capability, which re-applies it on every side of the boundary.
+        Caller-side policy wrappers must match the capability's policy; otherwise the unit would
+        silently lose them.
         """
         ref = workspace.ref
         # A `DurableWorkspace` without a ref never dispatched a unit; asking the capabilities for a
@@ -494,12 +512,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 'belongs on that capability (for example `LocalWorkspace(..., read_only=True)`), not around the '
                 'argument.'
             )
-        # A caller-side read-only wrapper cannot travel to activities; refusing it prevents
-        # a read-only run silently becoming writable on another worker.
-        if not isinstance(workspace, DurableWorkspace) and workspace.read_only and not rebuilt.read_only:
+        supplied = workspace.wrapped if isinstance(workspace, DurableWorkspace) else workspace
+        if (ref is not None or not isinstance(workspace, DurableWorkspace)) and self._workspace_layers(
+            supplied
+        ) != self._workspace_layers(rebuilt):
             raise UserError(
-                f'Under {self.engine_name}, a read-only `workspace=` argument would lose its policy across '
-                'durable units; put read_only on the capability (for example `LocalWorkspace(..., read_only=True)`).'
+                f'Under {self.engine_name}, a `workspace=` policy would be lost across durable units; '
+                'configure its wrapper on the capability instead.'
             )
         return rebuilt
 
@@ -855,8 +874,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
-        # An instructions-only capability contributes no tool activity to register. If a tool
-        # is added later, it could not gain a durable registration retroactively either.
+        # Instructions-only capabilities contribute no tool activity to register.
         if ts_id is None and isinstance(ts, FunctionToolset) and not ts.tools:
             return ts
         if ts_id is None and isinstance(ts, DynamicToolset):

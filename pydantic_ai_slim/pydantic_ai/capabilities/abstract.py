@@ -537,7 +537,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def _default_run_id(self) -> str | None:
-        """Return an execution-scoped ID, if this capability owns a durable run."""
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:

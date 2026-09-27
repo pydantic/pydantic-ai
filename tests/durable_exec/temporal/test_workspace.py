@@ -158,6 +158,11 @@ def test_workspace_run_activity_has_time_for_command_and_cleanup() -> None:
     assert config.get('start_to_close_timeout') == timedelta(seconds=60)
 
 
+def test_unattached_workspace_does_not_serialize_an_unavailable_reason() -> None:
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    assert 'workspace_unavailable_reason' not in TemporalRunContext.serialize_run_context(ctx)
+
+
 async def test_unavailable_workspace_reason_survives_activity_context() -> None:
     agent = Agent(TestModel(), name='unavailable')
     ctx = RunContext(
@@ -343,12 +348,31 @@ class RunIdWorkflow:
         return result.run_id, f'{info.workflow_id}:{info.run_id}'
 
 
-async def test_temporal_default_run_id_is_execution_id(client: Client) -> None:
+@workflow.defn
+class MultiTurnWorkflow:
+    @workflow.run
+    async def run(self) -> tuple[str, str]:
+        first = await fresh_agent.run('First.')
+        second = await fresh_agent.run('Second.', message_history=first.all_messages())
+        assert first.workspace.ref == second.workspace.ref
+        return first.run_id, second.run_id
+
+
+async def test_temporal_multiple_turns_in_one_workflow(client: Client) -> None:
+    _reset_provider()
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[MultiTurnWorkflow], plugins=[AgentPlugin(fresh_agent)]):
+        first_id, second_id = await client.execute_workflow(
+            MultiTurnWorkflow.run, id=f'multi-turn-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+    assert first_id != second_id
+
+
+async def test_temporal_default_run_id_is_distinct_from_execution_id(client: Client) -> None:
     async with Worker(client, task_queue=TASK_QUEUE, workflows=[RunIdWorkflow], plugins=[AgentPlugin(fresh_agent)]):
         actual, expected = await client.execute_workflow(
             RunIdWorkflow.run, id=f'run-id-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
-    assert actual == expected
+    assert actual != expected
 
 
 async def test_fresh_workspace_is_provisioned_once_and_shared_by_every_side(client: Client) -> None:
@@ -846,7 +870,7 @@ async def test_explicit_read_only_workspace_cannot_lose_its_policy(client: Clien
             )
     cause = _workflow_failure_cause(exc_info.value)
     assert cause.type == 'UserError'
-    assert 'read_only on the capability' in cause.message
+    assert 'policy would be lost across durable units' in cause.message
 
 
 async def test_a_dead_environment_fails_the_workflow_with_the_workspace_error(client: Client) -> None:
