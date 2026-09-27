@@ -108,11 +108,11 @@ pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::pydantic.Py
 
 
 @pytest.mark.parametrize('durability', [TemporalDurability, PrefectDurability])
-def test_instructions_only_capability_needs_no_toolset_id(
+def test_idless_capability_toolset_still_requires_an_id_without_a_workspace(
     durability: type[TemporalDurability] | type[PrefectDurability],
 ) -> None:
-    agent = Agent(TestModel(), name='instructions_only', capabilities=[Capability(instructions='x'), durability()])
-    assert agent is not None
+    with pytest.raises(UserError, match='unique `id`'):
+        Agent(TestModel(), name='instructions_only', capabilities=[Capability(instructions='x'), durability()])
 
 
 def test_temporal_runner_passes_installed_harness_through(monkeypatch: pytest.MonkeyPatch) -> None:
