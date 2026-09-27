@@ -33,7 +33,7 @@ from pydantic_ai.workspaces import (
 
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
-from .fake_e2b import FakeCommandHandle, FakeE2B, _HostCommandHandle
+from .fake_e2b import FakeCommandHandle, FakeE2B, _HostCommandHandle  # pyright: ignore[reportPrivateUsage]
 
 
 def _user_line(launch: str) -> str:
@@ -265,7 +265,7 @@ class TestRun:
         assert process.poll() is None
         fake_e2b.close()
         assert process.poll() is not None
-        assert handle._out.closed and handle._err.closed
+        assert handle._out.closed and handle._err.closed  # pyright: ignore[reportPrivateUsage]
 
     async def test_host_fake_closes_output_when_spawn_fails(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
