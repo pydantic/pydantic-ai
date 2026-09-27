@@ -86,8 +86,6 @@ async def _shielded(awaitable: Awaitable[None], deadline: float) -> None:
         error = group.exceptions[0]
         error.__suppress_context__ = True
         raise error
-    # An outer cancellation takes precedence over the child's safety deadline.
-    await anyio.sleep(0)
     if timed_out:
         raise TimeoutError('local workspace subprocess operation exceeded its grace period')
 
