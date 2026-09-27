@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 import anyio.to_thread
@@ -13,6 +13,7 @@ import pytest
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     WorkspaceBackend,
+    WorkspaceFileEntry,
     WorkspaceRef,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
@@ -28,8 +29,7 @@ from .workspace_fakes import (
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='workspace conformance command rules use POSIX sh')
 
 
-@pytest.fixture
-def destroy_environment() -> Callable[[WorkspaceBackend], Awaitable[None]]:
+def _local_destroy_environment() -> Callable[[WorkspaceBackend], Awaitable[None]]:
     async def destroy(backend: WorkspaceBackend) -> None:
         assert backend.ref is not None
         await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id)
@@ -50,6 +50,10 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return lambda ref: LocalWorkspaceBackend(ref.id)
+
+    @pytest.fixture
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+        return _local_destroy_environment()
 
 
 class TestFilesystemOnlyWorkspaceBackend(WorkspaceBackendSuite):
@@ -82,6 +86,46 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return lambda ref: RunOnlyWorkspaceBackend(LocalWorkspaceBackend(ref.id))
 
+    @pytest.fixture
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+        return _local_destroy_environment()
+
+
+class _FilesystemProviderBackend:
+    def __init__(self, backend: ProviderBackend) -> None:
+        self.backend = backend
+
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return self.backend.ref
+
+    async def working_dir(self) -> str:
+        return await self.backend.working_dir()
+
+    async def read_bytes(self, path: str) -> bytes:
+        return await self.backend.read_bytes(path)
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        await self.backend.write_bytes(path, data)
+
+    async def stat(self, path: str) -> WorkspaceFileEntry:
+        return await self.backend.stat(path)
+
+    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
+        return await self.backend.list_dir(path)
+
+    async def make_dir(self, path: str) -> None:
+        await self.backend.make_dir(path)
+
+    async def remove(self, path: str) -> None:
+        await self.backend.remove(path)
+
+    async def exists(self, path: str) -> bool:
+        return await self.backend.exists(path)
+
+    async def realpath(self, path: str) -> str:
+        return await self.backend.realpath(path)
+
 
 class TestProviderBackend(WorkspaceBackendSuite):
     @pytest.fixture
@@ -97,16 +141,16 @@ class TestProviderBackend(WorkspaceBackendSuite):
         return InMemoryProvider('conformance-provider')
 
     @pytest.fixture
-    def backend(self, provider: InMemoryProvider) -> ProviderBackend:
-        return provider.backend(None)
+    def backend(self, provider: InMemoryProvider) -> WorkspaceBackend:
+        return _FilesystemProviderBackend(provider.backend(None))
 
     @pytest.fixture
     def fresh_backend(self, provider: InMemoryProvider) -> Callable[[], WorkspaceBackend]:
-        return lambda: provider.backend(None)
+        return lambda: _FilesystemProviderBackend(provider.backend(None))
 
     @pytest.fixture
     def attach_backend(self, provider: InMemoryProvider) -> Callable[[WorkspaceRef], WorkspaceBackend]:
-        return provider.backend
+        return lambda ref: _FilesystemProviderBackend(provider.backend(ref))
 
     @pytest.fixture
     def destroy_environment(self, provider: InMemoryProvider) -> Callable[[WorkspaceBackend], Awaitable[None]]:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import posixpath
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -19,7 +18,6 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspaceRef,
     WorkspaceResult,
-    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 
@@ -37,9 +35,6 @@ class FakeEntry:
     path: str
     is_dir: bool = False
     size: int | None = None
-
-
-_ENV_COMMAND = re.compile(r'^printf %s "\$([A-Z0-9_]+)"$')
 
 
 def _add_parent_directories(directories: set[str], path: str) -> None:
@@ -102,45 +97,6 @@ def _remove(files: dict[str, bytes], directories: set[str], path: str) -> None:
     directories.difference_update(
         {directory for directory in directories if directory == path or directory.startswith(prefix)}
     )
-
-
-def _run_conformance_command(
-    command: WorkspaceCommand,
-    *,
-    shell: bool,
-    cwd: str | None,
-    env: Mapping[str, str] | None,
-    timeout: float | None,
-    working_dir: str,
-    files: dict[str, bytes],
-    directories: set[str],
-) -> FakeWorkspaceResult | None:
-    if isinstance(command, str) != shell:
-        raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
-    if cwd is not None and not posixpath.isabs(cwd):
-        raise ValueError('cwd must be absolute')
-    if cwd is not None and cwd != '/' and cwd not in directories:
-        raise FileNotFoundError(cwd)
-    if not isinstance(command, str) and list(command) == ['sh', '-c', 'sleep 30'] and timeout is not None:
-        raise WorkspaceTimeoutError('command timed out')
-    if list(command) == ['sh', '-c', 'read value || printf eof']:
-        return FakeWorkspaceResult(stdout='eof')
-    if list(command) == ['sh', '-c', 'i=0; while [ "$i" -lt 1024 ]; do printf workspace; i=$((i+1)); done']:
-        return FakeWorkspaceResult(stdout='workspace' * 1024)
-    if command == 'printf out; printf err >&2; exit 7':
-        return FakeWorkspaceResult(exit_code=7, stdout='out', stderr='err')
-    if list(command) == ['pydantic-ai-conformance-missing-program']:
-        return FakeWorkspaceResult(exit_code=127, stderr=f'{command[0]}: command not found\n')
-    if list(command[:3]) == ['sh', '-c', 'pwd -P']:
-        return FakeWorkspaceResult(stdout=f'{cwd or working_dir}\n')
-    if len(command) == 5 and list(command[:4]) == ['sh', '-c', 'printf "%s" "$1"', 'sh']:
-        return FakeWorkspaceResult(stdout=command[4])
-    if len(command) == 3 and (match := _ENV_COMMAND.fullmatch(command[2])):
-        return FakeWorkspaceResult(stdout=(env or {}).get(match.group(1), ''))
-    if len(command) == 5 and command[2].startswith('IFS= read'):
-        _write(files, directories, command[4], b'out\n')
-        return FakeWorkspaceResult()
-    return None
 
 
 class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
@@ -444,19 +400,7 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
-        files = await self._files()
-        conformance_result = _run_conformance_command(
-            command,
-            shell=shell,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-            working_dir='/remote',
-            files=files,
-            directories=self._directories(),
-        )
-        if conformance_result is not None:
-            return conformance_result
+        await self._files()
         return FakeWorkspaceResult(stdout=f'ran:{" ".join(command)}')
 
     async def working_dir(self) -> str:
