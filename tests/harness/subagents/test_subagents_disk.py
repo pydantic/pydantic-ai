@@ -18,6 +18,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import (
     MINIMUM_EFFORT_FLOOR,
     AgentOverride,
@@ -334,10 +335,31 @@ class TestWorkspaceDiscovery:
         assert seen[0] == (None, [])
 
     async def test_no_workspace_skips_convention_discovery(self) -> None:
-        # Neither the home root nor the host's cwd stands in for a missing workspace.
+        # Neither the home root nor the host's cwd stands in for a missing workspace, but a cwd folder
+        # earlier releases read is reported once per instance, not silently dropped.
         _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
         _write_agent(Path.cwd() / '.agents' / 'agents', 'planner.md', 'Plan.')
+        cap: SubAgents[object] = SubAgents()
+        with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions') as record:
+            assert await _listing(cap, None) is None
+            assert await _listing(cap, None) is None
+        assert len(record) == 1
+        assert "LocalWorkspace('.')" in str(record[0].message)
+        assert "SubAgents(workspace=LocalWorkspaceBackend('.'))" in str(record[0].message)
+
+    async def test_no_workspace_warns_about_the_claude_fallback(self) -> None:
+        _write_agent(Path.cwd() / '.claude' / 'agents', 'planner.md', 'Plan.')
+        with pytest.warns(HarnessDeprecationWarning, match=r'\.claude'):
+            assert await _listing(SubAgents(), None) is None
+
+    async def test_no_workspace_and_no_host_folder_is_silent(self) -> None:
+        # Nothing was there to lose. `filterwarnings = error` turns any warning into a failure.
+        _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
         assert await _listing(SubAgents(), None) is None
+
+    async def test_no_workspace_with_discovery_off_is_silent(self) -> None:
+        _write_agent(Path.cwd() / '.agents' / 'agents', 'planner.md', 'Plan.')
+        assert await _listing(SubAgents(agent_folders=None), None) is None
 
     async def test_runs_over_unchanged_files_are_identical(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'w.md', '---\nname: w\n---\nB')
