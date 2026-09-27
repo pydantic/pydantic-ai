@@ -314,7 +314,7 @@ The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and
 
 All implement the same async `StepStore` protocol, so capability hooks never block the event loop on the file/sqlite backends (I/O is dispatched via `anyio.to_thread`); the Mongo backend is natively async.
 
-`FileStepStore` and `SqliteStepStore` use paths on the machine running the agent, not the run's workspace, even when the agent works in a sandbox. This is expected to change in a future release.
+`FileStepStore` and `SqliteStepStore` are not routed through the run's workspace: `FileStepStore`'s `directory` and `SqliteStepStore`'s `database=`, when given, are paths on the machine running the agent, even when the agent works in a sandbox. This is expected to change in a future release.
 
 `FileStepStore` validates `run_id` against `[A-Za-z0-9_.-]{1,200}` (and rejects `..`) to prevent path traversal. Callers passing user-controlled IDs should still sanitise first.
 
