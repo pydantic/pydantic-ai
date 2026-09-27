@@ -122,6 +122,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [FileSystem](filesystem.md) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
+| [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
 
 ### Tools & native abilities
 

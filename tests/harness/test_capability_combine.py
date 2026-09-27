@@ -278,6 +278,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
+    'E2BSandbox': Anonymous('two coexist: the first one listed supplies the run workspace, the other is unused'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),

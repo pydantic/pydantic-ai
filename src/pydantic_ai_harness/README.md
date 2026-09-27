@@ -137,6 +137,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [FileSystem](pydantic_ai_harness/filesystem/) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
 | [Shell](pydantic_ai_harness/shell/) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](pydantic_ai_harness/modal_sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
+| [E2B Sandbox](pydantic_ai_harness/e2b_sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
 
 ### Tools & native abilities
 
