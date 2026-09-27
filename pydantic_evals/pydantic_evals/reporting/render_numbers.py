@@ -26,10 +26,15 @@ def default_render_number(value: float | int) -> str:
 
     * If the value is an integer, format it as an integer.
     * If the value is a float, include at least one decimal place and at least 3 significant figures.
+    * Non-finite floats are rendered as 'inf', '-inf', or 'nan'.
     """
     # If it's an int, just return its string representation.
     if isinstance(value, int):
         return f'{value:,d}'
+
+    # Non-finite floats would raise in the log10-based logic below.
+    if not math.isfinite(value):
+        return 'nan' if math.isnan(value) else ('inf' if value > 0 else '-inf')
 
     abs_val = abs(value)
 
