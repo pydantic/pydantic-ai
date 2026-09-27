@@ -562,10 +562,11 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         # exec-start reply from launching work after its caller has been cancelled.
         # `setsid -w` waits for its child; without -w Modal reports success after the fork.
         # Keep the group leader alive while the child runs, so it can remove its marker
-        # after completion. A cancelled late start still sees the tombstone before user code.
+        # after completion. A cancelled late start still sees the tombstone before user code,
+        # and removes it: no other start can follow for this token.
         start_script = (
-            'test ! -e "$1" || exit 143; pid_file=$2; echo $$ > "$pid_file"; '
-            'if test -e "$1"; then rm -f "$pid_file"; exit 143; fi; '
+            'test ! -e "$1" || { rm -f "$1"; exit 143; }; pid_file=$2; echo $$ > "$pid_file"; '
+            'if test -e "$1"; then rm -f "$pid_file" "$1"; exit 143; fi; '
             'shift 2; "$@" </dev/null; status=$?; rm -f "$pid_file"; exit "$status"'
         )
         wrapped = [
@@ -580,6 +581,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         ]
         # dash's builtin kill rejects `--`; the negative PID addresses the group. Give TERM
         # a short grace period, then KILL survivors (including TERM-ignoring descendants).
+        # A pid marker proves the start already happened, so the tombstone is no longer needed.
         target = '-"$pid"' if isolated else '"$pid"'
         stop_script = (
             'touch "$1"; if test -f "$2"; then '
@@ -587,7 +589,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             f'i=0; while kill -0 {target} 2>/dev/null && test "$i" -lt 5; do '
             'sleep 0.2; i=$((i+1)); done; '
             f'if kill -0 {target} 2>/dev/null; then kill -KILL {target} 2>/dev/null || true; fi; '
-            'fi; rm -f "$2"'
+            'rm -f "$1"; fi; rm -f "$2"'
         )
 
         async def stop() -> None:

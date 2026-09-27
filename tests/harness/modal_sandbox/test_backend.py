@@ -391,6 +391,36 @@ class TestRun:
         )
         assert blocked.returncode == 143
         assert not marker.exists()
+        # The late start the tombstone blocked was the one it existed for.
+        assert not (tmp_path / 'cancel').exists()
+
+    async def test_stopping_a_started_command_removes_its_tombstone(
+        self, fake_modal: FakeModal, tmp_path: Path
+    ) -> None:
+        fake_modal.wait_hangs = True
+        backend = await started()
+        waiter = asyncio.create_task(backend.run(['sleep', '30']))
+        await anyio.wait_all_tasks_blocked()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        sandbox = fake_modal.sandboxes[0]
+        start = sandbox.start_scripts[-1]
+        stop = next(call for call in sandbox.exec_calls if 'modal-stop' in call.argv).argv[2]
+        cancel, marker = tmp_path / 'cancel', tmp_path / 'pid'
+        # Its own session stands in for `setsid`, which macOS lacks.
+        command = subprocess.Popen(
+            ['sh', '-c', start, 'modal-command', str(cancel), str(marker), 'sleep', '30'], start_new_session=True
+        )
+        try:
+            with anyio.fail_after(30):
+                while not (marker.exists() and marker.read_text().strip()):
+                    await anyio.sleep(0.01)
+            subprocess.run(['sh', '-c', stop, 'modal-stop', str(cancel), str(marker)], check=True)
+            assert command.wait(timeout=30) != 0
+        finally:
+            command.kill()
+        assert not cancel.exists()
 
     async def test_stop_uses_stable_directory_after_command_cwd_is_removed(self, fake_modal: FakeModal) -> None:
         fake_modal.wait_hangs = True
