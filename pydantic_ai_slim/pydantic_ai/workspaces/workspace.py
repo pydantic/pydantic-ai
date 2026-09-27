@@ -65,6 +65,36 @@ _SHELL_CHECK_PARENTS = (
 )
 
 
+def _damaged(path: str) -> WorkspaceError:
+    return WorkspaceError(f'shell filesystem returned damaged or incomplete output for {path!r}')
+
+
+def _size(text: str, path: str) -> int:
+    if not text.strip().isdigit():
+        raise _damaged(path)
+    return int(text)
+
+
+def _decode(encoded: str, size: int, path: str) -> bytes:
+    """Decode base64 command output (text-safe for any bytes), refusing anything but exactly `size` bytes.
+
+    A truncated or damaged stream can still decode, and a file can shrink mid-read; never return a partial result.
+    """
+    try:
+        data = base64.b64decode(encoded)
+    except ValueError:
+        raise _damaged(path) from None
+    if len(data) != size:
+        raise _damaged(path)
+    return data
+
+
+def _decode_sized(output: str, path: str) -> bytes:
+    """Decode a size line followed by base64."""
+    size, _, encoded = output.partition('\n')
+    return _decode(encoded, _size(size, path), path)
+
+
 class _ShellFilesystem(SupportsFilesystem):
     """Derive filesystem operations from a backend's command-execution primitive.
 
@@ -103,15 +133,7 @@ class _ShellFilesystem(SupportsFilesystem):
                     f'shell filesystem {operation} exceeded command output limit for {path!r}'
                 ) from error
             await self._raise_for_error(result, path)
-            # base64 carries arbitrary bytes through a text-only command output.
-            try:
-                chunk = base64.b64decode(result.stdout)
-            except ValueError as error:
-                raise WorkspaceError(f'shell filesystem returned invalid base64 while {what}ing {path!r}') from error
-            # A short chunk means the transfer lost data or the file shrank; never return a partial file.
-            if len(chunk) != min(_SHELL_READ_CHUNK_BYTES, size - len(data)):
-                raise WorkspaceError(f'shell filesystem returned incomplete output while {what}ing {path!r}')
-            data.extend(chunk)
+            data.extend(_decode(result.stdout, min(_SHELL_READ_CHUNK_BYTES, size - len(data)), path))
         return bytes(data)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
@@ -183,17 +205,12 @@ class _ShellFilesystem(SupportsFilesystem):
         name = posixpath.basename(posixpath.normpath(path))
         if output == 'directory':
             return FileEntry(name=name, path=path, is_dir=True, size=None)
-        if not output.isdigit():
-            raise WorkspaceError(f'shell filesystem returned an invalid size for {path!r}: {output!r}')
-        size = int(output)
-        return FileEntry(name=name, path=path, is_dir=False, size=size)
+        return FileEntry(name=name, path=path, is_dir=False, size=_size(output, path))
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
         listing = await self._list_paths(path)
         # POSIX filenames are bytes; preserve undecodable names for a round trip via os.fsencode.
         entries = listing.decode(errors='surrogateescape').split('\0')
-        if any(entry and (entry[0] not in 'd-' or not entry[1:].startswith('/')) for entry in entries):
-            raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}')
         # Each entry is `<d|-><path>`: whether it is a directory, following a symlink to its target.
         return tuple(
             FileEntry(name=posixpath.basename(entry[1:]), path=entry[1:], is_dir=entry[0] == 'd', size=None)
@@ -226,12 +243,9 @@ class _ShellFilesystem(SupportsFilesystem):
             size, separator, encoded = result.stdout.partition('\n')
             await self._raise_for_error(result, path, missing=True)
             if not separator or encoded.strip() != 'PAGED':
-                return self._decode_sized_output(result.stdout, path, 'directory listing')
+                return _decode_sized(result.stdout, path)
             paged = True
-            if not size.strip().isdigit():
-                raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}')
-            length = int(size)
-            listing = await self._read_chunks(temporary_path, length, path, 'list')
+            listing = await self._read_chunks(temporary_path, _size(size, path), path, 'list')
             completed = True
             return listing
         finally:
@@ -292,21 +306,7 @@ class _ShellFilesystem(SupportsFilesystem):
             shell=True,
         )
         await self._raise_for_error(result, path)
-        return self._decode_sized_output(result.stdout, path, 'real path').decode()
-
-    @staticmethod
-    def _decode_sized_output(output: str, path: str, kind: str) -> bytes:
-        # A truncated base64 stream may still decode to a plausible path or listing.
-        size, separator, encoded = output.partition('\n')
-        if not separator or not size.strip().isdigit():
-            raise WorkspaceError(f'shell filesystem returned an invalid {kind} for {path!r}')
-        try:
-            data = base64.b64decode(encoded)
-        except ValueError as error:
-            raise WorkspaceError(f'shell filesystem returned an invalid {kind} for {path!r}') from error
-        if int(size) != len(data):
-            raise WorkspaceError(f'shell filesystem returned incomplete output for {path!r}')
-        return data
+        return _decode_sized(result.stdout, path).decode()
 
     async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:

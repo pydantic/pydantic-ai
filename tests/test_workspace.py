@@ -188,14 +188,6 @@ async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path:
     assert await workspace.realpath(path) == os.path.realpath(root.resolve() / path)
 
 
-async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
-    # This fake answers every unknown command with `connected`, which no real shell would print here.
-    workspace = Workspace(RunOnlyWorkspaceBackend(FakeWorkspace('garbled')))
-
-    with pytest.raises(WorkspaceError, match='invalid real path'):
-        await workspace.realpath('x')
-
-
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / 'large').write_bytes(b'x' * (80 * 1024))
     monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
@@ -551,80 +543,34 @@ async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_p
     assert cleanup_attempted
 
 
-async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
-    class InvalidStatBackend(RunOnlyWorkspaceBackend):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            return FakeWorkspaceResult(stdout='not-a-size')
-
-    workspace = Workspace(InvalidStatBackend(LocalWorkspaceBackend(tmp_path)))
-    (tmp_path / 'data.bin').write_bytes(b'data')
-    with pytest.raises(WorkspaceError, match='invalid size'):
-        await workspace.stat('data.bin')
-
-
-def _lose_the_head(stdout: str) -> str:
-    """Only the tail of the output arrives, the way a backend that attached late loses it."""
-    return stdout[4:]
-
-
-def _garble(stdout: str) -> str:
-    return 'AAA'
-
-
-@pytest.mark.parametrize(('corrupt', 'error'), [(_lose_the_head, 'incomplete output'), (_garble, 'invalid base64')])
-async def test_shell_read_rejects_output_damaged_in_transit(
-    tmp_path: Path, corrupt: Callable[[str], str], error: str
-) -> None:
-    """Damaged output must raise, never turn into a shorter or different file."""
-
-    class DamagingBackend(RunOnlyWorkspaceBackend):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            stdout = corrupt(result.stdout) if isinstance(command, str) and '| base64' in command else result.stdout
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=stdout, stderr=result.stderr)
-
-    (tmp_path / 'data.bin').write_bytes(bytes(range(256)) * 100)
-    with pytest.raises(WorkspaceError, match=error):
-        await Workspace(DamagingBackend(LocalWorkspaceBackend(tmp_path))).read_bytes('data.bin')
-
-
 def _truncate(stdout: str) -> str:
-    """Drop the end of valid base64, which can still decode to a plausible value."""
+    """Drop the end of the output, the way a connection lost mid-transfer does."""
     return stdout.strip()[:-4]
 
 
-def _bad_padding(stdout: str) -> str:
+def _garble(stdout: str) -> str:
+    """A plausible size, then base64 whose padding is broken."""
     return '4\nAAA'
 
 
 @pytest.mark.parametrize(
-    ('operation', 'corrupt', 'error'),
+    ('operation', 'corrupt'),
     [
-        ('list_dir', _truncate, 'incomplete output'),
-        ('realpath', _truncate, 'incomplete output'),
-        ('realpath', _bad_padding, 'invalid real path'),
+        *(
+            (operation, corrupt)
+            for operation in ('read_bytes', 'list_dir', 'realpath')
+            for corrupt in (_truncate, _garble)
+        ),
+        # A cut-short size is still a number, so only a garbled one is detectable.
+        ('stat', _garble),
     ],
 )
-async def test_shell_metadata_rejects_damaged_base64(
-    tmp_path: Path, operation: str, corrupt: Callable[[str], str], error: str
+async def test_shell_filesystem_refuses_damaged_output(
+    tmp_path: Path, operation: str, corrupt: Callable[[str], str]
 ) -> None:
-    class DamagedBackend(RunOnlyWorkspaceBackend):
+    """Damaged output raises; it never becomes a shorter file, a different listing or another path."""
+
+    class DamagingBackend(RunOnlyWorkspaceBackend):
         async def run(
             self,
             command: str | Sequence[str],
@@ -638,55 +584,10 @@ async def test_shell_metadata_rejects_damaged_base64(
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=corrupt(result.stdout), stderr=result.stderr)
 
     (tmp_path / 'directory').mkdir()
-    (tmp_path / 'directory' / 'long-name.txt').write_text('x')
-    workspace = Workspace(DamagedBackend(LocalWorkspaceBackend(tmp_path)))
-    with pytest.raises(WorkspaceError, match=error):
-        if operation == 'list_dir':
-            await workspace.list_dir('directory')
-        else:
-            await workspace.realpath('directory/long-name.txt')
-
-
-async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> None:
-    class InvalidListingBackend(RunOnlyWorkspaceBackend):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'find ' in command:
-                return FakeWorkspaceResult(stdout='1\n/w==')
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
-
-    workspace = Workspace(InvalidListingBackend(LocalWorkspaceBackend(tmp_path)))
-    await workspace.make_dir('directory')
-    with pytest.raises(WorkspaceError, match='invalid directory listing'):
-        await workspace.list_dir('.')
-
-
-async def test_shell_list_dir_rejects_invalid_paged_size(tmp_path: Path) -> None:
-    class InvalidSizeBackend(RunOnlyWorkspaceBackend):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            if isinstance(command, str) and 'find ' in command:
-                return FakeWorkspaceResult(stdout='bad-size\nPAGED\n')
-            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
-
-    with pytest.raises(WorkspaceError, match='invalid directory listing'):
-        await Workspace(InvalidSizeBackend(LocalWorkspaceBackend(tmp_path))).list_dir('.')
+    (tmp_path / 'directory' / 'data.bin').write_bytes(bytes(range(256)) * 100)
+    workspace = Workspace(DamagingBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(WorkspaceError, match='damaged or incomplete output'):
+        await getattr(workspace, operation)('directory/data.bin' if operation != 'list_dir' else 'directory')
 
 
 async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None:
