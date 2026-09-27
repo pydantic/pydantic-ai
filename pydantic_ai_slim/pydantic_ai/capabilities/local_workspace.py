@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
@@ -59,10 +58,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         backend = LocalWorkspaceBackend(self.working_dir, env=self.env)
-        if ref is not None and (
-            ref.provider != 'local' or os.path.realpath(ref.id) != os.path.realpath(backend.ref.id)
-        ):
-            # Compare identities only; the configured backend, never history's path, is used for I/O.
-            # Thus an alias can attach without letting a forged ref redirect host access.
+        if ref is not None and ref != backend.ref:
+            # A ref from history never redirects host access away from the configured backend.
             return None
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend

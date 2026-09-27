@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Annotated
 
 from pydantic import Field
@@ -70,7 +71,15 @@ class ModalSandboxToolset(FunctionToolset[AgentDepsT]):
         self.add_function(
             self.run_command,
             name='run_command',
-            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'},
+            metadata={
+                'code_arg_name': 'command',
+                'code_arg_language': 'shell',
+                'temporal': {
+                    'start_to_close_timeout': timedelta(
+                        seconds=(self._max_command_timeout or self._sandbox_timeout) + 30
+                    )
+                },
+            },
         )
         self.add_function(self.read_file, name='read_file')
         self.add_function(self.write_file, name='write_file')
