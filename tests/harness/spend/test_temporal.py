@@ -38,8 +38,9 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.spend import Budget, SpendLimitExceeded, SpendLimits
+from tests.harness.conftest import ignore_source_reads_left_open
 
-pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal')]
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7245  # avoid conflict with the code_mode suite
 TASK_QUEUE = 'pydantic-ai-harness-spend-queue'

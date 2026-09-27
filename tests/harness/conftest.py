@@ -32,7 +32,21 @@ if TYPE_CHECKING:
 else:
     from dirty_equals import IsDatetime, IsInstance, IsNow, IsPartialDict, IsStr
 
-__all__ = ('IsDatetime', 'IsInstance', 'IsNow', 'IsPartialDict', 'IsStr', 'agent_run_names')
+__all__ = (
+    'IsDatetime',
+    'IsInstance',
+    'IsNow',
+    'IsPartialDict',
+    'IsStr',
+    'agent_run_names',
+    'ignore_source_reads_left_open',
+)
+
+# On 3.14 coverage reads a module's source while the test runs; when Temporal's workflow sandbox
+# interrupts that read, the file is left for the garbage collector to close. Only `.py` files match.
+ignore_source_reads_left_open = pytest.mark.filterwarnings(
+    "ignore:unclosed file <_io.BufferedReader name='[^']*\\.py'>:ResourceWarning"
+)
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False

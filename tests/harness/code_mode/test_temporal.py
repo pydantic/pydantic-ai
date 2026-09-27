@@ -58,8 +58,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode
 from tests.harness.code_mode.conftest import websocket_relay_server
+from tests.harness.conftest import ignore_source_reads_left_open
 
-pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal')]
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7244  # avoid conflict with other test suites
 # Fixed because the agent below is built at import time, before any fixture runs.
