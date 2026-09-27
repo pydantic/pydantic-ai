@@ -49,7 +49,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.workspaces import WorkspaceRef
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parents[2]  # the repository root, above `tests/harness`
 
 _TEMPORAL_ADDRESS = 'localhost:7233'
 
