@@ -24,6 +24,7 @@ Run locally:
 from __future__ import annotations
 
 import asyncio
+import shlex
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -48,6 +49,16 @@ pytestmark = pytest.mark.e2b_live
 def _unique(prefix: str) -> str:
     """Return a collision-resistant path or name segment for a shared live sandbox."""
     return f'{prefix}-{uuid.uuid4().hex}'
+
+
+async def _wait_until_exited(sandbox: E2BSandboxBackend, pid_file: str) -> None:
+    """Poll until the process that wrote its pid to `pid_file` has exited, under a hang guard."""
+    with anyio.fail_after(60):
+        while not await sandbox.exists(pid_file):
+            await anyio.sleep(0.2)
+        pid = (await sandbox.read_bytes(pid_file)).decode().strip()
+        while (await sandbox.run(['kill', '-0', pid])).exit_code == 0:
+            await anyio.sleep(0.2)
 
 
 @asynccontextmanager
@@ -99,11 +110,12 @@ class TestRealExecution:
         the command would have written after the deadline must never appear.
         """
         marker = f'/tmp/{_unique("after-deadline")}'
+        pid_file = f'{marker}.pid'
         with pytest.raises(WorkspaceTimeoutError) as exc_info:
-            await sandbox.run(f'echo DIAGNOSTIC; sleep 20; touch {marker}', shell=True, timeout=2)
+            await sandbox.run(f'echo DIAGNOSTIC; echo $$ > {pid_file}; sleep 20; touch {marker}', shell=True, timeout=2)
 
         assert 'DIAGNOSTIC' in exc_info.value.stdout
-        await anyio.sleep(25)
+        await _wait_until_exited(sandbox, pid_file)
         assert await sandbox.exists(marker) is False
 
     @pytest.mark.xfail(reason='envd waits for inherited output pipes to close', strict=True)
@@ -116,9 +128,11 @@ class TestRealExecution:
     async def test_timeout_stops_foreground_descendants(self, sandbox: E2BSandboxBackend) -> None:
         """Check whether a timed-out foreground shell leaves a child able to mutate the sandbox."""
         marker = f'/tmp/{_unique("descendant")}'
+        pid_file = f'{marker}.pid'
+        child = shlex.quote(f'echo $$ > {pid_file}; sleep 3; touch {marker}')
         with pytest.raises(WorkspaceTimeoutError):
-            await sandbox.run(f'(sleep 3; touch {marker}) & sleep 30', shell=True, timeout=1)
-        await anyio.sleep(5)
+            await sandbox.run(f'sh -c {child} & sleep 30', shell=True, timeout=1)
+        await _wait_until_exited(sandbox, pid_file)
         assert not await sandbox.exists(marker)
 
     async def test_cancel_before_remote_start_fences_user_command(
@@ -158,10 +172,12 @@ class TestRealExecution:
     async def test_a_foreground_group_child_is_stopped(self, sandbox: E2BSandboxBackend) -> None:
         """The deadline stops children that remain in the foreground process group."""
         marker = f'/tmp/{_unique("orphan")}'
+        pid_file = f'{marker}.pid'
+        child = shlex.quote(f'echo $$ > {pid_file}; sleep 5; touch {marker}')
         with pytest.raises(WorkspaceTimeoutError):
-            await sandbox.run(f'(sleep 5; touch {marker}) & sleep 30', shell=True, timeout=2)
+            await sandbox.run(f'sh -c {child} & sleep 30', shell=True, timeout=2)
 
-        await anyio.sleep(10)
+        await _wait_until_exited(sandbox, pid_file)
         assert await sandbox.exists(marker) is False
 
     async def test_a_cancelled_run_stops_the_command(self, sandbox: E2BSandboxBackend) -> None:
@@ -171,10 +187,11 @@ class TestRealExecution:
         per-command kill, so the marker written after the cancellation must never appear.
         """
         marker = f'/tmp/{_unique("cancelled")}'
+        pid_file = f'{marker}.pid'
         with anyio.move_on_after(2):
-            await sandbox.run(f'sleep 15; touch {marker}', shell=True, timeout=60)
+            await sandbox.run(f'echo $$ > {pid_file}; sleep 15; touch {marker}', shell=True, timeout=60)
 
-        await anyio.sleep(20)
+        await _wait_until_exited(sandbox, pid_file)
         assert await sandbox.exists(marker) is False
 
     async def test_large_stderr_does_not_block_stdout(self, sandbox: E2BSandboxBackend) -> None:
