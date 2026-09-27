@@ -811,7 +811,7 @@ def _resolve_anthropic_service_tier(
     return OMIT
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class AnthropicModel(Model[AsyncAnthropicClient]):
     """A model that uses the Anthropic API.
 

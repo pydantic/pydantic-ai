@@ -329,7 +329,7 @@ class InstrumentationSettings:
             self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 

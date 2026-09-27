@@ -58,7 +58,7 @@ class _WrappedToolOutput:
         self.value = pydantic_core.to_jsonable_python(value)
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class TestModel(Model):
     """A model specifically for testing purposes.
 

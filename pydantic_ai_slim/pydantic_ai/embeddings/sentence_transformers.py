@@ -51,7 +51,7 @@ class SentenceTransformersEmbeddingSettings(EmbeddingSettings, total=False):
     """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class SentenceTransformerEmbeddingModel(EmbeddingModel):
     """Local embedding model using the `sentence-transformers` library.
 

@@ -138,7 +138,7 @@ class HuggingFaceModelSettings(ModelSettings, total=False):
     # This class is a placeholder for any future huggingface-specific settings
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class HuggingFaceModel(Model[AsyncInferenceClient]):
     """A model that uses Hugging Face Inference Providers.
 

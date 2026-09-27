@@ -370,7 +370,7 @@ class _Limits:
     score_levels: int | None
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class DecisionModel(Model[InterfaceClient]):
     """Base class for decision models: models that answer typed questions about a text rather than write text.
 

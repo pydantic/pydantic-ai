@@ -180,7 +180,7 @@ class MistralModelSettings(ModelSettings, total=False):
     """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class MistralModel(Model[Mistral]):
     """A model that uses Mistral.
 

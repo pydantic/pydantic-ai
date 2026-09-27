@@ -65,7 +65,7 @@ class CerebrasModelSettings(ModelSettings, total=False):
     """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class CerebrasModel(OpenAIChatModel):
     """A model that uses Cerebras's OpenAI-compatible API.
 

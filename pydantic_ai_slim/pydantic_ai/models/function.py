@@ -47,7 +47,7 @@ from . import (
 )
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class FunctionModel(Model):
     """A model controlled by a local function.
 

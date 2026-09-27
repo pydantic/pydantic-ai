@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     pass
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class WrapperEmbeddingModel(EmbeddingModel):
     """Base class for embedding models that wrap another model.
 

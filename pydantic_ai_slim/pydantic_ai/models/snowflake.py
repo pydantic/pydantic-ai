@@ -152,7 +152,7 @@ class _SnowflakeChatCompletionChunk(_ChatCompletionChunk):
     choices: list[_SnowflakeChunkChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class SnowflakeModel(OpenAIChatModel):
     """A model that uses Snowflake Cortex's OpenAI-compatible Chat Completions API.
 

@@ -86,7 +86,7 @@ def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     return isinstance(value, type) and issubclass(value, Exception)
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class FallbackModel(Model):
     """A model that uses one or more fallback models upon failure.
 

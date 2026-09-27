@@ -43,7 +43,7 @@ class OpenAIEmbeddingSettings(EmbeddingSettings, total=False):
     # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class OpenAIEmbeddingModel(EmbeddingModel):
     """OpenAI embedding model implementation.
 

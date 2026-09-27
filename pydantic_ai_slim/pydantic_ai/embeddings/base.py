@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import fields as _dataclass_fields, is_dataclass as _is_dataclass
 
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
@@ -31,6 +32,30 @@ class EmbeddingModel(ABC):
             settings: Model-specific settings that will be used as defaults for this model.
         """
         self._settings = settings
+
+    def __eq__(self, other: object) -> bool:
+        """Compare embedding models by value, including their default settings.
+
+        Embedding model adapters are `@dataclass(init=False, eq=False)` so that this base
+        implementation is used instead of a generated field comparison: the default `settings`
+        are declared on this base class rather than on any dataclass, so a generated `__eq__`
+        would ignore them and two models differing only in settings would compare equal.
+        """
+        if not isinstance(other, EmbeddingModel):
+            return NotImplemented
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        if _is_dataclass(self):
+            # Mirror the generated `__eq__` these adapters used to get: same-class instances
+            # compare by their dataclass fields, plus the default settings compared below.
+            self_fields = tuple(getattr(self, f.name) for f in _dataclass_fields(self))
+            other_fields = tuple(getattr(other, f.name) for f in _dataclass_fields(other))
+            if self_fields != other_fields:
+                return False
+        elif self is not other:
+            # Non-dataclass subclasses keep the identity comparison they always had.
+            return False
+        return self._settings == other._settings
 
     @property
     def settings(self) -> EmbeddingSettings | None:

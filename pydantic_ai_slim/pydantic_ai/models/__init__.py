@@ -14,7 +14,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields as _dataclass_fields, is_dataclass as _is_dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
@@ -460,6 +460,30 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         self._settings = settings
         self._profile = profile
         preload_pricing_data()
+
+    def __eq__(self, other: object) -> bool:
+        """Compare models by value, including their default settings.
+
+        Model adapters are `@dataclass(init=False, eq=False)` so that this base implementation
+        is used instead of a generated field comparison: the default `settings` are declared on
+        this base class rather than on any dataclass, so a generated `__eq__` would ignore them
+        and two models differing only in settings would compare equal.
+        """
+        if not isinstance(other, Model):
+            return NotImplemented
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        if _is_dataclass(self):
+            # Mirror the generated `__eq__` these adapters used to get: same-class instances
+            # compare by their dataclass fields, plus the default settings compared below.
+            self_fields = tuple(getattr(self, f.name) for f in _dataclass_fields(self))
+            other_fields = tuple(getattr(other, f.name) for f in _dataclass_fields(other))
+            if self_fields != other_fields:
+                return False
+        elif self is not other:
+            # Non-dataclass subclasses keep the identity comparison they always had.
+            return False
+        return self._settings == other._settings
 
     @property
     def provider(self) -> Provider[InterfaceClient] | None:

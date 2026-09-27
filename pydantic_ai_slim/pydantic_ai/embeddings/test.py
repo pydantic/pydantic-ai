@@ -18,7 +18,7 @@ def _estimate_tokens(text: str) -> int:
     return estimate_string_tokens(text) if text else 0
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class TestEmbeddingModel(EmbeddingModel):
     """A mock embedding model for testing.
 

@@ -49,7 +49,7 @@ See <https://docs.crusoecloud.com/serverless-inference/overview> for an up to da
 """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class CrusoeModel(OpenAIChatModel):
     """A model that uses Crusoe's OpenAI-compatible Serverless Inference API.
 

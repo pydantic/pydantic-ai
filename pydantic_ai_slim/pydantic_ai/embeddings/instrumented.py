@@ -38,7 +38,7 @@ def instrument_embedding_model(model: EmbeddingModel, instrument: Instrumentatio
     return model
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
     """Embedding model which wraps another model so that requests are instrumented with OpenTelemetry.
 

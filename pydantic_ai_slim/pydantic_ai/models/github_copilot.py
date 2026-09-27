@@ -36,7 +36,7 @@ List the ids your own plan serves with `GET https://api.githubcopilot.com/models
 """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class GitHubCopilotModel(OpenAIChatModel):
     """A model that uses GitHub Copilot's OpenAI-compatible Chat Completions API.
 

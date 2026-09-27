@@ -489,7 +489,7 @@ def _get_handler_for_model(model_name: str) -> _BedrockEmbeddingHandler:
     )
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class BedrockEmbeddingModel(EmbeddingModel):
     """Bedrock embedding model implementation.
 

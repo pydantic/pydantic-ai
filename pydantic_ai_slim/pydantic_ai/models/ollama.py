@@ -43,7 +43,7 @@ def _routes_to_ollama_cloud(provider: Provider[AsyncOpenAI], model_name: str) ->
     return hostname == 'ollama.com' or hostname.endswith('.ollama.com') or model_name.endswith('-cloud')
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class OllamaModel(OpenAIChatModel):
     """A model that uses Ollama's OpenAI-compatible Chat Completions API.
 

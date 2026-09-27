@@ -937,7 +937,7 @@ def _resolve_prompt_cache_retention(
     return None
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
 
@@ -1954,7 +1954,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
 

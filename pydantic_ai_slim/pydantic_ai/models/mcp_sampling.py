@@ -25,7 +25,7 @@ class MCPSamplingModelSettings(ModelSettings, total=False):
     """Model preferences to use for MCP Sampling."""
 
 
-@dataclass
+@dataclass(eq=False)
 class MCPSamplingModel(Model):
     """A model that uses MCP Sampling.
 

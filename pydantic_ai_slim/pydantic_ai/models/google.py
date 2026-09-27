@@ -506,7 +506,7 @@ def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleMode
     return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 

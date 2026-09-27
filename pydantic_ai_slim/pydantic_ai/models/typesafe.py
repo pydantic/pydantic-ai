@@ -95,7 +95,7 @@ TypeSafeStreamedResponse = DecisionStreamedResponse
 """Deprecated: use [`DecisionStreamedResponse`][pydantic_ai.models.decision.DecisionStreamedResponse] instead."""
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
     """The model class for TypeSafe's Jev, a [decision model][pydantic_ai.models.decision.DecisionModel].
 

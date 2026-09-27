@@ -597,7 +597,7 @@ class BedrockModelSettings(ModelSettings, total=False):
     """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 

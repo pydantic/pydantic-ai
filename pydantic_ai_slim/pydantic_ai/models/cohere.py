@@ -112,7 +112,7 @@ class CohereModelSettings(ModelSettings, total=False):
     # This class is a placeholder for any future cohere-specific settings
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class CohereModel(Model[AsyncClientV2]):
     """A model that uses the Cohere API.
 

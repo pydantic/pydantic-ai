@@ -160,7 +160,7 @@ class GroqModelSettings(ModelSettings, total=False):
     """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class GroqModel(Model[AsyncGroq]):
     """A model that uses the Groq API.
 

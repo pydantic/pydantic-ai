@@ -40,7 +40,7 @@ list the latest models but allow any name in the type hints.
 """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class BedrockMantleResponsesModel(OpenAIResponsesModel):
     """An OpenAI Responses model served by Amazon Bedrock Mantle.
 
@@ -86,7 +86,7 @@ class BedrockMantleResponsesModel(OpenAIResponsesModel):
         return self._mantle_client
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class BedrockMantleChatModel(OpenAIChatModel):
     """An OpenAI Chat Completions model served by Amazon Bedrock Mantle (GPT-OSS Safeguard).
 

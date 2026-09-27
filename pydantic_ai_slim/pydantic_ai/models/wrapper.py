@@ -28,7 +28,7 @@ from . import (
 __all__ = ['WrapperModel']
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class WrapperModel(Model):
     """Model which wraps another model.
 

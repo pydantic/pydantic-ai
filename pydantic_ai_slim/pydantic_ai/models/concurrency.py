@@ -23,7 +23,7 @@ from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class ConcurrencyLimitedModel(WrapperModel):
     """A model wrapper that limits concurrent requests to the underlying model.
 

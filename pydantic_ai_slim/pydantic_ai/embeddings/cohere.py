@@ -99,7 +99,7 @@ class CohereEmbeddingSettings(EmbeddingSettings, total=False):
     """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class CohereEmbeddingModel(EmbeddingModel):
     """Cohere embedding model implementation.
 

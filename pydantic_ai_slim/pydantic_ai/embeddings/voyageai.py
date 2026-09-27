@@ -83,7 +83,7 @@ _MAX_INPUT_TOKENS: dict[VoyageAIEmbeddingModelName, int] = {
 }
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class VoyageAIEmbeddingModel(EmbeddingModel):
     """VoyageAI embedding model implementation.
 

@@ -132,7 +132,7 @@ class ZaiModelSettings(ModelSettings, total=False):
     """
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class ZaiModel(OpenAIChatModel):
     """A model that uses Z.AI's OpenAI-compatible API.
 
