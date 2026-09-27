@@ -576,7 +576,7 @@ class TestBackgroundTools:
             await second_started.wait()
             ctx.cancel()
             await asyncio.sleep(0)
-            return 'discarded'  # pragma: no cover -- cancellation is delivered at the await
+            return 'discarded'  # pragma: lax no cover -- cancellation is delivered at the await
 
         @agent.tool_plain(metadata={'background': True})
         async def first() -> str:

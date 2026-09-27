@@ -23,6 +23,8 @@ from pydantic_clai2._session import Session
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.sessions import activate
 
+pytestmark = pytest.mark.anyio
+
 
 def saved_session(tmp_path: Path) -> Session[None, str]:
     return Session(
@@ -231,8 +233,8 @@ async def test_interrupted_tool_frontier_accepts_followup(tmp_path: Path, *, can
 
     @agent.tool_plain
     def effect() -> str:
-        calls.append('executed')
-        return 'done'
+        calls.append('executed')  # pragma: no cover
+        return 'done'  # pragma: no cover
 
     async def interrupt(event: AgentStreamEvent) -> None:
         if isinstance(event, FunctionToolCallEvent):

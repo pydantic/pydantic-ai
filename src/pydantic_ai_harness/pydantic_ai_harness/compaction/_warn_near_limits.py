@@ -39,8 +39,8 @@ class _Warning:
 class WarnNearLimits(AbstractCapability[AgentDepsT]):
     """Injects a warning message when the agent approaches configured limits.
 
-    The warning is appended as a trailing ``ModelRequest`` with a
-    ``UserPromptPart`` so that the model treats it as a distinct user turn
+    The warning is appended as a trailing `ModelRequest` with a
+    `UserPromptPart` so that the model treats it as a distinct user turn
     (models tend to pay more attention to user messages than system messages).
 
     Previous warnings injected by this capability are stripped before deciding

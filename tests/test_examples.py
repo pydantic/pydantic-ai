@@ -121,6 +121,9 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
             continue
+        if ex.path.resolve().is_relative_to(root_dir / 'docs' / 'harness'):
+            # Written for the harness repository, which never ran them; not yet made runnable here.
+            continue
         if ex.path.name == 'README.md' and (
             'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'ClearToolResults(' in ex.source
         ):

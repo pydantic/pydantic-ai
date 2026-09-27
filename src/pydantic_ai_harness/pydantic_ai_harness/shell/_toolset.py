@@ -65,7 +65,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     The opt-in `shell` tool instead starts commands that outlive the run and
     returns handles to their output and exit status.
 
-    Optionally tracks the working directory across calls so ``cd`` persists.
+    Optionally tracks the working directory across calls so `cd` persists.
     """
 
     def __init__(

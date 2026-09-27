@@ -456,6 +456,12 @@ xfail_strict = true
 markers = ["modal_live: runs against a real Modal control plane; needs credentials"]
 filterwarnings = [
     "error",
+    # anyio 4.14+ intentionally leaves a task's coroutine unawaited when the task is cancelled natively
+    # (`asyncio.wait_for`, `Task.cancel()`, Temporal evicting a workflow) before its first step, and the
+    # garbage collector then warns in whatever test is running.
+    # TODO: Replace native cancellation in harness code (e.g. `asyncio.wait_for` in `SubAgents`) with
+    # anyio cancel scopes, which only cancel started tasks: https://github.com/pydantic/pydantic-ai/issues/8824
+    "ignore:coroutine '.*' was never awaited:RuntimeWarning",
     # Experimental harness capabilities warn on import by design; tests assert it where it matters.
     # Matched by message: the warning class lives in a package some install cells do not have.
     "ignore:`pydantic_ai_harness\\.experimental\\.[a-z_.]+` is experimental:UserWarning",
@@ -524,6 +530,7 @@ include = [
 ]
 omit = [
     "tests/example_modules/*.py",
+    "tests/harness/modal_sandbox/test_modal_live.py",  # runs only with real Modal credentials
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags

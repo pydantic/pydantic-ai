@@ -32,6 +32,8 @@ from pydantic_ai_harness.modal_sandbox import (
 
 from .fake_modal import FakeModal, FileInfo
 
+pytestmark = pytest.mark.anyio
+
 
 @runtime_checkable
 class _ModalSandboxTools(Protocol):  # pragma: no cover - structural typing only

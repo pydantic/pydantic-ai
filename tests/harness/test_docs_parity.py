@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness'
 _PACKAGE = _ROOT / 'pydantic_ai_harness'
 
 # The `experimental` package is a namespace/warning shim, not a capability, so it
@@ -94,14 +94,14 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 # capability, and no leftover "experimental" framing on graduated capabilities.
 # ACP is the one page that stays experimental.
 
-_DOCS_DIR = _ROOT / 'docs'
+_DOCS_DIR = _ROOT / '../../docs/harness'
 # `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
 # and `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, so the
 # capability-page checks do not apply to either.
 _NON_CAPABILITY_PAGES = {'clai2.md', 'examples.md', 'gh-aw.md', 'index.md', 'media.md', 'mutation-testing.md'}
 _ACP_PAGE = 'acp.md'
 
-_SOURCE_LINK = 'github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/'
+_SOURCE_LINK = 'github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/'
 # Framing that must not appear on a graduated (non-ACP) capability page.
 _EXPERIMENTAL_MARKERS = ('HarnessExperimentalWarning', 'removed in any release', '!!! warning "Experimental')
 # Lifecycle hook names must not lead a page -- mechanism goes below the purpose.
@@ -355,8 +355,8 @@ def test_capability_readme_links_source(package: Path) -> None:
 # `coder_agent` actually is; see agent_docs/docs-conventions.md.
 _BLOWN_OUT_MARKER = '<!-- Keep this blown-out example in sync across'
 _BLOWN_OUT_SURFACES = (
-    'docs/coder.md',
-    'docs/index.md',
+    '../../docs/harness/coder.md',
+    '../../docs/harness/index.md',
     'README.md',
     'pydantic_ai_harness/coder/README.md',
 )
@@ -388,7 +388,7 @@ def test_blown_out_example_matches_coder_defaults() -> None:
     assert "name='coder'" in example and 'capabilities=[Coder(workspace or Path.cwd())]' in example
 
 
-@pytest.mark.parametrize('surface', ['README.md', 'docs/index.md'])
+@pytest.mark.parametrize('surface', ['README.md', '../../docs/harness/index.md'])
 def test_coder_entry_page_describes_current_tools(surface: str) -> None:
     text = (_ROOT / surface).read_text(encoding='utf-8')
     introduction = text.split('## Capabilities', 1)[0]

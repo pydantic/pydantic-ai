@@ -33,6 +33,8 @@ from pydantic_clai2.image_input import (
 from pydantic_clai2.prompt_surface import PromptSurface
 from pydantic_clai2.settings_store import SettingsStore
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:
@@ -398,7 +400,7 @@ def test_encoder_buffer_rejects_writes_before_allocating(monkeypatch: pytest.Mon
 )
 def test_network_paths_are_rejected_without_io(text: str, monkeypatch: pytest.MonkeyPatch) -> None:
     def no_stat(path: Path, *, follow_symlinks: bool = True) -> None:
-        raise AssertionError('Network paths must be rejected before filesystem access')
+        raise AssertionError('Network paths must be rejected before filesystem access')  # pragma: no cover
 
     monkeypatch.setattr(Path, 'stat', no_stat)
     assert pasted_paths(text) == []

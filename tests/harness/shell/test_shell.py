@@ -29,6 +29,8 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
 
+pytestmark = pytest.mark.anyio
+
 
 def _env_toolset(
     shell_dir: Path,

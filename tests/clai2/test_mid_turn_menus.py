@@ -28,6 +28,8 @@ from pydantic_clai2.screen import Screen
 from pydantic_clai2.session_settings import SessionSettings
 from pydantic_clai2.settings_store import SettingsStore
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

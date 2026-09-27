@@ -44,6 +44,8 @@ from pydantic_clai2.speculative_mode import (
     workspace_mount,
 )
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:
