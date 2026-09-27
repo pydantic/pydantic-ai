@@ -652,8 +652,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
                     )
                 if self.user_prompt is None:
-                    last_message = replace(last_message)
-                    messages[-1] = last_message
+                    # The response may later be stamped with the run's workspace ref; don't mutate the caller's copy.
+                    if ctx.deps.workspace.attached:
+                        last_message = replace(last_message)
+                        messages[-1] = last_message
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
                     run_context = replace(
                         build_run_context(ctx),

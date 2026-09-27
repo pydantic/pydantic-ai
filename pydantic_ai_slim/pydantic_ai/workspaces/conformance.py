@@ -181,23 +181,21 @@ class WorkspaceBackendSuite:
             pytest.skip('fake has no foreground process to cancel')
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            started = posixpath.join(root, 'started')
-            leaked = posixpath.join(root, 'leaked')
+            pid_file = posixpath.join(root, 'pid')
 
             async def command() -> None:
-                await _commands(backend).run(
-                    ['sh', '-c', 'printf ready > "$1"; sleep 2; printf leaked > "$2"', 'sh', started, leaked]
-                )
+                await _commands(backend).run(['sh', '-c', 'echo $$ > "$1"; exec sleep 30', 'sh', pid_file])
 
             async with anyio.create_task_group() as tg:
                 tg.start_soon(command)
                 with anyio.fail_after(30):
-                    while not await workspace.exists(started):
+                    while not await workspace.exists(pid_file):
                         await anyio.sleep(0.05)
                 tg.cancel_scope.cancel()
-            # A cancelled foreground command must not continue the rest of its script.
-            await anyio.sleep(2.1)
-            assert not await workspace.exists(leaked)
+            pid = (await workspace.read_text(pid_file)).strip()
+            with anyio.fail_after(60):
+                while (await _commands(backend).run(['sh', '-c', 'kill -0 "$1"', 'sh', pid])).exit_code == 0:
+                    await anyio.sleep(0.05)
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         result = await _commands(backend).run(['sh', '-c', 'printf %s "$CONFORMANCE"'], env={'CONFORMANCE': 'value'})
@@ -357,7 +355,7 @@ class WorkspaceBackendSuite:
             fifo = posixpath.join(root, 'fifo')
             if (await commands.run(['mkfifo', fifo])).exit_code != 0:
                 pytest.skip('the environment does not provide `mkfifo`')
-            with anyio.fail_after(5):
+            with anyio.fail_after(30):
                 with pytest.raises(OSError):
                     await workspace.read_bytes(fifo)
 

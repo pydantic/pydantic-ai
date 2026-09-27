@@ -269,9 +269,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             # The durable wrapper forbids `.backend` in workflow code; inspect its original
             # workspace only to preserve an explicit unavailable reason without a ref.
             workspace = ctx.workspace.wrapped if isinstance(ctx.workspace, DurableWorkspace) else ctx.workspace
-            if isinstance(workspace.backend, UnavailableWorkspace) and not isinstance(
-                workspace.backend, _UnrestoredWorkspace
-            ):
+            if isinstance(workspace.backend, UnavailableWorkspace):
                 serialized['workspace_unavailable_reason'] = workspace.backend.reason
         return serialized
 

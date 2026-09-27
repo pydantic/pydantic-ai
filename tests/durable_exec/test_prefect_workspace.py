@@ -17,7 +17,7 @@ from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace, WorkspaceCall
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import ReadOnlyWorkspace, WorkspaceReadOnlyError, WorkspaceRef
+from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceReadOnlyError, WorkspaceRef
 
 from ..workspace_fakes import InMemoryProvider
 
@@ -81,7 +81,7 @@ def record_task_names(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_operation_backend.PrefectOperationBackend, 'execute', execute)
 
 
-async def test_prefect_default_run_id_survives_flow_retry() -> None:
+async def test_prefect_default_run_id_is_not_flow_id() -> None:
     agent = Agent(TestModel(), name='prefect_run_id', capabilities=[PrefectDurability()])
     ids: list[str] = []
 
@@ -95,7 +95,30 @@ async def test_prefect_default_run_id_survives_flow_retry() -> None:
             raise RuntimeError('retry')
         return str(context.flow_run.id)
 
-    assert await run() == ids[0] == ids[1]
+    flow_id = await run()
+    assert all(run_id != flow_id for run_id in ids)
+    assert ids[0] != ids[1]
+
+
+async def test_prefect_multiple_turns_in_one_flow() -> None:
+    provider.reset()
+    agent = Agent(TestModel(), name='prefect_turns', capabilities=[provider.capability(), PrefectDurability()])
+    attempts: list[tuple[str, str]] = []
+
+    @flow(retries=1)
+    async def converse() -> tuple[str, str]:
+        first = await agent.run('First.')
+        second = await agent.run('Second.', message_history=first.all_messages())
+        assert first.workspace.ref == second.workspace.ref
+        ids = first.run_id, second.run_id
+        attempts.append(ids)
+        if len(attempts) == 1:
+            raise RuntimeError('retry')
+        return ids
+
+    first_id, second_id = await converse()
+    assert first_id != second_id
+    assert attempts == [(first_id, second_id)] * 2
 
 
 async def test_prefect_workspace_operations_run_as_tasks_and_a_flow_retry_replays_them() -> None:
@@ -222,6 +245,8 @@ async def test_prefect_explicit_workspace_inside_a_flow() -> None:
         by_ref = await agent.run('One.', workspace=seeded)
         by_live = await agent.run('Two.', workspace=provider.backend(seeded))
         by_result = await agent.run('Three.', workspace=by_ref.workspace)
+        with pytest.raises(UserError, match='policy'):
+            await agent.run('Policy.', workspace=Workspace(ReadOnlyWorkspace(Workspace(provider.backend(seeded)))))
         with pytest.raises(UserError, match='A live workspace cannot be passed to `workspace=` inside a Prefect flow'):
             await agent.run('Four.', workspace=provider.backend(None))
         return [await run.workspace.read_text('seed.txt') for run in (by_ref, by_live, by_result)]

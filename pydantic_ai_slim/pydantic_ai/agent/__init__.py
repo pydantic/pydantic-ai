@@ -66,7 +66,7 @@ from .._cancel import CancellationToken, RunBinding, RunCancellation, take_run_b
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import dispatch_event_stream, set_current_run_context, unattached_workspace
+from .._run_context import dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -806,9 +806,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             '_override_output_retries', default=None
         )
         self._override_tool_retries: ContextVar[_utils.Option[int]] = ContextVar('_override_tool_retries', default=None)
-        self._override_workspace: ContextVar[
-            _utils.Option[WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | None]
-        ] = ContextVar('_override_workspace', default=None)
+        self._override_workspace: ContextVar[_utils.Option[WorkspaceBackend | WorkspaceRef | Literal['new'] | None]] = (
+            ContextVar('_override_workspace', default=None)
+        )
         self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
             '_override_root_capability', default=None
         )
@@ -1640,8 +1640,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             output_retries_used=0,
             run_step=0,
-            # Durable engines derive this from their execution identity, not a random UUID:
-            # replaying the workflow must address the same per-run workspace state.
             run_id=_agent_graph.resolve_run_id(
                 run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
                 message_history,
@@ -1725,18 +1723,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
-            workspace=unattached_workspace(),
         )
 
         if workspace is None and (override_workspace := self._override_workspace.get()) is not None:
             workspace = override_workspace.value
         # The workspace is selected before `for_run`, like the bootstrap model above, so `for_run` can use
         # it. Selecting does no I/O: a backend creates or attaches on its first operation.
-        if (
-            workspace is not None
-            and workspace != 'new'
-            and not isinstance(workspace, (WorkspaceRef, Workspace, WorkspaceBackend))
-        ):
+        if workspace is not None and workspace != 'new' and not isinstance(workspace, (WorkspaceRef, WorkspaceBackend)):
             raise TypeError(
                 'workspace= must be a Workspace, WorkspaceBackend, WorkspaceRef(provider=..., id=...), '
                 "or 'new'; use LocalWorkspaceBackend(path) for a str or Path"
@@ -1753,23 +1746,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef) or is_unattached
             else workspace
         )
-        # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
-        pre_run_layers = _combine_layer_duplicates([base_capability], extra_capabilities)
-        pre_run_root = _compose_layers(pre_run_layers)
-        if explicit is not None:
-            selected = explicit if isinstance(explicit, Workspace) else Workspace(explicit)
-        else:
-            selected = select_workspace(
-                pre_run_root,
-                initial_ctx,
-                ref=offered_ref,
-                run_layer=pre_run_layers[1] if len(pre_run_layers) > 1 else None,
-            )
-        initial_ctx.root_capability = pre_run_root
-        if selected is not None:
-            initial_ctx.workspace = pre_run_root._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
-                initial_ctx, selected, explicit=explicit is not None
-            )
+        pre_run_layers = [base_capability, *extra_capabilities]
+        pre_run_root = base_capability
+        selected = None
+        if workspace is not None or any(cap.has_get_workspace for cap in pre_run_layers):
+            # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
+            pre_run_layers = _combine_layer_duplicates([base_capability], extra_capabilities)
+            pre_run_root = _compose_layers(pre_run_layers)
+            if explicit is not None:
+                selected = explicit if isinstance(explicit, Workspace) else Workspace(explicit)
+            else:
+                selected = select_workspace(
+                    pre_run_root,
+                    initial_ctx,
+                    ref=offered_ref,
+                    run_layer=pre_run_layers[1] if len(pre_run_layers) > 1 else None,
+                )
+            if selected is not None:
+                initial_ctx.workspace = pre_run_root._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
+                    replace(initial_ctx, root_capability=pre_run_root), selected, explicit=explicit is not None
+                )
+            initial_ctx.root_capability = pre_run_root
         # An explicit `Instrumentation` capability (agent- or call-level) replaces the one injected from
         # `instrumentation_settings` (see `_resolve_run_capabilities`), so `for_run` hooks and metadata
         # factories are shown the settings of the one that will actually instrument the run.
@@ -1825,7 +1822,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # A workspace capability that exists only after `for_run` (a capability function's) is asked now.
         # One selected before `for_run` is final: `for_run` may have used it.
         initial_ctx.root_capability = run_capability
-        if explicit is None and not model_layers_unchanged:
+        if explicit is None and not model_layers_unchanged and run_capability.has_get_workspace:
             candidate = select_workspace(
                 run_capability, initial_ctx, ref=offered_ref, run_layer=resolved_caps.run_layer
             )
