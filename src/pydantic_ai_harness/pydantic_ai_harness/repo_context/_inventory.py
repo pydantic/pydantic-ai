@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from pydantic_ai.workspaces import Workspace, WorkspaceFileEntry
+from pydantic_ai_harness._workspace import workspace_relpath
 
 _ROOT_NOTES = {
     '.codex': 'Codex uses TOML config; assets are derived from the .claude/.agents setup.',
@@ -114,4 +115,4 @@ async def _stat(workspace: Workspace, path: str) -> WorkspaceFileEntry | None:
 
 
 def _relative(path: str, workspace: str) -> str:
-    return posixpath.relpath(path, workspace)
+    return workspace_relpath(path, workspace)

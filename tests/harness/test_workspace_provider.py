@@ -1,4 +1,5 @@
 import asyncio
+import posixpath
 
 import anyio
 import pytest
@@ -14,7 +15,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._warn import warn_argument_renamed
-from pydantic_ai_harness._workspace import innermost_backend
+from pydantic_ai_harness._workspace import innermost_backend, workspace_relpath
 from pydantic_ai_harness._workspace_provider import (
     SandboxProvider,
     absolute_path,
@@ -259,3 +260,18 @@ def test_warn_argument_renamed_points_at_the_new_name() -> None:
         'Update the call; this deprecated alias will be removed in a future release.'
     )
     assert record[0].filename == __file__
+
+
+@pytest.mark.parametrize(
+    ('path', 'start'),
+    [
+        ('/w/a/b.txt', '/w'),
+        ('/w', '/w'),
+        ('/w/a', '/w/b/c'),
+        ('/', '/w/a'),
+        ('/w/a/', '/w//'),
+        ('/w/a/../b', '/w'),
+    ],
+)
+def test_workspace_relpath_matches_posixpath_without_the_host(path: str, start: str) -> None:
+    assert workspace_relpath(path, start) == posixpath.relpath(path, start)

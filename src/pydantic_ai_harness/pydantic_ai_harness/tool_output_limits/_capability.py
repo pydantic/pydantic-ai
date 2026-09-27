@@ -26,7 +26,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
+from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure, workspace_relpath
 from pydantic_ai_harness.filesystem._reader import READ_CHARS, find_file_reader
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
@@ -506,7 +506,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         """The file tool that reads the spill at `handle`, or `None` to point at `read_tool_result`."""
         if _spill_location(self._store) is None:
             return None
-        relative = posixpath.relpath(handle, await ctx.workspace.working_dir())
+        relative = workspace_relpath(handle, await ctx.workspace.working_dir())
         return find_file_reader(ctx, relative, max_chars=_MAX_READ_CHARS)
 
     async def _reads_a_spill(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, args: dict[str, Any]) -> bool:
@@ -519,7 +519,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             or find_file_reader(ctx, posixpath.join(location, 'spill'), max_chars=_MAX_READ_CHARS) != call.tool_name
         ):
             return False
-        relative = posixpath.relpath(await ctx.workspace.resolve(path), await ctx.workspace.working_dir())
+        relative = workspace_relpath(await ctx.workspace.resolve(path), await ctx.workspace.working_dir())
         return relative.startswith(location + '/')
 
     async def _summarize_action(

@@ -34,6 +34,20 @@ def workspace_path(path: Path) -> str:
     return path.as_posix()
 
 
+def workspace_relpath(path: str, start: str) -> str:
+    """`posixpath.relpath` for absolute workspace paths, computed from their components alone.
+
+    `posixpath.relpath` calls `os.path.abspath`, which reads this process's working directory: a
+    blocking call on the event loop, and a host path that says nothing about the workspace's.
+    """
+    target = [part for part in posixpath.normpath(path).split('/') if part]
+    base = [part for part in posixpath.normpath(start).split('/') if part]
+    common = 0
+    while common < min(len(target), len(base)) and target[common] == base[common]:
+        common += 1
+    return '/'.join(['..'] * (len(base) - common) + target[common:]) or '.'
+
+
 def raise_tool_failure(error: WorkspaceError) -> NoReturn:
     """Report a deliberate workspace failure to the model as a failed tool call.
 

@@ -25,7 +25,7 @@ import anyio.to_thread
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness._workspace import secondary_workspace, workspace_path
+from pydantic_ai_harness._workspace import secondary_workspace, workspace_path, workspace_relpath
 
 _VALID_SEGMENT_RE = re.compile(r'[A-Za-z0-9_.-]{1,200}')
 _OPERATIONS_NAME = '.memory-operations.json'
@@ -708,7 +708,7 @@ class FileStore:
                     if await workspace.realpath(entry.path) == entry.path:
                         pending.append(entry.path)
                     continue
-                relative = posixpath.relpath(entry.path, root)
+                relative = workspace_relpath(entry.path, root)
                 if relative.startswith(prefix) and not entry.name.startswith(_HIDDEN_PREFIXES):
                     paths.append(relative)
         return heapq.nsmallest(limit, paths)
