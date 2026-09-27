@@ -160,22 +160,14 @@ async def _file_entry(backend: ModalSandboxBackend, entry: modal.types.FileInfo,
 
     target: modal.types.FileInfo | None = entry
     if entry.is_symlink():
+        resolved = await Workspace(backend).realpath(path)
         try:
-            resolved = await Workspace(backend).realpath(path)
-        except WorkspaceError as error:
-            if 'too many levels of symbolic links' not in str(error):
-                raise
+            target = await (await backend.get_sandbox()).filesystem.stat.aio(resolved)
+        except (modal.exception.SandboxFilesystemNotFoundError, modal.exception.SandboxFilesystemNotADirectoryError):
             target = None
-        else:
-            try:
-                target = await (await backend.get_sandbox()).filesystem.stat.aio(resolved)
-            except (
-                modal.exception.SandboxFilesystemNotFoundError,
-                modal.exception.SandboxFilesystemNotADirectoryError,
-            ):
-                target = None
-            if target is not None and target.is_symlink():
-                target = None
+        # `realpath` leaves a loop unresolved, so its result is still a link.
+        if target is not None and target.is_symlink():
+            target = None
     is_dir = target is not None and target.is_dir()
     # A directory's reported size is an implementation detail of the underlying filesystem
     # rather than a content length, so report none for it, like the built-in backends.
@@ -326,12 +318,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         sandbox = await self.get_sandbox()
         async with self._mapped_errors(sandbox, f'Could not write {path!r}', path):
             # Modal replaces a leaf link; resolve it in the sandbox before writing.
-            try:
-                target = await Workspace(self).realpath(path)
-            except WorkspaceError as error:
-                if 'too many levels of symbolic links' not in str(error):
-                    raise
-                raise OSError(f'Symlink loop in the Modal sandbox: {path!r}') from error
+            target = await Workspace(self).realpath(path)
+            # `realpath` leaves a loop unresolved; writing there would replace the link.
             if (await self.run(['test', '-L', target])).exit_code == 0:
                 raise OSError(f'Symlink loop in the Modal sandbox: {path!r}')
             await sandbox.filesystem.write_bytes.aio(data, target)
