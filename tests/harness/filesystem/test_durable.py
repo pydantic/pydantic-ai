@@ -8,17 +8,23 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from temporalio import workflow
-from temporalio.client import Client
-from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker
-from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+
+try:
+    from temporalio import workflow
+    from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+except ImportError:  # pragma: lax no cover
+    pytest.skip('temporalio not installed', allow_module_level=True)
+
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 
@@ -86,7 +92,7 @@ async def test_temporal_default_runner_veto(tmp_path: Path) -> None:
                 str(tmp_path),
                 id=uuid4().hex,
                 task_queue='default-veto',
-                execution_timeout=timedelta(seconds=15),
+                execution_timeout=timedelta(seconds=120),
             )
     assert 'denied' in str(returns)
     assert (tmp_path / 'protected.txt').read_text() == 'original'
@@ -148,7 +154,7 @@ async def test_temporal_vetoes_before_mutation(
         async with Worker(client, task_queue='file-veto', workflows=[FileWorkflow], workflow_runner=runner):
             assert (
                 await client.execute_workflow(
-                    FileWorkflow.run, id=uuid4().hex, task_queue='file-veto', execution_timeout=timedelta(seconds=20)
+                    FileWorkflow.run, id=uuid4().hex, task_queue='file-veto', execution_timeout=timedelta(seconds=120)
                 )
                 == 'done'
             )

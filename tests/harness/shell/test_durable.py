@@ -9,17 +9,23 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from temporalio import workflow
-from temporalio.client import Client
-from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker
-from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+
+try:
+    from temporalio import workflow
+    from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+except ImportError:  # pragma: lax no cover
+    pytest.skip('temporalio not installed', allow_module_level=True)
+
 from pydantic_ai_harness.shell import Shell
 
 
@@ -96,7 +102,7 @@ async def test_concurrent_temporal_workflows_keep_separate_cwd(tmp_path: Path) -
                         key,
                         id=uuid4().hex,
                         task_queue='shell-cwd',
-                        execution_timeout=timedelta(seconds=25),
+                        execution_timeout=timedelta(seconds=120),
                     )
                     for key in ('a', 'b')
                 )

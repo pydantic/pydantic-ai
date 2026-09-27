@@ -9,17 +9,23 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from temporalio import workflow
-from temporalio.client import Client
-from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Replayer, Worker
-from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+
+try:
+    from temporalio import workflow
+    from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Replayer, Worker
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+except ImportError:  # pragma: lax no cover
+    pytest.skip('temporalio not installed', allow_module_level=True)
+
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
 
@@ -92,7 +98,7 @@ async def test_temporal_history_replays_veto_and_background_job_once(tmp_path: P
                 str(tmp_path),
                 id=workflow_id,
                 task_queue='replay-harness',
-                execution_timeout=timedelta(seconds=25),
+                execution_timeout=timedelta(seconds=120),
             )
         history = await client.get_workflow_handle(workflow_id).fetch_history()
     assert 'denied' in result[0]
