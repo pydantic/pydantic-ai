@@ -941,7 +941,7 @@ class TestBridgeFailureModes:
                     try:
                         await asyncio.sleep(10)
                     except asyncio.CancelledError:
-                        continue  # pragma: no cover - the forced deadline closes the loop first
+                        continue  # pragma: lax no cover - usually the forced deadline closes the loop first
 
         agent = build_agent(act)
         abandoned = loops.get()
