@@ -2,6 +2,7 @@ version: 1
 interactions:
 - kind: message
   direction: sent
+  at: 0.0
   data:
     type: conversation_initiation_client_data
     conversation_config_override:
@@ -12,54 +13,60 @@ interactions:
         text_only: true
 - kind: message
   direction: received
+  at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_5601m2de79frfzb9gmh2z8a42se2
+      conversation_id: conv_1201m3hcwawvfmm8p4vranwccf00
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
     type: conversation_initiation_metadata
 - kind: message
   direction: sent
+  at: 0.0
   data:
     type: user_message
     text: Say hi.
 - kind: message
   direction: received
+  at: 0.859
   data:
     text_response_part:
       text: ''
       type: start
       event_id: 1
-      response_id: d04bbee9-d524-494b-a72c-c83ab97e9f14
+      response_id: f4ee0a10-e1b3-4846-b5c0-97b9a77236fc
     type: agent_chat_response_part
 - kind: message
   direction: received
+  at: 0.859
   data:
     text_response_part:
       text: Hello there.
       type: delta
       event_id: 1
-      response_id: d04bbee9-d524-494b-a72c-c83ab97e9f14
+      response_id: f4ee0a10-e1b3-4846-b5c0-97b9a77236fc
     type: agent_chat_response_part
 - kind: message
   direction: received
+  at: 0.859
   data:
     text_response_part:
       text: ''
       type: stop
       event_id: 1
-      response_id: d04bbee9-d524-494b-a72c-c83ab97e9f14
+      response_id: f4ee0a10-e1b3-4846-b5c0-97b9a77236fc
     type: agent_chat_response_part
 - kind: message
   direction: received
+  at: 0.859
   data:
     agent_response_event:
       agent_response: Hello there.
       event_id: 1
-      response_id: d04bbee9-d524-494b-a72c-c83ab97e9f14
+      response_id: f4ee0a10-e1b3-4846-b5c0-97b9a77236fc
       in_response_to_ids:
-      - e45906a2-5a1b-4ee7-831a-d04b65e89d26
+      - 7d6fdeaf-59c1-4762-9867-cc172fb84d3a
       response_type: text
       attachments: []
     type: agent_response

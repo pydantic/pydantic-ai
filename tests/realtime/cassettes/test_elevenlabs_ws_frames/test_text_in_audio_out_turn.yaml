@@ -2,6 +2,7 @@ version: 1
 interactions:
 - kind: message
   direction: sent
+  at: 0.0
   data:
     type: conversation_initiation_client_data
     conversation_config_override:
@@ -10,35 +11,39 @@ interactions:
           prompt: Answer in two or three words.
 - kind: message
   direction: received
+  at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_9201m2de74cme2rsstdw4qr2xxds
+      conversation_id: conv_7301m3hcvkh7eb1t70kc0j827avx
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
     type: conversation_initiation_metadata
 - kind: message
   direction: sent
+  at: 0.0
   data:
     type: user_message
     text: Say hi.
 - kind: message
   direction: received
+  at: 0.844
   data:
     audio_event:
-      audio_base_64: AgAEAAAA///+//3//v/+//3//f/9//3//v/9//3//P/9
+      audio_base_64: AgADAAEAAAD///7//v/9//z//f/9//z//f/9//z/+v/7
       event_id: 1
       is_final: false
     type: audio
 - kind: message
   direction: received
+  at: 0.844
   data:
     agent_response_event:
       agent_response: Hello there.
       event_id: 1
-      response_id: de216885-f6f9-40a2-b3fd-179d29e658e0
+      response_id: 8b2730f9-4192-44b3-93e2-8eee954afa20
       in_response_to_ids:
-      - 8228f6bf-d661-4c54-9cd5-bf1b83441fa3
+      - 6f067418-6cfe-4190-9940-d18897273b92
       response_type: text
       attachments: []
     type: agent_response

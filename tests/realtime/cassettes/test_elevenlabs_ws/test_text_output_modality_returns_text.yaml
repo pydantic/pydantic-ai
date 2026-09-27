@@ -5,13 +5,13 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:
       - api.elevenlabs.io
     method: GET
-    uri: https://api.elevenlabs.io/v1/convai/agents/agent_9201m2de0852fst88qx42rp2y30b
+    uri: https://api.elevenlabs.io/v1/convai/agents/agent_1401m3hcjf30eqxtp3g5mczn16sr
   response:
     headers:
       access-control-allow-headers:
@@ -23,9 +23,9 @@ interactions:
       access-control-max-age:
       - '600'
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '11028'
+      - '11302'
       content-type:
       - application/json
       strict-transport-security:
@@ -42,8 +42,16 @@ interactions:
         creator_name: scrubbed
         is_creator: true
         role: admin
-      agent_id: agent_9201m2de0852fst88qx42rp2y30b
-      branch_id: agtbrch_5701m2de094qfcqtf1y1awr7rpjt
+      access_permissions:
+      - agent_edit_config
+      - agent_run_tests
+      - agent_view_analytics
+      - agent_view_config
+      - agent_view_conversation_history
+      - resource_delete
+      - resource_manage_access
+      agent_id: agent_1401m3hcjf30eqxtp3g5mczn16sr
+      branch_id: agtbrch_3501m3hcjg2dfdvvkrb5tktna494
       conversation_config:
         agent:
           disable_first_message_interruptions: false
@@ -59,10 +67,10 @@ interactions:
             bedrock_llm: null
             built_in_tools:
               end_call: null
+              flag_issue_for_review: null
               language_detection: null
               memory_entry_search: null
               play_keypad_touch_tone: null
-              request_help: null
               run_subagent: null
               skip_turn: null
               transfer_to_agent: null
@@ -74,7 +82,7 @@ interactions:
               voicemail_detection: null
             cascade_timeout_seconds: 4.0
             custom_llm: null
-            enable_parallel_tool_calls: false
+            enable_parallel_tool_calls: true
             enable_reasoning_summary: false
             ignore_default_personality: true
             knowledge_base: []
@@ -185,12 +193,11 @@ interactions:
           turn_timeout: 7.0
         vad:
           background_voice_detection: false
-          use_local_cpu_vad: false
       default_hold_audio_url: https://eleven-public-cdn-common.elevenlabs.io/convai/ambient-audio-assets/elevator1.mp3
-      main_branch_id: agtbrch_5701m2de094qfcqtf1y1awr7rpjt
+      main_branch_id: agtbrch_3501m3hcjg2dfdvvkrb5tktna494
       metadata:
-        created_at_unix_secs: 1789304775
-        updated_at_unix_secs: 1789304775
+        created_at_unix_secs: 1790511235
+        updated_at_unix_secs: 1790511235
       name: pydantic-ai cassette dev (toolless_agent_id)
       phone_numbers: []
       platform_settings:
@@ -452,6 +459,11 @@ interactions:
           transcript_enabled: true
           variant: full
         workspace_overrides:
+          cloud_storage_export:
+            destination_id: null
+            events:
+            - transcript
+            transcript_format: json
           conversation_initiation_client_data_webhook: null
           webhooks:
             events:
@@ -462,7 +474,7 @@ interactions:
       procedures: {}
       tags: []
       trust_context: unknown
-      version_id: agtvrsn_5401m2de098ff0zt0m7hhxveeeyv
+      version_id: agtvrsn_2401m3hcjg4zfsatfyv03tzkpysb
       whatsapp_accounts: []
       workflow:
         edges: {}
@@ -485,13 +497,13 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:
       - api.elevenlabs.io
     method: GET
-    uri: https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_9201m2de0852fst88qx42rp2y30b
+    uri: https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_1401m3hcjf30eqxtp3g5mczn16sr
   response:
     headers:
       access-control-allow-headers:
@@ -503,7 +515,7 @@ interactions:
       access-control-max-age:
       - '600'
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
       - '140'
       content-type:
@@ -515,7 +527,7 @@ interactions:
       vary:
       - Accept-Language, Accept-Encoding
     parsed_body:
-      signed_url: wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_9201m2de0852fst88qx42rp2y30b&conversation_signature=scrubbed
+      signed_url: wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_1401m3hcjf30eqxtp3g5mczn16sr&conversation_signature=scrubbed
     status:
       code: 200
       message: OK

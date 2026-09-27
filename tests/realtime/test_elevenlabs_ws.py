@@ -8,11 +8,13 @@ the streamed audio and transcripts, the `agent_response` turn boundary, and the 
 
 Unlike the sibling providers, ElevenLabs wraps a *hosted agent*, so recording needs two purpose-built
 dev agents (all override toggles enabled, `context_usage` added to `conversation.client_events`,
-16 kHz PCM in and out): one with a `get_weather` client tool attached for the tool round, and one
-with no tools for the plain turns (the default `elevenlabs_tool_sync='error'` would otherwise
-report the attached tool as undefined by the run). Their ids are baked in below; point
-`ELEVENLABS_TEST_AGENT_ID` and `ELEVENLABS_TEST_TOOLLESS_AGENT_ID` at your own agents to re-record.
-The REST preflight records through ordinary HTTP VCR alongside the WebSocket cassette:
+16 kHz PCM in and out, `turn.turn_timeout` raised to 30 s so the silence a microphone streams after
+a short reply does not prompt an "are you still there" turn): one with a `get_weather` client tool
+attached for the tool rounds, and one with no tools for the plain turns (the default
+`elevenlabs_tool_sync='error'` would otherwise report the attached tool as undefined by the run).
+Their ids are baked in below; point `ELEVENLABS_TEST_AGENT_ID` and `ELEVENLABS_TEST_TOOLLESS_AGENT_ID`
+at your own agents to re-record. The REST preflight records through ordinary HTTP VCR alongside the
+WebSocket cassette:
 
     uv run --env-file .env pytest --record-mode=rewrite --inline-snapshot=create tests/realtime/test_elevenlabs_ws.py
 
@@ -72,8 +74,8 @@ pytestmark = [
 
 # The dev agents the cassettes were recorded against (deleted after recording); the ids are not
 # secrets and pin the recorded REST paths for replay.
-AGENT_ID = os.environ.get('ELEVENLABS_TEST_AGENT_ID', 'agent_7801m2de06mqem2bcj41b3br9drm')
-TOOLLESS_AGENT_ID = os.environ.get('ELEVENLABS_TEST_TOOLLESS_AGENT_ID', 'agent_9201m2de0852fst88qx42rp2y30b')
+AGENT_ID = os.environ.get('ELEVENLABS_TEST_AGENT_ID', 'agent_2001m3hcjcrkfs1awbmpqytnqvew')
+TOOLLESS_AGENT_ID = os.environ.get('ELEVENLABS_TEST_TOOLLESS_AGENT_ID', 'agent_1401m3hcjf30eqxtp3g5mczn16sr')
 SYNC_CREATE_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_CREATE_AGENT_ID', 'agent_3801m2dhe625eh8skp0kpebf0e5s')
 SYNC_ADOPT_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_ADOPT_AGENT_ID', 'agent_4901m2dhfaqnfcqrpbs2e1sk8xn6')
 SYNC_UPDATE_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_UPDATE_AGENT_ID', 'agent_0101m2dhhjp2e9h8001eznp7q483')
@@ -82,18 +84,26 @@ SYNC_DETACH_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_DETACH_AGENT_ID', 'a
 INSTRUCTIONS = 'Answer in one short sentence. Use the get_weather tool for any weather question.'
 
 
+# The `context_tokens` of the two `context_usage` reports in the recording: the context the pipeline
+# LLM held on each turn. Turn 2's is turn 1's plus the follow-up exchange, not a running total, so
+# summing the reports into `input_tokens` counts what the LLM actually consumed.
+_TURN_ONE_CONTEXT_TOKENS = 451
+_TURN_TWO_CONTEXT_TOKENS = 459
+_CONTEXT_LIMIT_TOKENS = 1_048_576
+
+
+@pytest.mark.realtime_ws_hold_open
 async def test_tool_round_and_followup_turn(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], realtime_recording: bool
 ) -> None:
     """A text-in tool round against the hosted agent, then a follow-up turn.
 
     Covers, against real frames: the preflight tool comparison passing against the
     server-normalized stored schema (default `elevenlabs_tool_sync='error'`), the prompt-override
     initiation frame, `client_tool_call`/`client_tool_result`, streamed audio with the
-    `agent_response` turn boundary, and a `context_usage` report landing in run-level usage (which
-    is why the test runs a second turn: usage trails the turn boundary, so turn 1's report is
-    consumed while turn 2 streams). The recording holds one report, so accumulation across turns is
-    not covered here.
+    `agent_response` turn boundary, and one `context_usage` report per turn accumulating into
+    run-level usage. Each report trails its turn boundary, so the test waits for the second one
+    before closing, and pins both counts.
     """
     provider, cassette = elevenlabs_ws_cassette
     model = ElevenLabsRealtimeModel(AGENT_ID, provider=provider)
@@ -121,6 +131,10 @@ async def test_tool_round_and_followup_turn(
                         await session.send('Thanks, that is all.')
                     else:
                         break
+            if realtime_recording:  # pragma: no cover  # only while recording
+                await anyio.sleep(5)  # let the second report reach the recording
+            while session.usage.input_tokens < _TURN_ONE_CONTEXT_TOKENS + _TURN_TWO_CONTEXT_TOKENS:
+                await anyio.sleep(0.05)
 
     # No server-side rejection (a bad override or tool mismatch closes the socket with 1008 and
     # surfaces as a session error).
@@ -182,13 +196,14 @@ async def test_tool_round_and_followup_turn(
 
     # ElevenLabs reports LLM context consumption only (no output tokens or credits reach the
     # socket), once per turn *after* the turn boundary, so it accumulates into the run total
-    # without attaching to a specific response. The recording holds a single `context_usage`
-    # frame (436 context tokens of a 1,048,576 limit); the limit stays off the usage, see
-    # `ElevenLabsRealtimeConnection.context_limit_tokens`, and the pair is the window fraction.
-    assert session.usage.input_tokens == 436
+    # without attaching to a specific response: the two recorded reports sum into `input_tokens`.
+    # The limit stays off the usage (see `ElevenLabsRealtimeConnection.context_limit_tokens`), and
+    # the latest report against it is the window fraction.
+    assert session.usage.input_tokens == _TURN_ONE_CONTEXT_TOKENS + _TURN_TWO_CONTEXT_TOKENS
     assert session.usage.output_tokens == 0
     assert session.usage.details == {}
-    assert session.context_window_used == 436 / 1048576
+    assert session.context_window_used == _TURN_TWO_CONTEXT_TOKENS / _CONTEXT_LIMIT_TOKENS
+    assert all(isinstance(message, ModelResponse) and message.usage.input_tokens == 0 for message in messages[1::2])
 
 
 async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette]) -> None:
@@ -285,7 +300,9 @@ async def test_audio_in_server_vad_turn(
         for part in message.parts
         if isinstance(part, SpeechPart)
     ]
-    assert spoken == snapshot([('user', 'Hello, my name is Marcelo.'), ('assistant', 'Hello Marcelo. How can I help?')])
+    assert spoken == snapshot(
+        [('user', 'Hello, my name is Marcelo.'), ('assistant', 'Hello Marcelo. How can I help you?')]
+    )
 
 
 async def test_text_output_modality_returns_text(

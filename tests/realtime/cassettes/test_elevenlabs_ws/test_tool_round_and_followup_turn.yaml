@@ -5,13 +5,13 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:
       - api.elevenlabs.io
     method: GET
-    uri: https://api.elevenlabs.io/v1/convai/agents/agent_7801m2de06mqem2bcj41b3br9drm
+    uri: https://api.elevenlabs.io/v1/convai/agents/agent_2001m3hcjcrkfs1awbmpqytnqvew
   response:
     headers:
       access-control-allow-headers:
@@ -23,9 +23,9 @@ interactions:
       access-control-max-age:
       - '600'
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '11901'
+      - '12175'
       content-type:
       - application/json
       strict-transport-security:
@@ -42,8 +42,16 @@ interactions:
         creator_name: scrubbed
         is_creator: true
         role: admin
-      agent_id: agent_7801m2de06mqem2bcj41b3br9drm
-      branch_id: agtbrch_7401m2de07qtfrv80094sv06h3gn
+      access_permissions:
+      - agent_edit_config
+      - agent_run_tests
+      - agent_view_analytics
+      - agent_view_config
+      - agent_view_conversation_history
+      - resource_delete
+      - resource_manage_access
+      agent_id: agent_2001m3hcjcrkfs1awbmpqytnqvew
+      branch_id: agtbrch_6501m3hcjen9ehyb2nx87snhkvmy
       conversation_config:
         agent:
           disable_first_message_interruptions: false
@@ -59,10 +67,10 @@ interactions:
             bedrock_llm: null
             built_in_tools:
               end_call: null
+              flag_issue_for_review: null
               language_detection: null
               memory_entry_search: null
               play_keypad_touch_tone: null
-              request_help: null
               run_subagent: null
               skip_turn: null
               transfer_to_agent: null
@@ -74,7 +82,7 @@ interactions:
               voicemail_detection: null
             cascade_timeout_seconds: 4.0
             custom_llm: null
-            enable_parallel_tool_calls: false
+            enable_parallel_tool_calls: true
             enable_reasoning_summary: false
             ignore_default_personality: true
             knowledge_base: []
@@ -102,7 +110,7 @@ interactions:
             thinking_budget: null
             timezone: null
             tool_ids:
-            - tool_9101m2de06f8fk0b2rr27ekdm2sd
+            - tool_2401m3hcjcgtfg8tycvm3n67s8z3
             tools:
             - assignments: []
               description: Look up the current weather for a city.
@@ -220,12 +228,11 @@ interactions:
           turn_timeout: 7.0
         vad:
           background_voice_detection: false
-          use_local_cpu_vad: false
       default_hold_audio_url: https://eleven-public-cdn-common.elevenlabs.io/convai/ambient-audio-assets/elevator1.mp3
-      main_branch_id: agtbrch_7401m2de07qtfrv80094sv06h3gn
+      main_branch_id: agtbrch_6501m3hcjen9ehyb2nx87snhkvmy
       metadata:
-        created_at_unix_secs: 1789304774
-        updated_at_unix_secs: 1789304774
+        created_at_unix_secs: 1790511233
+        updated_at_unix_secs: 1790511233
       name: pydantic-ai cassette dev (agent_id)
       phone_numbers: []
       platform_settings:
@@ -487,6 +494,11 @@ interactions:
           transcript_enabled: true
           variant: full
         workspace_overrides:
+          cloud_storage_export:
+            destination_id: null
+            events:
+            - transcript
+            transcript_format: json
           conversation_initiation_client_data_webhook: null
           webhooks:
             events:
@@ -497,7 +509,7 @@ interactions:
       procedures: {}
       tags: []
       trust_context: unknown
-      version_id: agtvrsn_7601m2de07trf0ptz7dknjscz6zv
+      version_id: agtvrsn_7201m3hcjeqzfvhbyf639zyppdnx
       whatsapp_accounts: []
       workflow:
         edges: {}
@@ -520,13 +532,13 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:
       - api.elevenlabs.io
     method: GET
-    uri: https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_7801m2de06mqem2bcj41b3br9drm
+    uri: https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_2001m3hcjcrkfs1awbmpqytnqvew
   response:
     headers:
       access-control-allow-headers:
@@ -538,7 +550,7 @@ interactions:
       access-control-max-age:
       - '600'
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
       - '140'
       content-type:
@@ -550,7 +562,7 @@ interactions:
       vary:
       - Accept-Language, Accept-Encoding
     parsed_body:
-      signed_url: wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_7801m2de06mqem2bcj41b3br9drm&conversation_signature=scrubbed
+      signed_url: wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_2001m3hcjcrkfs1awbmpqytnqvew&conversation_signature=scrubbed
     status:
       code: 200
       message: OK
