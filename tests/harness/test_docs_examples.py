@@ -32,8 +32,6 @@ Agent('openai:gpt-6', capabilities=[LocalWorkspace({root!r}), FileSystem()]).run
 ```
 
 ```python
-import ast
-import re
 from pathlib import Path
 
 
