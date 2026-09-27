@@ -1865,6 +1865,8 @@ async def test_context_usage_maps_to_session_usage_and_leaves_model_name_unset()
     # Verified live: `context_usage` arrives once per user turn, *after* the turn boundary, so it
     # cannot be attributed to a specific model response and stays run-level.
     assert usage_event.response_scoped is False
+    # `context_tokens` is the whole context the LLM holds, so the report is the window fraction too.
+    assert usage_event.context_window_used == 321 / 128000
     # The reported pipeline LLM is not adopted as the served model: responses keep the agent id.
     assert connection.model_name is None
 
@@ -1873,8 +1875,10 @@ async def test_context_usage_maps_to_session_usage_and_leaves_model_name_unset()
     assert isinstance(bare_usage, SessionUsage)
     assert bare_usage.usage.input_tokens == 400
     assert bare_usage.usage.details == {}
-    # A report without the limit keeps the last one rather than clearing it.
+    # A report without the limit keeps the last one rather than clearing it, and the fraction is
+    # measured against it.
     assert connection.context_limit_tokens == 128000
+    assert bare_usage.context_window_used == 400 / 128000
 
 
 async def test_ping_is_answered_with_pong_and_yields_nothing() -> None:

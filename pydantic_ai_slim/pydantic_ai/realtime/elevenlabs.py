@@ -1448,8 +1448,18 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             # the WebSocket. Conversation cost appears post-hoc on `GET /v1/convai/conversations/{id}`.
             # Gated behind `client_events` (off by default); verified cadence: once per user turn,
             # *after* the `agent_response` turn boundary, so it cannot be attributed to a specific
-            # model response and accumulates into the run total only.
-            return [SessionUsage(usage=RequestUsage(input_tokens=usage.context_tokens or 0), response_scoped=False)]
+            # model response and accumulates into the run total only. The same report is the context
+            # window fraction: `context_tokens` is the whole context the LLM holds, against the limit
+            # (this frame's, or the last one reported when a frame omits it).
+            context_tokens = usage.context_tokens or 0
+            context_window_used = context_tokens / self._context_limit_tokens if self._context_limit_tokens else None
+            return [
+                SessionUsage(
+                    usage=RequestUsage(input_tokens=context_tokens),
+                    response_scoped=False,
+                    context_window_used=context_window_used,
+                )
+            ]
         if event_type == 'client_error':
             error = _ClientErrorEvent.model_validate(data).error_event
             message = error.message or error.error_name or 'unknown error'

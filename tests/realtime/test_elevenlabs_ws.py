@@ -183,11 +183,12 @@ async def test_tool_round_and_followup_turn(
     # ElevenLabs reports LLM context consumption only (no output tokens or credits reach the
     # socket), once per turn *after* the turn boundary, so it accumulates into the run total
     # without attaching to a specific response. The recording holds a single `context_usage`
-    # frame (436 context tokens); the reported context limit stays off the usage, see
-    # `ElevenLabsRealtimeConnection.context_limit_tokens`.
+    # frame (436 context tokens of a 1,048,576 limit); the limit stays off the usage, see
+    # `ElevenLabsRealtimeConnection.context_limit_tokens`, and the pair is the window fraction.
     assert session.usage.input_tokens == 436
     assert session.usage.output_tokens == 0
     assert session.usage.details == {}
+    assert session.context_window_used == 436 / 1048576
 
 
 async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette]) -> None:
