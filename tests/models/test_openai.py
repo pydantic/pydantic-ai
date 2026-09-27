@@ -6639,3 +6639,25 @@ async def test_openai_enum_member_docstrings_reach_the_wire(
             },
         }
     )
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_blank_response_body_raises_model_api_error(allow_model_requests: None) -> None:
+    # A 200 response whose body is not valid JSON surfaces as ModelAPIError, not a raw
+    # json.JSONDecodeError: https://github.com/pydantic/pydantic-ai/issues/8843
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, text='   ', headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model)
+
+        with pytest.raises(ModelAPIError) as catch_exceptions:
+            await agent.run('Hello')
+
+    assert isinstance(catch_exceptions.value.__cause__, json.JSONDecodeError)
+    assert catch_exceptions.value.message.startswith('Failed to decode response as JSON')

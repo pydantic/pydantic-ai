@@ -237,6 +237,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except json.JSONDecodeError as e:
+        raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as JSON: {e}') from e
 
 
 __all__ = (

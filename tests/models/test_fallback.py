@@ -10,6 +10,7 @@ from datetime import timezone
 from decimal import Decimal
 from typing import Any, Literal, cast
 
+import httpx2
 import pytest
 from dirty_equals import IsJson
 from pydantic import BaseModel
@@ -60,6 +61,7 @@ from ..conftest import IsDatetime, IsFloat, IsNow, IsStr, strip_logfire_metrics,
 
 with try_import() as openai_imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from openai import AsyncOpenAI
     from openai.types.chat import ChatCompletionMessage
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -3395,3 +3397,50 @@ def test_context_window_is_smallest_known_candidate_window() -> None:
     with pytest.raises(NotImplementedError):
         FallbackModel(windowed(200_000)).profile
     assert WrapperModel(FallbackModel(windowed(200_000), windowed(128_000))).context_window == 128_000
+
+
+@requires_openai
+async def test_fallback_tries_next_model_on_non_json_response_body(allow_model_requests: None) -> None:
+    # A 200 response whose body is not valid JSON raises ModelAPIError from the primary model, so the default
+    # fallback trigger fires and the healthy second model answers: https://github.com/pydantic/pydantic-ai/issues/8843
+    completion = {
+        'id': 'chatcmpl-123',
+        'object': 'chat.completion',
+        'created': 1730000000,
+        'model': 'gpt-4o-mini',
+        'choices': [
+            {'index': 0, 'message': {'role': 'assistant', 'content': 'Hello from fallback'}, 'finish_reason': 'stop'}
+        ],
+        'usage': {'prompt_tokens': 1, 'completion_tokens': 5, 'total_tokens': 6},
+    }
+    requests_made = {'primary': 0, 'fallback': 0}
+
+    async def primary_handler(request: httpx2.Request) -> httpx2.Response:
+        requests_made['primary'] += 1
+        return httpx2.Response(200, text='   ', headers={'content-type': 'application/json'})
+
+    async def fallback_handler(request: httpx2.Request) -> httpx2.Response:
+        requests_made['fallback'] += 1
+        return httpx2.Response(200, json=completion)
+
+    async with (
+        AsyncOpenAI(
+            api_key='test',
+            base_url='https://api.openai.com/v1',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(primary_handler)),
+        ) as primary_client,
+        AsyncOpenAI(
+            api_key='test',
+            base_url='https://api.openai.com/v1',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fallback_handler)),
+        ) as fallback_client,
+    ):
+        primary_model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=primary_client))
+        fallback_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=fallback_client))
+        agent = Agent(FallbackModel(primary_model, fallback_model))
+
+        result = await agent.run('Hello')
+
+    assert result.output == 'Hello from fallback'
+    assert result.response.model_name == 'gpt-4o-mini'
+    assert requests_made == {'primary': 1, 'fallback': 1}
