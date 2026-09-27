@@ -471,8 +471,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         forward_kwargs: dict[str, Any] = {}
         if _utils.is_set(retries):
             forward_kwargs['retries'] = retries
-        if _utils.is_set(workspace):
-            forward_kwargs['workspace'] = workspace
 
         with self.wrapped.override(
             name=name,
@@ -485,6 +483,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata=metadata,
             model_settings=model_settings,
             spec=spec,
+            workspace=workspace,
             **forward_kwargs,
         ):
             yield
