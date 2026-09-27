@@ -510,6 +510,34 @@ class TestWorkingDir:
         workspace = Workspace(backend)
         assert await workspace.read_text('marker.txt') == 'marker'
 
+    async def test_without_working_dir_commands_and_relative_paths_start_in_home(
+        self, fake_modal: FakeModal, tmp_path: Path
+    ) -> None:
+        # The image's own directory (`/` on Modal's default image) differs from the user's home,
+        # so only the `cd ~` in the wrapper puts a command, and so relative paths, in `~`.
+        home, image_dir = tmp_path / 'home', tmp_path / 'image'
+        home.mkdir()
+        image_dir.mkdir()
+        fake_modal.host_root = home.resolve()
+        backend = await started()
+        fake_modal.sandboxes[0].workdir = str(image_dir)
+        workspace = Workspace(backend)
+        assert (await backend.run('pwd -P', shell=True)).stdout == f'{home.resolve()}\n'
+        await workspace.write_text('note.txt', 'hi')
+        assert (home / 'note.txt').read_text() == 'hi'
+        assert (await backend.run('cat note.txt', shell=True)).stdout == 'hi'
+
+    async def test_configured_working_dir_is_where_commands_start(self, fake_modal: FakeModal, tmp_path: Path) -> None:
+        home, project = tmp_path / 'home', tmp_path / 'project'
+        home.mkdir()
+        project.mkdir()
+        fake_modal.host_root = home.resolve()
+        backend = ModalSandboxBackend(working_dir=str(project.resolve()))
+        assert (await backend.run('pwd -P', shell=True)).stdout == f'{project.resolve()}\n'
+        await Workspace(backend).write_text('note.txt', 'hi')
+        assert (project / 'note.txt').read_text() == 'hi'
+        assert not (home / 'note.txt').exists()
+
 
 class TestCreate:
     async def test_lost_create_reply_recovers_sandbox_by_name(self, fake_modal: FakeModal) -> None:
