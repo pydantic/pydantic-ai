@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
 from pydantic_ai.workspaces import WorkspaceRef
@@ -30,6 +32,8 @@ Agent('openai:gpt-6', capabilities=[LocalWorkspace({root!r}), FileSystem()]).run
 ```
 
 ```python
+import ast
+import re
 from pathlib import Path
 
 
@@ -57,3 +61,22 @@ def test_blocks_run_their_agents_through_the_tools_and_hand_every_workspace_to_c
         (True, {'run_command'}),
         (True, {'write_file', 'read_file'}),
     ]
+
+
+def test_modal_durable_example_is_module_level_and_runnable() -> None:
+    root = Path(__file__).parent.parent
+    for path in (root / 'docs/modal-sandbox.md', root / 'pydantic_ai_harness/modal_sandbox/README.md'):
+        section = path.read_text().split('## Durable execution\n', 1)[1].split('\n## ', 1)[0]
+        code = re.search(r'```python[^\n]*\n(.*?)\n```', section, re.DOTALL)
+        assert code is not None
+        source = code.group(1)
+        assert '...' not in source
+        tree = ast.parse(source)
+        assert any(
+            isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'agent' for t in node.targets)
+            for node in tree.body
+        )
+        assert 'TemporalDurability()' in source
+        assert 'Coder()' in source
+        assert 'PydanticAIPlugin()' in source
+        assert 'workflows=[' in source
