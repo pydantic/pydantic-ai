@@ -236,7 +236,7 @@ async def test_commands_get_a_usable_environment() -> None:
 
 
 # The README's Python blocks are the same as this page's.
-_DOCS_BLOCKS = python_blocks('docs/modal-sandbox.md')
+_DOCS_BLOCKS = python_blocks('docs/harness/modal-sandbox.md')
 
 
 @pytest.mark.parametrize('example', [pytest.param(block, id=f'line {block.start_line}') for block in _DOCS_BLOCKS])

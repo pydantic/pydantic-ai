@@ -169,7 +169,10 @@ def test_capability_takes_the_base_class_options_and_the_creation_settings() -> 
 
 
 def test_modal_docs_name_default_user_and_directory() -> None:
-    for path in (Path('docs/modal-sandbox.md'), Path('pydantic_ai_harness/modal_sandbox/README.md')):
+    for path in (
+        Path('docs/harness/modal-sandbox.md'),
+        Path('src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md'),
+    ):
         text = path.read_text()
         assert 'root user' in text
         assert 'relative paths' in text
@@ -177,7 +180,10 @@ def test_modal_docs_name_default_user_and_directory() -> None:
 
 
 def test_modal_docs_distinguish_command_timeout_from_sandbox_lifetime() -> None:
-    for path in (Path('docs/modal-sandbox.md'), Path('pydantic_ai_harness/modal_sandbox/README.md')):
+    for path in (
+        Path('docs/harness/modal-sandbox.md'),
+        Path('src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md'),
+    ):
         text = path.read_text()
         assert 'defer_loading=True' in text
         assert 'Removed. Use `sandbox_timeout`, which bounds every command.' not in text
@@ -185,7 +191,10 @@ def test_modal_docs_distinguish_command_timeout_from_sandbox_lifetime() -> None:
 
 
 def test_modal_coder_examples_explain_eager_creation_and_set_working_dir() -> None:
-    for path in (Path('docs/modal-sandbox.md'), Path('pydantic_ai_harness/modal_sandbox/README.md')):
+    for path in (
+        Path('docs/harness/modal-sandbox.md'),
+        Path('src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md'),
+    ):
         text = path.read_text()
         assert 'Coder(repo_context=False)' in text
         assert 'when the run starts' in text
