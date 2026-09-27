@@ -497,11 +497,7 @@ async def test_shell_symlink_write_is_atomic_and_preserves_target_mode(tmp_path:
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if self.fail and isinstance(command, str) and 'cat ' in command and f'> {link}' in command:
-                self.fail = False
-                # Simulate the old non-atomic copy failing after truncating the target.
-                command = f'printf partial > {link}; exit 1'
-            elif self.fail and isinstance(command, str) and 'base64 -d' in command and 'mv -f' in command:
+            if self.fail and isinstance(command, str) and 'base64 -d' in command and 'mv -f' in command:
                 self.fail = False
                 command = command.replace('mv -f', 'false && mv -f', 1)
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
