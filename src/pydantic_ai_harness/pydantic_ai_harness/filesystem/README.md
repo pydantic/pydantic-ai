@@ -239,6 +239,12 @@ applies the same rule to absolute symlink targets.
   read-only like `.env` itself. `root_dir='/'` turns containment off; the
   patterns still apply, and with no patterns set as well the boundary check is
   off entirely.
+- **Symlinks need the workspace's `realpath`.** Local and command-running
+  workspaces resolve symlinks for these checks. A filesystem-only backend without
+  `SupportsRealpath` gives only the path text: `..` and absolute paths outside
+  `root_dir` are still rejected, but a symlink leading outside is not detected,
+  and a link to `.env` does not match the patterns. That is exact for storage
+  without symlinks, such as an object store.
 - **A guardrail, not isolation.** The checks run before each operation, so a
   symlink swapped in between the check and the use is not caught, and `Shell`
   commands ignore `root_dir` entirely. Use a sandbox workspace when the agent or

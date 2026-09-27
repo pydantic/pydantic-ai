@@ -218,9 +218,16 @@ class Job:
 
     async def size(self, path: str) -> int:
         try:
-            return (await self.workspace.stat(path)).size or 0
+            size = (await self.workspace.stat(path)).size
         except FileNotFoundError:
             return 0
+        if size is not None:
+            return size
+        # The backend's `stat` reports no size; count the bytes in the workspace instead.
+        result = await self.workspace.run(f'wc -c < {shlex.quote(path)}', shell=True, timeout=CONTROL_TIMEOUT)
+        if result.exit_code != 0 or not result.stdout.strip().isdigit():
+            raise WorkspaceError(result.stderr.strip() or f'Unable to size job log {path!r}.')
+        return int(result.stdout)
 
     async def read(self, path: str, offset: int, length: int) -> bytes:
         """Up to `length` bytes of `path` from `offset`, read inside the workspace so only they cross the wire."""
