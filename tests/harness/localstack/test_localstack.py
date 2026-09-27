@@ -23,6 +23,8 @@ from pydantic_ai_harness.localstack import LocalStack, LocalStack as Exported, L
 
 from ._http_server import HttpResponse, http_server, unused_tcp_port
 
+pytestmark = pytest.mark.anyio
+
 
 def _toolset(
     *,

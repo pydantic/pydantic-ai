@@ -4,10 +4,12 @@ import io
 from typing import IO
 
 import pytest
-from surface_terminal import SurfaceTerminal
 
 from pydantic_clai2 import prompt_surface
 from pydantic_clai2.prompt_surface import PromptSurface
+from tests.clai2.surface_terminal import SurfaceTerminal
+
+pytestmark = pytest.mark.anyio
 
 ROWS = ('TOP', 'DRAFT', 'BOTTOM', 'FOOTER')
 

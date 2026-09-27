@@ -24,7 +24,7 @@ class SurfaceTerminal(io.StringIO):
 
     def resize(self, *, width: int, height: int, bottom_anchored: bool = False) -> None:
         """Resize without moving old UI rows to the new screen bottom."""
-        if bottom_anchored:
+        if bottom_anchored:  # pragma: lax no cover
             delta = height - self.height
             if delta > 0:
                 restored = self.history[-delta:]
@@ -62,7 +62,7 @@ class SurfaceTerminal(io.StringIO):
                 self.column = 0
             elif token.startswith('\x1b['):
                 self.control(token)
-            elif not token.startswith('\x1b') and token.isprintable():
+            elif not token.startswith('\x1b') and token.isprintable():  # pragma: no branch
                 if self.column == self.width:
                     self.column = 0
                     self.advance()
@@ -72,7 +72,7 @@ class SurfaceTerminal(io.StringIO):
 
     def advance(self) -> None:
         if self.row == self.bottom:
-            if self.top == 0:
+            if self.top == 0:  # pragma: no branch
                 self.history.append(''.join(self.cells[0]).rstrip())
             del self.cells[self.top]
             self.cells.insert(self.bottom, [' '] * self.width)

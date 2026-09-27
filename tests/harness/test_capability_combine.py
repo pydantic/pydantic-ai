@@ -24,8 +24,8 @@ The core half of this lives in `pydantic-ai`'s `tests/test_capability_combine.py
 Two of the names imported below are private to pydantic-ai, which is right: the duplicate-resolution
 pipeline is internal and no code in this package needs it. This file reaches in anyway rather than
 reimplementing the two questions the resolver asks -- a lookalike would drift from the real answer
-silently, which is the one thing the policy table exists to prevent. Both live in this repository,
-so a rename fails this test in the same pull request.
+silently, which is the one thing the policy table exists to prevent. Both packages change in the
+same pull request, so a rename fails this file alongside the change that made it.
 """
 
 from __future__ import annotations
@@ -395,7 +395,7 @@ def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]
         return False
     try:
         return issubclass(obj, AbstractCapability)
-    except TypeError:  # pragma: no cover
+    except TypeError:  # pragma: lax no cover
         return False
 
 
@@ -517,7 +517,7 @@ def test_every_capability_declares_a_combine_policy() -> None:
     )
     # Only meaningful when every module imported: an optional group that is not installed makes its
     # capabilities look deleted, and the slim CI lane installs none of them.
-    if not skipped:
+    if not skipped:  # pragma: lax no cover -- every optional group imports only where browser-use is installed
         assert not (declared - shipped), (
             f'`COMBINE_POLICY` names capabilities that no longer exist: {sorted(declared - shipped)}.'
         )
@@ -528,7 +528,7 @@ def test_capability_combine_policy_holds(name: str) -> None:
     """Each capability composes -- or refuses to -- the way its policy says."""
     policy = COMBINE_POLICY[name]
     shipped, _ = _shipped_capability_types()
-    if name not in shipped:  # pragma: no cover
+    if name not in shipped:  # pragma: lax no cover
         pytest.skip(f'{name} needs an optional dependency group that is not installed')
     capability_type = shipped[name]
 

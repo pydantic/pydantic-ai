@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 _CLAMP_MARKER = '\n[clamped: removed {removed} of {original} characters]\n'
-"""Inserted between the head and tail slices of a clamped part. ``{removed}`` and ``{original}``
+"""Inserted between the head and tail slices of a clamped part. `{removed}` and `{original}`
 are filled with character counts."""
 
 _CLAMP_ARGS_KEY = '_clamped'
@@ -81,10 +81,10 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     """
 
     max_part_tokens: int | None = None
-    """Clamp a part whose estimated token count exceeds this value. ``None`` disables this trigger."""
+    """Clamp a part whose estimated token count exceeds this value. `None` disables this trigger."""
 
     max_part_chars: int | None = None
-    """Clamp a part whose character count exceeds this value. ``None`` disables this trigger."""
+    """Clamp a part whose character count exceeds this value. `None` disables this trigger."""
 
     keep_head_chars: int = 2_000
     """Characters of the part's head to retain."""
@@ -93,13 +93,13 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     """Characters of the part's tail to retain."""
 
     clamp_tool_call_args: bool = True
-    """When ``True``, also clamp oversized `ToolCallPart` args, not just response text."""
+    """When `True`, also clamp oversized `ToolCallPart` args, not just response text."""
 
     tokenizer: Callable[[str], int] | None = None
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When ``None``, uses a ~4 characters-per-token heuristic.
+    When `None`, uses a ~4 characters-per-token heuristic.
     """
 
     def __post_init__(self) -> None:
@@ -122,7 +122,7 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
         return False
 
     def _clamp(self, text: str) -> str | None:
-        """Return the head/tail-clamped form of *text*, or ``None`` if it would not shrink."""
+        """Return the head/tail-clamped form of *text*, or `None` if it would not shrink."""
         if not self._is_oversized(text):
             return None
         head = text[: self.keep_head_chars]

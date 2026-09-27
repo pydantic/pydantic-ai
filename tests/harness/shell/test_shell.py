@@ -49,6 +49,8 @@ from pydantic_ai_harness.shell._toolset import ShellToolset
 
 from .._tool_calls import call_tool
 
+pytestmark = pytest.mark.anyio
+
 
 def _env_toolset(
     shell_dir: Path,

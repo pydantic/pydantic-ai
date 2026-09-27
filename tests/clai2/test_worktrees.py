@@ -5,7 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import anyio
 import pytest
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
@@ -137,7 +136,8 @@ def test_unwritable_exclude_is_a_parser_error(repository: Path) -> None:
     assert not (repository / '.worktrees').exists()
 
 
-def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path) -> None:
+@pytest.mark.anyio
+async def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path) -> None:
     result = launch(
         repository,
         '-w',
@@ -147,7 +147,7 @@ def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path) -> Non
     assert result.returncode == 0, result.stderr
     workspace = repository / '.worktrees/saved'
     store = SqliteConversationStore(database=repository / 'sessions.db')
-    summaries = anyio.run(store.listing)
+    summaries = await store.listing()
     assert len(summaries) == 1
     assert summaries[0].workspace == str(workspace)
     resumed = launch(workspace, '--database', str(repository / 'config.db'), '--resume', summaries[0].id)

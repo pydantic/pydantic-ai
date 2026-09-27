@@ -27,7 +27,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import BackgroundTools
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal')]
 
 TEMPORAL_PORT = 7253
 TASK_QUEUE = 'pydantic-ai-harness-background-tools'

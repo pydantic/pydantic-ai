@@ -14,6 +14,8 @@ from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, 
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:
@@ -136,7 +138,7 @@ async def test_cancel_during_drain_stops_writer() -> None:
 
     class ObservedOutput(io.StringIO):
         def write(self, text: str) -> int:
-            if 'x' in text:
+            if 'x' in text:  # pragma: no branch
                 writing.set()
             return super().write(text)
 

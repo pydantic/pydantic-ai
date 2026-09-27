@@ -10,6 +10,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, Coder, FileSystem, Researcher, Shell
 
+pytestmark = pytest.mark.anyio
+
 
 def test_import():
     assert pydantic_ai_harness.__doc__ is not None

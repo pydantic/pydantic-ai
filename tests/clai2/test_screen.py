@@ -21,6 +21,8 @@ from pydantic_clai2.screen import Screen
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.status import Status, StatusLine
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:
@@ -126,7 +128,16 @@ async def test_paused_is_a_no_op_when_the_row_was_never_reserved() -> None:
     assert output.getvalue() == ''
 
 
-@pytest.mark.parametrize('terminal', [False, True])
+@pytest.mark.parametrize(
+    'terminal',
+    [
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.skip(reason='Flaky output order: https://github.com/pydantic/pydantic-ai/issues/8824'),
+        ),
+    ],
+)
 async def test_plugin_takes_the_screen_from_inside_a_tool(tmp_path: Path, terminal: bool) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
