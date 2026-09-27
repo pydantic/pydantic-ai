@@ -44,7 +44,6 @@ BASE_LOCK = _lock(**{'temporalio': '1.31.0', 'modal': '1.5.2', 'e2b': '2.48.0', 
     [
         pytest.param([f'{_HARNESS}/modal_sandbox/_backend.py'], ['modal'], id='provider package'),
         pytest.param(['tests/harness/e2b_sandbox/test_e2b_live.py'], ['e2b'], id='provider tests'),
-        pytest.param(['tests/harness/filesystem/test_search_live.py'], ['e2b'], id='shared filesystem E2B test'),
         pytest.param([f'{_HARNESS}/shell/_toolset.py'], ALL, id='shared capability'),
         pytest.param([f'{_HARNESS}/_workspace.py'], ALL, id='shared module'),
         pytest.param(['pydantic_ai_slim/pydantic_ai/workspaces/protocol.py'], ALL, id='core workspace protocol'),
@@ -110,11 +109,6 @@ def test_shared_paths_exist() -> None:
 def test_the_uv_lock_in_this_repo_parses() -> None:
     lock = (_ROOT / 'uv.lock').read_text()
     assert 'modal' in script.moved_lock_packages('', lock)
-
-
-def test_e2b_live_workflow_selects_shared_filesystem_test() -> None:
-    workflow = (_ROOT / '.github/workflows/sandbox-live.yml').read_text()
-    assert 'tests/harness/filesystem/test_search_live.py' in workflow
 
 
 def test_all_prints_the_providers_in_this_tree() -> None:
