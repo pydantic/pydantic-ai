@@ -187,7 +187,7 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 | `sandbox_id` | Removed. Use `agent.run(..., workspace=WorkspaceRef(provider='modal', id=sandbox_id))`. |
 | `session`, `ModalSandboxSession` | Removed. Use `agent.run(..., workspace=ModalSandboxBackend(sandbox=<modal.Sandbox>))`. |
 | `default_command_timeout` | Removed. Use `Shell(default_timeout=...)`. |
-| `max_command_timeout` | Removed. Set a command timeout on `Shell`; `sandbox_timeout` limits the lifetime of a new sandbox and does not apply to attached sandboxes. |
+| `max_command_timeout` | Removed, with no direct equivalent: nothing caps a timeout the model asks for. `Shell(default_timeout=...)` sets the timeout of commands that don't give one; `sandbox_timeout` limits the lifetime of a new sandbox and does not apply to attached sandboxes. |
 | `max_output_bytes`, `max_output_lines` | Removed. Use `Shell(max_output_chars=...)` or `ToolOutputLimits`. |
 | `max_read_bytes` | Removed. Use `FileSystem(max_read_lines=..., max_read_chars=...)`. |
 | `instructions` | Removed. Use the agent's `instructions`. |

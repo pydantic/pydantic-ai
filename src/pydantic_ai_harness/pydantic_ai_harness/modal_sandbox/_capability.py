@@ -44,8 +44,9 @@ _LEGACY_ARGUMENTS: Mapping[str, str] = {
         'command timeouts belong to the tool that runs commands: use `Shell(default_timeout=...)`.'
     ),
     'max_command_timeout': (
-        'the ceiling is gone; the sandbox lifetime (`sandbox_timeout`) bounds every command, and the '
-        'model-facing default is `Shell(default_timeout=...)`.'
+        'there is no direct equivalent, as nothing caps a timeout the model asks for. '
+        '`Shell(default_timeout=...)` sets the timeout of commands that do not give one, and `sandbox_timeout` '
+        'limits the lifetime of a new sandbox, not of an attached one.'
     ),
     'max_output_bytes': (
         'output limits belong to the tools: use `Shell(max_output_chars=...)`, or `ToolOutputLimits` for any tool.'

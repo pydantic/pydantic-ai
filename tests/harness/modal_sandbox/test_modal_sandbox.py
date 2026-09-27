@@ -214,7 +214,7 @@ def test_defer_loading_is_refused() -> None:
         ({'sandbox_id': 'sb-1'}, "workspace=WorkspaceRef(provider='modal', id=sandbox_id)"),
         ({'session': object()}, 'ModalSandboxBackend(sandbox=<modal.Sandbox>)'),
         ({'default_command_timeout': 5.0}, 'Shell(default_timeout=...)'),
-        ({'max_command_timeout': 60}, 'sandbox lifetime (`sandbox_timeout`) bounds every command'),
+        ({'max_command_timeout': 60}, 'there is no direct equivalent, as nothing caps a timeout the model asks for'),
         ({'max_output_bytes': 1}, 'Shell(max_output_chars=...)'),
         ({'max_output_lines': 1}, 'ToolOutputLimits'),
         ({'max_read_bytes': 1}, 'FileSystem(max_read_lines=..., max_read_chars=...)'),
