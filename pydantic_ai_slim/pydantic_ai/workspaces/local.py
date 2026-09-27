@@ -134,11 +134,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return self._ref
 
     def _ensure_alive(self) -> Path:
-        if self._resolved_working_dir is None:
-            self._resolved_working_dir = self._working_dir.resolve()
-        root = self._resolved_working_dir
+        root = self._resolved_working_dir or self._working_dir.resolve()
         if not root.is_dir():
             raise WorkspaceUnavailableError(f'local workspace directory {self._working_dir!s} does not exist')
+        self._resolved_working_dir = root
         return root
 
     async def _get_working_dir(self) -> Path:

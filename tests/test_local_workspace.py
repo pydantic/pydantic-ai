@@ -574,3 +574,14 @@ async def test_first_local_remove_refuses_canonical_root(tmp_path: Path) -> None
     with pytest.raises(ValueError, match='workspace root'):
         await workspace.remove(str(root))
     assert (root / 'safe').read_bytes() == b'safe'
+
+
+async def test_missing_alias_can_attach_after_directory_is_created(tmp_path: Path) -> None:
+    alias = tmp_path / 'alias'
+    backend = LocalWorkspaceBackend(alias)
+    with pytest.raises(WorkspaceUnavailableError):
+        await backend.working_dir()
+    target = tmp_path / 'target'
+    target.mkdir()
+    alias.symlink_to(target, target_is_directory=True)
+    assert await backend.working_dir() == str(target.resolve())
