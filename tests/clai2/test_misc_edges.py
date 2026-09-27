@@ -3,6 +3,7 @@
 import io
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ def test_public_errors(tmp_path: Path) -> None:
     assert callable(pydantic_clai2.__main__.main)
     assert list(config_completions(['set', '']))
     path = tmp_path / 'future.db'
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute('PRAGMA user_version = 99')
     with pytest.raises(ValueError, match='Unsupported'):
         SettingsStore(path)

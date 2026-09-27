@@ -17,4 +17,4 @@ collect_ignore = ['test_browser_use.py', 'test_model.py'] if importlib.util.find
 @pytest.fixture
 def anyio_backend() -> str:
     """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
+    return 'asyncio'  # pragma: no cover -- only the browser-use job runs these, without coverage

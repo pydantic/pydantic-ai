@@ -269,7 +269,7 @@ class _StaticToolset(AbstractToolset[object]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover - required by AbstractToolset, never read in tests
+        return None  # pragma: lax no cover - required by AbstractToolset, never read in tests
 
     async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
         return {
@@ -638,7 +638,7 @@ class TestCodeMode:
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
-        docs = (Path(__file__).parents[2] / 'docs' / 'code-mode.md').read_text()
+        docs = (Path(__file__).parents[3] / 'docs' / 'harness' / 'code-mode.md').read_text()
         documented = re.search(r'Allowed stdlib modules: (.*?) \(', docs)
         assert advertised is not None and documented is not None
         modules = re.findall(r'`(\w+)`', advertised.group(1))

@@ -16,6 +16,8 @@ from pydantic_clai2._app import _reset_status  # pyright: ignore[reportPrivateUs
 from pydantic_clai2.status import Status, StatusLine
 from pydantic_clai2.theme import MUTED, WARNING, sgr
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend() -> str:

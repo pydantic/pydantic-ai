@@ -362,7 +362,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
                         # Python 3.10.
                         if not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
                             # Only fires for bugs in `wrap_run` implementations.
-                            _run_error.__context__ = wrap_exc  # pragma: no cover
+                            _run_error.__context__ = wrap_exc  # pragma: lax no cover
                 # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
                 # always still pending here.
                 elif not _wrap_task.done():  # pragma: no branch

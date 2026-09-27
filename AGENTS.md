@@ -98,6 +98,8 @@ The repo contains a `uv` workspace defining multiple Python packages:
 - `pydantic-graph` in `pydantic_graph/`: the type-hint based [graph library](docs/graph.md) that powers the agent loop
 - `pydantic-evals` in `pydantic_evals/`: the [evaluation framework](docs/evals.md) for evaluating the arbitrary stochastic functions including LLMs and agents
 - `clai` in `clai/`: a [CLI](docs/cli.md) (with an optional [web UI](docs/web.md)) to chat with Pydantic AI agents
+- `pydantic-ai-harness` in `src/pydantic_ai_harness/`: the [capability library](docs/harness/index.md) built on the packages above, with tests in `tests/harness/` and a contributor guide in `src/pydantic_ai_harness/AGENTS.md`. Released as `0.X.Y` alongside pydantic-ai `2.X.Y`.
+- `pydantic-clai2` in `src/pydantic_clai2/`: a capability-aware terminal client built on the harness, with tests in `tests/clai2/` and a guide in `src/pydantic_clai2/AGENTS.md`. Released with the harness.
 - `pydantic-ai` defined in `pyproject.toml` at the root, bringing in the packages above as well as the optional dependency groups for all model providers and select integrations.
 
 ## Development workflow
