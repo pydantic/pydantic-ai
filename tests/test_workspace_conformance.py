@@ -56,6 +56,30 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
         return _local_destroy_environment()
 
 
+class _StrictLoopBackend(LocalWorkspaceBackend):
+    async def realpath(self, path: str) -> str:
+        def resolve() -> str:
+            try:
+                return os.path.realpath(path, strict=True)
+            except FileNotFoundError:
+                return os.path.realpath(path)
+
+        return await anyio.to_thread.run_sync(resolve)
+
+
+class TestStrictLoopBackend:
+    @pytest.fixture
+    def backend(self, tmp_path: Path) -> LocalWorkspaceBackend:
+        return _StrictLoopBackend(tmp_path)
+
+    test_realpath_and_entries_follow_symlinks = WorkspaceBackendSuite.test_realpath_and_entries_follow_symlinks
+
+    async def test_realpath_loop_raises_oserror(self, backend: LocalWorkspaceBackend, tmp_path: Path) -> None:
+        (tmp_path / 'loop').symlink_to('loop')
+        with pytest.raises(OSError):
+            await backend.realpath(str(tmp_path / 'loop' / 'child'))
+
+
 class TestFilesystemOnlyWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def enforces_parent_file_errors(self) -> bool:

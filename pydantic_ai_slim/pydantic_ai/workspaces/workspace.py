@@ -254,7 +254,7 @@ class _ShellFilesystem(SupportsFilesystem):
     async def remove(self, path: str) -> None:
         root = await cast(WorkspaceBackend, self._backend).working_dir()
         # Refuse an ancestor before invoking `rm -rf`; never let removal of `.` destroy the environment.
-        target = await self.realpath(path)
+        target = posixpath.join(await self.realpath(posixpath.dirname(path)), posixpath.basename(path))
         if root == target or root.startswith(target.rstrip('/') + '/'):
             raise ValueError('cannot remove the workspace root or its ancestor')
         quoted_path = shlex.quote(path)
@@ -307,18 +307,18 @@ class _ShellFilesystem(SupportsFilesystem):
     async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:
             return
-        errors: dict[int, type[OSError]] = {
-            _SHELL_EXIT_NOT_FOUND: FileNotFoundError,
-            _SHELL_EXIT_NOT_DIRECTORY: NotADirectoryError,
-            _SHELL_EXIT_IS_DIRECTORY: IsADirectoryError,
-            _SHELL_EXIT_EXISTS: FileExistsError,
-            _SHELL_EXIT_NOT_REGULAR: OSError,
-            _SHELL_EXIT_PERMISSION: PermissionError,
-        }
-        if error := errors.get(result.exit_code):
-            if result.exit_code == _SHELL_EXIT_NOT_REGULAR:
-                raise OSError(f'not a regular file: {path!r}')
-            raise error(path)
+        if result.exit_code == _SHELL_EXIT_NOT_FOUND:
+            raise FileNotFoundError(path)
+        if result.exit_code == _SHELL_EXIT_NOT_DIRECTORY:
+            raise NotADirectoryError(path)
+        if result.exit_code == _SHELL_EXIT_IS_DIRECTORY:
+            raise IsADirectoryError(path)
+        if result.exit_code == _SHELL_EXIT_EXISTS:
+            raise FileExistsError(path)
+        if result.exit_code == _SHELL_EXIT_NOT_REGULAR:
+            raise OSError(f'not a regular file: {path!r}')
+        if result.exit_code == _SHELL_EXIT_PERMISSION:
+            raise PermissionError(path)
         if missing and not await self.exists(path):
             raise FileNotFoundError(path)
         message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'
@@ -340,7 +340,7 @@ class Workspace(WorkspaceBackend):
     @property
     def read_only(self) -> bool:
         """Whether this workspace refuses commands and file changes, so tools can leave those out."""
-        return False
+        return isinstance(self._backend, Workspace) and self._backend.read_only
 
     @property
     def attached(self) -> bool:
@@ -478,22 +478,16 @@ class WrapperWorkspace(Workspace):
         return self._backend
 
     @property
-    def backend(self) -> WorkspaceBackend:
-        return self.wrapped.backend
-
-    @property
-    def attached(self) -> bool:
-        return self.wrapped.attached
-
-    @property
     def read_only(self) -> bool:
         return self.wrapped.read_only
 
 
 def workspace_layers(workspace: Workspace) -> list[type[object]]:
-    """The policy wrappers around a workspace and its backend type, outermost first."""
+    """The policy wrappers around a workspace and its backend type, outermost first; plain `Workspace` layers are skipped."""
     layers: list[type[object]] = []
-    while isinstance(workspace, WrapperWorkspace):
-        layers.append(type(workspace))
-        workspace = workspace.wrapped
-    return [*layers, type(workspace), type(workspace.backend)]
+    layer: WorkspaceBackend = workspace
+    while isinstance(layer, Workspace):
+        if type(layer) is not Workspace:
+            layers.append(type(layer))
+        layer = layer._backend  # pyright: ignore[reportPrivateUsage]
+    return [*layers, type(layer)]

@@ -52,6 +52,7 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
     local as local_module,
 )
+from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .workspace_fakes import (
     ConnectOnlyWorkspaceCapability,
@@ -731,6 +732,13 @@ async def test_attached_is_false_only_for_an_unavailable_workspace_even_through_
     assert not ReadOnlyWorkspace(Workspace(UnavailableWorkspace('disabled by policy'))).attached
     assert not Workspace(Workspace(UnavailableWorkspace('disabled by policy'))).attached
     assert ReadOnlyWorkspace(Workspace(FakeWorkspace('attached'))).attached
+
+
+def test_a_plain_workspace_around_a_wrapper_keeps_its_policy() -> None:
+    nested = Workspace(ReadOnlyWorkspace(Workspace(FakeWorkspace('nested'))))
+
+    assert nested.read_only
+    assert workspace_layers(nested) == [ReadOnlyWorkspace, FakeWorkspace]
 
 
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
@@ -1456,6 +1464,16 @@ async def test_no_prompt_history_response_is_copied_before_stamping_workspace_re
     assert response.workspace_ref == backend.ref
 
 
+async def test_no_prompt_unavailable_history_ref_is_copied() -> None:
+    ref = WorkspaceRef(provider='missing', id='remote')
+    original = ModelResponse(parts=[TextPart('finished')], workspace_ref=ref)
+    result = await Agent(TestModel()).run(message_history=[original])
+
+    assert result.response is not original
+    assert original.workspace_ref == ref
+    assert result.response.workspace_ref == ref
+
+
 async def test_no_prompt_pending_tool_call_history_is_copied_before_execution() -> None:
     original = ModelResponse(parts=[ToolCallPart('probe', {})])
     history = [ModelRequest(parts=[UserPromptPart('go')]), original]
@@ -1560,9 +1578,20 @@ async def test_shell_remove_refuses_canonical_root_via_alias(tmp_path: Path) -> 
     root = tmp_path / 'root'
     root.mkdir()
     (root / 'safe').write_bytes(b'safe')
+    alias_parent = tmp_path / 'alias_parent'
+    alias_parent.symlink_to(tmp_path, target_is_directory=True)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root)))
+    with pytest.raises(ValueError, match='workspace root'):
+        await workspace.remove(str(alias_parent / 'root'))
+    assert (root / 'safe').read_bytes() == b'safe'
+
+
+async def test_shell_remove_symlink_to_root_only_removes_link(tmp_path: Path) -> None:
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'safe').write_bytes(b'safe')
     alias = tmp_path / 'alias'
     alias.symlink_to(root, target_is_directory=True)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root)))
-    with pytest.raises(ValueError, match='workspace root'):
-        await workspace.remove(str(alias))
-    assert (root / 'safe').read_bytes() == b'safe'
+    await workspace.remove(str(alias))
+    assert not alias.is_symlink()

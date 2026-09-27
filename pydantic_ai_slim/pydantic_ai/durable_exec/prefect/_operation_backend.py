@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from anyio.to_thread import run_sync
 from prefect import task
 from prefect.context import FlowRunContext
 
@@ -53,7 +52,6 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         async def operation(operation_name: str, *logical_inputs: object) -> object:
             return await body()
 
-        # Prefect inspects the function's source synchronously when constructing a task.
-        registered = await run_sync(lambda: task(operation))
+        registered = task(operation)
         options = config or {}
         return await registered.with_options(name=name, **options)(name, *cache_key)
