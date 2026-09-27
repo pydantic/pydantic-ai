@@ -393,8 +393,16 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             yield
         finally:
             self._operations -= 1
-            if self._operations == 0 and self._close_after_operation:
-                await self.aclose()
+            if self._operations == 0 and self._close_after_operation and self._owns_client:
+                # Detached before the close is awaited, so an operation starting meanwhile opens its
+                # own client instead of using this one while it closes.
+                client, self._client, self._sandbox = self._client, None, None
+                if client is not None:
+                    close = client.aclose
+                    if (
+                        error := await _run_to_completion(lambda: _cleanup_call(close, timeout=_CLOSE_TIMEOUT))
+                    ) is not None:
+                        logger.warning('Could not close Sprites SDK client: %r', error)
 
     async def working_dir(self) -> str:
         async with self._operation():

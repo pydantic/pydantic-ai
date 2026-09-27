@@ -206,6 +206,32 @@ class TestSpritesSandbox:
         assert (first.stdout, second) == ('hi', True)
         assert (len(transport.clients), transport.close_calls) == (2, 2)
 
+    async def test_an_operation_during_the_last_close_opens_its_own_client(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandbox[None]().get_workspace(context(), ref=None)
+        assert isinstance(backend, SpritesSandboxBackend)
+        note = str(transport.root / 'note.txt')
+        transport.release_close = release = asyncio.Event()
+        found: list[bool] = []
+
+        async def check() -> None:
+            found.append(await backend.exists(note))
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(backend.write_bytes, note, b'hi')
+            await transport.close_started.wait()
+            # The first client is still closing, so this operation must open another.
+            tg.start_soon(check)
+            try:
+                with anyio.fail_after(10):
+                    while len(transport.clients) < 2:
+                        await anyio.sleep(0)
+            finally:
+                # Closes are shielded, so the task group can only finish once they are released.
+                release.set()
+
+        assert found == [True]
+        assert (len(transport.clients), transport.close_calls) == (2, 2)
+
     async def test_cancelled_run_still_closes_the_owned_client(self, transport: SpriteTransport) -> None:
         agent = Agent(TestModel(), capabilities=[SpritesSandbox()])
         used = anyio.Event()
