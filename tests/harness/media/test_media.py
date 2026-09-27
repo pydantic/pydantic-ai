@@ -1261,7 +1261,7 @@ class TestS3MediaStoreWithMockTransport:
         assert path == f'/my-bucket/runs/{digest}.bin'
 
 
-@pytest.mark.skipif(  # pragma: no cover
+@pytest.mark.skipif(  # pragma: lax no cover
     not all(
         os.environ.get(k)
         for k in ('S3_ENDPOINT', 'S3_BUCKET_NAME', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_REGION')
