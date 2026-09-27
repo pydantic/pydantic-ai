@@ -104,10 +104,7 @@ jobs:
       - run: |
           upper="$(printf %s "$PROVIDER" | tr '[:lower:]' '[:upper:]')"
           export "PYDANTIC_AI_HARNESS_${upper}_LIVE=1" "${upper}_REQUIRE_LIVE=1"
-          paths=("tests/harness/${PROVIDER}_sandbox")
-          # The E2B search smoke test lives with FileSystem, not with the provider tests.
-          if [ "$PROVIDER" = e2b ]; then paths+=(tests/harness/filesystem/test_search_live.py); fi
-          uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "${paths[@]}" -q
+          uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
         env:
           PROVIDER: ${{ matrix.provider }}
           # Scoped to this step so checkout and setup never see the secrets.

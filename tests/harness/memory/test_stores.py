@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 from contextlib import AbstractAsyncContextManager
@@ -430,6 +431,41 @@ async def test_file_store_refuses_to_read_through_a_symlink_escape(tmp_path: Pat
 
     with pytest.raises(ValueError, match='outside the store directory'):
         await FileStore('.', workspace=LocalWorkspaceBackend(root)).read('scope/MEMORY.md', max_chars=100)
+
+
+async def test_file_store_refuses_a_receipts_file_linked_outside_the_store(tmp_path: Path) -> None:
+    root = tmp_path / 'root'
+    root.mkdir()
+    (tmp_path / 'victim.txt').write_text('keep')
+    os.symlink(tmp_path / 'victim.txt', root / '.memory-operations.json')
+    store = FileStore('.', workspace=LocalWorkspaceBackend(root))
+
+    with pytest.raises(ValueError, match='outside the store directory'):
+        await store.write('main.md', 'x', expected_version=None, operation=MemoryOperation('write-1', 'w'))
+    assert (tmp_path / 'victim.txt').read_text() == 'keep'
+
+
+async def test_file_store_settles_a_pending_receipt_only_inside_the_store(tmp_path: Path) -> None:
+    root = tmp_path / 'root'
+    root.mkdir()
+    (tmp_path / 'secret.md').write_text('secret')
+    os.symlink(tmp_path / 'secret.md', root / 'leak.md')
+    receipt = {
+        'id': 'probe',
+        'fingerprint': 'w',
+        'kind': 'write',
+        'path': 'leak.md',
+        'expected': None,
+        'version': hashlib.sha256(b'secret').hexdigest(),
+        'existed': False,
+        'done': False,
+    }
+    (root / '.memory-operations.json').write_text(json.dumps([receipt]))
+    store = FileStore('.', workspace=LocalWorkspaceBackend(root))
+
+    # Settling compares the linked file's hash with the receipt, which would reveal its content.
+    with pytest.raises(ValueError, match='outside the store directory'):
+        await store.get_operation(MemoryOperation('probe', 'w'))
 
 
 async def test_file_store_search_does_not_read_through_a_symlink_escape(tmp_path: Path) -> None:
