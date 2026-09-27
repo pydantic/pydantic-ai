@@ -128,6 +128,9 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'pydantic_graph',
             'pydantic',
             'pydantic_core',
+            # Pydantic imports `annotated_types` lazily, on the first schema with constraints; decoding
+            # a workspace result in workflow code can be that first use, after initial workflow load.
+            'annotated_types',
             'pydantic_monty',
             'logfire',
             'rich',
