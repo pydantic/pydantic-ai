@@ -45,6 +45,7 @@ SHARED = (
     'pydantic_ai_slim/pydantic_ai/workspaces/',
     'pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py',
     f'{_HARNESS}/_workspace.py',
+    f'{_HARNESS}/_workspace_provider.py',
     f'{_HARNESS}/_warn.py',
     f'{_HARNESS}/shell/',
     f'{_HARNESS}/filesystem/',
