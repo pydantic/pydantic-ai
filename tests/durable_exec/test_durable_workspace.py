@@ -372,7 +372,7 @@ async def test_no_units_are_bound_without_a_construction_time_supplier() -> None
 async def test_a_wrapper_capability_supplying_workspaces_binds_the_units() -> None:
     class SuppliesThroughWrapper(WrapperCapability[Any]):
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-            return FakeWorkspace('wrapped')
+            return FakeWorkspace('wrapped', ref=ref)
 
     durability = FakeDurability()
     agent = Agent(TestModel(), name='ws', capabilities=[SuppliesThroughWrapper(Capability(id='inner')), durability])

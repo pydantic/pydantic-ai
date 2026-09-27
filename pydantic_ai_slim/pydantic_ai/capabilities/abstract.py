@@ -1381,8 +1381,9 @@ def select_workspace(
     selected = run_layer.get_workspace(ctx, ref=ref) if run_layer is not None else None
     if selected is None:
         selected = capability.get_workspace(ctx, ref=ref)
-    if ref is not None and selected is not None and selected.ref is not None and selected.ref != ref:
-        # A resolver must not replace an expired or unauthorized environment with a fresh one.
+    if ref is not None and selected is not None and selected.ref != ref:
+        # A resolver must not replace an expired or unauthorized environment with a fresh one; a backend
+        # without a ref would create one on first use.
         raise UserError(f'Workspace resolver returned a different workspace than requested: {ref!r}')
     return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
 

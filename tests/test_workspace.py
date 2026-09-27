@@ -977,6 +977,21 @@ async def test_an_unrecognized_history_ref_is_an_error_when_the_agent_has_worksp
     assert fresh.workspace.attached
 
 
+@pytest.mark.parametrize('source', ['explicit', 'history'])
+async def test_a_resolver_cannot_answer_a_ref_with_a_backend_that_would_create_a_fresh_one(source: str) -> None:
+    class LazyResolver(AbstractCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return FakeWorkspace('lazy')
+
+    ref = WorkspaceRef(provider='fake', id='existing')
+    agent = Agent(TestModel(), capabilities=[LazyResolver()])
+    with pytest.raises(UserError, match='different workspace than requested'):
+        if source == 'explicit':
+            await agent.run('go', workspace=ref)
+        else:
+            await agent.run('go', message_history=[ModelResponse(parts=[TextPart('old')], workspace_ref=ref)])
+
+
 async def test_a_gone_workspace_fails_on_first_use_and_new_recovers() -> None:
     def probe_each_turn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
