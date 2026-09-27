@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import posixpath
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,13 +12,14 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import require_workspace
-from pydantic_ai_harness.filesystem._reader import READ_CHARS
 from pydantic_ai_harness.filesystem._toolset import (
     DEFAULT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
     FileSystemToolset,
     root_spelling,
 )
+
+_DEFAULT_READ_CHARS = 50_000
 
 _DEFAULT_READ_ONLY: tuple[str, ...] = (
     '**/.git/*',
@@ -85,7 +85,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     max_read_lines: int = 2000
     """Maximum number of lines returned by a single `read_file` call."""
 
-    max_read_chars: int | None = READ_CHARS
+    max_read_chars: int | None = _DEFAULT_READ_CHARS
     """Maximum characters in a single `read_file` result, header and hint included.
 
     The window ends on the last complete line that fits, and the continuation
@@ -160,27 +160,6 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""
         require_workspace(ctx.workspace, 'FileSystem')
-
-    def _file_read_tool(self, ctx: RunContext[Any], path: str, *, max_chars: int) -> str | None:
-        """`read_file`, when it reads the file at `path` and returns at most `max_chars` per call.
-
-        Implements `_FileReader` from configuration alone. The answer is yes when `read_file` is
-        registered, `max_read_chars` is at most `max_chars`, the boundary is the working directory
-        (no `root_dir`), and the patterns allow `path`. With an explicit `root_dir` it is `None`: placing `path` in it needs the workspace.
-        """
-        del ctx
-        relative = posixpath.normpath(path)
-        if (
-            'read_file' not in self.tools
-            or self.max_read_chars is None
-            or self.max_read_chars > max_chars
-            or self.root_dir is not None
-            or posixpath.isabs(relative)
-            or relative == '..'
-            or relative.startswith('../')
-        ):
-            return None
-        return 'read_file' if self._file_system_toolset()._is_accessible(relative) else None  # pyright: ignore[reportPrivateUsage]
 
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
         """The filesystem toolset, the same one for every run, so durable execution sees the leaf it registered."""

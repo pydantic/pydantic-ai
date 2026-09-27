@@ -12,7 +12,6 @@ from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS
 from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.filesystem._reader import READ_CHARS
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
@@ -31,12 +30,8 @@ class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
         return None
 
 
-MAX_READ_CHARS = READ_CHARS
-"""Characters of complete lines per `read_file`.
-
-Kept under `MAX_OUTPUT_CHARS` so the output cap never cuts a read, and at the limit
-`ToolOutputLimits` asks of a file reader, so an added `ToolOutputLimits` hands its spills to `read_file`.
-"""
+MAX_READ_CHARS = 50_000
+"""Characters of complete lines per `read_file`, below the output cap."""
 
 MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""

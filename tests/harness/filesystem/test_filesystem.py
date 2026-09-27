@@ -2020,6 +2020,11 @@ class TestFileSystemCapability:
 
     def test_default_read_output_is_bounded(self) -> None:
         assert FileSystem().max_read_chars == 50_000
+        assert FileSystem(max_read_chars=None).max_read_chars is None
+
+    def test_deprecated_cwd_is_ignored(self) -> None:
+        with pytest.warns(Warning, match='cwd'):
+            assert FileSystem(cwd='elsewhere').root_dir is None
 
     def test_read_only_defaults(self) -> None:
         fs = FileSystem()

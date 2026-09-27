@@ -98,7 +98,7 @@ async def fresh_workflow() -> dict[str, Any]:
     }
 
 
-async def test_dbos_default_run_id_is_workflow_id(dbos: DBOS) -> None:
+async def test_dbos_default_run_id_is_distinct_from_workflow_id(dbos: DBOS) -> None:
     workflow_id = f'run-id-{uuid.uuid4()}'
 
     @DBOS.workflow()
@@ -107,7 +107,24 @@ async def test_dbos_default_run_id_is_workflow_id(dbos: DBOS) -> None:
         return result.run_id, (await fresh_agent.run('Read the hook file.', run_id='explicit')).run_id
 
     with SetWorkflowID(workflow_id):
-        assert await run() == (workflow_id, 'explicit')
+        generated, explicit = await run()
+    assert generated != workflow_id
+    assert explicit == 'explicit'
+
+
+async def test_dbos_multiple_turns_in_one_workflow(dbos: DBOS) -> None:
+    provider.reset()
+    agent = Agent(TestModel(), name='dbos_turns', capabilities=[provider.capability(), DBOSDurability()])
+
+    @DBOS.workflow()
+    async def converse() -> tuple[str, str]:
+        first = await agent.run('First.')
+        second = await agent.run('Second.', message_history=first.all_messages())
+        assert first.workspace.ref == second.workspace.ref
+        return first.run_id, second.run_id
+
+    first_id, second_id = await converse()
+    assert first_id != second_id
 
 
 async def test_dbos_workspace_operations_run_as_steps_and_a_fork_replays_them(dbos: DBOS) -> None:

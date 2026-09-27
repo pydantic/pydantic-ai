@@ -4,6 +4,7 @@ import inspect
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
@@ -97,6 +98,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 
 JOURNAL_OPERATION_NAMES = {
     'compat__model.request',
@@ -1484,7 +1486,8 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
         await durable.get_tools(ctx)
 
 
-async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself() -> None:
+@pytest.mark.parametrize('attached', [False, True])
+async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself(tmp_path: Path, attached: bool) -> None:
     class ReplacingToolset(FunctionToolset[None]):
         async def for_run(self, ctx: RunContext[None]) -> FunctionToolset[None]:
             return FunctionToolset(id=self.id)
@@ -1497,6 +1500,8 @@ async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself() ->
     ) -> Any: ...
 
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    if attached:
+        ctx.workspace = Workspace(LocalWorkspaceBackend(tmp_path))
     leaf = ReplacingToolset(id='replacing')
     durable = DurableFunctionToolset(
         leaf,
@@ -1507,9 +1512,10 @@ async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself() ->
     )
     for method in ('for_run', 'for_run_step'):
         replacement = await getattr(durable, method)(ctx)
-        assert isinstance(replacement, DurableFunctionToolset)
-        assert replacement is not durable and replacement.id == leaf.id
-        assert replacement.id == 'replacing'
+        assert (replacement is durable) is not attached
+        assert replacement.durable_registrations is durable.durable_registrations
+        if attached:
+            assert replacement.wrapped is not leaf
 
 
 async def test_legacy_validation_fallbacks_remain_inline() -> None:
