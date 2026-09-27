@@ -34,6 +34,7 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    Workspace,
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceRef,
@@ -150,49 +151,31 @@ def _unwrap_filesystem_error(error: Exception) -> Exception:
     return error
 
 
-# Linux's limit on symlinks followed while resolving one path; a longer chain is a loop.
-_MAX_SYMLINK_HOPS = 40
-
-
-async def _follow_symlinks(
-    sandbox: modal.Sandbox, path: str, entry: modal.types.FileInfo | None
-) -> tuple[str, modal.types.FileInfo | None]:
-    """The path a symlink at `path` finally leads to, and its entry: `None` if it doesn't exist.
-
-    Modal's `stat` and `list_files` describe a symlink itself, so a link is resolved by stat-ing its
-    target, hop by hop. A dangling or looping link has no entry.
-    """
-    import modal
-
-    link, hops = path, 0
-    visited = {posixpath.normpath(path)}
-    while entry is not None and entry.is_symlink():
-        hops += 1
-        if hops > _MAX_SYMLINK_HOPS or entry.symlink_target is None:
-            return link, None
-        # A relative target is relative to the directory holding the link.
-        link = posixpath.normpath(posixpath.join(posixpath.dirname(link), entry.symlink_target))
-        if link in visited:
-            # Modal does not detect all cycles in its symlink metadata; skip repeated RPCs.
-            entry = None
-            continue
-        visited.add(link)
-        try:
-            entry = await sandbox.filesystem.stat.aio(link)
-        except (
-            modal.exception.SandboxFilesystemNotFoundError,
-            modal.exception.SandboxFilesystemNotADirectoryError,
-        ):
-            entry = None
-    return link, entry
-
-
-async def _file_entry(sandbox: modal.Sandbox, entry: modal.types.FileInfo, path: str) -> FileEntry:
+async def _file_entry(backend: ModalSandboxBackend, entry: modal.types.FileInfo, path: str) -> FileEntry:
     """The protocol entry for `entry` at `path`, with `is_dir` and `size` following a symlink.
 
     A dangling or looping link is reported as a file with no size.
     """
-    _, target = await _follow_symlinks(sandbox, path, entry)
+    import modal
+
+    target: modal.types.FileInfo | None = entry
+    if entry.is_symlink():
+        try:
+            resolved = await Workspace(backend).realpath(path)
+        except WorkspaceError as error:
+            if 'too many levels of symbolic links' not in str(error):
+                raise
+            target = None
+        else:
+            try:
+                target = await (await backend.get_sandbox()).filesystem.stat.aio(resolved)
+            except (
+                modal.exception.SandboxFilesystemNotFoundError,
+                modal.exception.SandboxFilesystemNotADirectoryError,
+            ):
+                target = None
+            if target is not None and target.is_symlink():
+                target = None
     is_dir = target is not None and target.is_dir()
     # A directory's reported size is an implementation detail of the underlying filesystem
     # rather than a content length, so report none for it, like the built-in backends.
@@ -340,28 +323,17 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
     async def write_bytes(self, path: str, data: bytes) -> None:
         absolute_path('path', path)
         # Modal takes the data first, creates missing parents, and replaces existing contents.
-        import modal
-
         sandbox = await self.get_sandbox()
         async with self._mapped_errors(sandbox, f'Could not write {path!r}', path):
-            # Modal replaces a symlink on write, unlike open(2). Resolve the leaf
-            # explicitly so writes through links update the same file the shell sees.
-            target = path
-            visited: set[str] = set()
-            for _ in range(_MAX_SYMLINK_HOPS):
-                normalized = posixpath.normpath(target)
-                if normalized in visited:
-                    raise OSError(f'Symlink loop in the Modal sandbox: {path!r}')
-                visited.add(normalized)
-                try:
-                    info = await sandbox.filesystem.stat.aio(target)
-                except modal.exception.SandboxFilesystemNotFoundError:
-                    break
-                if not info.is_symlink() or info.symlink_target is None:
-                    break
-                target = posixpath.normpath(posixpath.join(posixpath.dirname(target), info.symlink_target))
-            else:
-                raise OSError(f'Too many symlinks in the Modal sandbox: {path!r}')
+            # Modal replaces a leaf link; resolve it in the sandbox before writing.
+            try:
+                target = await Workspace(self).realpath(path)
+            except WorkspaceError as error:
+                if 'too many levels of symbolic links' not in str(error):
+                    raise
+                raise OSError(f'Symlink loop in the Modal sandbox: {path!r}') from error
+            if (await self.run(['test', '-L', target])).exit_code == 0:
+                raise OSError(f'Symlink loop in the Modal sandbox: {path!r}')
             await sandbox.filesystem.write_bytes.aio(data, target)
 
     async def stat(self, path: str) -> FileEntry:
@@ -369,7 +341,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         sandbox = await self.get_sandbox()
         async with self._mapped_errors(sandbox, f'Could not stat {path!r}', path):
             info = await sandbox.filesystem.stat.aio(path)
-            entry = await _file_entry(sandbox, info, path)
+            entry = await _file_entry(self, info, path)
             # Listings retain broken links, but stat follows them like the local backend.
             if info.is_symlink() and entry.size is None and not entry.is_dir:
                 raise FileNotFoundError(path)
@@ -386,7 +358,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
 
             async def resolve(index: int, entry: modal.types.FileInfo) -> None:
                 async with limit:
-                    results[index] = await _file_entry(sandbox, entry, posixpath.join(path, entry.name))
+                    results[index] = await _file_entry(self, entry, posixpath.join(path, entry.name))
 
             async with anyio.create_task_group() as group:
                 for index, entry in enumerate(entries):

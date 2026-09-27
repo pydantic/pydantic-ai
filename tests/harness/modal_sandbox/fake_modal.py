@@ -556,7 +556,17 @@ class FakeSandbox:
         program = argv[4:] if argv[:4] == ['/bin/sh', '-c', 'exec "$@"', 'sh'] else argv
         # In-memory fake stores only regular files; its generic responder does not know FIFOs.
         probing_fifo = program[:2] == ['test', '-p']
-        stdout, stderr, code = ('', '', 1) if probing_fifo else self._control.responder(program, timeout)
+        if program[:2] == ['test', '-L']:
+            stdout, stderr, code = '', '', 1
+        elif program[:2] == ['/bin/sh', '-c'] and 'links=0; while' in program[2]:
+            import base64
+            import shlex
+
+            rest = shlex.split(program[2].split(';', 1)[0].removeprefix('rest='))[0]
+            path = posixpath.normpath('/' + rest)
+            stdout, stderr, code = f'{len(path.encode())}\n{base64.b64encode(path.encode()).decode()}\n', '', 0
+        else:
+            stdout, stderr, code = ('', '', 1) if probing_fifo else self._control.responder(program, timeout)
         return _FakeProcess(
             _stream_bytes(stdout),
             _stream_bytes(stderr),

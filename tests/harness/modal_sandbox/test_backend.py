@@ -698,6 +698,63 @@ class TestFilesystem:
             'relative': (False, 5),
         }
 
+    async def test_parent_and_relative_leaf_symlink_write(self, fake_modal: FakeModal, tmp_path: Path) -> None:
+        fake_modal.host_root = tmp_path
+        (tmp_path / 'a' / 'sub').mkdir(parents=True)
+        (tmp_path / 'a' / 'out').mkdir()
+        (tmp_path / 'out').mkdir()
+        (tmp_path / 'abs').symlink_to('a/sub')
+        (tmp_path / 'a' / 'sub' / 'link').symlink_to('../out/file')
+        (tmp_path / 'a' / 'out' / 'file').write_bytes(b'old')
+        (tmp_path / 'out' / 'file').write_bytes(b'wrong length')
+        backend = ModalSandboxBackend()
+        assert (await backend.stat(str(tmp_path / 'abs' / 'link'))).size == 3
+        entry = next(e for e in await backend.list_dir(str(tmp_path / 'abs')) if e.name == 'link')
+        assert entry.size == 3
+        await backend.write_bytes(str(tmp_path / 'abs' / 'link'), b'new')
+        assert (tmp_path / 'a' / 'out' / 'file').read_bytes() == b'new'
+        assert (tmp_path / 'out' / 'file').read_bytes() == b'wrong length'
+        assert (tmp_path / 'a' / 'sub' / 'link').is_symlink()
+        (tmp_path / 'a' / 'sub' / 'loop').symlink_to('loop')
+        with pytest.raises(OSError):
+            await backend.write_bytes(str(tmp_path / 'abs' / 'loop'), b'no')
+        assert (tmp_path / 'a' / 'sub' / 'loop').is_symlink()
+
+    async def test_unresolved_kernel_link_is_not_replaced(
+        self, fake_modal: FakeModal, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_modal.host_root = tmp_path
+        link = tmp_path / 'loop'
+        link.symlink_to('loop')
+        backend = ModalSandboxBackend()
+
+        async def unresolved(self: Workspace, path: str) -> str:
+            return path
+
+        monkeypatch.setattr(Workspace, 'realpath', unresolved)
+        with pytest.raises(FileNotFoundError):
+            await backend.stat(str(link))
+        with pytest.raises(OSError, match='Symlink loop'):
+            await backend.write_bytes(str(link), b'no')
+        assert link.is_symlink()
+
+    async def test_realpath_errors_propagate(
+        self, fake_modal: FakeModal, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_modal.host_root = tmp_path
+        link = tmp_path / 'link'
+        link.symlink_to('target')
+        backend = ModalSandboxBackend()
+
+        async def failed(self: Workspace, path: str) -> str:
+            raise WorkspaceError('command unavailable')
+
+        monkeypatch.setattr(Workspace, 'realpath', failed)
+        with pytest.raises(WorkspaceError, match='command unavailable'):
+            await backend.stat(str(link))
+        with pytest.raises(WorkspaceError, match='command unavailable'):
+            await backend.write_bytes(str(link), b'no')
+
     async def test_dangling_symlink_is_listed_but_does_not_exist(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'dangling').symlink_to('missing')
