@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import IO, Any
 
 import anyio
+import anyio.lowlevel
 import pytest
 from e2b.exceptions import (
     AuthenticationException,
@@ -930,7 +931,7 @@ def test_signal_exit_code_limitation_is_documented() -> None:
 
 def test_file_api_identity_is_documented() -> None:
     docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
-    assert 'File operations and shell commands both run as the `user` account' in docs
+    assert 'Unix permissions do not restrict file operations' in docs
 
 
 def test_ripgrep_template_recipe_is_documented_without_running_a_build() -> None:
@@ -957,17 +958,30 @@ def test_missing_e2b_extra_has_an_install_hint() -> None:
 
 async def test_command_timeout_starts_once_the_sandbox_is_acquired(fake_e2b: FakeE2B) -> None:
     fake_e2b.create_response_held = held = anyio.Event()
-    backend = E2BSandboxBackend()
+    deadlines: list[float] = []
+
+    def respond(command: str, timeout: float | None) -> tuple[str, str, int]:
+        deadlines.append(anyio.current_effective_deadline())
+        return '', '', 0
+
+    fake_e2b.responder = respond
+    released_at: list[float] = []
 
     async def release() -> None:
-        # Creating the sandbox outlasts the timeout; the command itself fits in it comfortably.
-        await anyio.sleep(1.1)
+        # Let the clock move past the moment creation started, so a deadline started at the
+        # call would end before one started after acquisition.
+        while not fake_e2b.create_calls:
+            await anyio.lowlevel.checkpoint()
+        entered = anyio.current_time()
+        while anyio.current_time() <= entered:
+            await anyio.lowlevel.checkpoint()
+        released_at.append(anyio.current_time())
         held.set()
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(release)
-        result = await backend.run(['echo', 'ready'], timeout=1)
-        assert (result.exit_code, result.stdout) == (0, 'echo ready\n')
+        await E2BSandboxBackend().run(['true'], timeout=30)
+    assert deadlines[0] >= released_at[0] + 30
 
 
 async def test_filesystem_first_use_preserves_auth_error(fake_e2b: FakeE2B) -> None:
