@@ -42,7 +42,8 @@ for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its ope
 `WorkspaceUnavailableError` with that reason, which a tool can catch as a `WorkspaceError`.
 
 `resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
-components (native through `SupportsRealpath`, `readlink` in the shell otherwise).
+components (native through `SupportsRealpath`, `readlink` in the shell otherwise). With neither, it
+only normalizes the text, so a path check built on it cannot see through symlinks.
 
 Outside a durable container, an explicit backend passed through `workspace=` is used directly, and
 a `Workspace` facade or wrapper (`ReadOnlyWorkspace(...)`, `result.workspace`, `ctx.workspace`) is
