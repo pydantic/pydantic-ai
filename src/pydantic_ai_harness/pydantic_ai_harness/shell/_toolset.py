@@ -374,7 +374,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             Labeled stdout/stderr output with exit code on non-zero exit.
         """
         self._check_command(command)
-        timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
+        timeout = min(timeout_seconds if timeout_seconds is not None else self._default_timeout, MAX_FOREGROUND_WAIT)
 
         actual_command, cwd_file = await self._build_cwd_capture(ctx, command)
         try:
