@@ -696,16 +696,22 @@ class TestSpritesSandbox:
 
 
 def test_sprite_timeout_stop_guidance() -> None:
-    root = Path(__file__).resolve().parents[2]
-    for page in (root / 'docs/sprites-sandbox.md', root / 'pydantic_ai_harness/sprites_sandbox/README.md'):
+    root = Path(__file__).resolve().parents[3]
+    for page in (
+        root / 'docs/harness/sprites-sandbox.md',
+        root / 'src/pydantic_ai_harness/pydantic_ai_harness/sprites_sandbox/README.md',
+    ):
         content = page.read_text()
         assert 'What a timeout stops' in content
         assert 'process group' in content
 
 
 def test_sprite_ripgrep_install_guidance() -> None:
-    root = Path(__file__).resolve().parents[2]
-    for page in (root / 'docs/sprites-sandbox.md', root / 'pydantic_ai_harness/sprites_sandbox/README.md'):
+    root = Path(__file__).resolve().parents[3]
+    for page in (
+        root / 'docs/harness/sprites-sandbox.md',
+        root / 'src/pydantic_ai_harness/pydantic_ai_harness/sprites_sandbox/README.md',
+    ):
         content = page.read_text()
         assert 'not preinstalled' in content
         assert 'apt-get install ripgrep' in content
@@ -713,16 +719,22 @@ def test_sprite_ripgrep_install_guidance() -> None:
 
 
 def test_sprite_default_user_and_relative_path_guidance() -> None:
-    root = Path(__file__).resolve().parents[2]
-    for page in (root / 'docs/sprites-sandbox.md', root / 'pydantic_ai_harness/sprites_sandbox/README.md'):
+    root = Path(__file__).resolve().parents[3]
+    for page in (
+        root / 'docs/harness/sprites-sandbox.md',
+        root / 'src/pydantic_ai_harness/pydantic_ai_harness/sprites_sandbox/README.md',
+    ):
         content = page.read_text()
         assert '/home/sprite' in content
         assert 'relative paths' in content
 
 
 def test_background_process_docs_explain_sprite_pause() -> None:
-    root = Path(__file__).resolve().parents[2]
-    for page in (root / 'docs/sprites-sandbox.md', root / 'pydantic_ai_harness/sprites_sandbox/README.md'):
+    root = Path(__file__).resolve().parents[3]
+    for page in (
+        root / 'docs/harness/sprites-sandbox.md',
+        root / 'src/pydantic_ai_harness/pydantic_ai_harness/sprites_sandbox/README.md',
+    ):
         content = page.read_text()
         assert 'plain `&`' in content
         assert 'Sprites service' in content

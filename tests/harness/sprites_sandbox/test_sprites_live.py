@@ -283,7 +283,7 @@ async def test_commands_get_a_usable_environment(client: AsyncSpritesClient) -> 
 
 
 # The README's Python blocks are the same as this page's.
-_DOCS_BLOCKS = python_blocks('docs/sprites-sandbox.md')
+_DOCS_BLOCKS = python_blocks('docs/harness/sprites-sandbox.md')
 
 
 @pytest.mark.parametrize('example', [pytest.param(block, id=f'line {block.start_line}') for block in _DOCS_BLOCKS])
