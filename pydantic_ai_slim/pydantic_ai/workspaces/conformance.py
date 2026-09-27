@@ -1,5 +1,7 @@
-"""Conformance tests for `WorkspaceBackend` implementations, public so third-party backends can run them.
+"""The conformance suite for Pydantic AI workspace backends.
 
+Subclass `WorkspaceBackendSuite` in a pytest module and provide a `backend` fixture: each test checks
+one rule of the `WorkspaceBackend` contract, the same rules the built-in and provider backends pass.
 Requires pytest and the anyio pytest plugin.
 """
 

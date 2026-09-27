@@ -545,13 +545,13 @@ through `ctx.workspace.backend`. This is a provider API escape hatch and bypasse
 
 ### Checking a backend
 
-Subclass [`WorkspaceBackendSuite`][pydantic_ai.workspaces.testing.WorkspaceBackendSuite] in your
+Subclass [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] in your
 pytest suite and provide its `backend` fixture. Each test checks one rule of the backend contract:
 
 ```python {test="skip" lint="skip"}
 import pytest
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai.workspaces.testing import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 
 
 class TestMyBackend(WorkspaceBackendSuite):
@@ -578,6 +578,15 @@ Before shipping a backend, use the suite to check:
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
   reattachment, a destroyed reference, and destruction during a command. These optional rules
   skip when their fixtures are absent.
+
+A skipped rule is not a passed rule: run pytest with `-rs` to see what went unchecked. Four boolean
+fixtures, all `True` by default, declare a known limit; return `False` only for a limit you also
+document for users:
+
+- `can_detect_exit_with_inherited_output_pipes`: the provider reports a command's exit only after
+  every process holding its output has exited.
+- `filesystem_honors_shell_permissions`: the provider's file API bypasses the command user's permissions.
+- `has_real_posix_shell` and `enforces_parent_file_errors`: for in-memory test doubles only.
 
 ## Timeouts and clocks
 

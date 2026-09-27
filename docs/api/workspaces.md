@@ -23,9 +23,9 @@
             - WorkspaceTimeoutError
             - WorkspaceReadOnlyError
 
-# `pydantic_ai.workspaces.testing`
+# `pydantic_ai.workspaces.conformance`
 
-::: pydantic_ai.workspaces.testing
+::: pydantic_ai.workspaces.conformance
     options:
         members:
             - WorkspaceBackendSuite

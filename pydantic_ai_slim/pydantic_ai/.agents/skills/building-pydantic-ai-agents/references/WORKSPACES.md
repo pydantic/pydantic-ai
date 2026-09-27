@@ -82,7 +82,7 @@ SDK retries (outside durable execution), cleanup, TTL and pause/stop through the
 the concrete backend for provider-specific methods (not from workflow code under durable
 execution). Sandbox providers (Modal, E2B, Sprites) ship as capabilities in the
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). Check a custom backend by
-subclassing `pydantic_ai.workspaces.testing.WorkspaceBackendSuite` and providing its `backend`
+subclassing `pydantic_ai.workspaces.conformance.WorkspaceBackendSuite` and providing its `backend`
 fixture.
 
 Exception contract a backend must follow: `WorkspaceUnavailableError` when the environment is gone
