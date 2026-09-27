@@ -530,7 +530,11 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     user=self._user,
                 )
                 assert handle is not None
-                result = await handle.wait()
+                try:
+                    result = await handle.wait()
+                except e2b.CommandExitException as exited:
+                    # A nonzero exit is a completed result; the SDK's exception carries it.
+                    result = exited
             if result is None:
                 assert timeout is not None
                 raise WorkspaceTimeoutError(
@@ -539,8 +543,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     stderr=handle.stderr if handle is not None else '',
                 )
             return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
-        except e2b.CommandExitException as error:
-            return CommandResult(exit_code=error.exit_code, stdout=error.stdout, stderr=error.stderr)
         except BaseException as error:
             # A child task shields the side-channel stop from repeated task cancellation.
             # Allow the winning launcher to publish its PID before bounding a lost start ACK.

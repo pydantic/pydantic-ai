@@ -391,6 +391,15 @@ class TestRun:
         result = await backend.run(['false'])
         assert (result.stdout, result.stderr, result.exit_code) == ('out', 'err', 2)
 
+    @pytest.mark.parametrize('exit_code', [0, 2])
+    async def test_completed_command_removes_its_stop_registration(self, fake_e2b: FakeE2B, exit_code: int) -> None:
+        fake_e2b.responder = lambda command, timeout: ('', '', exit_code)
+        backend = await started()
+        await backend.run(['true'])
+        removed = fake_e2b.sandboxes[0].files.removed
+        assert [path.rsplit('-', 1)[0] for path in removed] == ['/tmp/pydantic-e2b-pgid'] * 2
+        assert removed[1] == f'{removed[0]}.claim'
+
     async def test_command_uses_utf8_locale_unless_overridden(self, fake_e2b: FakeE2B) -> None:
         backend = await started()
         await backend.run(['printf', 'é'])
