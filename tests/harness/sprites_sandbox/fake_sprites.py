@@ -30,12 +30,15 @@ import os
 import signal
 import subprocess
 import threading
+from collections.abc import Callable, Coroutine
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
-from typing import IO
+from typing import IO, ParamSpec, TypeVar
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import anyio
+import anyio.to_thread
 from sprites import AsyncSprite, AsyncSpritesClient
 from sprites.async_filesystem import AsyncSpritePath
 from sprites.exceptions import FileNotFoundError_, IsADirectoryError_, NotADirectoryError_, NotFoundError
@@ -45,6 +48,16 @@ from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
 _STDOUT, _EXIT, _STDIN_EOF = 1, 3, 4
+_P = ParamSpec('_P')
+_T = TypeVar('_T')
+
+
+def _host_io(fn: Callable[_P, Coroutine[object, object, _T]]) -> Callable[_P, Coroutine[object, object, _T]]:
+    @wraps(fn)
+    async def call(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+        return await anyio.to_thread.run_sync(lambda: anyio.run(lambda: fn(*args, **kwargs)))
+
+    return call
 
 
 class FakeSocketTransport:
@@ -58,7 +71,7 @@ class FakeSocketTransport:
 class FakeExecSocket:
     """One exec WebSocket, from the handshake to the EXIT frame."""
 
-    def __init__(self, sprite_transport: SpriteTransport, url: str) -> None:
+    def __init__(self, sprite_transport: SpriteTransport, url: str, loop: asyncio.AbstractEventLoop) -> None:
         self.sprite_transport = sprite_transport
         self.query_url = url
         self.query = parse_qs(urlsplit(url).query)
@@ -69,7 +82,7 @@ class FakeExecSocket:
         # Set on the client's stdin EOF; output printed before then is not streamed.
         self.attached = False
         self._frames: asyncio.Queue[bytes | None] = asyncio.Queue()
-        self._loop = asyncio.get_running_loop()
+        self._loop = loop
         self.process = subprocess.Popen(
             self.query['cmd'],
             cwd=self.query.get('dir', [str(sprite_transport.root)])[0],
@@ -129,7 +142,7 @@ class FakeExecSocket:
         if self.sprite_transport.release_stdin_eof is not None:
             await self.sprite_transport.release_stdin_eof.wait()
         self.attached = True
-        self.process.stdin.close()
+        await anyio.to_thread.run_sync(self.process.stdin.close)
 
     async def close(self) -> None:
         sprite_transport = self.sprite_transport
@@ -202,7 +215,9 @@ class SpriteTransport:
             raise InvalidStatus(Response(404, 'Not Found', Headers()))
         if len(url) > self.url_limit:
             raise InvalidStatus(Response(414, 'URI Too Long', Headers()))
-        socket = FakeExecSocket(self, url)
+        # Popen's exec handshake waits on a pipe; construct the socket off-loop.
+        loop = asyncio.get_running_loop()
+        socket = await anyio.to_thread.run_sync(lambda: FakeExecSocket(self, url, loop))
         self.execs.append(socket)
         self.exec_started.set()
         return socket
@@ -251,6 +266,7 @@ class SpriteTransport:
             raise FileNotFoundError_('fs', str(path))
         return Path(str(path))
 
+    @_host_io
     async def fs_stat(self, path: AsyncSpritePath) -> FileStat:
         target = self._fs_path(path)
         # The API lists a directory's entries and the SDK reports the first; the fake keeps that.
@@ -268,6 +284,7 @@ class SpriteTransport:
             is_dir=entry.is_dir(),
         )
 
+    @_host_io
     async def fs_write(self, path: AsyncSpritePath, data: bytes, mode: int) -> None:
         target = self._fs_path(path)
         if target.is_dir():

@@ -5,6 +5,7 @@ import json
 import signal
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import anyio
 import httpx
@@ -355,16 +356,35 @@ class TestSpritesSandbox:
         assert ('connection' if attach else 'creation') in str(caught.value)
         assert transport.execs == []
 
-    async def test_run_deadline_starts_once_the_sprite_is_acquired(self, transport: SpriteTransport) -> None:
+    async def test_run_deadline_starts_once_the_sprite_is_acquired(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         transport.names.add('remote')
         transport.release_get = asyncio.Event()
+        acquiring = anyio.Event()
+        deadlines: list[float] = []
+        get, connect = transport.get, transport.connect
+
+        async def observed_get(*args: Any, **kwargs: Any) -> Any:
+            acquiring.set()
+            return await get(*args, **kwargs)
+
+        async def observed_connect(*args: Any, **kwargs: Any) -> Any:
+            deadlines.append(anyio.current_effective_deadline())
+            return await connect(*args, **kwargs)
+
+        monkeypatch.setattr(transport, 'get', observed_get)
+        monkeypatch.setattr('sprites.websocket.connect', observed_connect)
         backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'))
-        # Attaching outlasts the timeout; the command itself fits in it comfortably.
-        task = asyncio.create_task(backend.run(['echo', 'ok'], timeout=1))
-        await asyncio.sleep(1.1)
+        task = asyncio.create_task(backend.run(['echo', 'ok'], timeout=60))
+        await acquiring.wait()
+        # Only makes the clock move on; a deadline set before acquisition then lands earlier.
+        await anyio.sleep(0.01)
+        acquired_at = anyio.current_time()
         transport.release_get.set()
 
         assert (await task).stdout == 'ok\n'
+        assert deadlines[-1] >= acquired_at + 60
 
     async def test_failed_acquisition_keeps_the_client_for_a_retry(self, transport: SpriteTransport) -> None:
         transport.get_error = SpriteError('lookup failed')
