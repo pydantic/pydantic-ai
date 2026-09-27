@@ -19,7 +19,7 @@ from pydantic_ai.durable_exec._workspace import WorkspaceCall
 from pydantic_ai.models.test import TestModel
 
 from ..workspace_fakes import InMemoryProvider
-from .workspace_scenarios import IN_PROCESS_GAPS, SCENARIOS, Check, ScenarioFailed, cases, scenario_agents, tool_runs
+from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents, tool_runs
 
 try:
     from prefect import flow
@@ -85,14 +85,6 @@ async def scenario_flow(name: str, arg: str | None) -> Any:
     return await SCENARIOS[name](agents, arg, str(context.flow_run.id))
 
 
-PREFECT_GAPS = {
-    'two_agents': (
-        "A capability operation's task cache key is the same for every agent, but its sequence counter is "
-        "per agent, so a second agent's first `ensure` in a flow is served the first agent's environment."
-    ),
-}
-
-
 async def run_scenario(name: str, arg: str | None) -> Any:
     try:
         return await scenario_flow(name, arg)
@@ -100,7 +92,7 @@ async def run_scenario(name: str, arg: str | None) -> Any:
         raise ScenarioFailed(type(error).__name__, str(error)) from error
 
 
-@pytest.mark.parametrize('check', cases(xfail={**IN_PROCESS_GAPS, **PREFECT_GAPS}))
+@pytest.mark.parametrize('check', cases())
 async def test_workspace_scenario(check: Check) -> None:
     provider.reset()
     await check(run_scenario, agents)
@@ -123,10 +115,10 @@ async def test_prefect_flow_retry_replays_workspace_tasks_and_run_ids() -> None:
     await fail_after_the_run_once()
 
     # The retry replayed every task the first attempt recorded, with the same run ID, and attached to
-    # the environment the first attempt created instead of creating another.
+    # the environments the first attempt created (one per agent) instead of creating more.
     assert attempts[0] == attempts[1]
     assert tool_runs == ['write_left']
-    assert provider.log == snapshot(['create:env-1'])
+    assert provider.log == snapshot(['create:env-1', 'create:env-2'])
     assert _workspace_tasks() == snapshot(
         [
             'ensure',
