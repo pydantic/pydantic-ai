@@ -179,7 +179,7 @@ a `ToolReturnPart` holding a [`BinaryImage`][pydantic_ai.messages.BinaryImage] �
 Because the run usually ends on the model's text response, `result.response.images` is empty even though an image was
 generated:
 
-```python
+```python {test="skip" lint="skip"}
 result = agent.run_sync('Generate an illustration of a cafe. Then write alt text for it.')
 result.output           # the alt text
 result.response.images  # [] — the image was produced earlier, by the capability's tool
@@ -187,7 +187,7 @@ result.response.images  # [] — the image was produced earlier, by the capabili
 
 Collect the generated images by walking the run's messages and keeping the parts whose content is a `BinaryImage`:
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai import BinaryImage
 
 images = [
@@ -205,7 +205,7 @@ saves it to disk.
 
 Setting `output_type=BinaryImage` makes the image the run's `output` instead, with no history walk:
 
-```python
+```python {test="skip" lint="skip"}
 agent = Agent(
     'openai:gpt-5-mini',
     capabilities=[ImageGeneration(native=False, local=image_generator)],
