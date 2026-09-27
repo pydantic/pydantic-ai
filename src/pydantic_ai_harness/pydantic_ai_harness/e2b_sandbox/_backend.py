@@ -79,6 +79,11 @@ _CREATE_TIMEOUT = 120
 # Bounds the internal `pwd` probe behind `working_dir()` and the best-effort kills.
 _INTERNAL_EXEC_TIMEOUT = 10
 
+# A buffered upload's deadline: the SDK's default request timeout plus the transfer time at a
+# conservative 2 Mbit/s.
+_UPLOAD_BASE_TIMEOUT = 60
+_UPLOAD_MIN_BYTES_PER_SECOND = 256 * 1024
+
 # E2B's own command `timeout` bounds the event stream and leaves the command running, so it is
 # switched off (0 is the SDK's "no limit") and the deadline is enforced client-side instead,
 # with a kill at expiry. See `E2BSandboxBackend.run`.
@@ -316,8 +321,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def write_bytes(self, path: str, data: bytes) -> None:
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not write {path!r}', path):
-            # The SDK's default 60s request bound can interrupt a valid large upload.
-            await sandbox.files.write(path, data, user=self._user, request_timeout=0)  # pyright: ignore[reportUnknownMemberType]
+            # The SDK bounds a buffered upload by one whole-request deadline, and 0 means none: keep
+            # its 60 s for small files and allow a slow link's throughput for large ones.
+            deadline = _UPLOAD_BASE_TIMEOUT + len(data) / _UPLOAD_MIN_BYTES_PER_SECOND
+            await sandbox.files.write(path, data, user=self._user, request_timeout=deadline)  # pyright: ignore[reportUnknownMemberType]
 
     async def stat(self, path: str) -> FileEntry:
         sandbox = await self.get_sandbox()

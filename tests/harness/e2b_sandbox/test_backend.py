@@ -647,9 +647,10 @@ class TestFilesystem:
         assert sandbox.commands.calls
         assert {*sandbox.files.users, *(call.user for call in sandbox.commands.calls)} == {'user'}
 
-    async def test_upload_does_not_inherit_sdk_request_timeout(
+    async def test_upload_deadline_is_finite_and_grows_with_size(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """The SDK reads `request_timeout=0` as no deadline at all, and its fixed 60 s default can cut off a large upload."""
         backend = await started()
         files = fake_e2b.sandboxes[0].files
         write = files.write
@@ -662,8 +663,12 @@ class TestFilesystem:
             return await write(path, data, user, request_timeout)
 
         monkeypatch.setattr(files, 'write', track)
-        await backend.write_bytes('/tmp/large', b'data')
-        assert seen == [0]
+        await backend.write_bytes('/tmp/small', b'data')
+        await backend.write_bytes('/tmp/large', bytes(64 * 1024 * 1024))
+        small, large = seen
+        assert small is not None and large is not None
+        assert 60 <= small < large
+        assert large > 120
 
     async def test_concurrent_uploads_are_documented_as_non_atomic(self) -> None:
         docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
