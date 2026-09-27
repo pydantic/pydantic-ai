@@ -639,8 +639,38 @@ Your callback's return value decides the call's fate, and the two outcomes are e
 !!! warning "Host access depends on the configuration"
     `mount` exposes selected host directories. The built-in `OSAccess` uses an isolated in-memory filesystem and environment but the host clock by default; a custom handler or `CallbackFile` can expose other host resources. Prefer constructing `CodeMode` per request so any granted access is scoped to that request.
 
+### `os_policy` -- set the sandbox's clock and timezone
+
+Reach for `os_policy` when the agent needs the current date and time in a given zone and nothing else from the host. It is Monty's session policy, merged key by key over the defaults `CodeMode` applies: the clock and unseeded randomness routed to `os_access` (unavailable without one), sleeps waited for by the harness. A key you set replaces that default.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+# The worker's clock, read in Paris time: `datetime.now()`, `astimezone()`,
+# `time.tzname` and `%Z` all agree on the zone, with no `os_access` handler.
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[CodeMode(os_policy={'datetime': 'system', 'timezone': 'Europe/Paris'})],
+)
+```
+
+Without `timezone`, Monty's sandbox is in UTC: an `os_access` handler that answers `datetime.now()` with a local wall time gets it stamped `+00:00` by `astimezone()`, and `time.tzname` still says `UTC`. Set `timezone` alone to keep the clock on your handler while `astimezone()` and `%Z` report the zone. `time.tzname` and `time.timezone` then need a fixed offset (`{'offset_seconds': 3600, 'name': 'CET'}`) rather than an IANA name, since reading a zone's DST state needs a clock the sandbox holds itself:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[CodeMode(os_access=my_os, os_policy={'timezone': 'Europe/Paris'})],
+)
+```
+
+The `run_code` description tells the model the clock is available when the policy provides one (`'system'` or a frozen `datetime`). A `'system'` clock or randomness is read again when a Temporal workflow replays the run, so keep the defaults there. `pydantic_monty.OSPolicy` documents every key.
+
 !!! note "Monty-specific types"
-    These parameters use Monty's `AbstractOS`/`MountDir` types from `pydantic_monty`.
+    These parameters use Monty's `AbstractOS`/`MountDir`/`OSPolicy` types from `pydantic_monty`.
 
 ## Sandbox restrictions
 
@@ -648,7 +678,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib` (each must be imported before use).
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments. Other task creation and wait APIs are unavailable.
-- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail. They become available when an `os_access` handler implements them (the built-in `OSAccess` does). `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer.
+- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail. They become available when an `os_access` handler implements them (the built-in `OSAccess` does), or when `os_policy` gives the sandbox the worker's clock or entropy. `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer.
 - No `import *`.
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry.

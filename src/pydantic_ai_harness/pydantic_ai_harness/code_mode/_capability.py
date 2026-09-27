@@ -24,6 +24,7 @@ from pydantic_ai_harness.code_mode._speculation import (
 from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
     CodeModeOS,
+    CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeToolset,
     as_os_handler,
@@ -68,13 +69,16 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     ```
 
     By default, sandboxed code cannot touch the host -- no filesystem, environment
-    variables, or clock. Two parameters open it up:
+    variables, or clock. Three parameters open it up:
 
     - `mount` shares specific host directories: reach for it when the agent reads or
       writes real files.
     - `os_access` routes the sandbox's OS calls to a handler you provide: reach for it
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
+    - `os_policy` sets the sandbox's own clock, timezone, sleep and randomness behavior:
+      reach for it when the agent needs the time in a given zone and nothing else from
+      the host.
 
     `mount` exposes selected host directories. The built-in `OSAccess` has an
     isolated filesystem and environment but uses the host clock by default; custom
@@ -121,6 +125,21 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
+
+    os_policy: CodeModeOSPolicy | None = None
+    """Monty's clock, timezone, sleep and randomness policies for the sandbox, merged over the defaults key by key.
+
+    By default the clock and unseeded randomness are routed to `os_access` (unavailable without one) and
+    sleeps are waited for by the harness, so a Temporal replay sees the same run. A key you set replaces
+    that default: `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock
+    in that zone with no handler at all, and `{'timezone': 'Europe/Paris'}` alone keeps the clock on
+    `os_access` while `astimezone()` and `%Z` report that zone instead of UTC; `time.tzname` and
+    `time.timezone` then need a fixed offset (`{'offset_seconds': 3600, 'name': 'CET'}`), since an IANA
+    zone's DST reading needs a clock the sandbox holds itself. The `run_code` description tells the
+    model the clock is available when the policy provides one. A
+    `'system'` clock or randomness is read again on a Temporal replay, so keep the defaults there. See
+    `pydantic_monty.OSPolicy` for every key.
+    """
 
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
@@ -243,6 +262,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
+                os_policy=self.os_policy,
                 monty_sandbox_url=self.monty_sandbox_url,
                 capability=self,
                 speculation=self._speculation,
@@ -256,6 +276,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
+            os_policy=self.os_policy,
             monty_sandbox_url=self.monty_sandbox_url,
             capability=self,
             speculation=self._speculation,

@@ -123,7 +123,27 @@ _REMOTE_TURN_SLACK_SECS = 10.0
 # Route the clock and unseeded randomness to the `os=` handler, as before Monty 1.0: without one they are
 # unavailable, which keeps sandbox code deterministic when a Temporal workflow replays it. Sleeps come back to
 # `MontyExecutor`, which waits on the run's own event loop (a durable timer inside a Temporal workflow).
+# `CodeMode(os_policy=...)` overrides these key by key, see `resolve_os_policy`.
 _OS_POLICY: OSPolicy = {'datetime': 'call_host', 'sleep': 'call_host', 'random_start': 'call_host'}
+
+
+def resolve_os_policy(os_policy: OSPolicy | None) -> OSPolicy:
+    """Return the session policy: the harness defaults, with the keys `os_policy` sets replacing theirs.
+
+    Keys the override leaves out keep the default, so `{'timezone': 'Europe/Paris'}` only sets the zone the
+    sandbox reports and still routes the clock itself to `os_access`.
+    """
+    if os_policy is None:
+        return _OS_POLICY
+    return _OS_POLICY | os_policy
+
+
+def policy_gives_clock(os_policy: OSPolicy | None) -> bool:
+    """Whether `os_policy` gives the sandbox a clock of its own, the worker's or a frozen instant.
+
+    With the default `'call_host'` the clock is whatever `os_access` answers, and nothing without one.
+    """
+    return resolve_os_policy(os_policy).get('datetime') != 'call_host'
 
 
 @dataclass
@@ -136,6 +156,7 @@ class MontyRunState:
     """
 
     monty_sandbox_url: str | None = None
+    os_policy: OSPolicy | None = None
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -170,7 +191,10 @@ class MontyRunState:
                 raise
         if self.session is None:
             checkout = self.pool.checkout(
-                limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=_OS_POLICY
+                limits=limits,
+                type_check=type_check,
+                type_check_stubs=type_check_stubs,
+                os_policy=resolve_os_policy(self.os_policy),
             )
             self.session = await _enter_monty(self._session_stack, checkout, self.portal)
         return self.session

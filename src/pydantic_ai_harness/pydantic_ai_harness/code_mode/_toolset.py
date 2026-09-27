@@ -51,6 +51,7 @@ try:
         MountDir,
         OsFunction,
         OsHandler,
+        OSPolicy,
         ResourceLimits,
     )
 except ImportError as _import_error:  # pragma: no cover
@@ -63,6 +64,7 @@ from pydantic_ai_harness._monty_exec import (
     PrintCapture,
     in_temporal_workflow,
     is_sandbox_panic,
+    policy_gives_clock,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
@@ -74,6 +76,8 @@ if TYPE_CHECKING:
 CodeModeOSCallback = Callable[[OsFunction, tuple[object, ...], dict[str, object]], object]
 # Accepted by `CodeMode.os_access`: a ready-made OS implementation or a handler that decides each call.
 CodeModeOS = AbstractOS | OsHandler | CodeModeOSCallback
+# Accepted by `CodeMode.os_policy`: Monty's session policies, merged over the harness defaults key by key.
+CodeModeOSPolicy = OSPolicy
 # Accepted by `CodeMode.mount`: one or more host-directory mounts.
 CodeModeMount = MountDir | list[MountDir]
 
@@ -429,6 +433,27 @@ _MOUNT_LIFETIME_NOTE = (
     "- **Mount write lifetime**: writes through a `mode='overlay'` mount last only for the current "
     "`run_code` call. Use `mode='read-write'` when later calls need to read those writes."
 )
+# The variants `os_policy` selects when it gives the sandbox a clock of its own: the fs/env part of the
+# note above, then the clock sentence in place of the "clock unavailable" or "clock routed" claim.
+_POLICY_CLOCK_SENTENCE = (
+    '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` read the clock configured for this sandbox.'
+)
+_NO_OS_WITH_CLOCK_NOTE = (
+    '- **No filesystem or environment**: `pathlib.Path` I/O and `os.getenv`/`os.environ` are unavailable here '
+    '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but their I/O '
+    f'operations are not supported in this configuration. {_POLICY_CLOCK_SENTENCE} '
+    '`time.sleep` and `asyncio.sleep` really wait.'
+)
+_MOUNT_ONLY_WITH_CLOCK_NOTE = (
+    '- **Mounted filesystem access**: `pathlib.Path` operations under the configured mount '
+    f'point(s) are routed to the host. `os.getenv`/`os.environ` remain unavailable. {_POLICY_CLOCK_SENTENCE} '
+    '`time.sleep` and `asyncio.sleep` really wait.'
+)
+_OS_ENABLED_WITH_CLOCK_NOTE = (
+    '- **Configured OS access**: `pathlib.Path` operations and `os.getenv`/`os.environ` are routed to the OS '
+    f'handler configured for this agent (availability depends on that configuration). {_POLICY_CLOCK_SENTENCE} '
+    '`time.sleep` and `asyncio.sleep` really wait.'
+)
 
 _RUN_CODE_DESCRIPTION_TAIL = """\
 - **No `import *`**: wildcard imports are not supported
@@ -456,19 +481,21 @@ final expression, returns a list with the printed text followed by the native co
 """
 
 
-def _base_description(*, has_os: bool, has_mount: bool) -> str:
+def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool = False) -> str:
     """Assemble the `run_code` base description with the right OS-access restriction line.
 
     `os` routes environment, clock, and filesystem calls; a `mount` alone only
     exposes filesystem paths, so a mount-only sandbox must not advertise env or
     clock access (the model would generate calls that fail and burn retries).
+    `has_clock` says `os_policy` gives the sandbox a clock of its own, which the
+    note then advertises instead of calling the clock unavailable or routed.
     """
     if has_os:
-        restriction = _OS_ENABLED_NOTE
+        restriction = _OS_ENABLED_WITH_CLOCK_NOTE if has_clock else _OS_ENABLED_NOTE
     elif has_mount:
-        restriction = _MOUNT_ONLY_NOTE
+        restriction = _MOUNT_ONLY_WITH_CLOCK_NOTE if has_clock else _MOUNT_ONLY_NOTE
     else:
-        restriction = _NO_OS_RESTRICTION
+        restriction = _NO_OS_WITH_CLOCK_NOTE if has_clock else _NO_OS_RESTRICTION
     if has_mount:
         restriction = f'{restriction}\n{_MOUNT_LIFETIME_NOTE}'
     return f'{_RUN_CODE_DESCRIPTION_HEAD}\n{restriction}\n{_RUN_CODE_DESCRIPTION_TAIL}'
@@ -760,6 +787,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
+    os_policy: CodeModeOSPolicy | None = field(default=None, kw_only=True)
+    """Monty session policies (clock, timezone, sleep, randomness) merged over the harness defaults, key by key.
+
+    See [`CodeMode.os_policy`][pydantic_ai_harness.CodeMode.os_policy].
+    """
+
     monty_sandbox_url: str | None = field(default=None, kw_only=True)
     """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
 
@@ -833,7 +866,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise UserError('`max_tool_calls` must be at least 1')
         if self.monty_sandbox_url is not None:
             _check_monty_sandbox_url(self.monty_sandbox_url)
-        run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url)
+        run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url, os_policy=self.os_policy)
         await self.wrapped.__aenter__()
         self._run_state = run_state
         return self
@@ -934,12 +967,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # The base prose stays host-aware in both modes -- its OS/mount restriction line is
         # static (it doesn't change per discovery), so it belongs in the cached description.
         has_os = self.os_access is not None
+        has_clock = policy_gives_clock(self.os_policy)
         has_mount = self.mount is not None
         if self.dynamic_catalog:
-            description = _base_description(has_os=has_os, has_mount=has_mount)
+            description = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
             self._last_catalog = self._render_catalog(callable_defs)
         else:
-            description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
+            description = self._build_description(
+                callable_defs, has_os=has_os, has_mount=has_mount, has_clock=has_clock
+            )
             self._last_catalog = ''
 
         if _RUN_CODE_TOOL_NAME in native_tools:
@@ -1316,9 +1352,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return callable_defs, sanitized_to_original
 
     @staticmethod
-    def _build_description(callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool) -> str:
+    def _build_description(
+        callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool, has_clock: bool = False
+    ) -> str:
         """Render the `run_code` description: base prose + TypedDicts + function signatures."""
-        base = _base_description(has_os=has_os, has_mount=has_mount)
+        base = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
         catalog = CodeModeToolset._render_catalog(callable_defs)
         if not catalog:
             return base

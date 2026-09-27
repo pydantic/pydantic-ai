@@ -22,12 +22,13 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 from unittest.mock import MagicMock
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import anyio
 import pytest
 from pydantic import BaseModel
 from pydantic_core import SchemaValidator, core_schema
-from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
+from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction, OSPolicy
 from typing_extensions import Never, TypedDict
 
 from pydantic_ai import (
@@ -4159,3 +4160,123 @@ class TestCodeModeOSAccessInTemporal:
         mount = MountDir(virtual_path='/work', host_path=str(tmp_path))
         code = "from pathlib import Path\nPath('/work/data.txt').read_text()"
         assert await self._run(code, handler, mount) == 'hello-from-host'
+
+
+class TestCodeModeOSPolicy:
+    """`CodeMode(os_policy=...)` sets the sandbox's own clock and zone, over the harness defaults."""
+
+    PARIS_NOON = datetime(2026, 1, 15, 12, 0, tzinfo=ZoneInfo('Europe/Paris'))
+    CLOCK_CODE = (
+        'import datetime\n'
+        'now = datetime.datetime.now()\n'
+        '[now.isoformat(), now.astimezone().isoformat(), now.astimezone().strftime("%Z")]'
+    )
+
+    async def _run(self, code_mode: CodeMode[object], code: str) -> Any:
+        wrapper = code_mode.get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        return result.return_value
+
+    async def _description(self, code_mode: CodeMode[object]) -> str:
+        wrapper = code_mode.get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
+        assert description is not None
+        return description
+
+    async def test_policy_clock_and_zone_agree_without_os_access(self) -> None:
+        """A policy clock in a zone: `now()`, `astimezone()`, `%Z` and `time.tzname` all report it."""
+        code_mode = CodeMode[object](os_policy={'datetime': self.PARIS_NOON, 'timezone': 'Europe/Paris'})
+        assert await self._run(code_mode, self.CLOCK_CODE) == [
+            '2026-01-15T12:00:00',
+            '2026-01-15T12:00:00+01:00',
+            'CET',
+        ]
+        assert await self._run(code_mode, 'import time\nlist(time.tzname)') == ['CET', 'CEST']
+
+    async def test_timezone_alone_keeps_the_clock_on_os_access(self) -> None:
+        """`{'timezone': ...}` leaves `datetime` on `'call_host'`: the handler still answers `now()`,
+        and the zone it answers in is the one `astimezone()` and `time.tzname` report."""
+        seen: list[str] = []
+
+        def paris_clock(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
+            seen.append(name)
+            return datetime(2026, 1, 15, 12, 0)  # what a Paris wall clock reads at PARIS_NOON
+
+        code_mode = CodeMode[object](os_access=paris_clock, os_policy={'timezone': 'Europe/Paris'})
+        assert await self._run(code_mode, self.CLOCK_CODE) == [
+            '2026-01-15T12:00:00',
+            '2026-01-15T12:00:00+01:00',
+            'CET',
+        ]
+        assert seen == ['datetime.now']
+
+    async def test_without_a_zone_the_sandbox_stamps_a_handler_clock_utc(self) -> None:
+        """The inconsistency `os_policy` fixes: a handler answering Paris wall time, read as UTC."""
+
+        def paris_clock(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
+            return datetime(2026, 1, 15, 12, 0)
+
+        code_mode = CodeMode[object](os_access=paris_clock)
+        assert await self._run(code_mode, self.CLOCK_CODE) == [
+            '2026-01-15T12:00:00',
+            '2026-01-15T12:00:00+00:00',
+            'UTC',
+        ]
+
+    @pytest.mark.parametrize(
+        'code',
+        [
+            pytest.param('import datetime\ndatetime.datetime.now()', id='datetime'),
+            pytest.param('import random\nrandom.random()', id='random'),
+        ],
+    )
+    async def test_unset_keys_keep_the_harness_defaults(self, code: str) -> None:
+        """Only the keys the policy sets change: the clock and entropy stay routed to `os_access`."""
+        code_mode = CodeMode[object](os_policy={'timezone': 'Europe/Paris'})
+        wrapper = code_mode.get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        with pytest.raises(ModelRetry, match='is not supported in this environment'):
+            await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+
+    async def test_description_advertises_the_policy_clock(self) -> None:
+        """With a policy clock and no handler, the note stops calling the clock unavailable."""
+        description = await self._description(CodeMode[object](os_policy={'datetime': 'system'}))
+        assert 'No filesystem or environment' in description
+        assert 'read the clock configured for this sandbox' in description
+        assert 'No filesystem, environment, or clock' not in description
+
+    async def test_description_advertises_the_policy_clock_with_a_mount(self, tmp_path: Path) -> None:
+        code_mode = CodeMode[object](
+            mount=MountDir(virtual_path='/work', host_path=str(tmp_path)), os_policy={'datetime': 'system'}
+        )
+        description = await self._description(code_mode)
+        assert 'Mounted filesystem access' in description
+        assert 'read the clock configured for this sandbox' in description
+        assert '`time.time()` remain unavailable' not in description
+
+    async def test_description_advertises_the_policy_clock_with_os_access(self) -> None:
+        """The clock no longer goes through the handler, so the note says where it comes from."""
+        code_mode = CodeMode[object](os_access=_unused_os_callback, os_policy={'datetime': 'system'})
+        description = await self._description(code_mode)
+        assert 'Configured OS access' in description
+        assert 'read the clock configured for this sandbox' in description
+
+    async def test_description_is_unchanged_when_the_clock_stays_on_call_host(self) -> None:
+        """A zone alone, or an explicit `'call_host'`, gives the sandbox no clock of its own."""
+        policies: list[OSPolicy] = [{'timezone': 'Europe/Paris'}, {'datetime': 'call_host'}]
+        for os_policy in policies:
+            description = await self._description(CodeMode[object](os_policy=os_policy))
+            assert 'No filesystem, environment, or clock' in description
+
+    def test_policy_reaches_both_toolset_tiers(self) -> None:
+        os_policy: OSPolicy = {'timezone': 'Europe/Paris'}
+        for code_mode in (CodeMode[object](os_policy=os_policy), CodeMode[object](os_policy=os_policy, eager=True)):
+            wrapper = code_mode.get_wrapper_toolset(_build_function_toolset(add))
+            assert isinstance(wrapper, CodeModeToolset)
+            assert wrapper.os_policy == os_policy
