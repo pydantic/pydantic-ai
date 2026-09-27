@@ -128,6 +128,9 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'pydantic_graph',
             'pydantic',
             'pydantic_core',
+            # Pydantic imports `annotated_types` lazily, on the first schema with constraints; decoding
+            # a workspace result in workflow code can be that first use, after initial workflow load.
+            'annotated_types',
             'pydantic_monty',
             'logfire',
             'rich',
@@ -198,21 +201,16 @@ class PydanticAIPlugin(SimplePlugin):
             # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
             # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
             # would otherwise turn it into a `UserError`; without it those would hang the same way.
-            # `WorkspaceError` and the builtin file errors a workspace raises are re-raised in
-            # workflow code by `DurableWorkspace` after crossing an activity boundary as data; a
-            # hook that lets one escape must fail the workflow the same way, not hang it.
+            # `WorkspaceError` covers a workspace that is gone or refused a call, re-raised in
+            # workflow code by `DurableWorkspace`; no redeploy can fix it. Builtin errors a workspace
+            # call re-raises (`FileNotFoundError` and the like) are left to Temporal's default, like
+            # any other exception in workflow code: the task retries until a code fix is deployed.
             workflow_failure_exception_types=[
                 UserError,
                 PydanticUserError,
                 AgentRunError,
                 UnsupportedEventLoopError,
                 WorkspaceError,
-                FileNotFoundError,
-                NotADirectoryError,
-                IsADirectoryError,
-                PermissionError,
-                FileExistsError,
-                UnicodeDecodeError,
             ],
         )
 
