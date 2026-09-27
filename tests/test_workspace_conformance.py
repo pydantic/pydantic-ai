@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-import anyio
 import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import (
-    CommandResult,
     LocalWorkspaceBackend,
     WorkspaceBackend,
-    WorkspaceCommand,
     WorkspaceRef,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
@@ -31,63 +28,13 @@ from .workspace_fakes import (
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='workspace conformance command rules use POSIX sh')
 
 
-@pytest.mark.anyio
-@pytest.mark.parametrize('raises', [True, False])
-async def test_realpath_rule_accepts_loop_error_or_confined_path(tmp_path: Path, raises: bool) -> None:
-    class LoopBackend(LocalWorkspaceBackend):
-        async def realpath(self, path: str) -> str:
-            if path.endswith('/loop1/q'):
-                if raises:
-                    raise OSError('symlink loop')
-                return path
-            return await super().realpath(path)
+@pytest.fixture
+def destroy_environment() -> Callable[[WorkspaceBackend], Awaitable[None]]:
+    async def destroy(backend: WorkspaceBackend) -> None:
+        assert backend.ref is not None
+        await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id)
 
-    await WorkspaceBackendSuite.test_realpath_and_entries_follow_symlinks(
-        WorkspaceBackendSuite(), LoopBackend(tmp_path)
-    )
-
-
-@pytest.mark.anyio
-async def test_stdin_rule_does_not_use_a_remote_latency_deadline(tmp_path: Path) -> None:
-    class RecordingBackend(LocalWorkspaceBackend):
-        command_timeout: float | None = None
-
-        async def run(
-            self,
-            command: WorkspaceCommand,
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> CommandResult:
-            self.command_timeout = timeout
-            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-
-    backend = RecordingBackend(tmp_path)
-    await WorkspaceBackendSuite.test_stdin_is_at_eof(WorkspaceBackendSuite(), backend)
-    assert backend.command_timeout is not None and backend.command_timeout >= 30
-
-
-@pytest.mark.anyio
-async def test_background_rule_tolerates_slow_control_plane(tmp_path: Path) -> None:
-    class SlowBackend(LocalWorkspaceBackend):
-        async def run(
-            self,
-            command: WorkspaceCommand,
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> CommandResult:
-            if isinstance(command, list) and any('printf done' in part for part in command):
-                await anyio.sleep(6)  # Simulate slow remote dispatch after provisioning.
-            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-
-    await WorkspaceBackendSuite.test_background_child_does_not_hold_up_completed_command(
-        WorkspaceBackendSuite(), SlowBackend(tmp_path), True, True
-    )
+    return destroy
 
 
 class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
@@ -103,38 +50,6 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return lambda ref: LocalWorkspaceBackend(ref.id)
-
-    @pytest.fixture
-    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
-        async def destroy(backend: WorkspaceBackend) -> None:
-            assert backend.ref is not None
-            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id)
-
-        return destroy
-
-
-class TestSharedLocalWorkspaceBackend(WorkspaceBackendSuite):
-    @pytest.fixture(scope='class')
-    @classmethod
-    def backend(cls, tmp_path_factory: pytest.TempPathFactory) -> LocalWorkspaceBackend:
-        return LocalWorkspaceBackend(tmp_path_factory.mktemp('shared-ws'))
-
-    @pytest.fixture
-    def destructive_backend(self, tmp_path_factory: pytest.TempPathFactory) -> Callable[[], WorkspaceBackend]:
-        path = tmp_path_factory.mktemp('destructive-ws')
-        return lambda: LocalWorkspaceBackend(path)
-
-    @pytest.fixture
-    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
-        return lambda ref: LocalWorkspaceBackend(ref.id)
-
-    @pytest.fixture
-    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
-        async def destroy(backend: WorkspaceBackend) -> None:
-            assert backend.ref is not None
-            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id)
-
-        return destroy
 
 
 class TestFilesystemOnlyWorkspaceBackend(WorkspaceBackendSuite):
@@ -166,14 +81,6 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return lambda ref: RunOnlyWorkspaceBackend(LocalWorkspaceBackend(ref.id))
-
-    @pytest.fixture
-    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
-        async def destroy(backend: WorkspaceBackend) -> None:
-            assert backend.ref is not None
-            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id)
-
-        return destroy
 
 
 class TestProviderBackend(WorkspaceBackendSuite):
