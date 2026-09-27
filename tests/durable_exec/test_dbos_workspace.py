@@ -17,7 +17,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from ..workspace_fakes import InMemoryProvider
-from .workspace_scenarios import IN_PROCESS_GAPS, SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
+from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -76,7 +76,7 @@ async def run_scenario(name: str, arg: str | None) -> Any:
         raise ScenarioFailed(type(error).__name__, str(error)) from error
 
 
-@pytest.mark.parametrize('check', cases(xfail=IN_PROCESS_GAPS))
+@pytest.mark.parametrize('check', cases())
 async def test_workspace_scenario(dbos: DBOS, check: Check) -> None:
     provider.reset()
     await check(run_scenario, agents)

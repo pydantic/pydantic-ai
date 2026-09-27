@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
@@ -426,20 +426,6 @@ CASES: dict[str, Check] = {
 }
 
 
-IN_PROCESS_GAPS = {
-    'amnesiac': (
-        'An in-process engine runs `ensure` against the workflow-side backend object, which takes the new ref '
-        'itself, so the check that a creating capability recognizes that ref only runs on recovery.'
-    ),
-}
-"""Cases DBOS and Prefect fail today, and why."""
-
-
-def cases(*, xfail: Mapping[str, str] = {}) -> list[Any]:
-    """`CASES` as pytest params, with the named cases marked as strict expected failures."""
-    return [
-        pytest.param(
-            check, id=name, marks=[pytest.mark.xfail(reason=xfail[name], strict=True)] if name in xfail else []
-        )
-        for name, check in CASES.items()
-    ]
+def cases() -> list[Any]:
+    """`CASES` as pytest params, one per scenario."""
+    return [pytest.param(check, id=name) for name, check in CASES.items()]
