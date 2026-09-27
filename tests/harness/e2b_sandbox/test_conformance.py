@@ -77,8 +77,8 @@ class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover - li
 
     @pytest.fixture
     def filesystem_honors_shell_permissions(self) -> bool:
-        # Live envd file operations run with elevated privileges despite the non-root shell user.
-        # Verified by the live conformance chmod-000 test (2026-09-26).
+        # envd opens files with its own root privileges; `user=` only sets ownership and `~`
+        # (envd internal/api/download.go), so a shell chmod 000 does not stop the file API.
         return False
 
     @pytest.fixture

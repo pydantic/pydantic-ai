@@ -85,7 +85,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-File operations and shell commands both run as the `user` account. Unix permissions apply to both.
+Shell commands run as the `user` account, and files the backend creates are owned by it. E2B's file service still reads and writes with its own root privileges, so Unix permissions do not restrict file operations; do not rely on them to keep file tools out of a path.
 
 A background child that inherits stdout or stderr can keep `run()` waiting for the SDK stream to close after the main command exits. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
 
