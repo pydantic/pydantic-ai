@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import re
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
@@ -241,6 +243,33 @@ async def test_native_cancellation_during_creation_retains_sandbox(fake_e2b: Fak
         assert await backend.get_sandbox() is fake_e2b.sandboxes[0]
     assert backend.ref == WorkspaceRef(provider='e2b', id='sbx-1')
     assert len(fake_e2b.create_calls) == 1
+
+
+async def test_acquisition_failing_after_its_caller_left_is_retrieved(fake_e2b: FakeE2B) -> None:
+    # The acquisition task outlives a cancelled caller; its later failure must not surface as
+    # asyncio's "Task exception was never retrieved".
+    fake_e2b.create_response_held = held = anyio.Event()
+    backend = E2BSandboxBackend(working_dir='/work')
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _, context: unhandled.append(context))
+    try:
+        caller = asyncio.create_task(backend.get_sandbox())
+        with anyio.fail_after(30):
+            while not fake_e2b.sandboxes:
+                await anyio.sleep(0)
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            (acquisition,) = [task for task in asyncio.all_tasks() if task.get_name() == 'e2b-sandbox-acquisition']
+            fake_e2b.fs_error = SandboxException('input/output error')
+            held.set()
+            await asyncio.wait([acquisition])
+        del acquisition
+        gc.collect()
+    finally:
+        loop.set_exception_handler(None)
+    assert unhandled == []
 
 
 async def test_agent_runs_without_history_create_fresh_workspaces(fake_e2b: FakeE2B) -> None:

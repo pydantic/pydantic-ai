@@ -231,6 +231,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             task = self._acquisition
             if task is None:
                 task = asyncio.create_task(self._acquire_detached(), name='e2b-sandbox-acquisition')
+                # Waiting callers still get the failure; this only stops asyncio reporting it as
+                # never retrieved when every caller was cancelled first.
+                task.add_done_callback(lambda done: done.cancelled() or done.exception())
                 self._acquisition = task
             return await asyncio.shield(task)
         return await self._acquire()
