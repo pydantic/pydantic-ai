@@ -194,6 +194,7 @@ async def test_audio_in_server_vad_turn(
         emits_input_speech_events=True,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
+        response_usage_covers_context=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supports_thinking=False,

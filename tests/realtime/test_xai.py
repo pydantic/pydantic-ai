@@ -171,6 +171,7 @@ def test_map_tool_call_preserves_xai_item_id() -> None:
         args='{}',
         item_id='item-1',
         response_usage_follows=True,
+        response_id='response',
     )
 
     event = map_event(
@@ -199,9 +200,11 @@ def test_map_input_transcription_completed_respects_status() -> None:
 
 def test_map_delegates_audio_and_transcript_and_tool_calls() -> None:
     payload = base64.b64encode(b'\x01\x02').decode('ascii')
-    assert map_event({'type': 'response.output_audio.delta', 'delta': payload}) == AudioDelta(data=b'\x01\x02')
+    assert map_event({'type': 'response.output_audio.delta', 'delta': payload}) == AudioDelta(
+        data=b'\x01\x02', response_id='response'
+    )
     assert map_event({'type': 'response.output_audio_transcript.delta', 'delta': 'hel'}) == OutputTranscript(
-        text='hel', is_final=False
+        text='hel', is_final=False, response_id='response'
     )
     assert map_event(
         {
@@ -217,6 +220,7 @@ def test_map_delegates_audio_and_transcript_and_tool_calls() -> None:
         args='{}',
         response_usage_follows=True,
         item_id='item-call',
+        response_id='response',
     )
 
 
@@ -242,7 +246,7 @@ def test_connection_map_event_override_matches_module() -> None:
     ) == InputTranscript(text='x', cumulative=True)
     assert conn._map_event(  # pyright: ignore[reportPrivateUsage]
         sdk_frame({'type': 'response.output_audio_transcript.delta', 'delta': 'hi'})
-    ) == OutputTranscript(text='hi', is_final=False)
+    ) == OutputTranscript(text='hi', is_final=False, response_id='response')
 
 
 @pytest.mark.anyio
@@ -285,6 +289,7 @@ def test_profile() -> None:
         emits_input_speech_events=True,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
+        response_usage_covers_context=False,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
@@ -561,6 +566,7 @@ async def test_response_done_maps_xai_usage_extras() -> None:
         usage=expected,
         provider_response_id='resp-xai',
         finish_reason='stop',
+        provider_details={'status': 'completed'},
     )
 
 
@@ -694,7 +700,7 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
 
     assert events == [
         InputTranscript(text='partial', cumulative=True),
-        OutputTranscript(text='hi', is_final=True),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
     ]
     assert fake_connect.url == 'wss://api.x.ai/v1/realtime?model=grok-voice-latest'
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
@@ -844,7 +850,10 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [RealtimeSessionReconnectEvent(state_restored=True), OutputTranscript(text='hi', is_final=True)]
+    assert events == [
+        RealtimeSessionReconnectEvent(state_restored=True),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
     # The last URL is the re-dial attempted after `good` hung up, which the stand-in refuses.
     assert connect.urls == [

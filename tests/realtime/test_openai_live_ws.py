@@ -126,6 +126,8 @@ async def test_audio_in_delegated_tool_round(
     assert session.usage.input_tokens > 0
     assert session.usage.output_tokens > 0
     assert session.usage.audio_seconds > 0
+    # Live reports how full its own context is; the backend's tokens don't measure it.
+    assert session.context_window_used == snapshot(0.01021875)
     # Each backend response's tokens land on the `ModelResponse` it produced, as in a standard run: the
     # one that asked for the tool on the tool-call response, the continuation on the spoken answer.
     tool_call_response, spoken_reply = messages[1], messages[3]

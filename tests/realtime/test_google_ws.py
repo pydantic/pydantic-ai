@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
@@ -219,6 +220,77 @@ async def test_rejected_config_raises_realtime_error(
     assert exc_info.value.message == snapshot(
         "Gemini Live connection closed: 1007 None. Requested voice api_name 'alloy' is not available for model models/gemini-2.5-flash-native-audio-preview-09-2025"
     )
+
+
+@pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
+async def test_image_then_typed_question(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str
+) -> None:
+    """An image sent right before a typed question is seen.
+
+    The image goes out as a video frame, which these models' typed turns don't see (3.8 answers that
+    it can't see an image, 2.5 misreads it), so the question's client content carries it again.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(model_name, provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    image = BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+
+    async with agent.realtime(model).session() as session:
+        await session.send(image)
+        await session.send('What fruit is in the image?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [video] = sent_frames_containing(cassette, '"video"')
+    [question] = sent_frames_containing(cassette, 'What fruit is in the image?')
+    assert [list(part) for part in question['client_content']['turns'][0]['parts']] == [['inlineData'], ['text']]
+    sent = [message.data for message in cassette.interactions if isinstance(message, CassetteMessage)]
+    assert sent.index(video) < sent.index(question)
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == ['ModelRequest', 'ModelRequest', 'ModelResponse']
+    response = messages[-1]
+    assert isinstance(response, ModelResponse) and isinstance(response.parts[0], SpeechPart)
+    assert 'kiwi' in (response.parts[0].transcript or '').lower()
+
+
+@pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
+async def test_image_then_spoken_question(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str
+) -> None:
+    """An image sent right before a spoken question is seen, as the video frame it goes out as."""
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(model_name, provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    image = BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+    # The question, then a second of silence so voice activity detection ends the turn.
+    pcm = assets_path.joinpath('what_fruit_is_in_the_image_16khz.pcm').read_bytes() + bytes(32000)
+
+    async with agent.realtime(model).session() as session:
+        await session.send(image)
+        for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
+            await session.send_audio(pcm[start : start + 3200])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    realtime_inputs = [
+        next(iter(frame['realtime_input']))
+        for frame in sent_frames_containing(cassette, 'realtime_input')
+        if 'realtime_input' in frame
+    ]
+    assert realtime_inputs[0] == 'video'
+    assert set(realtime_inputs[1:]) == {'audio'}
+
+    messages = session.all_messages()
+    assert isinstance(messages[0], ModelRequest) and isinstance(messages[0].parts[0], UserPromptPart)
+    response = messages[-1]
+    assert isinstance(response, ModelResponse) and isinstance(response.parts[0], SpeechPart)
+    assert 'kiwi' in (response.parts[0].transcript or '').lower()
 
 
 async def test_web_search_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -590,6 +662,7 @@ def test_profile_allow_seeding() -> None:
         emits_input_speech_events=False,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
+        response_usage_covers_context=True,
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
         context_window=None,
@@ -599,6 +672,8 @@ def test_profile_allow_seeding() -> None:
         google_requires_async_tool_calls=False,
         google_supports_async_tool_call_scheduling=True,
         google_supports_affective_dialog=True,
+        # A typed turn doesn't see an image sent just before it as a video frame (verified live).
+        google_text_turns_see_video_frames=False,
     )
 
 
