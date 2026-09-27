@@ -64,8 +64,11 @@ def test_blocks_run_their_agents_through_the_tools_and_hand_every_workspace_to_c
 
 
 def test_e2b_durable_example_is_module_level_and_runnable() -> None:
-    root = Path(__file__).parent.parent
-    for path in (root / 'docs/e2b-sandbox.md', root / 'pydantic_ai_harness/e2b_sandbox/README.md'):
+    root = Path(__file__).parents[2]
+    for path in (
+        root / 'docs/harness/e2b-sandbox.md',
+        root / 'src/pydantic_ai_harness/pydantic_ai_harness/e2b_sandbox/README.md',
+    ):
         section = path.read_text().split('## Durable execution\n', 1)[1].split('\n## ', 1)[0]
         code = re.search(r'```python[^\n]*\n(.*?)\n```', section, re.DOTALL)
         assert code is not None

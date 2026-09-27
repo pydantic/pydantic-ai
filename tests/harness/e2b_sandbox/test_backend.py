@@ -651,7 +651,7 @@ class TestFilesystem:
         assert seen == [0]
 
     async def test_concurrent_uploads_are_documented_as_non_atomic(self) -> None:
-        docs = (Path(__file__).parents[2] / 'docs/e2b-sandbox.md').read_text()
+        docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
         assert 'Concurrent writes to the same path are not atomic' in docs
 
     async def test_write_then_read_round_trips(self, fake_e2b: FakeE2B) -> None:
@@ -882,30 +882,30 @@ async def test_auth_error_classifies_expired_key_without_leaking_it(fake_e2b: Fa
 
 
 def test_preview_recipe_names_port_api_and_cleanup() -> None:
-    docs = (Path(__file__).parents[2] / 'docs/e2b-sandbox.md').read_text()
+    docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
     assert 'start_command' in docs and 'get_host(3000)' in docs
     assert 'stop_command' in docs and 'kill_sandbox' in docs
 
 
 def test_default_user_directory_and_relative_paths_are_documented() -> None:
-    docs = (Path(__file__).parents[2] / 'docs/e2b-sandbox.md').read_text()
+    docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
     assert '`user`' in docs and '`/home/user`' in docs
     assert 'relative paths' in docs
 
 
 def test_signal_exit_code_limitation_is_documented() -> None:
-    docs = (Path(__file__).parents[2] / 'docs/e2b-sandbox.md').read_text()
+    docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
     assert 'exit_code=-1' in docs
     assert 'signal' in docs
 
 
 def test_file_api_privileges_are_documented() -> None:
-    docs = (Path(__file__).parents[2] / 'docs/e2b-sandbox.md').read_text()
+    docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
     assert 'File operations run with elevated privileges' in docs
 
 
 def test_ripgrep_template_recipe_is_documented_without_running_a_build() -> None:
-    docs = (Path(__file__).parents[2] / 'docs/e2b-sandbox.md').read_text()
+    docs = (Path(__file__).parents[3] / 'docs/harness/e2b-sandbox.md').read_text()
     assert "Template().from_base_image().apt_install(['ripgrep'])" in docs
     assert 'AsyncTemplate.build' in docs
     assert "E2BSandbox(template='my-rg-template')" in docs

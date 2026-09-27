@@ -393,7 +393,7 @@ class TestEnvironment:
 
 
 # The README's Python blocks are the same as this page's.
-_DOCS_BLOCKS = python_blocks('docs/e2b-sandbox.md')
+_DOCS_BLOCKS = python_blocks('docs/harness/e2b-sandbox.md')
 
 
 class TestDocsExamples:
