@@ -38,6 +38,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    CommandResult,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     SupportsCommands,
@@ -58,7 +59,6 @@ from .workspace_fakes import (
     ConnectOnlyWorkspaceCapability,
     DecliningWorkspaceCapability,
     FakeWorkspace,
-    FakeWorkspaceResult,
     FilesystemOnlyWorkspaceBackend,
     InMemoryProvider,
     RunOnlyWorkspaceBackend,
@@ -225,10 +225,9 @@ async def test_shell_listing_uses_configured_temporary_directory(tmp_path: Path)
             shell: bool = False,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
+        ) -> CommandResult:
             assert '/tmp/.pydantic-ai-' not in str(command)
-            result = await super().run(command, shell=shell, env={'TMPDIR': str(temporary)}, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return await super().run(command, shell=shell, env={'TMPDIR': str(temporary)}, timeout=timeout)
 
     workspace = Workspace(TemporaryBackend(LocalWorkspaceBackend(tmp_path)))
     assert [entry.name for entry in await workspace.list_dir('.')] == ['temp']
@@ -248,15 +247,14 @@ async def test_shell_listing_removes_scratch_file_on_cancel(tmp_path: Path) -> N
             shell: bool = False,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
+        ) -> CommandResult:
             if isinstance(command, str) and 'find ' in command:
                 match = re.search(r'\.pydantic-ai-[a-f0-9]+\.list', command)
                 assert match is not None
                 await anyio.to_thread.run_sync((temporary / match.group()).write_bytes, b'partial')
                 started.set()
                 await asyncio.Event().wait()
-            result = await super().run(command, shell=shell, env={'TMPDIR': str(temporary)}, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return await super().run(command, shell=shell, env={'TMPDIR': str(temporary)}, timeout=timeout)
 
     workspace = Workspace(InterruptedBackend(LocalWorkspaceBackend(tmp_path)))
     task = asyncio.create_task(workspace.list_dir('.'))
@@ -279,9 +277,9 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
             shell: bool = False,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
+        ) -> CommandResult:
             listing = b'-/workspace/file-\xff\0'
-            return FakeWorkspaceResult(stdout=f'{len(listing)}\n{base64.b64encode(listing).decode()}')
+            return CommandResult(exit_code=0, stdout=f'{len(listing)}\n{base64.b64encode(listing).decode()}', stderr='')
 
     workspace = Workspace(ByteListingBackend(LocalWorkspaceBackend(tmp_path)))
     assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
@@ -481,12 +479,11 @@ async def test_shell_symlink_write_is_atomic_and_preserves_target_mode(tmp_path:
             shell: bool = False,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
+        ) -> CommandResult:
             if self.fail and isinstance(command, str) and 'base64 -d' in command and 'mv -f' in command:
                 self.fail = False
                 command = command.replace('mv -f', 'false && mv -f', 1)
-            result = await super().run(command, shell=shell, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return await super().run(command, shell=shell, env=env, timeout=timeout)
 
     backend = FailedTransfer(LocalWorkspaceBackend(tmp_path))
     workspace = Workspace(backend)
@@ -521,7 +518,7 @@ async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_p
             shell: bool = False,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
+        ) -> CommandResult:
             nonlocal cleanup_attempted
             if isinstance(command, str) and command.startswith('rm -f '):
                 cleanup_attempted = True
@@ -529,8 +526,7 @@ async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_p
                     raise RuntimeError('cleanup failed')
             if isinstance(command, str) and 'base64 -d' in command:
                 raise RuntimeError('write failed')
-            result = await super().run(command, shell=shell, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return await super().run(command, shell=shell, env=env, timeout=timeout)
 
     with pytest.raises(RuntimeError, match='write failed'):
         await Workspace(FailedWriteBackend(LocalWorkspaceBackend(tmp_path))).write_bytes('data.bin', b'data')
@@ -573,9 +569,9 @@ async def test_shell_filesystem_refuses_damaged_output(
             shell: bool = False,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
+        ) -> CommandResult:
             result = await super().run(command, shell=shell, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=corrupt(result.stdout), stderr=result.stderr)
+            return replace(result, stdout=corrupt(result.stdout))
 
     (tmp_path / 'directory').mkdir()
     (tmp_path / 'directory' / 'data.bin').write_bytes(bytes(range(256)) * 100)
@@ -599,12 +595,11 @@ async def test_shell_filesystem_rereads_a_file_replaced_mid_read(tmp_path: Path)
             shell: bool = False,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
+        ) -> CommandResult:
             if isinstance(command, str) and command.startswith('dd ') and self.replacements:
                 # The job publishes a new status right after the size was read.
                 await status.write_text(self.replacements.pop(0))
-            result = await super().run(command, shell=shell, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return await super().run(command, shell=shell, env=env, timeout=timeout)
 
     backend = PublishingBackend(LocalWorkspaceBackend(tmp_path))
     backend.replacements = ['{"exit_code": 0}']
@@ -625,11 +620,10 @@ async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None
             shell: bool = False,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
+        ) -> CommandResult:
             if isinstance(command, str) and 'find ' in command:
                 command = command.replace('find ', 'false ', 1)
-            result = await super().run(command, shell=shell, env=env, timeout=timeout)
-            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return await super().run(command, shell=shell, env=env, timeout=timeout)
 
     with pytest.raises(WorkspaceError):
         await Workspace(FailedFindBackend(LocalWorkspaceBackend(tmp_path))).list_dir('.')

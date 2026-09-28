@@ -22,10 +22,10 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
+    FileEntry,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
-    WorkspaceFileEntry,
     WorkspaceReadOnlyError,
 )
 from pydantic_ai_harness._events import event_ctx
@@ -694,7 +694,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             self._check_access(workspace_relpath(spelling, scope.root), write=write, check_allowed=check_allowed)
         return resolved
 
-    async def _stat(self, scope: _Scope, resolved: str) -> WorkspaceFileEntry | None:
+    async def _stat(self, scope: _Scope, resolved: str) -> FileEntry | None:
         """The entry at `resolved`, or `None` when nothing is there (including below a file)."""
         try:
             return await scope.workspace.stat(resolved)
@@ -703,7 +703,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
     async def _walk(
         self, scope: _Scope, directory: str, *, max_depth: int | None = None
-    ) -> tuple[list[WorkspaceFileEntry], bool]:
+    ) -> tuple[list[FileEntry], bool]:
         """Entries below `directory`, walked iteratively with `list_dir`, and whether the walk was cut short.
 
         Hidden directories are not descended into, since everything under them
@@ -714,7 +714,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         listings or `_MAX_WALK_ENTRIES` entries, which bounds a symlink loop inside
         the root.
         """
-        entries: list[WorkspaceFileEntry] = []
+        entries: list[FileEntry] = []
         pending: list[tuple[str, int]] = [(directory, 1)]
         seen_dirs = {await scope.workspace.realpath(directory)}
         listed = 0
@@ -1215,7 +1215,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         walk_cut = False
         hidden_count = 0
         if entry is None:
-            files: list[WorkspaceFileEntry] = []
+            files: list[FileEntry] = []
         elif not entry.is_dir:
             files = [entry]
         else:
@@ -1278,7 +1278,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         self,
         scope: _Scope,
         ctx: RunContext[AgentDepsT] | None,
-        entry: WorkspaceFileEntry,
+        entry: FileEntry,
         resolved: str,
         pattern: str,
         include_glob: str | None,

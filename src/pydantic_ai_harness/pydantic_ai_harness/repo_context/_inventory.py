@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from pydantic_ai.workspaces import Workspace, WorkspaceFileEntry
+from pydantic_ai.workspaces import FileEntry, Workspace
 from pydantic_ai_harness._workspace import workspace_relpath
 
 _ROOT_NOTES = {
@@ -107,7 +107,7 @@ async def _scan_agents(workspace: Workspace, agents_root: str, root_dir: str) ->
     return [_relative(entry.path, root_dir) for entry in entries if not entry.is_dir and entry.name.endswith('.md')]
 
 
-async def _stat(workspace: Workspace, path: str) -> WorkspaceFileEntry | None:
+async def _stat(workspace: Workspace, path: str) -> FileEntry | None:
     try:
         return await workspace.stat(path)
     except FileNotFoundError:
