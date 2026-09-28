@@ -1306,6 +1306,41 @@ jobs:
         with:
           skip-existing: true
 
+  gh-aw-engine-pin:
+    name: gh-aw engine / read pin
+    needs: [release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # `uv run --script` resolves the guard script's dependencies from PyPI without a lockfile, so it
+    # runs in its own job, on its own runner, with no write token: a step can extend `GITHUB_PATH`
+    # for the steps after it, so a separate step would not keep a dependency away from the token.
+    permissions:
+      contents: read
+    # The workflow-level `GIT_CONFIG_*` would otherwise carry the token here. Nothing here installs
+    # from git.
+    env:
+      GIT_CONFIG_COUNT: '0'
+      GIT_CONFIG_KEY_0: ''
+      GIT_CONFIG_VALUE_0: ''
+    outputs:
+      version: ${{ steps.engine.outputs.version }}
+    steps:
+      # Consumers compile the definition from the default branch, which may have moved past the tag.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: false
+
+      - id: engine
+        run: |
+          version=$(uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   # `src/pydantic_ai_harness/gh-aw/pydantic.md` pins the `pydantic-ai-harness` release a generated
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
   # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
@@ -1316,38 +1351,18 @@ jobs:
   # workflow runs: it would arrive with none of this repository's required checks.
   gh-aw-engine-pin-reminder:
     name: gh-aw engine / pin reminder
-    needs: [release-build, release]
-    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    needs: [release-build, gh-aw-engine-pin]
+    if: ${{ !cancelled() && needs.gh-aw-engine-pin.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: read
       issues: write
-    # The workflow-level `GIT_CONFIG_*` carries the token into every step, including the one that
-    # resolves the guard script's dependencies from PyPI. Nothing here installs from git.
-    env:
-      GIT_CONFIG_COUNT: '0'
-      GIT_CONFIG_KEY_0: ''
-      GIT_CONFIG_VALUE_0: ''
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: false
-
-      # `uv run --script` resolves the guard script's dependencies from PyPI
-      # without a lockfile, so it runs in its own step with no token in the
-      # environment. The step below holds the token and runs only `gh`.
-      - id: engine
-        run: echo "version=$(uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py)" >> "$GITHUB_OUTPUT"
-
       - name: Ask for a pin bump when the release moved past the definition
         env:
           GH_TOKEN: ${{ github.token }}
-          PINNED: ${{ steps.engine.outputs.version }}
+          GH_REPO: ${{ github.repository }}
+          PINNED: ${{ needs.gh-aw-engine-pin.outputs.version }}
           # The harness releases as `0.<minor>.<patch>` with every tag, so the tag name is not
           # the version the engine installs.
           RELEASED: ${{ needs.release-build.outputs.harness-version }}
