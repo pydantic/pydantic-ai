@@ -293,6 +293,11 @@ class GeminiServer:
                 self.truth.lose(response)
         session = self.session_for(socket)
         session.turn = None
+        # What the model was about to answer is gone with the connection: a re-dial doesn't resume a generation.
+        for key in session.triggers:
+            input_ = self.truth.input(key)
+            assert input_ is not None
+            input_.answer_lost = True
         session.triggers.clear()
 
     def session_for(self, socket: FakeGeminiSession) -> _ServerSession:

@@ -385,19 +385,6 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
     matches=_spoke_after_calling,
 )
 
-GEMINI_RESUMED_SESSION_FORGETS_CALLS = Finding(
-    id='G6',
-    title=(
-        'a tool call in flight at a drop is forgotten by the resumed Gemini session (its handle predates the call): '
-        'the result goes nowhere and `wait_for_reply()` hangs'
-    ),
-    tracked_by='#8763',
-    codes=frozenset({'wait.hang'}),
-    providers=GEMINI,
-    matches=lambda sim, violation: any(
-        input_.kind == 'tool_output' and input_.answer_lost for input_ in sim.truth.inputs
-    ),
-)
 
 LIVE_BATCH_RESERVATIONS = Finding(
     id='SIM-6',
@@ -469,18 +456,6 @@ LIVE_RAW_CLOSE_ERROR = Finding(
     codes=frozenset({'api.unexpected_error'}),
     providers=frozenset({'gpt-live'}),
     matches=_raw_transport_error,
-)
-
-SEND_DURING_RECONNECT = Finding(
-    id='G3',
-    title=(
-        'a send that hits the dropped socket raises `RealtimeError` although the reconnect succeeds, so the documented '
-        '`send_audio(microphone)` task (or a tool result) dies on every reconnect'
-    ),
-    tracked_by='#8763 (and the planned stopgap that drops audio frames sent mid-reconnect)',
-    codes=frozenset({'send.failed_across_reconnect'}),
-    providers=OPENAI_PROTOCOL | GEMINI,
-    matches=lambda sim, violation: True,
 )
 
 
@@ -591,22 +566,50 @@ EXTENDED_THINKING_PARALLEL_CALLS = Finding(
 )
 
 
+BARGE_IN_ON_A_TOOL_ROUND = Finding(
+    id='SIM-20',
+    title=(
+        'server VAD cuts off a response that called a tool while a request is deferred behind it: the request is '
+        'dropped for the barge-in but keeps its reservation, so `wait_for_reply()` hangs (the part of OR3 #8765 left)'
+    ),
+    tracked_by='reply reservations released with the request the barge-in dropped; found by this simulator',
+    codes=frozenset({'wait.hang'}),
+    providers=OPENAI_PROTOCOL,
+    matches=lambda sim, violation: (
+        getattr(sim, 'deferred_requests', 0) > 0
+        and any(response.tool_calls and response.status == 'cancelled' for response in sim.truth.responses.values())
+    ),
+)
+
+NON_AUDIO_SEND_DURING_RECONNECT = Finding(
+    id='G3b',
+    title=(
+        'a send other than audio (a typed turn, context, an image, `clear_audio`) that hits the dropped socket raises '
+        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else'
+    ),
+    tracked_by='an ordered outbox that holds sends across a re-dial (#8806 covered audio only)',
+    codes=frozenset({'send.failed_across_reconnect'}),
+    providers=OPENAI_PROTOCOL | GEMINI,
+    matches=lambda sim, violation: violation.context.get('operation') != 'send_audio',
+)
+
+
 KNOWN_FINDINGS.extend(
     [
+        NON_AUDIO_SEND_DURING_RECONNECT,
+        BARGE_IN_ON_A_TOOL_ROUND,
         REFUSED_CONTEXT_MISFILES_SPEECH,
         PARKED_ERROR_LEAVES_REQUEST_OWED,
         CLEARED_BARGE_IN,
         EXTENDED_THINKING_PARALLEL_CALLS,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
         ASYNC_BATCH_OF_THREE,
-        SEND_DURING_RECONNECT,
         LIVE_BATCH_RESERVATIONS,
         LIVE_QUEUED_TEXT_RESERVATIONS,
         LIVE_RAW_CLOSE_ERROR,
         LIVE_ABANDONED_CALL_RESERVATIONS,
         GEMINI_ASYNC_TOOL_ROUND,
         CUT_OFF_TURN_COMPLETE,
-        GEMINI_RESUMED_SESSION_FORGETS_CALLS,
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,
     ]

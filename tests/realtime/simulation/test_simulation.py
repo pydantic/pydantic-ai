@@ -351,6 +351,29 @@ def test_known_gemini_async_batch_of_three_leaves_a_reservation() -> None:
     reproduce('SIM-19', async_gemini(), scenario)
 
 
+@known('G3b')
+def test_known_typed_turn_during_reconnect_fails() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.drop(ticks=0)
+        sim.send_text()
+        sim.settle()
+
+    reproduce('G3b', OpenAISimulation(), scenario)
+
+
+@known('SIM-20')
+def test_known_barge_in_on_a_tool_round_keeps_the_deferred_request() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.create_response()
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.settle()
+
+    reproduce('SIM-20', OpenAISimulation(), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -388,14 +411,14 @@ def test_known_reply_lost_to_a_drop_keeps_its_reservation_openai() -> None:
     reproduce('SIM-1', OpenAISimulation(), scenario)
 
 
-@known('SIM-1')
-def test_known_reply_lost_to_a_drop_keeps_its_reservation_gemini() -> None:
+def test_gemini_typed_turn_lost_to_a_drop_is_settled() -> None:
+    """A typed turn the model hadn't answered when the connection dropped is settled (SIM-1, fixed for it by #8763)."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.drop()
-        sim.settle()
 
-    reproduce('SIM-1', GeminiSimulation(), scenario)
+    run_clean(GeminiSimulation(), scenario)
 
 
 @known('SIM-2a')
@@ -477,9 +500,8 @@ def test_gemini_tool_turn_boundary_does_not_end_the_wait() -> None:
     run_clean(GeminiSimulation(behavior=GeminiBehavior(closes_tool_turn_separately=True)), scenario)
 
 
-@known('G6')
-def test_known_gemini_resumed_session_forgets_a_tool_call() -> None:
-    """The resumption handle was issued after the first turn, before the call the second turn makes."""
+def test_gemini_resumed_session_settles_a_forgotten_tool_call() -> None:
+    """The resumption handle predates the call the second turn makes (G6, fixed by #8763)."""
 
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
@@ -489,29 +511,28 @@ def test_known_gemini_resumed_session_forgets_a_tool_call() -> None:
         sim.call_tools()
         sim.drop()
         sim.advance_time(1)
-        sim.settle()
 
-    reproduce('G6', GeminiSimulation(), scenario)
+    run_clean(GeminiSimulation(), scenario)
 
 
-@known('G3')
-def test_known_send_during_reconnect_fails_openai() -> None:
+def test_send_during_reconnect_survives_openai() -> None:
+    """Audio sent while the link is re-dialed is dropped, not raised (G3, fixed by #8806)."""
+
     def scenario(sim: OpenAISimulation) -> None:
         sim.drop(ticks=0)
         sim.send_audio()
-        sim.settle()
 
-    reproduce('G3', OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(), scenario)
 
 
-@known('G3')
-def test_known_send_during_reconnect_fails_gemini() -> None:
+def test_send_during_reconnect_survives_gemini() -> None:
+    """Audio sent while the link is re-dialed is dropped, not raised (G3, fixed by #8806)."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.drop(ticks=0)
         sim.send_audio()
-        sim.settle()
 
-    reproduce('G3', GeminiSimulation(), scenario)
+    run_clean(GeminiSimulation(), scenario)
 
 
 @known('SIM-6')
