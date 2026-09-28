@@ -2127,7 +2127,7 @@ class ToolAvailabilityDeltaPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class InstructionBaselineEntry:
     """An append-mode instruction block as it stood at the start of a history window.
 
