@@ -104,7 +104,8 @@ class SmartGrep(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if not 0 <= self.threshold <= 1:
             raise ValueError(f'threshold must be between 0 and 1, got {self.threshold}')
-        if self.concurrency < 1:
+        # Negated so NaN, which an agent spec can pass through unvalidated, fails too instead of hanging the search.
+        if not self.concurrency >= 1:
             raise ValueError(f'concurrency must be a positive integer, got {self.concurrency}')
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

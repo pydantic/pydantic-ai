@@ -445,8 +445,9 @@ async def test_long_lines_trim_the_excerpt_to_its_character_budget(tmp_path: Pat
 def test_capability_validates_its_settings() -> None:
     with pytest.raises(ValueError, match='threshold'):
         SmartGrep[None](threshold=1.5)
-    with pytest.raises(ValueError, match='concurrency'):
-        SmartGrep[None](concurrency=0)
+    for concurrency in (0, float('nan')):
+        with pytest.raises(ValueError, match='concurrency'):
+            SmartGrep[None](concurrency=concurrency)  # pyright: ignore[reportArgumentType]
 
 
 def test_guidance_replaces_or_disables_the_discovery_policy() -> None:
