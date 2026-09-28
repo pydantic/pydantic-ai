@@ -201,7 +201,17 @@ def test_previous_constructor_arguments_warn_with_guidance(legacy: dict[str, Any
     assert 'add `Shell()` and/or `FileSystem()`' in message
     assert f'- `{name}`: ' in message
     assert guidance in message
+    # Only a sandbox `ModalSandbox` creates used to be terminated at run end; `sandbox_id` names the user's own.
+    assert ('no longer terminated when the run ends' in message) == (name != 'sandbox_id')
     assert message.endswith('#upgrading-from-the-previous-modalsandbox')
+
+
+def test_previous_arguments_passed_as_none_do_not_warn() -> None:
+    # A config that spells out an argument as `None` sets nothing that needs moving.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        capability = ModalSandbox(sandbox_id=None, instructions=None)  # pyright: ignore[reportArgumentType]
+    assert capability == ModalSandbox()
 
 
 def test_several_previous_arguments_are_reported_together() -> None:
@@ -256,10 +266,21 @@ async def test_backend_rejects_foreign_ref(fake_modal: FakeModal) -> None:
 
 async def test_agent_without_workspace_tool_does_not_create(fake_modal: FakeModal) -> None:
     agent = Agent(TestModel(), capabilities=[ModalSandbox()])
-    with pytest.warns(UserWarning, match='registers no tools'):
+    with pytest.warns(UserWarning, match='registers no tools') as record:
         result = await agent.run('go')
     assert result.output
     assert not fake_modal.sandboxes
+    assert 'await ModalSandbox().destroy(result.workspace.ref)' in str(record[0].message)
+
+
+async def test_no_tools_warning_does_not_advise_destroying_a_sandbox_id_sandbox(fake_modal: FakeModal) -> None:
+    # The sandbox `sandbox_id=` names is the user's own; the previous `ModalSandbox` never terminated it either.
+    with pytest.warns(HarnessDeprecationWarning):
+        capability = ModalSandbox(sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
+    agent = Agent(TestModel(), capabilities=[capability])
+    with pytest.warns(UserWarning, match='registers no tools') as record:
+        await agent.run('go')
+    assert 'destroy' not in str(record[0].message)
 
 
 async def test_agent_runs_without_history_create_fresh_workspaces(fake_modal: FakeModal) -> None:

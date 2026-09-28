@@ -87,27 +87,40 @@ _WORKSPACE_TOOL_NAMES = frozenset(
 )
 
 
-def _no_workspace_tools_message(agent_name: str | None) -> str:
+# The previous `ModalSandbox` terminated the sandbox it created when the run ended; this one does not.
+_LIFETIME_NOTE = (
+    'The sandbox is no longer terminated when the run ends: it keeps running, and billing, until its '
+    '`sandbox_timeout` (24 hours by default) ends it. Set `idle_timeout=...`, or terminate it with '
+    '`await ModalSandbox().destroy(result.workspace.ref)`.'
+)
+
+
+def _no_workspace_tools_message(agent_name: str | None, *, attached: bool) -> str:
     # Naming the agent tells the user which of several agents lacks the tools.
     run = 'this run' if agent_name is None else f'this run of agent {agent_name!r}'
+    # A `sandbox_id=` sandbox is the user's own, which the previous `ModalSandbox` never terminated either.
+    lifetime = '' if attached else f'{_LIFETIME_NOTE} '
     return (
         "`ModalSandbox` supplies the Modal sandbox as the run's `ctx.workspace` and registers no tools of its own, "
         f'and {run} has no `Shell` or `FileSystem` tool. Add `Coder()`, or `Shell()` and/or `FileSystem()`, '
         'alongside it. If your own code or tools use `ctx.workspace`, pass `ModalSandbox(warn_if_no_tools=False)` '
-        'to silence this warning. The sandbox also keeps running after the run ends, until you terminate it with '
-        f'`ModalSandbox().destroy(result.workspace.ref)` or its `sandbox_timeout` ends it. See {UPGRADE_DOCS_URL}'
+        f'to silence this warning. {lifetime}See {UPGRADE_DOCS_URL}'
     )
 
 
 def _legacy_argument_message(names: list[str]) -> str:
     moves = '\n'.join(f'- `{name}`: {_LEGACY_ARGUMENTS[name]}' for name in names)
     listed = ', '.join(f'{name}=...' for name in names)
-    # `sandbox_id` still attaches, so only say 'ignored' when it is not among them.
-    ignored = '' if 'sandbox_id' in names else ' and ignored'
+    # `sandbox_id` still attaches, so only say 'ignored' when it is not among them, and the
+    # sandbox it names is the user's own, never one the previous `ModalSandbox` terminated.
+    attached = 'sandbox_id' in names
+    ignored = '' if attached else ' and ignored'
+    lifetime = '' if attached else f'{_LIFETIME_NOTE}\n'
     return (
         f"`ModalSandbox({listed})` is deprecated{ignored}. `ModalSandbox` now supplies the Modal sandbox as the run's "
         '`ctx.workspace` and registers no tools of its own; add `Shell()` and/or `FileSystem()` alongside it '
         'to give the model command and file tools that run in the sandbox.\n'
+        f'{lifetime}'
         f'{moves}\n'
         f'See {UPGRADE_DOCS_URL}'
     )
@@ -185,11 +198,13 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         # Hand-written, with the same parameters a dataclass would generate, so the previous
         # `ModalSandbox` arguments reach a message that says where each one went. `**legacy: Never`
         # keeps the static signature closed.
-        if legacy:
-            unknown = [argument for argument in legacy if argument not in _LEGACY_ARGUMENTS]
-            if unknown:
-                raise TypeError(f'ModalSandbox.__init__() got an unexpected keyword argument {unknown[0]!r}')
-            warnings.warn(_legacy_argument_message(list(legacy)), HarnessDeprecationWarning, stacklevel=2)
+        unknown = [argument for argument in legacy if argument not in _LEGACY_ARGUMENTS]
+        if unknown:
+            raise TypeError(f'ModalSandbox.__init__() got an unexpected keyword argument {unknown[0]!r}')
+        # An explicit `None` (say, from a config file) sets nothing, so there is nothing to move off.
+        passed = [argument for argument, value in legacy.items() if value is not None]
+        if passed:
+            warnings.warn(_legacy_argument_message(passed), HarnessDeprecationWarning, stacklevel=2)
         if workdir is not None:
             if working_dir is not None:
                 raise UserError('Pass `working_dir` only; `workdir` is its deprecated name.')
@@ -269,5 +284,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         ):
             self._warned_no_tools = True
             agent_name = ctx.agent.name if ctx.agent is not None else None
-            warnings.warn(_no_workspace_tools_message(agent_name), UserWarning, stacklevel=2)
+            warnings.warn(
+                _no_workspace_tools_message(agent_name, attached=self._legacy_ref is not None),
+                UserWarning,
+                stacklevel=2,
+            )
         return tool_defs
