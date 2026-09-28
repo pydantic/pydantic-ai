@@ -147,7 +147,7 @@ class Job:
             )
         )
         result = await workspace.run(
-            f'{assignments}\n{_LAUNCHER}', shell=True, cwd=cwd, env=env, timeout=CONTROL_TIMEOUT
+            f'cd {shlex.quote(cwd)} || exit\n{assignments}\n{_LAUNCHER}', shell=True, env=env, timeout=CONTROL_TIMEOUT
         )
         if job_id is not None and result.exit_code == 126:
             # An existing claim can be an in-flight launch or a lost reply. Never

@@ -379,10 +379,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         actual_command, cwd_file = await self._build_cwd_capture(ctx, command)
         try:
             try:
+                cwd = shlex.quote(await self._cwd_for(ctx))
                 result = await ctx.workspace.run(
-                    limited_script(actual_command, self._max_file_bytes),
+                    f'cd {cwd} || exit\n{limited_script(actual_command, self._max_file_bytes)}',
                     shell=True,
-                    cwd=await self._cwd_for(ctx),
                     env=self._resolve_env(),
                     timeout=timeout,
                 )
