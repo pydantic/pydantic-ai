@@ -1826,6 +1826,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     resolution_capture=resolutions,
                 )
             except BaseException as error:
+                if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+                    raise
                 assert len(resolutions.layers) == len(extra_capabilities) + 1
                 resolved_base = replace_resolved_run_capabilities(base_capability, resolutions.layers[0])
                 resolved_extras = [

@@ -2046,17 +2046,30 @@ class TestRunErrorHooks:
         assert 'on_run_error' not in cap.log
 
     async def test_on_run_error_not_called_for_generator_exit_during_setup(self):
+        setup_failed = False
+        reconstruction_states: list[bool] = []
+
         class FailingSetupCapability(AbstractCapability[Any]):
             async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+                nonlocal setup_failed
+                setup_failed = True
                 raise GeneratorExit()
+
+            def visit_and_replace(
+                self, visitor: Callable[[AbstractCapability[Any]], AbstractCapability[Any] | None]
+            ) -> AbstractCapability[Any] | None:
+                reconstruction_states.append(setup_failed)
+                return super().visit_and_replace(visitor)
 
             async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
                 # Only reached if the control-exception guard regresses.
                 pytest.fail('on_run_error should not be called for control exceptions')  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[FailingSetupCapability()])
+        reconstruction_count_before_setup = len(reconstruction_states)
         with pytest.raises(GeneratorExit):
             await agent.run('hello')
+        assert reconstruction_states[reconstruction_count_before_setup:] == []
 
     async def test_on_run_error_can_transform_error(self):
         @dataclass
