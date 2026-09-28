@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
     from .usage import RunUsage, UsageLimits
+    from .workspaces import Workspace, WorkspaceRef
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
@@ -106,6 +107,24 @@ async def dispatch_event_stream(
         elif capability is not None and capability.listens_to(event):
             await capability.on_event(ctx, event=event)
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
+
+
+def no_workspace() -> Workspace:
+    # Imported lazily to keep the run-context module independent of the workspace facade during
+    # package initialization. This factory runs only when a `RunContext` is constructed.
+    from .workspaces import Workspace
+    from .workspaces.unavailable import NO_WORKSPACE
+
+    return Workspace(NO_WORKSPACE)
+
+
+def recorded_workspace_ref(workspace: Workspace, carried: WorkspaceRef | None) -> WorkspaceRef | None:
+    """The `workspace_ref` a run records on its responses.
+
+    A run without an attached workspace (none selected, or an `UnavailableWorkspace`) records `carried`, the
+    conversation's ref, so a turn that couldn't touch the workspace doesn't lose it for the next one.
+    """
+    return workspace.ref if workspace.attached else carried
 
 
 @dataclasses.dataclass(frozen=True)
@@ -234,6 +253,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     During a realtime session this holds the merged
     [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
     with, for the whole session (realtime settings are fixed at connect time).
+    """
+    workspace: Workspace = field(default_factory=no_workspace)
+    """The run's [`Workspace`](../workspace.md): the one passed as `workspace=`, else the first a capability supplies.
+
+    Without one, a placeholder whose operations explain how to attach one.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.

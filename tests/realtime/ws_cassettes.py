@@ -1,7 +1,7 @@
 """WebSocket cassette utilities for realtime provider tests.
 
 Realtime providers talk over a persistent WebSocket rather than the request/response HTTP that
-`pytest-recording` / VCR captures, so VCR can't record their traffic. These helpers record and
+the HTTP cassettes capture, so those can't record their traffic. These helpers record and
 replay the actual JSON frames exchanged with the provider, letting cassette-backed tests exercise
 the *real* protocol offline:
 
@@ -237,7 +237,7 @@ CassettePlan = Literal['replay', 'record', 'error_missing']
 
 
 def realtime_cassette_plan(*, cassette_exists: bool, record_mode: str | None) -> CassettePlan:
-    """Decide replay vs. record, mirroring the repo's `pytest-recording` record modes."""
+    """Decide replay vs. record, mirroring the repo's `--record-mode` values."""
     mode = (record_mode or 'none').strip().lower()
     if mode in {'rewrite', 'all'}:
         return 'record'

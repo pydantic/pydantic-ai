@@ -123,7 +123,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import IsDatetime, IsStr
 from .conversation import assert_conversation_invariants
 
-pytestmark = pytest.mark.anyio
 T = TypeVar('T')
 
 

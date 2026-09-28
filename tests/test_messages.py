@@ -714,7 +714,6 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert loaded.usage.__dict__['future_tokens'] == 42
 
 
-@pytest.mark.anyio
 async def test_legacy_vendor_message_history_replays_through_agent():
     """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
 
@@ -863,6 +862,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -2906,6 +2906,7 @@ def test_speech_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
                 'state': 'complete',
             },
         ]
@@ -3066,7 +3067,6 @@ def test_prepare_messages_passes_through_without_speech_parts():
     assert prepared[1] is history[1]
 
 
-@pytest.mark.anyio
 async def test_agent_run_with_speech_history():
     """History from a realtime session (containing both speaker variants) replays through
     `agent.run(message_history=...)` against a standard model: the seam converts the parts before the
@@ -3107,7 +3107,6 @@ async def test_agent_run_with_speech_history():
     )
 
 
-@pytest.mark.anyio
 async def test_agent_run_with_speech_only_response():
     """A custom model returning only realtime `SpeechPart`s yields their transcript as text output.
 
@@ -3124,7 +3123,6 @@ async def test_agent_run_with_speech_only_response():
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
-@pytest.mark.anyio
 async def test_openai_mapping_of_prepared_speech_history():
     """A real provider model's message mapping handles realtime session history once it has passed
     through `prepare_messages`, which the framework applies before every request.
@@ -3143,7 +3141,6 @@ async def test_openai_mapping_of_prepared_speech_history():
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
-@pytest.mark.anyio
 async def test_unprepared_speech_history_raises():
     """A `SpeechPart` that reaches an adapter unconverted raises rather than silently vanishing.
 
@@ -3157,7 +3154,6 @@ async def test_unprepared_speech_history_raises():
         await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_function_model_estimates_usage_from_unprepared_speech():
     """`FunctionModel.request()` doesn't run `prepare_messages`, so user speech can arrive unconverted;
     its transcript still counts toward estimated usage — the same as its converted text form — rather
@@ -3372,7 +3368,6 @@ def test_user_content_types_matches_union():
     assert set(_USER_CONTENT_TYPES) == union_members
 
 
-@pytest.mark.anyio
 async def test_agent_run_rejects_non_sequence_user_prompt():
     """The same guard reached through the public API, where the prompt becomes a `UserPromptPart` inside the run."""
     agent = Agent(TestModel())
