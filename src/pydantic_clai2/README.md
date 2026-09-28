@@ -494,8 +494,17 @@ may be ignored or rejected by the provider; select only settings your provider s
 
 CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
 missing from the Python CLAI runs on fails right away, naming the install command, instead
-of on the next prompt. TypeSafe's Jev needs the `typesafe` extra: `pip install "pydantic-clai2[typesafe]"`,
-or from a pydantic-ai checkout, `uv run --package pydantic-clai2 --extra typesafe clai2`.
+of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+
+```bash
+pip install "pydantic-clai2[typesafe]"
+```
+
+From a pydantic-ai checkout, run CLAI with the extra instead:
+
+```bash
+uv run --package pydantic-clai2 --extra typesafe clai2
+```
 
 ### Model settings and custom parameters
 

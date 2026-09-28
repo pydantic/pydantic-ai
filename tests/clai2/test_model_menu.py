@@ -12,7 +12,6 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.models.typesafe import TypeSafeModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session
 from pydantic_clai2.command_context import CommandContext
@@ -286,12 +285,13 @@ async def test_cancel_adding_from_picker(tmp_path: Path) -> None:
 
 
 async def test_select_model_whose_provider_extra_is_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip('typesafe_sdk', reason='needs the `typesafe` extra')
     monkeypatch.setenv('TYPESAFE_API_KEY', 'test-key')
     context, applied = make_context(tmp_path)
     context.store.add_model(name='typesafe:jev-latest')
     assert await model_command(context, ['typesafe:jev-latest']) == 'Saved model. Applied.'
     assert applied == ['model']
-    assert isinstance(infer_model('typesafe:jev-latest'), TypeSafeModel)
+    assert infer_model('typesafe:jev-latest').system == 'typesafe'
 
 
 @pytest.mark.parametrize(
