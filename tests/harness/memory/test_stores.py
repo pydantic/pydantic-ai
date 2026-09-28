@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +18,16 @@ import pytest
 
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai.workspaces import (
+    CommandResult,
+    FileEntry,
+    LocalWorkspaceBackend,
+    Workspace,
+    WorkspaceCommand,
+    WorkspaceError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+)
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.memory import (
     FileStore,
@@ -933,3 +943,125 @@ async def test_postgres_concurrent_store_initialization_cannot_regress_versions(
 def test_postgres_store_rejects_unsafe_table_names(table: str) -> None:
     with pytest.raises(ValueError, match='invalid table name'):
         PostgresMemoryStore(FakePostgresPool(), table=table)
+
+
+class _TruncatingBackend(LocalWorkspaceBackend):
+    """A local workspace whose writes to staged files stop halfway and fail, like a full disk."""
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        if os.path.basename(path).startswith('.memory-tmp-'):
+            await super().write_bytes(path, data[: len(data) // 2])
+            raise OSError('simulated full disk')
+        await super().write_bytes(path, data)
+
+
+class _FailingRenameBackend(LocalWorkspaceBackend):
+    """A local workspace whose `mv` fails, either with an exit status or by raising."""
+
+    raises: bool = False
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if self.raises:
+            raise WorkspaceTimeoutError('mv timed out')
+        return CommandResult(exit_code=1, stdout='', stderr='mv: rename refused')
+
+
+def _version(content: str) -> str:
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+def _staged_files(directory: Path) -> list[Path]:
+    return [path for path in directory.rglob('*') if path.name.startswith('.memory-tmp-')]
+
+
+async def test_file_store_failed_write_keeps_the_old_content(tmp_path: Path) -> None:
+    store = FileStore('.', workspace=_TruncatingBackend(tmp_path))
+    (tmp_path / 'notes').mkdir()
+    (tmp_path / 'notes/main.md').write_text('old content')
+    with pytest.raises(OSError, match='simulated full disk'):
+        await store.write('notes/main.md', 'new content', expected_version=_version('old content'))
+    assert (tmp_path / 'notes/main.md').read_text() == 'old content'
+    assert _staged_files(tmp_path) == []
+
+
+async def test_file_store_failed_journal_write_keeps_the_old_journal(tmp_path: Path) -> None:
+    await FileStore('.', workspace=LocalWorkspaceBackend(tmp_path)).write(
+        'main.md', 'old', expected_version=None, operation=MemoryOperation('write-1', 'w')
+    )
+    journal = (tmp_path / '.memory-operations.json').read_text()
+    store = FileStore('.', workspace=_TruncatingBackend(tmp_path))
+    with pytest.raises(OSError, match='simulated full disk'):
+        await store.write('main.md', 'new', expected_version=_version('old'), operation=MemoryOperation('write-2', 'w'))
+    assert (tmp_path / '.memory-operations.json').read_text() == journal
+    assert json.loads(journal)[0]['id'] == 'write-1'
+    assert _staged_files(tmp_path) == []
+
+
+@pytest.mark.parametrize('raises', [False, True])
+async def test_file_store_failed_rename_names_the_target(tmp_path: Path, raises: bool) -> None:
+    backend = _FailingRenameBackend(tmp_path)
+    backend.raises = raises
+    (tmp_path / 'main.md').write_text('old')
+    with pytest.raises(WorkspaceError, match=r"Could not replace memory file '.*/main\.md'"):
+        await FileStore('.', workspace=backend).write('main.md', 'new', expected_version=_version('old'))
+    assert (tmp_path / 'main.md').read_text() == 'old'
+    assert _staged_files(tmp_path) == []
+
+
+async def test_file_store_writes_in_place_without_commands(tmp_path: Path) -> None:
+    store = FileStore('.', workspace=_FilesystemOnly(tmp_path))
+    created = await store.write('main.md', 'old', expected_version=None, operation=MemoryOperation('write-1', 'w'))
+    await store.write('main.md', 'new', expected_version=created.version)
+    assert (tmp_path / 'main.md').read_text() == 'new'
+    assert (tmp_path / '.memory-operations.json').is_file()
+    assert _staged_files(tmp_path) == []
+
+
+async def test_file_store_success_leaves_no_staged_files(tmp_path: Path) -> None:
+    store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
+    await store.write('notes/main.md', 'one', expected_version=None, operation=MemoryOperation('write-1', 'w'))
+    assert (tmp_path / 'notes/main.md').read_text() == 'one'
+    assert _staged_files(tmp_path) == []
+    assert await store.list_paths(limit=10) == ['notes/main.md']
+
+
+class _FilesystemOnly:
+    """Storage without commands: the store cannot rename, so it writes in place."""
+
+    def __init__(self, working_dir: Path) -> None:
+        self._local = LocalWorkspaceBackend(working_dir)
+
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return None
+
+    async def working_dir(self) -> str:
+        return await self._local.working_dir()
+
+    async def read_bytes(self, path: str) -> bytes:
+        return await self._local.read_bytes(path)
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        await self._local.write_bytes(path, data)
+
+    async def stat(self, path: str) -> FileEntry:
+        return await self._local.stat(path)
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        return await self._local.list_dir(path)  # pragma: no cover -- no listing here
+
+    async def make_dir(self, path: str) -> None:
+        await self._local.make_dir(path)
+
+    async def remove(self, path: str) -> None:
+        await self._local.remove(path)  # pragma: no cover -- nothing is removed here
+
+    async def exists(self, path: str) -> bool:
+        return await self._local.exists(path)

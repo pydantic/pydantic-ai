@@ -162,7 +162,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer no tools when the workspace cannot execute commands; fail a run with no workspace."""
         if not ctx.workspace.attached:
-            require_workspace(ctx.workspace, 'ShellToolset')
+            require_workspace(ctx.workspace, 'ShellToolset', ctx.messages)
         if not supports_commands(ctx.workspace):
             return {}
         return await super().get_tools(ctx)

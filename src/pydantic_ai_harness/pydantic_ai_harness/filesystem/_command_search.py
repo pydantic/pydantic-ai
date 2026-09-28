@@ -10,12 +10,14 @@ from typing import TypeVar
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
 
-from ._ripgrep import Record
+from ._ripgrep import Record, Unreadable
 
 _T = TypeVar('_T')
 _MAX_OUTPUT_BYTES = 8 << 20
 _MAX_RECORD_BYTES = 1 << 20
 _STATUS = '__harness_posix_status='
+_UNREADABLE = '__harness_posix_unreadable='
+"""Prefix of the NUL-terminated stderr record naming a file `grep` could not read."""
 
 
 def validate_posix_pattern(pattern: str) -> None:
@@ -42,8 +44,12 @@ async def run_posix_search(
     limit: int,
     accept: Callable[[Record], Awaitable[_T | None]],
     prepare: Callable[[list[Record]], Awaitable[None]] | None = None,
-) -> tuple[list[_T], bool]:
-    """Enumerate sorted files and optionally grep them without transferring their contents to the host."""
+) -> tuple[list[_T], bool, list[Unreadable]]:
+    """Enumerate sorted files and optionally grep them without transferring their contents to the host.
+
+    Returns the accepted records, whether more were cut, and the files `grep` could not read,
+    which are skipped rather than failing the search.
+    """
     if pattern is not None and not literal:
         validate_posix_pattern(pattern)
     # Git applies nested .gitignore files, but --exclude-from=.ignore only reads the
@@ -86,7 +92,10 @@ async def run_posix_search(
             # again so xargs still reports the signal that marks the output as cut.
             'trap "rm -f -- \\"\\$tmp\\"; trap - PIPE; kill -PIPE \\$\\$" PIPE; '
             'pattern=$1; shift; for file do ' + canonical + f'grep {flags} -e "$pattern" -- "$file" > "$tmp"; code=$?; '
-            'if [ "$code" -gt 1 ]; then rm -f -- "$tmp"; exit "$code"; fi; '
+            # A file grep cannot read is skipped and reported; any other error (an invalid ERE
+            # fails on every file) still ends the search.
+            'if [ "$code" -gt 1 ]; then if [ -r "$file" ] || [ ! -e "$file" ]; then rm -f -- "$tmp"; exit "$code"; fi; '
+            f'printf "{_UNREADABLE}%s\\0" "$file" >&2; continue; fi; '
             # With -n, every output line is numbered except the `--` between context groups.
             'while IFS= read -r line; do [ "$line" = -- ] && continue; '
             'printf "%s\\0%s\\0%s\\n" "$file" "$real" "$line"; done < "$tmp"; '
@@ -104,6 +113,8 @@ async def run_posix_search(
     )
     result = await workspace.run(script, shell=True, timeout=120)
     stderr, _, status = result.stderr.rpartition(_STATUS)
+    unreadable = [Unreadable(path, 'Permission denied') for path in re.findall(f'{_UNREADABLE}([^\0]*)\0', stderr)]
+    stderr = re.sub(f'{_UNREADABLE}[^\0]*\0', '', stderr)
     output = result.stdout
     cut = len(output.encode('utf-8', errors='surrogateescape')) >= _MAX_OUTPUT_BYTES
     # head closes the pipe at the cap; xargs can report its child dying of SIGPIPE.
@@ -122,7 +133,7 @@ async def run_posix_search(
                 cut = True
                 break
             results.append(kept)
-    return results, cut
+    return results, cut, unreadable
 
 
 def _parse_records(output: str, *, listing: bool) -> tuple[list[Record], bool]:

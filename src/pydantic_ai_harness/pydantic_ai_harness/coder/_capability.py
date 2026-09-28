@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCap
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness.coder._instructions import INSTRUCTIONS
+from pydantic_ai_harness.coder._instructions import INSTRUCTIONS, project_instructions
 from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -86,7 +86,13 @@ class Coder(CombinedCapability[AgentDepsT]):
             RequireWorkspace[AgentDepsT]('Coder'),
             # The id also names its (empty) function toolset, which durable execution requires.
             Capability[AgentDepsT](
-                id='coder_instructions', instructions=INSTRUCTIONS + ('\n' + instructions if instructions else '')
+                id='coder_instructions',
+                instructions=[
+                    INSTRUCTIONS + ('\n' + instructions if instructions else ''),
+                    # Naming the directory creates a lazily created sandbox, so it comes only with
+                    # `RepoContext`, which reads the workspace at run start anyway.
+                    *([project_instructions(unrestricted=unrestricted_filesystem)] if repo_context else []),
+                ],
             ),
             _file_system(unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](

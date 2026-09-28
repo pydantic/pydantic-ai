@@ -84,7 +84,16 @@ _SIGNAL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 directory may be gone).
 """
 
-_LAUNCHER = """if [ "$exclusive" = 1 ]; then
+_REQUIRED_TOOLS = ('mv', 'base64')
+"""Executables the job files need: the wrapper publishes its status with `mv`, and logs are read back through `base64`."""
+
+_MISSING_TOOLS = 122
+"""The launcher's exit status when a tool in `_REQUIRED_TOOLS` is not on the workspace's `PATH`."""
+
+_LAUNCHER = f"""missing=
+for tool in {' '.join(_REQUIRED_TOOLS)}; do command -v "$tool" > /dev/null 2>&1 || missing="$missing $tool"; done
+if [ -n "$missing" ]; then echo $missing; exit {_MISSING_TOOLS}; fi
+if [ "$exclusive" = 1 ]; then
   (umask 077 && mkdir "$dir") || exit 126
 else
   (umask 077 && mkdir -p "$dir") || exit 125
@@ -104,6 +113,9 @@ echo "$pid $group" > "$dir/handle"
 echo "$pid $group"
 """
 """Start the wrapper detached and print `<pid> <process group or ->`, also kept in the job's `handle` file.
+
+It first checks for `_REQUIRED_TOOLS` with the shell's `command -v` builtin, which costs no extra
+process, and prints the missing ones and exits `_MISSING_TOOLS` instead of launching.
 
 Before returning, the launcher waits for the wrapper to publish its status after `setsid`
 has detached it: some workspaces kill the launching process group as soon as it exits.
@@ -160,6 +172,12 @@ class Job:
         result = await workspace.run(
             f'cd {shlex.quote(cwd)} || exit\n{assignments}\n{_LAUNCHER}', shell=True, env=env, timeout=CONTROL_TIMEOUT
         )
+        if result.exit_code == _MISSING_TOOLS:
+            # Without these the launcher would wait out `CONTROL_TIMEOUT` for a status that is never
+            # published, or a log read would fail looking like the command's own output.
+            needed = ' and '.join(f'`{tool}`' for tool in _REQUIRED_TOOLS)
+            lacking = ' and '.join(f'`{tool}`' for tool in result.stdout.split())
+            raise WorkspaceError(f'Shell needs {needed} on PATH in the workspace; this image lacks {lacking}.')
         if job_id is not None and result.exit_code == 126:
             # An existing claim can be an in-flight launch or a lost reply. Never
             # spawn a second process in either case; a later retry can attach.

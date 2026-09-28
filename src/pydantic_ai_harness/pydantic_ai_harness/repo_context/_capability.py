@@ -163,7 +163,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, and load walk-up instruction files so `get_instructions` is sync."""
-        require_workspace(ctx.workspace, 'RepoContext')
+        require_workspace(ctx.workspace, 'RepoContext', ctx.messages)
         if not self.autoload_instructions:
             return
         workspace = ctx.workspace
