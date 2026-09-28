@@ -107,6 +107,26 @@ jobs:
       id-token: write
       actions: read
     steps:
+      - name: Reject commits newer than the @claude comment
+        # issue_comment events carry no commit SHA, so get-pr-info reads the PR
+        # head after the comment was posted. If the author pushed in between,
+        # Claude would run on code the maintainer never saw (TOCTOU). The
+        # committer date is author-controlled, so this stops the ordinary race;
+        # the restricted permissions and tool allowlist below remain the real
+        # boundary.
+        if: github.event_name == 'issue_comment'
+        run: |
+          commit_at=$(gh api "repos/${HEAD_REPO}/commits/${HEAD_SHA}" --jq '.commit.committer.date')
+          if [[ $(date -d "$commit_at" +%s) -gt $(date -d "$COMMENT_AT" +%s) ]]; then
+            echo "::error::PR head changed after the @claude comment; comment again to run on the new code."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REPO: ${{ needs.get-pr-info.outputs.pr_head_repo }}
+          HEAD_SHA: ${{ needs.get-pr-info.outputs.pr_head_sha }}
+          COMMENT_AT: ${{ github.event.comment.created_at }}
+
       - name: Checkout fork repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
