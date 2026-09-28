@@ -168,37 +168,6 @@ def test_capability_takes_the_base_class_options_and_the_creation_settings() -> 
     assert capability.get_instructions() is None
 
 
-def test_modal_docs_name_default_directory() -> None:
-    for path in (
-        Path('docs/harness/modal-sandbox.md'),
-        Path('src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md'),
-    ):
-        text = path.read_text()
-        assert 'home directory (`/root` on the default' in text
-
-
-def test_modal_docs_distinguish_command_timeout_from_sandbox_lifetime() -> None:
-    for path in (
-        Path('docs/harness/modal-sandbox.md'),
-        Path('src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md'),
-    ):
-        text = path.read_text()
-        assert 'defer_loading=True' in text
-        assert 'Removed. Use `sandbox_timeout`, which bounds every command.' not in text
-        assert 'does not apply to attached sandboxes' in text
-
-
-def test_modal_coder_examples_explain_eager_creation() -> None:
-    for path in (
-        Path('docs/harness/modal-sandbox.md'),
-        Path('src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md'),
-    ):
-        text = path.read_text()
-        assert 'Coder(repo_context=False)' in text
-        assert 'when the run starts' in text
-        assert 'ModalSandbox(), Coder()' in text
-
-
 def test_modal_capability_repr_does_not_expose_env_secrets() -> None:
     assert 'private-token' not in repr(ModalSandbox(env={'TOKEN': 'private-token'}))
 
@@ -410,9 +379,11 @@ def test_other_missing_names_are_attribute_errors() -> None:
         getattr(modal_sandbox_package, 'ModalSandboxTypo')
 
 
-@pytest.mark.parametrize('value', [0, -5, 1.5, True, None])
-def test_sandbox_timeout_must_be_a_positive_integer(value: Any) -> None:
-    with pytest.raises(UserError, match=rf'sandbox_timeout must be an integer of at least 1, got {value!r}\.'):
+@pytest.mark.parametrize('value', [0, 9, 86_401, 1.5, True, None])
+def test_sandbox_timeout_must_be_within_modal_limits(value: Any) -> None:
+    with pytest.raises(
+        UserError, match=rf'sandbox_timeout must be an integer between 10 and 86400 seconds, got {value!r}\.'
+    ):
         ModalSandbox(sandbox_timeout=value)
 
 

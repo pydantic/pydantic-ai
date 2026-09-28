@@ -195,7 +195,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             )
         # Checked here rather than when the backend first creates a sandbox, so a bad value fails
         # where it is written instead of at the first workspace operation of some later run.
-        check_integer('sandbox_timeout', sandbox_timeout)
+        if type(sandbox_timeout) is not int or not 10 <= sandbox_timeout <= 86_400:
+            raise UserError(
+                f'sandbox_timeout must be an integer between 10 and 86400 seconds, got {sandbox_timeout!r}.'
+            )
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
         self.id = id
