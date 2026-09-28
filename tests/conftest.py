@@ -783,10 +783,8 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
         return
     if vcr is None or vcr.record_mode != RecordMode.NONE:
         return
-
-    if not (cassette_path := Path(vcr.path)).is_file():
-        return
-    check_cache_prefix_stability(request.node, cassette_path)
+    # Playback never records, so the interactions cassetter loaded are exactly the file's contents.
+    check_cache_prefix_stability(request.node, vcr)
 
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.

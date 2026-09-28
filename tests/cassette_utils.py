@@ -51,7 +51,7 @@ class CassettePrefixViolation:
     later_block: str
 
 
-def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None:
+def check_cache_prefix_stability(node: pytest.Item, cassette: Path | Cassette) -> None:
     """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
     if (marker := node.get_closest_marker('moves_cache_prefix')) is not None:
         reason = marker.kwargs.get('reason')
@@ -62,8 +62,9 @@ def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None
             )
         return
 
-    violations = list(iter_cassette_prefix_violations(cassette_path))
+    violations = list(iter_cassette_prefix_violations(cassette))
     if violations:
+        cassette_path = cassette if isinstance(cassette, Path) else cassette.path
         details = '\n'.join(
             f'{cassette_path} [{violation.shape}] pair {violation.pair_index}, {violation.level} block '
             f'{violation.block_index}:\n  earlier: {violation.earlier_block}\n  later:   {violation.later_block}'
@@ -254,35 +255,45 @@ def recorded_request_body(request: dict[str, Any]) -> Any:
     return body
 
 
-def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePrefixViolation]:
-    """Yield prompt-cache prefix violations from one cassette.
+def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any]]:
+    """Yield `(method, uri, body)` for each request in a cassette file on disk."""
+    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
+    if not is_str_dict(cassette):
+        return
+    raw_interactions = cassette.get('interactions')
+    if not _is_list(raw_interactions):
+        return
+    for interaction in raw_interactions:
+        if is_str_dict(interaction) and is_str_dict(request := interaction.get('request')):
+            yield request.get('method'), request.get('uri'), recorded_request_body(request)
+
+
+def _loaded_cassette_requests(cassette: Cassette) -> Iterator[tuple[Any, Any, Any]]:
+    """Yield `(method, uri, body)` for each request cassetter already parsed, so the file is not read again."""
+    for interaction in cassette.interactions:
+        request = interaction.request
+        body = request.body.content if request.body.body_type == 'json' else None
+        yield request.method, request.uri, body
+
+
+def iter_cassette_prefix_violations(cassette: Path | Cassette) -> Iterator[CassettePrefixViolation]:
+    """Yield prompt-cache prefix violations from one cassette, either a file on disk or one cassetter loaded.
 
     Across 1,177 cassettes on 2026-07-15, this found 15 deliberately prefix-moving pairs in ten
     cassettes. Requests are grouped by host and provider shape so unrelated endpoints are not paired.
     """
-    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
-    if not is_str_dict(cassette):
-        return
+    requests = _yaml_cassette_requests(cassette) if isinstance(cassette, Path) else _loaded_cassette_requests(cassette)
     # Group by (host, path, shape): only requests to the same endpoint share a provider cache, so the
     # path must be part of the key. Otherwise a token-count or compaction sub-endpoint, a different
     # model or deployment carried in the path, or any other sibling endpoint on the same host would be
     # pooled with generation requests and compared as if consecutive -- a spurious divergence.
     requests_by_endpoint: dict[tuple[str, str, str], list[tuple[list[PrefixBlock], list[str]]]] = defaultdict(list)
 
-    raw_interactions = cassette.get('interactions')
-    if not _is_list(raw_interactions):
-        return
-    interactions = raw_interactions
-    for interaction in interactions:
-        if not is_str_dict(interaction) or not is_str_dict(request := interaction.get('request')):
-            continue
-        method = request.get('method')
+    for method, uri, body in requests:
         if not isinstance(method, str) or method.upper() != 'POST':
             continue
-        body = recorded_request_body(request)
         if not is_str_dict(body):
             continue
-        uri = request.get('uri')
         if not isinstance(uri, str):
             continue
         canonical = canonical_prefix_blocks(body, uri)
