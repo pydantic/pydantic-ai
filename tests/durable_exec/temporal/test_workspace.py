@@ -26,6 +26,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Workspace,
+    WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
@@ -135,9 +136,12 @@ def test_temporal_runner_passes_installed_harness_through(monkeypatch: pytest.Mo
 
 def test_workspace_failures_do_not_retry_temporal_activities() -> None:
     policy = with_non_retryable_errors(RetryPolicy())
-    assert {WorkspaceTimeoutError.__name__, WorkspaceReadOnlyError.__name__, WorkspaceUnavailableError.__name__} <= set(
-        policy.non_retryable_error_types or []
-    )
+    assert {
+        WorkspaceTimeoutError.__name__,
+        WorkspaceOutputLimitError.__name__,
+        WorkspaceReadOnlyError.__name__,
+        WorkspaceUnavailableError.__name__,
+    } <= set(policy.non_retryable_error_types or [])
 
 
 def test_unattached_workspace_does_not_serialize_an_unavailable_reason() -> None:

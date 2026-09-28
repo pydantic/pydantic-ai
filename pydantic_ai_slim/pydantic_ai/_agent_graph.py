@@ -454,6 +454,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     workspace: Workspace
     carried_workspace_ref: WorkspaceRef | None = None
     """The ref from history this run's responses record when it has no attached workspace; `None` after `'new'`."""
+    adopted_response: _messages.ModelResponse | None = None
+    """The trailing history response a no-prompt run continues from, which records this run's ref like its own."""
 
     @property
     def workspace_ref(self) -> WorkspaceRef | None:
@@ -656,6 +658,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     if ctx.deps.workspace.attached or ctx.deps.workspace_ref is not None:
                         last_message = replace(last_message)
                         messages[-1] = last_message
+                        ctx.deps.adopted_response = last_message
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
                     run_context = replace(
                         build_run_context(ctx),
