@@ -173,6 +173,7 @@ KnownModelName = TypeAliasType(
         'cohere:command-r-08-2024',
         'cohere:command-r-plus-08-2024',
         'cohere:command-r7b-12-2024',
+        'contrastive:clm-latest',
         'crusoe:Qwen/Qwen3-235B-A22B-Instruct-2507',
         'crusoe:deepseek-ai/DeepSeek-V3-0324',
         'crusoe:deepseek-ai/DeepSeek-V4-Pro',

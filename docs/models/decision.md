@@ -10,7 +10,12 @@ A decision model answers typed questions about a text rather than writing text: 
 
 A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: behind a [`FallbackModel`](overview.md#fallback-model), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed.
 
-The decision model Pydantic AI supports out of the box is TypeSafe's Jev, through the [`TypeSafeModel`](typesafe.md) model class, and the examples on this page use it. This page covers what `DecisionModel` does for any backend; the [TypeSafe page](typesafe.md) covers setup, Jev's own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
+Pydantic AI supports two decision model backends out of the box:
+
+- TypeSafe's Jev, a hosted API, through [`TypeSafeModel`](typesafe.md), as `typesafe:jev-latest`.
+- [Contrastive Language Models](contrastive.md) (CLM), open-weight models such as [`CLM-v0.1-8B`](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) that you serve on your own hardware, through [`ContrastiveModel`](contrastive.md), as `contrastive:clm-latest`.
+
+The examples on this page use Jev, and run on a CLM by changing the model name. This page covers what `DecisionModel` does for any backend; each backend's page covers its setup, its own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
 
 Reach for one when the answer is a classification — a verdict, a route, a label, a score against a rubric — and you want it cheaper and faster than a language model gives it, with a confidence you can act on. Keep a language model for anything that has to be written: a `str` field, a reply, a summary.
 
@@ -1180,7 +1185,7 @@ A decision model does not revise an answer the way a language model does. Its pr
 
 ## Implementing a decision model
 
-Any backend that answers the three kinds of question can be a decision model. Subclass [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] and implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide], which sends one [`DecisionRequest`][pydantic_ai.models.decision.DecisionRequest] and returns a [`DecisionResponse`][pydantic_ai.models.decision.DecisionResponse]; the base class does everything else on this page. A `DecisionModel` is a [`Model`][pydantic_ai.models.Model], so it also needs `model_name`, `system` and `base_url`, like any [custom model](overview.md#custom-models).
+Any backend that answers the three kinds of question can be a decision model. [`TypeSafeModel`](typesafe.md) and [`ContrastiveModel`](contrastive.md) are both built this way, and are worth reading as examples of one that calls an SDK and one that calls an HTTP API directly. Subclass [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] and implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide], which sends one [`DecisionRequest`][pydantic_ai.models.decision.DecisionRequest] and returns a [`DecisionResponse`][pydantic_ai.models.decision.DecisionResponse]; the base class does everything else on this page. A `DecisionModel` is a [`Model`][pydantic_ai.models.Model], so it also needs `model_name`, `system` and `base_url`, like any [custom model](overview.md#custom-models).
 
 This one has no opinion at all: every option is equally likely. Replace the body of `decide` with a call to your backend:
 

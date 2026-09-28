@@ -35,3 +35,5 @@
 ::: pydantic_ai.profiles.groq
 
 ::: pydantic_ai.profiles.zai
+
+::: pydantic_ai.profiles.decision

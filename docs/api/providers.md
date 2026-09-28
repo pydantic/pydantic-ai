@@ -86,4 +86,6 @@
 
 ::: pydantic_ai.providers.typesafe.TypeSafeProvider
 
+::: pydantic_ai.providers.contrastive.ContrastiveProvider
+
 ::: pydantic_ai.providers.zai.ZaiProvider

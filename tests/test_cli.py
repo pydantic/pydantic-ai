@@ -362,6 +362,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'zai',
         'snowflake',
         'typesafe',
+        'contrastive',
     )
     models = {line.strip().split(' ')[0] for line in output[3:]}
     for provider in providers:

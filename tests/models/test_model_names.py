@@ -17,6 +17,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
     from pydantic_ai.models.cohere import CohereModelName
+    from pydantic_ai.models.contrastive import ContrastiveModelName
     from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.groq import GroqModelName
@@ -38,7 +39,7 @@ if not imports_successful():  # pragma: lax no cover
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
-    TypeSafeModelName = None
+    TypeSafeModelName = ContrastiveModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -71,6 +72,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'bedrock': BedrockModelName,
     'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
+    'contrastive': ContrastiveModelName,
     'crusoe': CrusoeModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,

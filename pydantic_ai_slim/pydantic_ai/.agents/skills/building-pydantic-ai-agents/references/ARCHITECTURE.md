@@ -172,6 +172,7 @@ Need deterministic, fast tests?
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
 | TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
+| Contrastive Language Models (CLM, self-hosted, structured output only) | `contrastive:` | `contrastive:clm-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |

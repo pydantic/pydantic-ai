@@ -13,6 +13,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Bedrock](bedrock.md)
 * [Cerebras](cerebras.md)
 * [Cohere](cohere.md)
+* [Contrastive Language Models (CLM)](contrastive.md), an open-weight [decision model](decision.md) you serve yourself
 * [Crusoe](crusoe.md)
 * [GitHub Copilot](github-copilot.md)
 * [Groq](groq.md)

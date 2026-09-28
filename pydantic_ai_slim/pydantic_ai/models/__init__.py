@@ -1721,6 +1721,13 @@ def infer_model(  # noqa: C901
         from .typesafe import TypeSafeModel
 
         return TypeSafeModel(model_name, provider=provider)
+    elif model_kind == 'contrastive':
+        from ..providers.contrastive import ContrastiveProvider
+        from .contrastive import ContrastiveModel
+
+        if not isinstance(provider, ContrastiveProvider):
+            raise UserError('Contrastive Language Models require a `ContrastiveProvider`.')
+        return ContrastiveModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
