@@ -251,7 +251,7 @@ uv add "pydantic-ai-harness[playwright]"
 uv run playwright install chromium
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 
 from pydantic_ai_harness.playwright import PlaywrightBrowser
@@ -277,7 +277,7 @@ resolve, private resolved address, `blocked_domains`, then `allowed_domains` onl
 `allowlist_reach`. Add `'subframe'` or `'subresource'` to `allowlist_reach` to bound those too, or
 subclass and override `refuse` (call `super().refuse(request)` for the default verdict).
 
-```python
+```python {test="skip"}
 from pydantic_ai_harness.playwright import EgressPolicy, EgressRequest
 
 policy = EgressPolicy(

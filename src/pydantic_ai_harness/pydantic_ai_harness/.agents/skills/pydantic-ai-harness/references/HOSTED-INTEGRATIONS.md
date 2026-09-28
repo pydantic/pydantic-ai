@@ -227,7 +227,7 @@ hr = StackOne('hr-account', api_key='sk-example', actions=['*_list_*'])
 writes = StackOneToolset(
     account_id='hr-account', api_key='sk-example', actions=['workday_create_worker']
 ).approval_required()
-agent = Agent('test', capabilities=[hr])
+agent = Agent('test', capabilities=[hr], toolsets=[writes])
 print(hr.id)
 #> stackone-hr-account
 ```
