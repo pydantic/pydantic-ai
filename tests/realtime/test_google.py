@@ -93,7 +93,6 @@ with try_import() as imports_successful:
 
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
 
