@@ -156,15 +156,22 @@ def _content_type(headers: dict[str, list[str]]) -> str:
 
 
 def _decompress(body: bytes, headers: dict[str, list[str]]) -> bytes:
-    """Inflate a body cassetter hasn't decompressed yet (botocore hands over the wire bytes)."""
-    encoding = headers.pop('content-encoding', [])
+    """Inflate a body so it can be scrubbed (botocore hands over the wire bytes).
+
+    `content-encoding` is only dropped once the body is actually inflated; anything left encoded
+    is decoded by cassetter after the hook.
+    """
+    encoding = headers.get('content-encoding', [])
     if 'br' in encoding:
-        return cast('bytes', brotli.decompress(body))  # pyright: ignore[reportUnknownMemberType]
-    if 'gzip' in encoding or body[:2] == b'\x1f\x8b':
+        body = cast('bytes', brotli.decompress(body))  # pyright: ignore[reportUnknownMemberType]
+    elif 'gzip' in encoding or body[:2] == b'\x1f\x8b':
         try:
-            return gzip.decompress(body)
-        except (gzip.BadGzipFile, zlib.error):  # pragma: no cover
+            body = gzip.decompress(body)
+        except (gzip.BadGzipFile, zlib.error):
             return body
+    else:
+        return body
+    headers.pop('content-encoding', None)
     return body
 
 

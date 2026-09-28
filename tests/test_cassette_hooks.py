@@ -116,6 +116,14 @@ def test_compressed_bodies_are_inflated_before_scrubbing(encoding: str):
     assert json.loads(response.body) == {'access_token': 'scrubbed', 'ok': True}
 
 
+def test_undecodable_body_keeps_its_content_encoding():
+    response = before_record_response(
+        _response(body=b'\x1f\x8bnot really gzip', **{'content-type': 'application/json', 'content-encoding': 'gzip'})
+    )
+    assert response.headers['content-encoding'] == ['gzip']
+    assert response.body == b'\x1f\x8bnot really gzip'
+
+
 def test_smart_characters_are_normalized():
     response = before_record_response(
         _response(body='{"text": "“quoted” — it’s…"}'.encode(), **{'content-type': 'application/json'})
