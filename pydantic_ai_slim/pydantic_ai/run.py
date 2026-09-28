@@ -243,7 +243,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 self._traceparent(required=False),
             )
         # Not a dataclass field: Temporal serializes a result's dataclass fields, and a live workspace can't be.
-        result.__dict__.setdefault('_workspace', self._graph_run.deps.workspace)
+        # Always this run's: a result an `after_run` hook returns may come from another run.
+        result.__dict__['_workspace'] = self._graph_run.deps.workspace
         return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
