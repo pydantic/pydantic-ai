@@ -206,13 +206,13 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         if not ready:
             reason = before.strip() or f'`ssh` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id} is unavailable: {reason}')
-        if stderr.endswith(_GONE):
-            raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the working directory was removed')
-        if not stderr.endswith(_DONE):
+        # A background child that kept stderr open can write after the marker, so look for it, not at the end.
+        head, done, tail = stderr.rpartition(_DONE)
+        if not done:
+            if _GONE in stderr:
+                raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the working directory was removed')
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the connection was lost during the command')
-        return CommandResult(
-            exit_code=result.exit_code, stdout=_after_ready(result.stdout), stderr=stderr.removesuffix(_DONE)
-        )
+        return CommandResult(exit_code=result.exit_code, stdout=_after_ready(result.stdout), stderr=head + tail)
 
     async def _stop(self, tag: str) -> None:
         # Killing the local `ssh` leaves the remote command running, so a second connection stops it.

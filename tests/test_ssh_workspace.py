@@ -136,6 +136,13 @@ async def test_resolving_the_working_dir_counts_against_the_first_timeout(tools:
         await SSHWorkspaceBackend('slow').run(['true'], timeout=1)
 
 
+async def test_stderr_from_a_background_child_after_the_command_is_kept(tools: FakeRemoteTools) -> None:
+    # The child keeps stderr open, so `ssh` waits for it and its output lands after the wrapper's marker.
+    result = await SSHWorkspaceBackend('box').run('(sleep 1; printf late >&2) & printf done', shell=True)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, 'done', 'late')
+
+
 async def test_an_empty_argv_is_rejected(tools: FakeRemoteTools) -> None:
     with pytest.raises(ValueError, match='command must not be empty'):
         await SSHWorkspaceBackend('box').run([])
