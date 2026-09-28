@@ -248,7 +248,9 @@ agent = Agent(
 ```
 
 Inside the sandbox, commands see the host's files read-only, a private `/tmp` and no network, and
-can write only to the working directory. Pass `network=True` to allow the network, and add `bwrap`
+can write only to the working directory. `/run` is empty, because host daemons such as Docker listen
+on sockets there, and a read-only mount doesn't stop a connection. Pass `network=True` to allow the
+network (the DNS configuration under `/run` comes back with it), and add `bwrap`
 arguments with `bwrap_args=`: they come after the defaults, so `['--bind', path, path]` makes
 another directory writable and `['--tmpfs', path]` hides one. The host must run Linux with `bwrap`
 installed and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`.

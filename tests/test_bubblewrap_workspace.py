@@ -47,7 +47,17 @@ def _sandbox_args(working_dir: str, *, network: bool = False) -> str:
         [
             '--die-with-parent --new-session --unshare-user-try --unshare-ipc --unshare-uts --unshare-cgroup-try',
             *([] if network else ['--unshare-net']),
-            f'--ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind {working_dir} {working_dir}',
+            '--ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run',
+            *(
+                [
+                    '--ro-bind-try /run/systemd/resolve /run/systemd/resolve',
+                    '--ro-bind-try /run/NetworkManager /run/NetworkManager',
+                    '--ro-bind-try /run/resolvconf /run/resolvconf',
+                ]
+                if network
+                else []
+            ),
+            f'--bind {working_dir} {working_dir}',
         ]
     )
 
@@ -221,6 +231,11 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
             assert (await workspace.run(['test', '-e', str(marker)])).exit_code == 1
         finally:
             marker.unlink()
+
+    async def test_host_daemon_sockets_are_hidden(self, tmp_path: Path) -> None:
+        workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+
+        assert (await workspace.run(['sh', '-c', 'ls -A /run'])).stdout == ''
 
     async def test_a_detached_command_outlives_the_call(self, tmp_path: Path) -> None:
         """The harness `Shell` detaches its jobs and checks on them in later calls."""

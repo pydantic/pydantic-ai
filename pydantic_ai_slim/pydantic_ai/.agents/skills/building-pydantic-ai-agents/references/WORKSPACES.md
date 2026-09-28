@@ -40,8 +40,8 @@ shell fallback there. Its ref is `WorkspaceRef(provider='ssh', id='<destination>
 from construction, and the capability claims only that ref. An unreachable host, missing directory or
 dropped connection raises `WorkspaceUnavailableError`. `BubblewrapSandbox(wrapped_capability, *,
 network=False, bwrap_args=())` wraps another workspace capability's workspace in `BubblewrapWorkspace`,
-a `WrapperWorkspace` that prefixes every command with `bwrap` (read-only host, private `/tmp`, no
-network, writable working dir, shared host PID namespace so detached `Shell` jobs survive the call)
+a `WrapperWorkspace` that prefixes every command with `bwrap` (read-only host, empty `/run`, private
+`/tmp`, no network, writable working dir, shared host PID namespace so detached `Shell` jobs survive the call)
 and runs it through the wrapped workspace, so
 `BubblewrapSandbox(SSHWorkspace(...))` sandboxes commands on the remote host. File methods are not
 sandboxed; they go to the wrapped workspace.

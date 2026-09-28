@@ -9,6 +9,9 @@ from .workspace import Workspace, WrapperWorkspace
 
 __all__ = ('BubblewrapWorkspace',)
 
+_DNS_DIRS = ('/run/systemd/resolve', '/run/NetworkManager', '/run/resolvconf')
+"""Where `/etc/resolv.conf` usually points; the ones that exist are mounted back over the empty `/run`."""
+
 
 class BubblewrapWorkspace(WrapperWorkspace):
     """A [`Workspace`][pydantic_ai.workspaces.Workspace] that runs commands in a bubblewrap (`bwrap`) sandbox.
@@ -17,8 +20,8 @@ class BubblewrapWorkspace(WrapperWorkspace):
     [`SSHWorkspaceBackend`][pydantic_ai.workspaces.SSHWorkspaceBackend] to sandbox commands on the
     remote host. `bwrap` must be installed there (Linux only).
 
-    Commands see the host read-only, a private `/tmp`, and no network, and can only write to the
-    working directory. They share the host's processes, so a detached command keeps running after
+    Commands see the host read-only, with an empty `/run` (so no host daemon sockets), a private
+    `/tmp`, and no network, and can only write to the working directory. They share the host's processes, so a detached command keeps running after
     the call that started it, and they can signal the host user's other processes. File methods are
     not sandboxed: they go to the wrapped workspace.
 
@@ -51,6 +54,14 @@ class BubblewrapWorkspace(WrapperWorkspace):
             *('--unshare-user-try', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try'),
             *([] if self._network else ['--unshare-net']),
             *('--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'),
+            # Host daemons listen on sockets under `/run` (Docker, podman, D-Bus), and a read-only mount
+            # doesn't stop a connection, so hide it; with the network on, bring back the DNS configuration.
+            *('--tmpfs', '/run'),
+            *(
+                arg
+                for directory in (_DNS_DIRS if self._network else ())
+                for arg in ('--ro-bind-try', directory, directory)
+            ),
             *('--bind', working_dir, working_dir),
             *self._bwrap_args,
             *('--chdir', working_dir),
