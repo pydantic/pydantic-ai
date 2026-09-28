@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
     from .dynamic_workflow import DynamicWorkflow
+    from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
     from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
     from .grain import Grain
@@ -80,6 +81,8 @@ __all__ = [
     'DayAI',
     'DeduplicateFileReads',
     'DynamicWorkflow',
+    'E2BSandbox',
+    'E2BSandboxBackend',
     'ExaAgent',
     'ExaSearch',
     'FallbackCompaction',
@@ -144,6 +147,7 @@ _CAPABILITY_EXPORTS = {
     'DayAI': 'day_ai',
     'DeduplicateFileReads': 'compaction',
     'DynamicWorkflow': 'dynamic_workflow',
+    'E2BSandbox': 'e2b_sandbox',
     'ExaAgent': 'exa',
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
@@ -184,6 +188,7 @@ _CAPABILITY_EXPORTS = {
 
 _CONSTANT_EXPORTS = {
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'SubAgent': 'subagents',

@@ -35,6 +35,14 @@ def test_env_is_not_shown_in_repr() -> None:
     assert secret not in repr(E2BSandboxBackend(env={'TOKEN': secret}))
 
 
+def test_root_package_exports_the_capability_and_backend() -> None:
+    import pydantic_ai_harness
+
+    assert pydantic_ai_harness.E2BSandbox is E2BSandbox
+    assert pydantic_ai_harness.E2BSandboxBackend is E2BSandboxBackend
+    assert {'E2BSandbox', 'E2BSandboxBackend'} <= set(pydantic_ai_harness.__all__)
+
+
 async def test_destroy_ref_without_attaching(fake_e2b: FakeE2B) -> None:
     provider = E2BSandbox()
     fake_e2b.new_sandbox('sbx-keep')
