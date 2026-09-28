@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
+    AsyncToolCallMode,
     RealtimeError,
     RealtimeModelProfile,
     RealtimeModelSettings,
@@ -2637,15 +2638,17 @@ def _declared_behavior(model: GoogleRealtimeModel, settings: GoogleRealtimeModel
 
 def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
     provider = GoogleProvider(client=_fake_client(_RecordingSession()))
-    model = GoogleRealtimeModel(
-        _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(google_async_tool_calls=True)
-    )
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
-        assert _declared_behavior(model, None) == 'NON_BLOCKING'
+    # A model-level setting is translated when the model is built, so the warning points at that line.
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated') as record:
+        model = GoogleRealtimeModel(
+            _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(google_async_tool_calls=True)
+        )
+    assert record[0].filename == __file__
+    assert model.settings == {'async_tool_calls': True}
+    assert _declared_behavior(model, None) == 'NON_BLOCKING'
     # Each settings layer is translated on its own, so a session-level setting still overrides a model-level
     # one, whichever of the two spellings each uses.
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
-        assert _declared_behavior(model, {'async_tool_calls': False}) == 'BLOCKING'
+    assert _declared_behavior(model, {'async_tool_calls': False}) == 'BLOCKING'
     model = GoogleRealtimeModel(
         _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(async_tool_calls=True)
     )
@@ -2654,6 +2657,54 @@ def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
     # Within one layer, the shared setting wins.
     with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
         assert _declared_behavior(model, {'google_async_tool_calls': True, 'async_tool_calls': False}) == 'BLOCKING'
+    # A model-level setting assigned after construction is still translated when it's used.
+    model.settings = GoogleRealtimeModelSettings(google_async_tool_calls=True)
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+        assert _declared_behavior(model, None) == 'NON_BLOCKING'
+
+
+@pytest.mark.parametrize(
+    ('model_settings', 'session_settings', 'expected_behavior'),
+    [
+        (
+            GoogleRealtimeModelSettings(async_tool_calls=True),
+            GoogleRealtimeModelSettings(google_async_tool_calls=False),
+            'BLOCKING',
+        ),
+        (
+            GoogleRealtimeModelSettings(google_async_tool_calls=False),
+            GoogleRealtimeModelSettings(async_tool_calls=True),
+            'NON_BLOCKING',
+        ),
+    ],
+)
+async def test_agent_realtime_session_setting_overrides_the_model_setting_in_either_spelling(
+    model_settings: GoogleRealtimeModelSettings,
+    session_settings: GoogleRealtimeModelSettings,
+    expected_behavior: str,
+) -> None:
+    """`Agent.realtime` merges the two layers through the model, which translates each one on its own."""
+    captured: dict[str, Any] = {}
+    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+        model = GoogleRealtimeModel(
+            _OPTIONAL_MODEL,
+            provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured)),
+            settings=model_settings,
+        )
+        agent: Agent[None, str] = Agent()
+
+        @agent.tool_plain
+        def get_weather(city: str) -> str:
+            return f'Sunny in {city}.'  # pragma: no cover
+
+        async with agent.realtime(model, model_settings=session_settings).session():
+            pass
+    config = captured['config']
+    assert isinstance(config, genai_types.LiveConnectConfig) and config.tools
+    genai_tool = config.tools[0]
+    assert isinstance(genai_tool, genai_types.Tool) and genai_tool.function_declarations
+    behavior = genai_tool.function_declarations[0].behavior
+    assert behavior is not None and behavior.value == expected_behavior
 
 
 async def test_deprecated_google_async_tool_calls_setting_reaches_the_connection() -> None:
@@ -2719,6 +2770,22 @@ def test_callable_profile_passing_the_derived_flag_through_is_not_deprecated() -
     assert seen == [True]
     assert profile.get('async_tool_call_mode') == 'optional'
     assert profile.get('supports_async_tool_calls') is True
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'mode'),
+    [(_OPTIONAL_MODEL, 'never'), (_NEVER_MODEL, 'optional'), (_OPTIONAL_MODEL, 'always')],
+)
+def test_callable_profile_setting_the_mode_is_not_deprecated(model_name: str, mode: AsyncToolCallMode) -> None:
+    """A callable written against `async_tool_call_mode` passes the derived flag back untouched, without a warning."""
+
+    def set_mode(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+        return {**resolved, 'async_tool_call_mode': mode}
+
+    provider = GoogleProvider(client=_fake_client(_RecordingSession()))
+    profile = GoogleRealtimeModel(model_name, provider=provider, profile=set_mode).profile
+    assert profile.get('async_tool_call_mode') == mode
+    assert profile.get('supports_async_tool_calls') is (mode != 'never')
 
 
 @pytest.mark.parametrize(

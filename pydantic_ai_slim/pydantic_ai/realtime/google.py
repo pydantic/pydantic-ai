@@ -609,17 +609,19 @@ def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
     )
 
 
-def _translate_legacy_settings(settings: GoogleRealtimeModelSettings) -> GoogleRealtimeModelSettings:
+def _translate_legacy_settings(
+    settings: GoogleRealtimeModelSettings, *, stacklevel: int = 2
+) -> GoogleRealtimeModelSettings:
     """Translate the deprecated `google_async_tool_calls` into the shared `async_tool_calls`, warning."""
     # TODO(v3): remove, along with the `google_async_tool_calls` setting.
     if 'google_async_tool_calls' not in settings:
         return settings
-    # Settings reach the model at connect time, where no stack level points at the code that set them, so
-    # the message names the setting instead.
+    # Session settings reach the model at connect time, where no stack level points at the code that set
+    # them, so the message names the setting.
     warnings.warn(
         '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
         PydanticAIDeprecationWarning,
-        stacklevel=2,
+        stacklevel=stacklevel,
     )
     translated = settings.copy()
     translated.setdefault('async_tool_calls', translated.pop('google_async_tool_calls'))
@@ -817,6 +819,9 @@ class GoogleRealtimeModel(RealtimeModel):
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
+        if settings:
+            # Translated here so the deprecation warning points at the caller's line.
+            settings = _translate_legacy_settings(cast(GoogleRealtimeModelSettings, settings), stacklevel=3)
         super().__init__(settings=settings, profile=profile)
         self.model = model
         if isinstance(provider, str):
@@ -863,7 +868,7 @@ class GoogleRealtimeModel(RealtimeModel):
         # Each layer is translated on its own, so a deprecated setting keeps its layer's precedence.
         merged: GoogleRealtimeModelSettings | None = None
         for layer in (self.settings, model_settings):
-            if layer is not None:
+            if layer:
                 translated = _translate_legacy_settings(cast(GoogleRealtimeModelSettings, layer))
                 merged = {**merged, **translated} if merged is not None else translated.copy()
         return merged
