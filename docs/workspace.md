@@ -415,6 +415,8 @@ class UserDirectory(AbstractCapability[str]):
     base_dir: Path
 
     def get_workspace(self, ctx: RunContext[str], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if not ctx.deps.isalnum():  # keeps an ID like '../other-user' from leaving base_dir
+            raise ValueError(f'Invalid user ID: {ctx.deps!r}')
         backend = LocalWorkspaceBackend(self.base_dir / ctx.deps)
         if ref is not None and ref != backend.ref:
             return None  # not this user's directory
@@ -616,6 +618,10 @@ document for users:
 - `filesystem_honors_shell_permissions`: the provider's file API bypasses the command user's permissions.
 - `has_real_posix_shell` and `enforces_parent_file_errors`: for in-memory test doubles only.
 
+The suite's class, fixtures, switches and rule names are stable in 2.x, so renaming one is a breaking
+change. New or stricter rules may be added in minor releases; pin `pydantic-ai` if a new rule failing
+your CI is a problem.
+
 ## Timeouts and clocks
 
 `run(timeout=...)` starts its clock after the sandbox is ready (and, locally, after resolving the
@@ -634,6 +640,9 @@ safety bounds.
 explicitly choose the variables the command needs. Arguments to workflow-side workspace calls,
 including `env=` and file contents, are stored in durable history; do not pass secrets there
 without a suitable payload codec.
+
+Agent run spans record `pydantic_ai.workspace.id` (the sandbox id, or the directory path for
+`LocalWorkspace`) even with `include_content=False`, because it identifies the environment, not content.
 
 ## Platforms
 

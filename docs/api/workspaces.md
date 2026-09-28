@@ -14,9 +14,7 @@
             - SupportsFilesystem
             - SupportsRealpath
             - WorkspaceCommand
-            - WorkspaceResult
             - CommandResult
-            - WorkspaceFileEntry
             - FileEntry
             - WorkspaceError
             - WorkspaceUnavailableError

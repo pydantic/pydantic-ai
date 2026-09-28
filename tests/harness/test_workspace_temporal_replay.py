@@ -61,7 +61,8 @@ async def _stream(messages: list[ModelMessage], info: object):
     for index, part in enumerate(_model(messages, info).parts):
         if isinstance(part, TextPart):
             yield part.content
-        elif isinstance(part, ToolCallPart):
+        else:
+            assert isinstance(part, ToolCallPart)
             yield {index: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
 
 
@@ -120,7 +121,7 @@ async def test_temporal_history_replays_veto_and_background_job_once(tmp_path: P
     launches = tmp_path / 'launches.txt'
     with anyio.fail_after(30):
         while not (launches.exists() and launches.read_text()):
-            await anyio.sleep(0.01)
+            await anyio.sleep(0.01)  # pragma: lax no cover
     assert launches.read_text().splitlines() == ['once']
     await Replayer(workflows=[ReplayWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner).replay_workflow(
         history
