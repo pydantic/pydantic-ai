@@ -52,7 +52,7 @@ from anthropic import AsyncAnthropic
 from mcp.shared.exceptions import McpError
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
@@ -171,6 +171,51 @@ def run_request_limit() -> int:
     if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
         return ATTENTION_REQUEST_LIMIT
     return REQUEST_LIMIT
+
+
+# Hitting `request_limit` raises before the model can say anything, so a run that
+# spent its budget reading files ends with nothing posted. The model cannot see its
+# own request count, so it is told once the last tenth of the budget starts. The
+# text is fixed rather than a countdown: it sits in the system instructions, and a
+# changing value would miss the prompt cache on every remaining request.
+REQUEST_BUDGET_NOTICE = (
+    '## Request budget nearly spent\n\n'
+    'This run is within its last tenth of model requests, and reaching the limit '
+    'stops it with nothing posted. Stop investigating. Emit the safe output your '
+    'task ends with now, from what you have already found.'
+)
+
+
+def request_budget_notice(ctx: RunContext[object]) -> str | None:
+    """Warn the model once its remaining requests fall into the last tenth of the run's limit."""
+    request_limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
+    if request_limit is None or request_limit - ctx.usage.requests > request_limit // 10:
+        return None
+    return REQUEST_BUDGET_NOTICE
+
+
+# `output_type=str` ends the run on any text-only response, and MiniMax regularly
+# ends a turn narrating its next step ("Now let me analyze…") with no tool call.
+# gh-aw then reports the run as "produced no safe outputs". The safe-outputs MCP
+# server appends every safe output to `GH_AW_SAFE_OUTPUTS`, so an absent or empty
+# file means the task is not done. The retry budget is cumulative over the run.
+NO_SAFE_OUTPUT_RETRIES = 3
+
+
+def require_safe_output(output: str) -> str:
+    """Send the model back to work when it ends the run before emitting any safe output."""
+    path = os.environ.get('GH_AW_SAFE_OUTPUTS')
+    if not path:
+        return output
+    sink = pathlib.Path(path)
+    if sink.is_file() and sink.read_text(encoding='utf-8').strip():
+        return output
+    logger.warning('run ended with no safe output emitted; sending the model back')
+    raise ModelRetry(
+        'You ended your turn without emitting a safe output, so nothing has been posted. '
+        'Continue the task and finish by calling the safe-output tool it ends with, '
+        'or `noop` if there is nothing to report.'
+    )
 
 
 # Per-request HTTP timeout for every LLM call. The read timeout is the
@@ -948,7 +993,8 @@ async def run(
     reset_context_state()
     agent: Agent[object, str] = Agent(
         model,
-        instructions=[INSTRUCTIONS, prompt],
+        instructions=[INSTRUCTIONS, prompt, request_budget_notice],
+        retries={'output': NO_SAFE_OUTPUT_RETRIES},
         toolsets=[claude_code_toolset, *mcp_servers],
         capabilities=[
             _RecoverMCPToolErrors(),
@@ -957,6 +1003,7 @@ async def run(
             ProcessEventStream(_stream_events),
         ],
     )
+    agent.output_validator(require_safe_output)
     limits = UsageLimits(request_limit=run_request_limit())
     emit({'type': 'system', 'subtype': 'init', 'session_id': session_id, 'model': label})
 

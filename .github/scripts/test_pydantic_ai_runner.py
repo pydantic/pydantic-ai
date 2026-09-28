@@ -45,8 +45,9 @@ from pydantic_ai_gh_aw_shim import (
     shared,
 )
 
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model as _Model
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -898,6 +899,122 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch: pytest.M
     assert ('system', 'init') in kinds
     assert any(t == 'result' and s == 'success' for t, s in kinds)
     assert sentinel not in user_text
+
+
+def _safe_outputs_toolset(sink: Path) -> AbstractToolset[object]:
+    """Stand-in for gh-aw's safe-outputs MCP server, which appends each output to `GH_AW_SAFE_OUTPUTS`."""
+    from pydantic_ai.toolsets import FunctionToolset
+
+    toolset: FunctionToolset[object] = FunctionToolset()
+
+    @toolset.tool_plain
+    def noop(message: str) -> str:
+        with sink.open('a', encoding='utf-8') as f:
+            f.write(json.dumps({'type': 'noop', 'message': message}) + '\n')
+        return 'ok'
+
+    @toolset.tool_plain
+    def probe() -> str:
+        return 'nothing new'
+
+    return toolset
+
+
+def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse], sink: Path) -> int:
+    """Run the shim on a `FunctionModel` that streams each response `respond` returns."""
+    import asyncio
+
+    from pydantic_ai.messages import TextPart, ToolCallPart
+    from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        response = respond(messages, info)
+        for part in response.parts:
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+    return asyncio.run(
+        shim.run(
+            prompt='review the PR',
+            model=FunctionModel(respond, stream_function=_stream),
+            label='test-model',
+            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
+            mcp_servers=[_safe_outputs_toolset(sink)],
+            session_id='test-session',
+        )
+    )
+
+
+def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from pydantic_ai.messages import RetryPromptPart, TextPart, ToolCallPart
+
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    retries: list[str] = []
+
+    def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        retries.extend(str(p.content) for m in messages[-1:] for p in m.parts if isinstance(p, RetryPromptPart))
+        if not retries:
+            return ModelResponse(parts=[TextPart('Now let me analyze the key concerns.')])
+        if not sink.exists():
+            return ModelResponse(parts=[ToolCallPart('noop', {'message': 'nothing to flag'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 0
+    assert retries == [
+        'You ended your turn without emitting a safe output, so nothing has been posted. '
+        'Continue the task and finish by calling the safe-output tool it ends with, '
+        'or `noop` if there is nothing to report.'
+    ]
+    assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
+
+
+def test_run_fails_when_the_model_never_emits_a_safe_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from pydantic_ai.messages import TextPart
+
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    requests = 0
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(parts=[TextPart('Let me look further.')])
+
+    assert _run_shim(_respond, sink) == 1
+    assert requests == shim.NO_SAFE_OUTPUT_RETRIES + 1
+    assert any(e.get('type') == 'result' and e.get('is_error') is True for e in emitted)
+
+
+def test_run_warns_the_model_when_the_request_budget_is_nearly_spent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from pydantic_ai.messages import TextPart, ToolCallPart
+
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 20)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    warned: list[bool] = []
+
+    def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        warned.append(shim.REQUEST_BUDGET_NOTICE in (info.instructions or ''))
+        if sink.exists():
+            return ModelResponse(parts=[TextPart('done')])
+        if warned[-1]:
+            return ModelResponse(parts=[ToolCallPart('noop', {'message': 'out of budget'})])
+        return ModelResponse(parts=[ToolCallPart('probe', {})])
+
+    # With a limit of 20 the last tenth is 2 requests: one to emit the safe output,
+    # one to end the run.
+    assert _run_shim(_respond, sink) == 0
+    assert warned == [False] * 18 + [True, True]
 
 
 def test_read_only_subagent_tools_are_non_mutating_and_exclude_task():
