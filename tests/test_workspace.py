@@ -1431,6 +1431,22 @@ async def test_result_workspace_survives_after_run_replacement() -> None:
     assert result.workspace is workspace
 
 
+async def test_result_workspace_is_the_outer_runs_when_after_run_returns_another_runs_result() -> None:
+    inner_workspace = Workspace(FakeWorkspace('inner'))
+    inner = Agent(TestModel(custom_output_text='inner'))
+
+    class ReturnInnerResult(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            return await inner.run('go', workspace=inner_workspace)
+
+    outer_workspace = Workspace(FakeWorkspace('outer'))
+    agent = Agent(TestModel(custom_output_text='outer'), capabilities=[ReturnInnerResult()])
+    result = await agent.run('go', workspace=outer_workspace)
+
+    assert result.output == 'inner'
+    assert result.workspace is outer_workspace
+
+
 @pytest.mark.parametrize('fail', [False, True], ids=['success', 'error'])
 async def test_late_after_run_workspace_ref_is_stamped_on_latest_response(fail: bool) -> None:
     backend = FakeWorkspace('late-after-run')

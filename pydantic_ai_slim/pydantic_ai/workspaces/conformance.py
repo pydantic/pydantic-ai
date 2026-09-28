@@ -111,9 +111,9 @@ class WorkspaceBackendSuite:
         """If output cannot be collected in full, the backend must raise rather than return a truncated success."""
         output = 'workspace' * 1024
         result = await _commands(backend).run(
-            ['sh', '-c', 'i=0; while [ "$i" -lt 1024 ]; do printf workspace; i=$((i+1)); done']
+            ['sh', '-c', 'i=0; while [ "$i" -lt 1024 ]; do printf workspace; printf workspace >&2; i=$((i+1)); done']
         )
-        assert (result.exit_code, result.stdout) == (0, output)
+        assert (result.exit_code, result.stdout, result.stderr) == (0, output, output)
 
     @pytest.fixture
     def can_detect_exit_with_inherited_output_pipes(self) -> bool:
