@@ -824,6 +824,14 @@ class TestMarkdownConverter:
             _convert_html(html)
         assert time.perf_counter() - started < 3
 
+    def test_shallow_nested_indentation_is_bounded(self):
+        """Indented lines also count when the document is fewer than 16 levels deep."""
+        html = '<dd>' * 15 + 'x\n' * 300_000 + '</dd>' * 15
+        started = time.perf_counter()
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+        assert time.perf_counter() - started < 3
+
     @pytest.mark.parametrize(
         'html',
         [
