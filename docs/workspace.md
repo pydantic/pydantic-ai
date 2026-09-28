@@ -226,7 +226,8 @@ set `working_dir=` for portable commands: sandbox providers use different defaul
 working directories.
 
 A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Catch it and
-raise `ModelRetry` so the model can try again; uncaught, it ends the run. An environment that is gone,
+raise `ModelRetry` so the model can try again; uncaught, it ends the run, except on Temporal, where it
+follows the activity retry policy (see [Durable execution](#durable-execution)). An environment that is gone,
 such as a sandbox deleted during a command, raises `WorkspaceUnavailableError` and ends the run.
 A command killed by a signal while its environment stays live returns its exit code instead.
 
@@ -369,8 +370,10 @@ activities.
 - On DBOS, a run with a workspace runs its tool calls one at a time: DBOS numbers steps as they
   start, so parallel tools making several workspace calls each could not be replayed reliably.
 - A workspace call may run again if a worker dies mid-call: inside a tool it retries with the tool,
-  and from workflow code it follows the engine's activity or step settings. Workspace and file errors,
-  timeouts, output-limit failures and a lost environment are never retried.
+  and from workflow code it follows the engine's activity or step settings. On Temporal and Prefect,
+  workspace timeouts, output-limit failures, read-only refusals and a lost environment are never
+  retried. Other exceptions, such as `FileNotFoundError`, follow the retry policy, which on Temporal
+  retries without limit by default: catch them and raise `ModelRetry`, or set `maximum_attempts`.
 - On Temporal, a command runs within an activity's `start_to_close_timeout`, 60 seconds by default,
   whatever its own `timeout`. Inside a tool that is the tool's activity; raise it with
   `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. From workflow code it is
