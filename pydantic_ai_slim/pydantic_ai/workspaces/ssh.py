@@ -160,9 +160,9 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         script = (
             f': {tag}\n'
             f'cd {shlex.quote(directory)} || exit 1\n'
-            '__pydantic_ai_dir=$PWD\n'
-            f"printf '%s' {shlex.quote(_READY)} >&2\n"
-            f'{exports}{line}\n'
+f"printf '%s' {shlex.quote(_READY)} >&2\n"
+            f'{exports}__pydantic_ai_dir=$PWD\n'
+            f'{line}\n'
             '__pydantic_ai_status=$?\n'
             f'if [ -d "$__pydantic_ai_dir" ]; then printf \'%s\' {shlex.quote(_DONE)} >&2; '
             f"else printf '%s' {shlex.quote(_GONE)} >&2; fi\n"
