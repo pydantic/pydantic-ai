@@ -409,12 +409,18 @@ def _glob_match(pattern: Sequence[str], path: Sequence[str]) -> bool:
     `*`, `?`, and `[...]` stay within one component; a `**` component matches
     zero or more whole components.
     """
-    if not pattern:
-        return not path
-    head, rest = pattern[0], pattern[1:]
-    if head == '**':
-        return any(_glob_match(rest, path[index:]) for index in range(len(path) + 1))
-    return bool(path) and fnmatch.fnmatchcase(path[0], head) and _glob_match(rest, path[1:])
+
+    # Memoized on (pattern index, path index): each `**` tries every split, so plain
+    # recursion is exponential in the number of `**` components.
+    @functools.cache
+    def match(p: int, q: int) -> bool:
+        if p == len(pattern):
+            return q == len(path)
+        if pattern[p] == '**':
+            return any(match(p + 1, index) for index in range(q, len(path) + 1))
+        return q < len(path) and fnmatch.fnmatchcase(path[q], pattern[p]) and match(p + 1, q + 1)
+
+    return match(0, 0)
 
 
 def _with_walk_notice(lines: list[str], walk_cut: bool, hidden_count: int = 0) -> str:

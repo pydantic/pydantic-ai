@@ -1041,6 +1041,20 @@ class TestSearchFiles:
         )
         assert await toolset.list_directory('.github', workspace=workspace) == '.github/workflows/'
 
+    async def test_many_globstars_match_without_blowup(self, tmp_path: Path) -> None:
+        # Each `**` tries every split of the remaining path; unmemoized, this is C(40, 20) splits per entry.
+        deep = tmp_path.joinpath(*['d'] * 20)
+        deep.mkdir(parents=True)
+        (deep / 'file.txt').write_text('x')
+        toolset = FileSystem[None](root_dir=tmp_path).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        workspace = LocalWorkspaceBackend(tmp_path)
+        globstars = '/'.join(['**'] * 20)
+        assert await toolset.find_files(f'{globstars}/*.md', workspace=workspace) == 'No matches found.'
+        assert await toolset.find_files(f'{globstars}/*.txt', workspace=workspace) == '/'.join(
+            ['d'] * 20 + ['file.txt']
+        )
+
     async def test_symlinked_directory_loop_does_not_duplicate_matches(self, fs_root: Path) -> None:
         (fs_root / 'loop').symlink_to('.', target_is_directory=True)
         toolset = FileSystem[None](root_dir=fs_root).get_toolset()
