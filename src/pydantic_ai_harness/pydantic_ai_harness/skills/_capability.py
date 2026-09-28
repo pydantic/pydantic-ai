@@ -183,7 +183,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         `workspace=` meets a run without a workspace.
         """
         if any(source.workspace is None for source in self._sources):
-            require_workspace(ctx.workspace, 'Skills')
+            require_workspace(ctx.workspace, 'Skills', ctx.messages)
         skills = await self._load(ctx.workspace)
         self._warn(skills)
         return CombinedCapability([_Skill[AgentDepsT](skill) for skill in skills]) if skills else self

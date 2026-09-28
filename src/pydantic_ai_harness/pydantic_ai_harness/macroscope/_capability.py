@@ -78,7 +78,7 @@ class Macroscope(AbstractCapability[AgentDepsT]):
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when it has no workspace to review."""
-        require_workspace(ctx.workspace, 'Macroscope')
+        require_workspace(ctx.workspace, 'Macroscope', ctx.messages)
 
     def get_toolset(self) -> MacroscopeToolset[AgentDepsT]:
         """Build the toolset that provides the `run_macroscope_review` tool."""

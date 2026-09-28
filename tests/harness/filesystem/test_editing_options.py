@@ -283,4 +283,8 @@ class TestRootAboveTheWorkingDirectory:
         project = tmp_path / 'root' / 'project'
         project.mkdir(parents=True)
         result = await call(tmp_path / 'root', 'read_file', {'path': '../../outside.txt'}, working_dir=project)
-        assert 'outside the root directory' in result
+        root = (tmp_path / 'root').resolve()
+        assert (
+            f'`{root.parent}/outside.txt` is outside root_dir `{root}`; the file tools only work inside it.' in result
+        )
+        assert f'Create or clone it inside `{root}`, or use a shell tool if you have one.' in result

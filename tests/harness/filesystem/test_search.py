@@ -1,5 +1,7 @@
 """Search on command-capable workspaces without ripgrep."""
 
+import logging
+import os
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -291,3 +293,37 @@ async def test_posix_search_reports_failed_sort(tmp_path: Path) -> None:
         await tools.grep('needle', workspace=backend)
     with pytest.raises(ModelRetry, match='POSIX search failed'):
         await tools.list_files(workspace=backend)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason='root reads a mode-000 file')
+async def test_posix_grep_skips_an_unreadable_file(tmp_path: Path, no_rg_path: str) -> None:
+    (tmp_path / 'a.txt').write_text('needle\n')
+    locked = tmp_path / 'locked.txt'
+    locked.write_text('needle\n')
+    locked.chmod(0)
+    tools = FileSystem[None](tools=['grep']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_path}))
+    try:
+        assert await tools.grep('needle', workspace=workspace) == (
+            'a.txt:1:needle\n[1 path could not be read (Permission denied): locked.txt]'
+        )
+        # An error on a readable file, such as an invalid pattern, still fails the search.
+        with pytest.raises(ModelRetry, match='POSIX search failed'):
+            await tools.grep('a(', workspace=workspace)
+    finally:
+        locked.chmod(0o644)
+
+
+async def test_the_fallback_is_logged_once_per_workspace(
+    tmp_path: Path, no_rg_path: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / 'a.txt').write_text('needle\n')
+    tools = FileSystem[None](tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_path}))
+    with caplog.at_level(logging.DEBUG, logger='pydantic_ai_harness.filesystem._toolset'):
+        assert await tools.grep('needle', workspace=workspace) == 'a.txt:1:needle'
+        assert await tools.list_files(workspace=workspace) == 'a.txt'
+    (record,) = caplog.records
+    assert record.getMessage().startswith(f'`rg` is not on the PATH of the workspace at {tmp_path.resolve()}')

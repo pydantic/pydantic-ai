@@ -39,7 +39,8 @@ agent = Agent(
     'anthropic:claude-opus-5-5',
     capabilities=[LocalWorkspace('.'), Coder()],
 )
-agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
+result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
+print(result.output)
 ```
 
 File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, or Sprites); the rest of the code stays the same. Commands run without an allowlist, and the file tools' path limits don't apply to them.
@@ -55,7 +56,7 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 
 ### The command environment
 
-Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, so they find your tools and their configuration and use your locale, and nothing else from your environment. Pass only what they need with `env=`:
+Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, so they find your tools and their configuration and use your locale, and nothing else from your environment. `python`, `pytest` and other tools resolve through that `PATH`, so when you start the agent with `uv run` they come from the agent project's virtualenv, not necessarily the workspace's; pass `LocalWorkspace('.', env={'PATH': ...})` to point commands at the workspace's own interpreter. Pass only what they need with `env=`:
 
 ```python {names="defined"}
 import os
@@ -194,6 +195,7 @@ accessible to commands in a local workspace.
 The default instructions keep engineering guidance brief: autonomous investigation and completion,
 focused changes and verification, and pragmatic DRY, YAGNI, SOLID, and the Zen of Python.
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
+The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
 Use it for additional policy, such as file-size limits or a preferred verification workflow.
 
@@ -237,7 +239,7 @@ When retaining `result.workspace` after a run with a provider backend that expos
 
 Sandbox refs identify existing environments; provider-specific cleanup should use an ID-only delete API for refs your application owns (where that provider offers one). Do not create or attach a backend merely to delete a sandbox. Directory upload and preview URLs depend on the provider SDK.
 
-With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily. Choose a working directory that exists in your image.
+With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily; the instructions then do not name the working directory. Choose a working directory that exists in your image.
 
 ## Benchmarking
 

@@ -6,6 +6,7 @@ import errno
 import fnmatch
 import functools
 import hashlib
+import logging
 import os
 import posixpath
 import re
@@ -44,9 +45,11 @@ from pydantic_ai_harness.filesystem._events import (
     FileWrittenEvent,
     SearchKind,
 )
-from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, run_ripgrep
+from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, Unreadable, run_ripgrep
 
 _P = ParamSpec('_P')
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_NAMES: tuple[str, ...] = (
     'read_file',
@@ -68,6 +71,9 @@ FILE_SYSTEM_TOOL_NAMES: tuple[str, ...] = (*DEFAULT_TOOL_NAMES, *RIPGREP_TOOL_NA
 
 _MAX_SEARCH_FILE_BYTES = 10 << 20
 """Avoid remote full-file downloads for large files during Python-side content searches."""
+
+_MAX_UNREADABLE_NAMED = 5
+"""Unreadable files a search result names before it only counts the rest."""
 
 _FILE_TYPE_NEEDS_RIPGREP = '`file_type` needs ripgrep, which this workspace cannot run; use `glob` instead.'
 
@@ -202,6 +208,18 @@ class _Scope:
     @lacks_ripgrep.setter
     def lacks_ripgrep(self, value: bool) -> None:
         self.bounds.lacks_ripgrep = value
+
+
+def _fall_back_from_ripgrep(scope: _Scope) -> None:
+    """Search this workspace without `rg` from now on, saying so once, since the results differ slightly."""
+    if not scope.lacks_ripgrep:
+        logger.debug(
+            '`rg` is not on the PATH of the workspace at %s; its searches use the POSIX fallback, which also '
+            'returns tracked files that .gitignore lists, skips nested .ignore files, and without git '
+            'applies no ignore files.',
+            scope.cwd,
+        )
+    scope.lacks_ripgrep = True
 
 
 def _contains(root: str, path: str) -> bool:
@@ -641,13 +659,27 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         resolved = await scope.workspace.resolve(path, base=scope.cwd)
         if not _contains(scope.root, resolved):
-            raise PermissionError(f'Path {path!r} resolves outside the root directory.')
+            raise PermissionError(
+                f'`{resolved}` is outside {self._root_name(scope)}; the file tools only work inside it. '
+                f'Create or clone it inside {self._root_place(scope)}, or use a shell tool if you have one.'
+            )
         if not scope.checks_realpath:
             return resolved, resolved
         real = await scope.workspace.realpath(resolved)
         if not _contains(scope.root, real):
-            raise PermissionError(f'Path {path!r} resolves outside the root directory.')
+            # The link's target is not named: absolute paths outside the root stay out of tool results.
+            raise PermissionError(
+                f'`{path}` leads outside {self._root_name(scope)} through a symlink; the file tools only work '
+                f'inside it. Use a path inside {self._root_place(scope)}, or a shell tool if you have one.'
+            )
         return resolved, real
+
+    def _root_name(self, scope: _Scope) -> str:
+        """The boundary as an error names it: the project itself unless `root_dir` was set."""
+        return f'the project root `{scope.root}`' if self._root_spelling is None else f'root_dir `{scope.root}`'
+
+    def _root_place(self, scope: _Scope) -> str:
+        return 'the project' if self._root_spelling is None else f'`{scope.root}`'
 
     async def _real_path_inside(self, scope: _Scope, path: str) -> bool:
         """Whether a path a walk reached still leads inside the root once symlinks are resolved."""
@@ -821,7 +853,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             File content with line numbers, plus metadata header.
         """
-        return await self._read_file(await self._scope(ctx.workspace), event_ctx(ctx), path, offset=offset, limit=limit)
+        return await self._read_file(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, offset=offset, limit=limit
+        )
 
     @_recoverable
     async def _read_file(
@@ -907,7 +941,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             Confirmation message with new hash.
         """
         return await self._write_file(
-            await self._scope(ctx.workspace), event_ctx(ctx), path, content, expected_hash=expected_hash
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, content, expected_hash=expected_hash
         )
 
     async def _write_file_tool_unhashed(self, ctx: RunContext[AgentDepsT], path: str, content: str) -> str:
@@ -918,7 +952,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             path: File path relative to the working directory.
             content: The text content to write.
         """
-        return await self._write_file(await self._scope(ctx.workspace), event_ctx(ctx), path, content)
+        return await self._write_file(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, content)
 
     async def _announced_state(
         self, scope: _Scope, resolved: str, path: str, *, exists: bool, expected_hash: str | None
@@ -1082,7 +1116,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         edits = _replacements(old_text, new_text, replacements)
         return await self._edit_file(
-            await self._scope(ctx.workspace), event_ctx(ctx), path, edits, expected_hash=expected_hash
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits, expected_hash=expected_hash
         )
 
     async def _edit_file_tool_unhashed(
@@ -1109,7 +1143,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             replacements: Replacements to apply in order, instead of a single pair.
         """
         edits = _replacements(old_text, new_text, replacements)
-        return await self._edit_file(await self._scope(ctx.workspace), event_ctx(ctx), path, edits)
+        return await self._edit_file(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits)
 
     @_recoverable
     async def _edit_file(
@@ -1172,7 +1206,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Paths relative to the working directory, with type indicators and sizes.
         """
-        return await self._list_directory(await self._scope(ctx.workspace), event_ctx(ctx), path)
+        return await self._list_directory(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path)
 
     @_recoverable
     async def _list_directory(self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str = '.') -> str:
@@ -1243,7 +1277,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             str: Matching lines formatted as file:line_number:text, with paths relative to the working directory.
         """
         return await self._search_files(
-            await self._scope(ctx.workspace), event_ctx(ctx), pattern, path=path, include_glob=include_glob
+            await self._scope(ctx.workspace),
+            event_ctx(ctx, 'FileSystem'),
+            pattern,
+            path=path,
+            include_glob=include_glob,
         )
 
     @_recoverable
@@ -1363,7 +1401,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
-            results, capped = await run_ripgrep(
+            results, capped, unreadable = await run_ripgrep(
                 scope.workspace,
                 [
                     '--line-number',
@@ -1387,8 +1425,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 prepare=prepare,
             )
         except RipgrepMissing:
-            scope.lacks_ripgrep = True
-            results, capped = await run_posix_search(
+            _fall_back_from_ripgrep(scope)
+            results, capped, unreadable = await run_posix_search(
                 scope.workspace,
                 cwd=cwd,
                 target=target,
@@ -1405,7 +1443,23 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         if capped:
             results.append(f'[... truncated at {self._max_search_results} lines or search output byte limit]')
-        return '\n'.join(results) if results else 'No matches found.'
+        return self._with_unreadable(scope, cwd, results or ['No matches found.'], unreadable)
+
+    def _with_unreadable(self, scope: _Scope, cwd: str, lines: list[str], unreadable: list[Unreadable]) -> str:
+        """A search result, ending with a note naming the paths it could not read, grouped by reason.
+
+        Paths the patterns hide stay unnamed but are still counted, so the note never reveals them.
+        """
+        by_reason: dict[str, list[str | None]] = {}
+        for entry in unreadable:
+            path = posixpath.normpath(posixpath.join(cwd, entry.path))
+            by_reason.setdefault(entry.reason, []).append(self._walk_entry(scope, path, cwd, include_hidden=True))
+        for reason, paths in by_reason.items():
+            named = [path for path in paths if path is not None]
+            shown = ', '.join(named[:_MAX_UNREADABLE_NAMED]) + (', ...' if len(named) > _MAX_UNREADABLE_NAMED else '')
+            noun = 'path' if len(paths) == 1 else 'paths'
+            lines.append(f'[{len(paths)} {noun} could not be read ({reason}){": " + shown if shown else ""}]')
+        return '\n'.join(lines)
 
     def _searched(
         self, scope: _Scope, resolved: str, pattern: str, *, search: SearchKind, match_count: int, truncated: bool
@@ -1434,7 +1488,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Newline-separated list of matching file paths relative to the working directory.
         """
-        return await self._find_files(await self._scope(ctx.workspace), event_ctx(ctx), pattern, path=path)
+        return await self._find_files(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), pattern, path=path
+        )
 
     @_recoverable
     async def _find_files(
@@ -1518,7 +1574,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             One file path per line, relative to the working directory.
         """
-        return await self._list_files(await self._scope(ctx.workspace), event_ctx(ctx), path, glob=glob)
+        return await self._list_files(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, glob=glob)
 
     @_recoverable
     async def _list_files(
@@ -1538,7 +1594,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
-            results, capped = await run_ripgrep(
+            results, capped, unreadable = await run_ripgrep(
                 scope.workspace,
                 arguments,
                 cwd=resolved,
@@ -1552,7 +1608,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 prepare=prepare,
             )
         except RipgrepMissing:
-            scope.lacks_ripgrep = True
+            _fall_back_from_ripgrep(scope)
 
             async def accept(record: Record) -> str | None:
                 if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
@@ -1561,7 +1617,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     scope, resolved, record, include_hidden=include_hidden, permitted=permitted
                 )
 
-            results, capped = await run_posix_search(
+            results, capped, unreadable = await run_posix_search(
                 scope.workspace,
                 cwd=resolved,
                 include_hidden=include_hidden,
@@ -1575,7 +1631,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         if capped:
             results.append(f'[... truncated at {self._max_find_results} files]')
-        return '\n'.join(results) if results else 'No files found.'
+        return self._with_unreadable(scope, resolved, results or ['No files found.'], unreadable)
 
     async def grep(
         self,
@@ -1631,7 +1687,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         return await self._grep(
             await self._scope(ctx.workspace),
-            event_ctx(ctx),
+            event_ctx(ctx, 'FileSystem'),
             pattern,
             path=path,
             glob=glob,
@@ -1703,7 +1759,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
-            results, capped = await run_ripgrep(
+            results, capped, unreadable = await run_ripgrep(
                 scope.workspace,
                 arguments,
                 cwd=cwd,
@@ -1714,7 +1770,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 prepare=prepare,
             )
         except RipgrepMissing:
-            scope.lacks_ripgrep = True
+            _fall_back_from_ripgrep(scope)
             if file_type is not None:
                 raise ValueError(_FILE_TYPE_NEEDS_RIPGREP)
 
@@ -1725,7 +1781,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     scope, cwd, record, include_hidden=include_hidden, permitted=permitted
                 )
 
-            results, capped = await run_posix_search(
+            results, capped, unreadable = await run_posix_search(
                 scope.workspace,
                 cwd=cwd,
                 target=target,
@@ -1745,7 +1801,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         if capped:
             results.append(f'[... truncated at {self._max_search_results} lines]')
-        return '\n'.join(results) if results else 'No matches found.'
+        return self._with_unreadable(scope, cwd, results or ['No matches found.'], unreadable)
 
     def _batch_authorizer(
         self, scope: _Scope, cwd: str
@@ -1851,7 +1907,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Confirmation message.
         """
-        return await self._create_directory(await self._scope(ctx.workspace), event_ctx(ctx), path)
+        return await self._create_directory(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path)
 
     async def _nearest_existing_is_dir(self, scope: _Scope, path: str) -> bool:
         """Whether the closest existing ancestor of `path` (or the filesystem root) is a directory."""

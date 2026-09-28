@@ -245,6 +245,8 @@ to stdout) so command output can never spoof the tracked directory.
 
 `stop_command` signals the entire process group, including children left after the wrapper exits, then removes the job's output files.
 
+Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
+
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 
 ## Configuration
