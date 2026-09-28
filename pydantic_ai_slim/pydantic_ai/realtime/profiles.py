@@ -3,10 +3,21 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
+from typing import Literal
 
 from typing_extensions import TypeAliasType, TypedDict
 
 from ..native_tools import AbstractNativeTool
+
+AsyncToolCallMode = TypeAliasType('AsyncToolCallMode', Literal['never', 'optional', 'always'])
+"""Whether a realtime model keeps the conversation going while a tool call runs.
+
+- `'never'`: the model waits for the tool's result before it says anything else.
+- `'optional'`: it's up to the session, via the
+  [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting.
+- `'always'`: the model keeps talking, and answering the user, while a tool runs; it has no mode that
+  waits.
+"""
 
 
 class RealtimeModelProfile(TypedDict, total=False):
@@ -82,11 +93,27 @@ class RealtimeModelProfile(TypedDict, total=False):
     reasoning models, Gemini's native-audio models, and xAI's `grok-voice-latest` and
     `grok-voice-think-*` models. When `False` (the default), a `thinking` setting is silently ignored
     rather than sent to a model that would reject it."""
-    supports_async_tool_calls: bool
-    """Whether the model runs tool calls asynchronously without blocking generation.
+    async_tool_call_mode: AsyncToolCallMode
+    """Whether the model keeps the conversation going while a tool call runs. Default: `'never'`.
 
-    Gemini Live maps this to `Behavior.NON_BLOCKING` on function declarations and
-    `FunctionResponseScheduling.INTERRUPT` on function responses."""
+    With async tool calls, the model can keep speaking (typically saying what it's doing) and answer the
+    user while a tool runs, and the result reaches it when it's ready. Without them, the model goes quiet
+    until the result is back.
+
+    `'optional'` models run tool calls asynchronously when the session asks for it with the
+    [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting, and
+    `'never'` and `'always'` models ignore that setting.
+    OpenAI Realtime, Azure OpenAI, OpenAI GPT-Live, xAI Grok Voice, and
+    `gemini-3.8-live-extended-thinking` are `'always'`; the Gemini native-audio models and
+    `gemini-3.8-live` are `'optional'`; other Gemini Live models are `'never'`, since they accept an
+    async declaration and then wait for the result anyway."""
+    supports_async_tool_calls: bool
+    """Deprecated: use [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] instead.
+
+    A resolved [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile] still carries it,
+    as `async_tool_call_mode != 'never'`. Setting it in a `profile=` override is translated (with a
+    deprecation warning): `True` to `'optional'` and `False` to `'never'`, except that it never changes
+    an `'always'` model, which it never could."""
     supports_tool_return_schema: bool
     """Whether the model natively renders a tool's [`return_schema`][pydantic_ai.tools.ToolDefinition.return_schema]
     (Gemini Live's function-declaration `response` schema). Where it can't, a tool that opted in via
@@ -177,7 +204,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
-    'supports_async_tool_calls': False,
+    'async_tool_call_mode': 'never',
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,

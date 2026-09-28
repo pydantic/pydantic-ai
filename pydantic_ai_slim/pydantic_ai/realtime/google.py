@@ -17,6 +17,7 @@ Application Default Credentials.
 from __future__ import annotations as _annotations
 
 import time
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
@@ -39,6 +40,7 @@ except ImportError as _import_error:
 
 from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     AudioUrl,
@@ -123,7 +125,7 @@ from .codec import (
     ToolResult,
 )
 from .model import RealtimeError, RealtimeModel
-from .profiles import DEFAULT_REALTIME_PROFILE, RealtimeModelProfile, RealtimeModelProfileSpec
+from .profiles import DEFAULT_REALTIME_PROFILE, RealtimeModelProfile, RealtimeModelProfileSpec, merge_realtime_profile
 from .settings import RealtimeModelSettings, ReconnectPolicy, TurnDetection
 
 LatestGoogleRealtimeModelNames = Literal[
@@ -281,23 +283,10 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """
 
     google_async_tool_calls: bool
-    """Whether tool calls may run without pausing the model's speech. Defaults to `False`.
+    """Deprecated: use the shared [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting instead.
 
-    By default Gemini stops generating while a tool call is outstanding, so the caller hears silence
-    for as long as the tool takes. Enabling this declares tools `NON_BLOCKING` and returns their
-    results with `INTERRUPT` scheduling, so the model keeps talking (typically narrating what it's
-    doing) and the result cuts into that speech when it arrives.
-
-    This pays off for tools that take a noticeable moment. It is a poor trade for fast tools: the
-    result interrupts a reply the model has barely started, leaving an extra interrupted turn in
-    history with nothing in it. Verified live against `gemini-2.5-flash-native-audio-latest`.
-
-    Supported by the Gemini native-audio models and `gemini-3.8-live` (see
-    [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]).
-    Other models silently ignore it.
-
-    `gemini-3.8-live-extended-thinking` has no blocking mode at all, so it runs tool calls
-    asynchronously whether or not this is set, and ignores an explicit `False` the same way.
+    Translated (with a deprecation warning) when a session connects; an `async_tool_calls` in the same
+    settings wins.
     """
 
 
@@ -331,21 +320,27 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     """Whether the model runs a tool call asynchronously when its declaration sets no `behavior`. Default: `False`.
 
     True of the Gemini 3.8 Live family, where Google made `NON_BLOCKING` the default. Tool calls stay
-    blocking unless
-    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
+    blocking unless [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls]
     asks otherwise, so on such a model the declaration says `BLOCKING` explicitly instead of leaving it unset.
     """
 
     google_requires_async_tool_calls: bool
-    """Whether the model *only* runs tool calls asynchronously, having no blocking mode. Default: `False`.
+    """Deprecated: use [`async_tool_call_mode='always'`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] instead.
 
-    Stronger than [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]:
-    tool calls are declared `NON_BLOCKING` whatever
-    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
-    says, since a `BLOCKING` declaration closes the session. `gemini-3.8-live-extended-thinking` answers
-    `1007 BLOCKING function calls are not supported for this model`.
+    Translated (with a deprecation warning) when the profile is resolved: `True` becomes
+    `async_tool_call_mode='always'`, and `False`, which left the choice to the other flags, is dropped.
     """
 
+    google_closes_tool_call_turn_separately: bool
+    """Whether the model closes a tool-call turn with a `turn_complete` of its own. Default: `False`.
+
+    Vertex's half-cascade `gemini-live-2.5-flash` sends one when the tool-call generation ends (usage
+    only, no output), whether or not the results have arrived yet, and another after speaking the
+    answer (verified live); other Live models send only the answer's. With
+    this set, the first of the two is reported as the tool-call response's usage rather than a turn
+    boundary, so the exchange isn't reported complete before the answer is spoken. Set by default on
+    Vertex AI only, where it was verified.
+    """
     google_supports_async_tool_call_scheduling: bool
     """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
 
@@ -624,6 +619,25 @@ def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
     )
 
 
+def _translate_legacy_settings(
+    settings: GoogleRealtimeModelSettings, *, stacklevel: int = 2
+) -> GoogleRealtimeModelSettings:
+    """Translate the deprecated `google_async_tool_calls` into the shared `async_tool_calls`, warning."""
+    # TODO(v3): remove, along with the `google_async_tool_calls` setting.
+    if 'google_async_tool_calls' not in settings:
+        return settings
+    # Session settings reach the model at connect time, where no stack level points at the code that set
+    # them, so the message names the setting.
+    warnings.warn(
+        '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    translated = settings.copy()
+    translated.setdefault('async_tool_calls', translated.pop('google_async_tool_calls'))
+    return translated
+
+
 def _tool_def_to_genai(
     tool: ToolDefinition, *, async_tool_calls: bool = False, explicit_blocking: bool = False
 ) -> genai_types.FunctionDeclaration:
@@ -815,6 +829,9 @@ class GoogleRealtimeModel(RealtimeModel):
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
+        if settings:
+            # Translated here so the deprecation warning points at the caller's line.
+            settings = _translate_legacy_settings(cast(GoogleRealtimeModelSettings, settings), stacklevel=3)
         super().__init__(settings=settings, profile=profile)
         self.model = model
         if isinstance(provider, str):
@@ -835,10 +852,47 @@ class GoogleRealtimeModel(RealtimeModel):
     def system(self) -> str:
         return self._provider.name
 
+    def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
+        # `google_closes_tool_call_turn_separately` was verified on Vertex AI only, so it's off on the Gemini
+        # Developer API unless a `profile=` override (applied after this) turns it back on.
+        if cast(GoogleRealtimeModelProfile, profile).get('google_closes_tool_call_turn_separately', False) and (
+            not self.client.vertexai
+        ):
+            profile = merge_realtime_profile(
+                profile, GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=False)
+            )
+        return profile
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        profile = cast(GoogleRealtimeModelProfile, super().profile)
+        # TODO(v3): remove, along with the `google_requires_async_tool_calls` profile field.
+        if 'google_requires_async_tool_calls' not in profile:
+            return profile
+        warnings.warn(
+            '`GoogleRealtimeModelProfile` key `google_requires_async_tool_calls` is deprecated, use '
+            "`async_tool_call_mode='always'` instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        translated = profile.copy()
+        if translated.pop('google_requires_async_tool_calls'):
+            translated.update(async_tool_call_mode='always', supports_async_tool_calls=True)
+        return translated
+
     @property
     def _google_profile(self) -> GoogleRealtimeModelProfile:
         """[`profile`][pydantic_ai.realtime.RealtimeModel.profile], narrowed to the Gemini-specific fields."""
         return cast(GoogleRealtimeModelProfile, self.profile)
+
+    def _merge_model_settings(self, model_settings: RealtimeModelSettings | None) -> RealtimeModelSettings | None:
+        # Each layer is translated on its own, so a deprecated setting keeps its layer's precedence.
+        merged: GoogleRealtimeModelSettings | None = None
+        for layer in (self.settings, model_settings):
+            if layer:
+                translated = _translate_legacy_settings(cast(GoogleRealtimeModelSettings, layer))
+                merged = {**merged, **translated} if merged is not None else translated.copy()
+        return merged
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -877,23 +931,6 @@ class GoogleRealtimeModel(RealtimeModel):
             multi_speaker_voice_config=multi_speaker_config,
             language_code=language_code,
         )
-
-    def _async_tool_calls(self, model_settings: GoogleRealtimeModelSettings | None) -> bool:
-        """Whether to run this session's tool calls without pausing the model's speech.
-
-        Opt-in, and only where the model actually honors it — the other Live families accept
-        `NON_BLOCKING` and then block anyway, so enabling it there would promise something the
-        provider doesn't deliver. A model that has no blocking mode
-        ([`google_requires_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_requires_async_tool_calls])
-        runs them asynchronously whether or not the session asked, since a `BLOCKING` declaration
-        closes the session outright. Either way a setting the model can't honor is ignored, not raised.
-        """
-        profile = self._google_profile
-        if profile.get('google_requires_async_tool_calls', False):
-            return True
-        if not (model_settings and model_settings.get('google_async_tool_calls', False)):
-            return False
-        return profile.get('supports_async_tool_calls', False)
 
     def _check_proactive_audio_api_version(self, settings: GoogleRealtimeModelSettings) -> None:
         """Reject a proactive-audio session on a client that can't carry the setting.
@@ -1259,6 +1296,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._async_tool_call_scheduling_enabled = profile is None or cast('GoogleRealtimeModelProfile', profile).get(
             'google_supports_async_tool_call_scheduling', False
         )
+        self._closes_tool_call_turn_separately = profile is not None and cast(
+            'GoogleRealtimeModelProfile', profile
+        ).get('google_closes_tool_call_turn_separately', False)
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
@@ -1292,6 +1332,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
             'google_text_turns_see_video_frames', True
         )
         self._recent_image: tuple[BinaryImage, float] | None = None
+        # Whether the turn's latest output is a tool-call frame, with nothing said since. A model that
+        # `google_closes_tool_call_turn_separately` closes that turn with its own `turn_complete` when the
+        # tool-call generation ends, before speaking the answer; see `_map_message`. It's taken for that
+        # only once every result is sent (with results still pending, the session holds the reply open
+        # anyway), and only the first time: the next boundary always ends the turn, so an empty answer
+        # completes.
+        self._tool_call_turn_unanswered = False
 
     @property
     def _answers_tool_calls_per_response(self) -> bool:
@@ -1434,6 +1481,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         # ending the turn or delivering messages queued behind it.
                         self._turn_open = False
                         self._turn_interrupted = False
+                        self._tool_call_turn_unanswered = False
                         self._native_part_index = 0
                         yield ResponseDone(interrupted=True)
                     yield RealtimeSessionReconnectEvent(state_restored=state_restored)
@@ -1537,6 +1585,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # "opened" by one would close as an empty interrupted response if the connection then dropped.
         if native_tool_parts or any(isinstance(event, (AudioDelta, OutputTranscript)) for event in events):
             self._turn_open = True
+            self._tool_call_turn_unanswered = False
         # `turn_complete` is emitted by `_map_message` *after* the message's `usage_metadata`, not here:
         # Gemini packs `turnComplete` and `usageMetadata` into the same message, and the session
         # finalizes the response's usage on `ResponseDone`, so the usage must be accounted first
@@ -1578,6 +1627,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # or every barge-in leaks an entry for the life of the connection.
             for call_id in cancelled_ids:
                 self._tool_calls.pop(call_id, None)
+            if not self._tool_calls:
+                # A frame the model abandoned has no answer coming, so no boundary after it is taken for
+                # the tool-call turn's own.
+                self._tool_call_turn_unanswered = False
             events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
         if message.usage_metadata is not None:
             events.append(
@@ -1594,6 +1647,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # `turn_complete`), but the calls above were promised some: an empty report closes their
             # response now, since Gemini answers only once it has their results.
             events.append(SessionUsage(usage=RequestUsage()))
+        if message.tool_call is not None and message.tool_call.function_calls:
+            self._tool_call_turn_unanswered = True
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
         # tokens into the finalized `ModelResponse` / `chat` span before `ResponseDone` closes it.
         if message.server_content is not None and message.server_content.turn_complete:
@@ -1607,14 +1662,31 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 message.server_content.interaction_status == genai_types.InteractionStatus.IN_PROGRESS
                 and not interrupted
             )
-            events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
-            self._turn_interrupted = False
-            # A stalled exchange's response is still open — the model will add a tool call and an answer
-            # to it — so the turn stays open too. Closing it here would leave a drop between the filler
-            # and the tool call with no synthetic terminal, and the partial response in flight forever.
-            self._turn_open = more_expected
-            if not more_expected:
-                self._native_part_index = 0
+            closes_answered_tool_call_turn = (
+                self._closes_tool_call_turn_separately
+                and self._tool_call_turn_unanswered
+                and not interrupted
+                and not more_expected
+                and not self._tool_calls
+            )
+            self._tool_call_turn_unanswered = False
+            # The model said nothing after its tool calls and has all their results: this closes the
+            # tool-call turn, not the answer, which is still to come. Like the OpenAI protocol's
+            # function-call-only `response.done`, it reports only its usage (emitted above, folded into
+            # the answer's response), and the turn stays open for the answer: the next boundary ends
+            # it, even an empty one, and a drop before then closes it as interrupted.
+            if closes_answered_tool_call_turn:
+                self._turn_open = True
+            else:
+                events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
+                self._turn_interrupted = False
+                # A stalled exchange's response is still open — the model will add a tool call and an
+                # answer to it — so the turn stays open too. Closing it here would leave a drop between
+                # the filler and the tool call with no synthetic terminal, and the partial response in
+                # flight forever.
+                self._turn_open = more_expected
+                if not more_expected:
+                    self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:
