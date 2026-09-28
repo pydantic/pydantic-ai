@@ -56,7 +56,11 @@ def test_coder_mentions_post_run_backend_close() -> None:
 
 
 def test_coder_explains_sandbox_creation_timing() -> None:
-    for path in ('docs/harness/coder.md', 'src/pydantic_ai_harness/pydantic_ai_harness/coder/README.md', 'docs/harness/index.md'):
+    for path in (
+        'docs/harness/coder.md',
+        'src/pydantic_ai_harness/pydantic_ai_harness/coder/README.md',
+        'docs/harness/index.md',
+    ):
         text = (_ROOT / path).read_text(encoding='utf-8')
         assert 'Coder(repo_context=False)' in text
         assert 'sandbox' in text.lower()

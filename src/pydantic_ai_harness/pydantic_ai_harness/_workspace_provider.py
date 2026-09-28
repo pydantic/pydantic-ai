@@ -6,13 +6,12 @@ import asyncio
 import posixpath
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Protocol
 
 import anyio
 import sniffio
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceCommand, WorkspaceRef, WorkspaceTimeoutError
+from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
 
 
 def safe_credential_reason(error: Exception) -> str:
@@ -26,18 +25,6 @@ def safe_credential_reason(error: Exception) -> str:
     if 'missing' in message or 'not configured' in message:
         return 'Credential missing'
     return 'Credentials rejected'
-
-
-class SandboxProvider(Protocol):
-    """Provider-specific ref lifecycle, without leasing or implicitly attaching a sandbox."""
-
-    def backend(self, ref: WorkspaceRef) -> WorkspaceBackend:
-        """Construct a backend for an existing ref without I/O."""
-        ...
-
-    async def destroy(self, ref: WorkspaceRef) -> None:
-        """Delete this ref via the provider's ID-only API, without resuming it."""
-        ...
 
 
 # asyncio holds only weak references to tasks, so a detached stop needs a strong one until it ends.
