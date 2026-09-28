@@ -234,6 +234,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # sandbox's default, resolved once with `pwd -P`.
         self._resolved_working_dir: str | None = None
         self._lock = anyio.Lock()
+        # A sandbox this backend created still needs its `working_dir` made.
+        self._working_dir_pending = False
         self._acquisition: asyncio.Task[e2b.AsyncSandbox] | None = None
         self._template = template
         self._sandbox_timeout = sandbox_timeout
@@ -277,21 +279,25 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def _acquire(self) -> e2b.AsyncSandbox:
         async with self._lock:
-            if (sandbox := self._sandbox) is not None:
-                return sandbox
-            ref = self._ref
-            sandbox = await self._attach(ref.id) if ref is not None else await self._create()
-            if ref is None:
-                # Recorded at creation, so the id can be found whatever ends the run before it is stored.
-                logger.info('Created E2B sandbox %s', sandbox.sandbox_id)
-            self._sandbox = sandbox
-            self._ref = WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
-            if ref is None and self._working_dir is not None:
+            if (sandbox := self._sandbox) is None:
+                ref = self._ref
+                sandbox = await self._attach(ref.id) if ref is not None else await self._create()
+                if ref is None:
+                    # Recorded at creation, so the id can be found whatever ends the run before it is stored.
+                    logger.info('Created E2B sandbox %s', sandbox.sandbox_id)
                 # Record the new sandbox before setup, so a failed mkdir still leaves
                 # a ref the caller can use to clean up the billed sandbox.
+                self._sandbox = sandbox
+                self._ref = WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
+                self._working_dir_pending = ref is None and self._working_dir is not None
+            if self._working_dir_pending:
+                assert self._working_dir is not None
+                # Retried on every acquisition until it succeeds, so one failed mkdir does not leave
+                # later commands running in a missing directory.
                 with anyio.CancelScope(shield=True):
                     async with self._sdk_errors(sandbox.sandbox_id, 'Could not create working_dir', self._working_dir):
                         await sandbox.files.make_dir(self._working_dir, user=self._user)
+                self._working_dir_pending = False
         await anyio.lowlevel.checkpoint_if_cancelled()
         return sandbox
 

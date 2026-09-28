@@ -103,6 +103,17 @@ class TestCreate:
         assert backend.ref is not None
         assert '/work/new' in fake_e2b.sandboxes[0].files.directories
 
+    async def test_a_failed_working_dir_setup_is_retried_on_next_use(self, fake_e2b: FakeE2B) -> None:
+        backend = E2BSandboxBackend(working_dir='/work/new')
+        fake_e2b.fs_error = SandboxException('503: envd unavailable', status_code=503)
+        with pytest.raises(WorkspaceError, match='Could not create working_dir'):
+            await backend.get_sandbox()
+        assert backend.ref is not None
+        fake_e2b.fs_error = None
+        await backend.get_sandbox()
+        assert '/work/new' in fake_e2b.sandboxes[0].files.directories
+        assert len(fake_e2b.sandboxes) == 1
+
     async def test_defaults(self, fake_e2b: FakeE2B) -> None:
         await started()
         call = fake_e2b.create_calls[-1]
