@@ -18,13 +18,6 @@ from pydantic_clai2.prompt_surface import PromptSurface
 from pydantic_clai2.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.settings_store import SettingsStore
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

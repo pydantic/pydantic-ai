@@ -1,9 +1,7 @@
 """Tests for the `CodeMode` capability and the `CodeModeToolset` it wraps.
 
-Style follows `pydantic_ai/tests/test_toolsets.py`: module-level
-`pytestmark = pytest.mark.anyio`, an `anyio_backend` fixture, async tests, and a
-`build_run_context` factory. The `anyio` package's pytest plugin is already
-loaded by the project (no extra dev dependency needed).
+Style follows `pydantic_ai/tests/test_toolsets.py`: async tests and a `build_run_context`
+factory.
 """
 
 from __future__ import annotations
@@ -81,6 +79,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     global_mode_is_sequential,
 )
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 _entered_toolsets: list[CodeModeToolset[Never]] = []
 
@@ -94,15 +93,7 @@ async def _close_direct_toolsets(anyio_backend: str) -> AsyncIterator[None]:
         await toolset.__aexit__(None, None, None)
 
 
-pytestmark = pytest.mark.anyio
-
 T = TypeVar('T')
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
 
 
 def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
@@ -698,7 +689,7 @@ class TestCodeMode:
             return ModelResponse(parts=[TextPart(returned[0].model_response_str())])
 
         agent: Agent[object, str] = Agent(
-            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object]()]
+            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object](store=LocalFileStore())]
         )
         result = await agent.run('what type is x?')
         assert result.output == "<class 'dict'>"

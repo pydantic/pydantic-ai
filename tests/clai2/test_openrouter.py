@@ -11,13 +11,6 @@ from pydantic_clai2 import openrouter
 from pydantic_clai2.model_menu import open_add_model_menu
 from tests.clai2.menu_script import make_context
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 @pytest.mark.parametrize('token', ['test-secret'])
 async def test_discovery(token: str) -> None:

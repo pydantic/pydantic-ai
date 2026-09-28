@@ -13,10 +13,9 @@ from typing import Any, Literal, cast
 
 import httpx2
 import pytest
+from cassetter import Cassette, RecordMode
 from pydantic import BaseModel
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
-from vcr.record_mode import RecordMode
 
 from pydantic_ai import (
     BinaryContent,
@@ -121,7 +120,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -706,7 +704,7 @@ async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
     """VCR test: GPT-5.5 reasons by default, so sampling params must be dropped when no effort is set.
 
     The live API rejects `temperature` on gpt-5.5 unless `effort='none'` is sent — i.e.
-    `openai_reasoning_enabled_by_default=True`, unlike the gpt-5.1..5.4 mainline models.
+    `thinking_enabled_by_default=True`, unlike the gpt-5.1..5.4 mainline models.
     The request-body assertion proves `temperature` was dropped so the request succeeds.
     """
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
@@ -805,7 +803,7 @@ async def test_openai_responses_tool_choice_list_unsupported_raises_error(allow_
         ]
     )
     mock_client = MockOpenAIResponses.create_mock(c)
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     model = OpenAIResponsesModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     tools = [

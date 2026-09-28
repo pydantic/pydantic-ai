@@ -63,13 +63,6 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _run_context(conversation_id: str | None = None) -> RunContext[None]:
     return RunContext[None](

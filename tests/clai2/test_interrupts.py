@@ -8,13 +8,6 @@ import pytest
 
 from pydantic_clai2.interrupts import Interrupts
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def test_worker_thread_does_not_install_signals() -> None:
     completed: list[bool] = []

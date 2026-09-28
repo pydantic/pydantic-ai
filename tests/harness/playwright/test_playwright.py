@@ -51,16 +51,9 @@ from pydantic_ai_harness.playwright import (
     RequestKind,
 )
 
-pytestmark = pytest.mark.anyio
-
 _STORAGE_STATE: StorageState = {'cookies': [{'name': 'session', 'value': 'abc', 'domain': 'example.com', 'path': '/'}]}
 
 _HISTORY_RESPONSE = object()
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 # --- Doubles for the Playwright API surface ---------------------------------

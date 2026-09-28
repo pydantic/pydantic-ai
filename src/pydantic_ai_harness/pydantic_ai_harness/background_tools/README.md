@@ -35,7 +35,7 @@ async def slow_research(query: str) -> str:
 
 By default, any tool with `metadata={'background': True}` runs in the background. `BackgroundTools` tells the model how to continue while the tool runs.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 ## Selecting which tools run in the background
 

@@ -28,14 +28,7 @@ from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_comman
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.menu_script import Script, pick, typed
 
-pytestmark = pytest.mark.anyio
-
 PromptT = TypeVar('PromptT')
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -> None:

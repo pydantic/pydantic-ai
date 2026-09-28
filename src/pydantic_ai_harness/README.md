@@ -1,8 +1,8 @@
 # Pydantic AI Harness
 
-[![CI](https://github.com/pydantic/pydantic-ai-harness/actions/workflows/main.yml/badge.svg?event=push)](https://github.com/pydantic/pydantic-ai-harness/actions/workflows/main.yml?query=branch%3Amain)
+[![CI](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain)
 [![PyPI](https://img.shields.io/pypi/v/pydantic-ai-harness.svg)](https://pypi.python.org/pypi/pydantic-ai-harness)
-[![versions](https://img.shields.io/pypi/pyversions/pydantic-ai-harness.svg)](https://github.com/pydantic/pydantic-ai-harness)
+[![versions](https://img.shields.io/pypi/pyversions/pydantic-ai-harness.svg)](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness)
 [![license](https://img.shields.io/github/license/pydantic/pydantic-ai-harness.svg)](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/LICENSE)
 [![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
 
@@ -21,31 +21,47 @@ Install with [`uv`](https://docs.astral.sh/uv/):
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[anthropic]"
+uv add "pydantic-ai-harness[coder,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[anthropic]"
+pip install "pydantic-ai-harness[coder,anthropic]"
 ```
 
-```python
+<!-- Keep this blown-out example in sync across docs/coder.md, docs/index.md, README.md, pydantic_ai_harness/coder/README.md, and examples/coding_agent.py. -->
+
+```python {names="defined"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import Coder
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness.coder import Coder
 
-agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
-
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    capabilities=[LocalWorkspace('.'), Coder()],
+)
 result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
 print(result.output)
-#> Found it: `parse()` returned None on empty input instead of raising. Fixed in src/parser.py; tests pass now.
+```
+
+`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, or Sprites); see [Workspaces](#workspaces).
+
+With [Modal](docs/modal-sandbox.md), for example:
+
+```python
+from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
 Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
 ```
+
+The bundled `coder_agent` is the example above without a model.
 
 Every model works: swap the string for [any provider's](https://ai.pydantic.dev/models/). Need more? Add capabilities to the list; here's the same coder on `gpt-5.6-sol`, with web search and cross-session memory:
 
@@ -63,13 +79,14 @@ pip install "pydantic-ai-slim[openai]"
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.capabilities import LocalWorkspace, WebSearch
 from pydantic_ai_harness import Coder, Memory
 from pydantic_ai_harness.memory import FileStore
 
 agent = Agent(
     'openai:gpt-5.6-sol',
     capabilities=[
+        LocalWorkspace('.'),
         Coder(),
         WebSearch(),  # look up docs and error messages on the web
         Memory(FileStore('.agent-memory')),  # remembers across sessions
@@ -81,22 +98,33 @@ agent = Agent(
 
 ## No magic: it's capabilities all the way down
 
-`Coder` is a regular combined capability: [`FileSystem`](pydantic_ai_harness/filesystem/) with five of its tools and content hashes off, [`Shell`](pydantic_ai_harness/shell/) with its persistent `shell` tool and no allowlist, [`RepoContext`](pydantic_ai_harness/repo_context/), [`SubAgents`](pydantic_ai_harness/subagents/) delegating to the agent itself, [`ClearToolResults` and `WarnNearLimits`](pydantic_ai_harness/compaction/), and a bounded [`ToolOutputLimits`](pydantic_ai_harness/tool_output_limits/), plus its default instructions and JSON argument repair. Use it whole, or build the same agent from those capabilities to change any setting; the [Coder page](pydantic_ai_harness/coder/) lists the exact configuration.
+`Coder` is a regular combined capability: [`FileSystem`](pydantic_ai_harness/filesystem/) with five of its tools and content hashes off, [`Shell`](pydantic_ai_harness/shell/) with its persistent `shell` tool and no allowlist, [`RepoContext`](pydantic_ai_harness/repo_context/), [`SubAgents`](pydantic_ai_harness/subagents/) delegating to the agent itself, [`ClearToolResults` and `WarnNearLimits`](pydantic_ai_harness/compaction/), and a bounded [`ToolOutputLimits`](pydantic_ai_harness/tool_output_limits/), plus its default instructions and JSON argument repair. Use it whole, or build the same agent from those capabilities to change any setting; the [Coder page](pydantic_ai_harness/coder/) lists the exact configuration, tool signatures, delegation, and the persistent shell lifecycle.
 
-<!-- Keep this blown-out example in sync across docs/coder.md, docs/index.md, README.md, pydantic_ai_harness/coder/README.md, and examples/coding_agent.py. -->
+## Workspaces
+
+A [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is where the agent's files and commands live: your machine with `LocalWorkspace`, or an isolated sandbox. Harness capabilities never pick one for you. Attach one, or the run fails at its start and tells you what to attach.
+
+[Coder](pydantic_ai_harness/coder/), [FileSystem](pydantic_ai_harness/filesystem/), [Shell](pydantic_ai_harness/shell/), [Repo Context](pydantic_ai_harness/repo_context/), and [Macroscope](pydantic_ai_harness/macroscope/) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](pydantic_ai_harness/coder/#sharing-a-workspace).
+
+Skills, SubAgents, ToolOutputLimits, and Memory's `FileStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
 
 ```python
-from pydantic_ai import Agent
-from pydantic_ai_harness.coder import Coder
+from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai_harness import Memory, ToolOutputLimits
+from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
-agent = Agent(
-    'anthropic:claude-fable-5',
-    name='coder',
-    capabilities=[Coder('.')],
-)
+memory = Memory(FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')))  # notes on this machine
+limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's temp directory
 ```
 
-See the Coder documentation for tool signatures, persistent shell lifecycle, and delegation.
+By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored.
+
+Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and Code Mode mounts use paths on the machine running the agent, not the run's workspace.
+
+`FileSystem`'s `root_dir` limits only the file tools, not `Shell` commands.
+
+Upgrading from an earlier release? The [Coder page](pydantic_ai_harness/coder/#upgrading) lists what changed.
 
 ## Capabilities
 
@@ -117,9 +145,11 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 
 | Capability | Package | What it does |
 |---|---|---|
-| [FileSystem](pydantic_ai_harness/filesystem/) | Harness | Read, write, edit, list, and search files under a root, with opt-in ripgrep tools; path-traversal and symlink safe, secrets read-only |
-| [Shell](pydantic_ai_harness/shell/) | Harness | Command execution with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
+| [FileSystem](pydantic_ai_harness/filesystem/) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
+| [Shell](pydantic_ai_harness/shell/) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](pydantic_ai_harness/modal_sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
+| [E2B Sandbox](pydantic_ai_harness/e2b_sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Sprites Sandbox](pydantic_ai_harness/sprites_sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 
 ### Tools & native abilities
 
@@ -225,7 +255,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Durable execution](https://ai.pydantic.dev/capabilities/durable_execution/overview/) | Core | Runs that survive restarts and failures on [Temporal](https://ai.pydantic.dev/capabilities/durable_execution/temporal/), [DBOS](https://ai.pydantic.dev/capabilities/durable_execution/dbos/), or [Prefect](https://ai.pydantic.dev/capabilities/durable_execution/prefect/), with [Restate](https://ai.pydantic.dev/capabilities/durable_execution/restate/), [Kitaru](https://ai.pydantic.dev/capabilities/durable_execution/kitaru/), and [Airflow](https://ai.pydantic.dev/capabilities/durable_execution/airflow/) integrations |
+| [Durable execution](https://ai.pydantic.dev/capabilities/durable_execution/overview/) | Core | Runs that survive restarts and failures on [Temporal](https://ai.pydantic.dev/capabilities/durable_execution/temporal/), [DBOS](https://ai.pydantic.dev/capabilities/durable_execution/dbos/), or [Prefect](https://ai.pydantic.dev/capabilities/durable_execution/prefect/), with [Restate](https://ai.pydantic.dev/capabilities/durable_execution/restate/), [Kitaru](https://ai.pydantic.dev/capabilities/durable_execution/kitaru/), and [Airflow](https://ai.pydantic.dev/capabilities/durable_execution/airflow/) integrations. See [what works on each engine](https://pydantic.dev/docs/ai/harness/durable-execution/) for Coder, Shell, and FileSystem |
 | [AWS Lambda durability](pydantic_ai_harness/aws_lambda/) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
 | [Step Persistence](pydantic_ai_harness/step_persistence/) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](https://ai.pydantic.dev/capabilities/instrumentation/) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
@@ -247,22 +277,23 @@ A research agent from regular capabilities -- this is literally [`Researcher`](p
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai_harness import SubAgent, SubAgents, ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 sub_researcher = SubAgent(
     Agent(
         name='researcher',
         description='Research a focused sub-question on the web and report back with findings and source links',
-        capabilities=[WebSearch(local=True), WebFetch(local=True), ToolOutputLimits()],
+        capabilities=[WebSearch(local=True), WebFetch(local=True), ToolOutputLimits(store=LocalFileStore())],
     )
 )
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    'anthropic:claude-opus-5-5',
     capabilities=[
         WebSearch(local=True),  # native provider search, DuckDuckGo fallback elsewhere
         WebFetch(local=True),  # read the pages behind the results, native or local
         SubAgents(agents=[sub_researcher], agent_folders=None),
-        ToolOutputLimits(),  # fetched pages don't flood the context
+        ToolOutputLimits(store=LocalFileStore()),  # fetched pages don't flood the context
     ],
 )
 
@@ -301,11 +332,10 @@ This installs [`pydantic-ai-slim`](https://ai.pydantic.dev/install/) with it, so
 
 We welcome capability contributions:
 
-1. **Start with an issue.** [Open a capability request](https://github.com/pydantic/pydantic-ai-harness/issues/new?template=capability-request.yml) so we can discuss approach and priority before code is written.
+1. **Start with an issue.** [Open a feature request](https://github.com/pydantic/pydantic-ai/issues/new?template=feature-request.yaml) so we can discuss approach and priority before code is written.
 2. **Then open a PR** and link the issue. We review based on community interest; upvotes on both count.
 3. **Don't chase green CI.** Get the approach working and let us know; we may push to your branch or follow up, and you'll be credited as the original author. (See the [Pydantic AI contributing guide](https://github.com/pydantic/pydantic-ai/blob/main/CONTRIBUTING.md).)
 
-> **Note**: PRs that modify `pyproject.toml` or `uv.lock` from non-team members are auto-closed by CI to prevent supply chain risk. If you need a new dependency, [open an issue](https://github.com/pydantic/pydantic-ai-harness/issues/new).
 
 ### Development
 

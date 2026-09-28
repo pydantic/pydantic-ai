@@ -87,7 +87,6 @@ def test_agent_to_web_with_model_instances():
     assert isinstance(app, Starlette)
 
 
-@pytest.mark.anyio
 async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPatch):
     """Test that model instances are preserved and used in dispatch, not reconstructed from string."""
     model_instance = TestModel(custom_output_text='Custom output')
@@ -301,7 +300,6 @@ def test_chat_app_index_endpoint(isolated_ui_cache: None):
         assert len(response.content) > 0
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from CDN when filesystem cache misses."""
     monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
@@ -317,7 +315,6 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert cache_file.read_bytes() == test_content
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html returns cached content from filesystem."""
     monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
@@ -331,7 +328,6 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
-@pytest.mark.anyio
 async def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """`_get_cache_dir` derives its path from `XDG_CACHE_HOME` and creates the directory.
 
@@ -346,7 +342,6 @@ async def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch
     assert cache_dir.is_dir()
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
@@ -423,7 +418,6 @@ def test_write_cached_file_closes_temp_handle_before_replace(monkeypatch: pytest
     assert cache_file.read_bytes() == content
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """The destination cache file only ever materializes complete, via an atomic `os.replace`.
 
@@ -456,7 +450,6 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
     assert replaced_targets == [cache_file]
 
 
-@pytest.mark.anyio
 async def test_cache_read_and_write_do_not_overlap_on_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """A reader holds the cache lock until it closes, before a writer replaces the destination."""
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
@@ -524,7 +517,6 @@ def test_chat_app_index_caching(isolated_ui_cache: None):
         assert response2.status_code == 200
 
 
-@pytest.mark.anyio
 async def test_post_chat_endpoint():
     """Test the POST /api/chat endpoint."""
     agent = Agent(TestModel(custom_output_text='Hello from test!'))
@@ -560,7 +552,6 @@ def _parse_sse_chunk_types(body: str) -> list[str]:
     return types
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('sdk_version', [None, 5, 6, 7])
 async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_version: Literal[5, 6, 7] | None):
     """The bundled web path targets Vercel AI SDK v7, so a tool call that requires approval streams a
@@ -1004,7 +995,6 @@ def test_agent_to_web_with_instructions():
     assert isinstance(app, Starlette)
 
 
-@pytest.mark.anyio
 async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
     """Test that instructions from create_web_app are passed to dispatch_request."""
     agent = Agent(TestModel(custom_output_text='Hello'))
@@ -1038,7 +1028,6 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
     assert call_kwargs['instructions'] == 'Always respond in Spanish'
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from custom URL when provided."""
     monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
@@ -1074,7 +1063,6 @@ async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert captured_url[0] == custom_url
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that custom URLs are cached to filesystem and not re-fetched."""
     monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
@@ -1109,7 +1097,6 @@ def test_agent_to_web_with_html_source():
     assert isinstance(app, Starlette)
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_local_file_path_string(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html supports local file paths as strings."""
     # Create a test HTML file
@@ -1122,7 +1109,6 @@ async def test_get_ui_html_local_file_path_string(monkeypatch: pytest.MonkeyPatc
     assert result == test_html
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_local_file_path_instance(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html supports Path instances."""
     # Create a test HTML file
@@ -1135,7 +1121,6 @@ async def test_get_ui_html_local_file_path_instance(monkeypatch: pytest.MonkeyPa
     assert result == test_html
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_local_file_cancellation_waits_for_file_operation(monkeypatch: pytest.MonkeyPatch):
     """Cancelling a local-file request does not abandon its active worker-thread operation."""
     entered = threading.Event()
@@ -1162,7 +1147,6 @@ async def test_get_ui_html_local_file_cancellation_waits_for_file_operation(monk
     assert finished.is_set()
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_local_file_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html raises FileNotFoundError for missing local file paths."""
     # Try to use a non-existent local file path
@@ -1172,7 +1156,6 @@ async def test_get_ui_html_local_file_not_found(monkeypatch: pytest.MonkeyPatch,
         await app_module._get_ui_html(html_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_local_file_not_found_preserves_user_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv('HOME', str(tmp_path))
 
@@ -1180,7 +1163,6 @@ async def test_get_ui_html_local_file_not_found_preserves_user_path(monkeypatch:
         await app_module._get_ui_html(html_source='~/missing-ui.html')  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_get_ui_html_source_instance_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html raises FileNotFoundError for missing Path instances."""
     # Try to use a non-existent Path instance

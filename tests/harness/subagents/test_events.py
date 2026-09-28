@@ -36,13 +36,6 @@ from pydantic_ai_harness.subagents import (
     SubAgentToolset,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 @dataclass
 class Listener(AbstractCapability[object]):

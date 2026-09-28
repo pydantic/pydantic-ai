@@ -60,7 +60,7 @@ from pydantic_ai_harness import CodeMode
 from tests.harness.code_mode.conftest import websocket_relay_server
 from tests.harness.conftest import ignore_source_reads_left_open
 
-pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
+pytestmark = [pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7244  # avoid conflict with other test suites
 # Fixed because the agent below is built at import time, before any fixture runs.
@@ -90,12 +90,6 @@ def _workflow_runner() -> SandboxedWorkflowRunner:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    """Temporal's Python SDK runs on asyncio."""
-    return 'asyncio'
 
 
 @pytest.fixture(scope='module')

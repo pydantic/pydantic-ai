@@ -36,14 +36,6 @@ from pydantic_ai_harness.step_persistence import (
 )
 from pydantic_ai_harness.step_persistence._types import SnapshotState
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 BACKENDS = ['memory', 'file', 'sqlite']
 
 

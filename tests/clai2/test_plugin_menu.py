@@ -17,8 +17,6 @@ from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.settings_store import SettingsStore
 
-pytestmark = pytest.mark.anyio
-
 PLUGIN = 'from pydantic_clai2.plugins import PluginHost\ndef activate(host: PluginHost) -> None:\n    pass\n'
 
 
@@ -116,8 +114,3 @@ async def test_open_menu_closes_quietly_without_changes(tmp_path: Path, names: t
 
     assert await open_plugins_menu(loader, run=run) == ''
     assert all(entry.host is None for entry in loader.entries())
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'

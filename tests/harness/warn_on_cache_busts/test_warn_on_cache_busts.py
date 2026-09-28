@@ -28,13 +28,6 @@ from pydantic_ai_harness.warn_on_cache_busts import (
     WarnOnCacheBusts,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _usage(*, read: int = 0, write: int = 0) -> RequestUsage:
     return RequestUsage(input_tokens=10, output_tokens=5, cache_read_tokens=read, cache_write_tokens=write)

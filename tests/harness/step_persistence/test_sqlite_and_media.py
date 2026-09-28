@@ -38,13 +38,6 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _sample_messages_with_media(payload_size: int) -> list[ModelMessage]:
     big = b'\xab' * payload_size

@@ -9,6 +9,7 @@ store only uses the async collection surface both share.
 
 from __future__ import annotations
 
+import anyio.to_thread
 import pytest
 from bson.binary import Binary
 from mongomock_motor import AsyncMongoMockClient
@@ -23,8 +24,6 @@ from pydantic_ai_harness.media import (
     media_uri_for,
     parse_media_uri,
 )
-
-pytestmark = pytest.mark.anyio
 
 _MISSING_URI = 'media+sha256://' + ('0' * 64)
 
@@ -79,7 +78,10 @@ class TestMongoMediaStoreConstruction:
         monkeypatch: pytest.MonkeyPatch,
         close_calls: list[AsyncMongoClient[dict[str, object]]],
     ) -> None:
-        store = MongoMediaStore(db_url='mongodb://localhost:59017', database='t')
+        # Building a client touches the filesystem; users build stores outside the event loop.
+        store = await anyio.to_thread.run_sync(
+            lambda: MongoMediaStore(db_url='mongodb://localhost:59017', database='t')
+        )
         await store.aclose()
         assert len(close_calls) == 1
 

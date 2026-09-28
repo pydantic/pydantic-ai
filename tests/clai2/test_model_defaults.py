@@ -20,13 +20,6 @@ from pydantic_clai2.model_settings import model_defaults
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.menu_script import Script, make_context, pick
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 @pytest.mark.parametrize('provider', ['openai', 'openai-codex', 'openai-chat', 'azure', 'openrouter', 'custom'])
 @pytest.mark.parametrize('name', ['gpt-6', 'gpt-6-astra', 'gpt-6.1', 'gpt-5.6', 'gpt-5.6-pro', 'openai/gpt-5.6:free'])

@@ -1,0 +1,94 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '552'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Take the country that borders both France and Austria and whose capital is not its largest city. Give me information
+            about its largest city.
+          type: text
+        role: user
+      model: claude-opus-5-5
+      output_config:
+        format:
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+          type: json_schema
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1927'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-58edc420d2bac87a0ce3bacf530e0192-0e128479a0f9afef-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - signature: CAQSkwcKEAgSGAI4AUIIdGhpbmtpbmcSDE5s1FjTMfU4O5zGVRoMtzuITbMp+JLgZMlxIjDGfURZXUGQLrCl91H5HQO8xyOSOXKTuxVeFZOhgXY2jQGh8e6tgbEJPNy304kltKUqsAZsMkHT+ABOUDjmADIP+VCiAofV900MtIAE3tOSzNXiAHcEoQw1vNMU1NCHkoDXusoHeEXrdsJd4Uhlfx1sKQ9Y3g2xMaBO4ZVunUY3G69a6I8MUjqV+cKYY5ehG4+oqiLu6pHIhj1vHgJ134l+dOuHVAPApjNyjge0rsDnuSQbyqeu7wM/MVNjRIAwgx7m1qF6r4AKiu4ZXVKIfc8RgTQOw0ocoSrljtyUSRz2syhWNff0W8YcquuBKjVdWdJq7O+INA3TUW47VpUPwOJi1oTfJP1/R+9glMKmUHdhB1lAoRAVNB2+LzmquQwhkVPr+4C9GcGsLXlQLVqZ5i+zxls7ckgJ3p5BrX7BKDNfyUTXlkizH1GzmJFoDB+knMoeyGBk6Kxt64FXmw0Pu80EKZcj24ljq41v/fQFClwtsvFsC1i2ibGLTkmH1tqQgg21ft4YU6fZEf00SyiJImwbuW9gsQA9ZYeeAgC76J/gBbOnzafk1v8cHdNvlgaryrZoWuy5xCeHgNkXDW293DPP3MssBzOerxXd5Upf3HWGgdwD1NEN/gEUIWgwoFU6SJg/4ZsBvl6JFyuk3wP5jaNZgvIEOmQrY+t+OoB5w/E1njvCeNZZyFm1HHXLjTXLym1VxHQNF2BJGYCs0AAAKaK3Y7J1OJmZPv0cTM0SeEIKNDiaTzpgRZY3U31UCCyR5/eJvE7cCD/uDf0sbv3sVkNntVEdq1jkGGiY/Swwc8gi47s0f6hc+BT29nvHsalgfuYvjL4SQ4n3Wxx/oumC7g4Tg/nOFuDBq1QqV/ih2+3K3voYBa3srN70PprS77uAxOFmI1V3cBnADUulRS3wJU09/xhk1qTYwCuwXwdPZiMWv8FJnLVlqXgAZKicse0swgpIzFFL7+tzcyOzz9I9ReJwguAVdgNy+67OxV9hABXUmNwQEPo2LhJTu0K4jJNtmhxK/VtzQqtfkuzbUl+zUFFpANxt0McY0AtDy6uxpoE7tQPl00OyQdFROom0DbUq8V3zrAfgkZwBk7ILOe1ZVnObuZwwdt23LNYxheJ6TvYQWBYfDp5NsPz/81dMZhoRJHphhFkYAQ==
+        thinking: ''
+        type: thinking
+      - text: '{"city":"Zurich","country":"Switzerland","population":423193}'
+        type: text
+      diagnostics: null
+      id: msg_011CfR2UEsGkgcy4R88PZ9Mp
+      model: claude-opus-5-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 273
+        output_tokens: 195
+        output_tokens_details:
+          thinking_tokens: 169
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

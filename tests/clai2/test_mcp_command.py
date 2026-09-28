@@ -33,8 +33,6 @@ from pydantic_clai2.mcp import (
 from pydantic_clai2.plugins import PluginHost
 from tests.clai2.menu_script import Script, pick, typed
 
-pytestmark = pytest.mark.anyio
-
 ESC = MenuResult(cancelled=True)
 
 

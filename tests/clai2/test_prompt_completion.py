@@ -11,13 +11,6 @@ from termflow.tui.completion import Completion
 
 from pydantic_clai2.prompt_completion import CompletionWorker
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def test_worker_is_daemon_preserves_context_and_can_report_errors() -> None:
     marker = ContextVar('completion-test', default='default')

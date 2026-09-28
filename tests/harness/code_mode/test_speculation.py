@@ -55,14 +55,6 @@ from pydantic_ai_harness.code_mode import (
 
 from .._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
 
 @dataclass
 class ToolLog:

@@ -136,7 +136,6 @@ def test_unwritable_exclude_is_a_parser_error(repository: Path) -> None:
     assert not (repository / '.worktrees').exists()
 
 
-@pytest.mark.anyio
 async def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path) -> None:
     result = launch(
         repository,

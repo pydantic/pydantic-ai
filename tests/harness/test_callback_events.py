@@ -30,13 +30,6 @@ from pydantic_ai_harness.planning import (
 from pydantic_ai_harness.spend import SpendLimits, SpendRecordedEvent
 from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent, SystemReminders
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def test_spend_event_and_legacy_callback() -> None:
     events: list[SpendRecordedEvent] = []
