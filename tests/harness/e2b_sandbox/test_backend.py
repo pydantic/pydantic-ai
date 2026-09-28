@@ -553,8 +553,13 @@ class TestRun:
     async def test_an_attached_sandbox_names_itself_when_gone(self, fake_e2b: FakeE2B) -> None:
         backend = await started(ref=WorkspaceRef(provider='e2b', id='sbx-keep'))
         fake_e2b.run_error = SandboxNotFoundException('gone')
-        with pytest.raises(WorkspaceUnavailableError, match="'sbx-keep' is no longer running"):
+        with pytest.raises(WorkspaceUnavailableError) as exc_info:
             await backend.run(['x'])
+        # E2B still finds a paused sandbox, so a not-found one was killed, not paused.
+        assert str(exc_info.value) == (
+            "The E2B sandbox 'sbx-keep' is no longer running: it was killed. "
+            "Pass `workspace='new'` to start a fresh sandbox."
+        )
 
     async def test_run_wait_failure_is_a_sandbox_error(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.wait_error = SandboxException('stream broke')

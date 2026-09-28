@@ -143,10 +143,16 @@ async def _file_entry(sandbox: e2b.AsyncSandbox, entry: e2b.EntryInfo, user: str
     return FileEntry(name=entry.name, path=entry.path, is_dir=is_dir, size=size)
 
 
-def _unavailable_message(sandbox_id: str) -> str:
+def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
+    """Say the sandbox is gone; only one E2B still knows about (`found`) may merely be paused."""
+    reason = (
+        'it was killed, or it was paused when its `sandbox_timeout` ran out '
+        '(a later run that attaches to it resumes it)'
+        if found
+        else 'it was killed'
+    )
     return (
-        f'The E2B sandbox {sandbox_id!r} is no longer running: it was killed, or it was paused when its '
-        '`sandbox_timeout` ran out (a later run that attaches to it resumes it). '
+        f'The E2B sandbox {sandbox_id!r} is no longer running: {reason}. '
         "Pass `workspace='new'` to start a fresh sandbox."
     )
 
@@ -323,7 +329,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if isinstance(error, e2b.AuthenticationException):
             return _auth_error(error)
         if isinstance(error, e2b.SandboxNotFoundException) and sandbox_id is not None:
-            return WorkspaceUnavailableError(_unavailable_message(sandbox_id))
+            return WorkspaceUnavailableError(_unavailable_message(sandbox_id, found=False))
         if isinstance(error, e2b.FileNotFoundException):
             return FileNotFoundError(f'No such file or directory in the E2B sandbox: {path!r}')
         if (
@@ -335,7 +341,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if isinstance(error, e2b.TimeoutException):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
-                return WorkspaceUnavailableError(_unavailable_message(sandbox.sandbox_id))
+                return WorkspaceUnavailableError(_unavailable_message(sandbox.sandbox_id, found=True))
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
