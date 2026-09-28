@@ -1240,6 +1240,7 @@ jobs:
 
     outputs:
       package-version: ${{ steps.inspect_package.outputs.version }}
+      harness-version: ${{ steps.inspect_package.outputs.harness-version }}
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1268,6 +1269,8 @@ jobs:
           uv tool install --with uv-dynamic-versioning hatchling
           version=$(uvx hatchling version)
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          harness_version=$(cd src/pydantic_ai_harness && uvx hatchling version)
+          echo "harness-version=$harness_version" >> "$GITHUB_OUTPUT"
 
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1302,3 +1305,69 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           skip-existing: true
+
+  gh-aw-engine-pin-reminder:
+    name: gh-aw engine / pin reminder
+    needs: [release-build, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: false
+
+      # `uv run --script` resolves the guard script's dependencies from PyPI
+      # without a lockfile, so it runs in its own step with no token in the
+      # environment. The step below holds the token and runs only `gh`.
+      - id: engine
+        run: echo "version=$(uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Ask for a pin bump when the release moved past the definition
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.engine.outputs.version }}
+          # The harness releases as `0.<minor>.<patch>` with every tag, so the tag name is not
+          # the version the engine installs.
+          RELEASED: ${{ needs.release-build.outputs.harness-version }}
+        run: |
+          pinned="$PINNED"
+          released="$RELEASED"
+          # A pre-release is not a pin consumers should move to.
+          if ! [[ "$released" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "pydantic-ai-harness ${released} is not a final release."
+            exit 0
+          fi
+          if [ "$pinned" = "$released" ]; then
+            echo "The gh-aw engine definition already pins ${released}."
+            exit 0
+          fi
+
+          title="Bump the gh-aw engine pin to ${released}"
+          # `--search` matches words rather than the phrase, so it narrows the
+          # listing and the exact title is compared here.
+          if gh issue list --state open --search "${title} in:title" \
+            --json title --jq '.[].title' | grep -qxF "${title}"; then
+            echo "An open issue already asks for this: ${title}"
+            exit 0
+          fi
+
+          # A heredoc rather than an inline `--body`: the body is Markdown with
+          # blank lines and backticks, and only `$pinned` and `$released` are
+          # meant to expand.
+          cat > "${RUNNER_TEMP}/pin-reminder.md" <<EOF
+          \`src/pydantic_ai_harness/gh-aw/pydantic.md\` on the default branch still pins \`engine.version: ${pinned}\`, and pydantic-ai-harness ${released} is now released.
+
+          gh-aw compiles that file from the default branch, so a pull request bumping \`engine.version\` to ${released} is what ships the new pin: consumers pick it up on their next recompile.
+
+          Lint refuses a pin PyPI does not serve, so that pull request goes green once ${released} is on PyPI.
+          EOF
+
+          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/pin-reminder.md"
