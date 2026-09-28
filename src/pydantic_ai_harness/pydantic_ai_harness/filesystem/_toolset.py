@@ -579,6 +579,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             root = await facade.resolve(self._root_spelling)
             if root != '/':
                 root = await facade.realpath(root)
+                # Compare like with like: a working directory reached through a symlink is still inside.
+                cwd = await facade.realpath(cwd)
             if not _contains(root, cwd):
                 raise UserError(
                     f'The working directory {cwd!r} is outside root_dir {root!r}. '

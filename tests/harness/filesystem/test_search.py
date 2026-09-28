@@ -103,7 +103,8 @@ async def test_many_search_results_use_batched_path_checks(tmp_path: Path, no_rg
         backend.realpaths = 0
         assert len((await call()).splitlines()) == 20
         assert backend.commands <= 3
-        assert backend.realpaths <= 2
+        # The root, the working directory and the search start; the results are checked in the search command.
+        assert backend.realpaths <= 3
 
 
 async def test_large_listing_checks_paths_in_search_command(tmp_path: Path, no_rg_path: str) -> None:

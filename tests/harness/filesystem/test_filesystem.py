@@ -438,6 +438,18 @@ class TestRootDir:
         ):
             await call_tool(capabilities, 'list_directory', {}, workspace=LocalWorkspaceBackend(tmp_path))
 
+    async def test_root_reached_through_a_symlink_holds_the_working_directory(self, tmp_path: Path) -> None:
+        (tmp_path / 'real').mkdir()
+        (tmp_path / 'real' / 'a.txt').write_text('through the link\n')
+        (tmp_path / 'link').symlink_to(tmp_path / 'real')
+        result = await call_tool(
+            [FileSystem[None](root_dir=tmp_path / 'link')],
+            'read_file',
+            {'path': 'a.txt'},
+            workspace=SymlinkedWorkingDir(tmp_path / 'link'),
+        )
+        assert result.endswith('1\tthrough the link\n')
+
     async def test_the_boundary_is_resolved_once_per_run(self, tmp_path: Path) -> None:
         (tmp_path / 'a.txt').write_text('a\n')
         workspace = CountingWorkspace(tmp_path)
