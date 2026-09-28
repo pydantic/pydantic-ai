@@ -323,10 +323,11 @@ async def test_a_refresh_by_another_session_while_waiting_for_the_lock_is_reused
     [
         (None, r'Not signed in to Example\. Run /plugins configure example to sign in\.'),
         ('{broken', r'Not signed in to Example\.'),
+        ('clai-chunks-v1:broken', r'Not signed in to Example\. Run /plugins configure example'),
         (tokens(expires_in=3600, client_id='other-app').stored(), r'Not signed in to Example\.'),
         (tokens(expires_in=0, refresh_token=None).stored(), r'The Example sign-in expired\. Run /plugins configure'),
     ],
-    ids=['nothing-saved', 'unreadable', 'other-client', 'expired-no-refresh'],
+    ids=['nothing-saved', 'unreadable', 'corrupt-chunk-manifest', 'other-client', 'expired-no-refresh'],
 )
 async def test_token_fails_closed_when_there_is_nothing_usable(saved: str | None, message: str) -> None:
     if saved is not None:

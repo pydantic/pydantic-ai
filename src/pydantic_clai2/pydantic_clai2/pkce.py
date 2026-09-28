@@ -216,11 +216,11 @@ class PKCESignIn:
         self.timeout = timeout
 
     def _load(self) -> Tokens | None:
-        raw = load_codex_credentials(account=self.account)
         try:
+            raw = load_codex_credentials(account=self.account)
             return None if raw is None else Tokens.model_validate_json(raw)
-        except ValidationError:
-            return None  # Unreadable tokens mean signing in again.
+        except (UserError, ValidationError):
+            return None  # Unreadable or incomplete tokens mean signing in again.
 
     def _save(self, tokens: Tokens) -> None:
         save_codex_credentials(account=self.account, value=tokens.stored())

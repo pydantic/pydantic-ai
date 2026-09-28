@@ -584,7 +584,7 @@ of its own; tool calls appear in core's spans.
 ### `slack`: your Slack workspace, as you
 
 `slack` (`pydantic_clai2.slack`) connects harness
-[`Slack`](../pydantic_ai_harness/slack/README.md) to Slack's hosted MCP server.
+[`Slack`](../pydantic_ai_harness/pydantic_ai_harness/slack/README.md) to Slack's hosted MCP server.
 It ships disabled. The tools act as the user whose token CLAI connects with, so
 anything the agent posts appears under your name. If you enabled or disabled the
 earlier raw `pydantic_ai_harness.slack:Slack` catalog row, CLAI switches that saved
