@@ -11,7 +11,7 @@ from rich.console import Console
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
 from pydantic_ai.agent import WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
@@ -325,19 +325,32 @@ async def test_resume_from_another_directory_runs_in_this_session_directory(tmp_
     assert working_dirs == [str(original.resolve()), str(elsewhere.resolve()), str(elsewhere.resolve())]
 
 
-async def test_a_sandbox_on_the_agent_itself_replaces_the_session_directory(tmp_path: Path) -> None:
+@pytest.mark.parametrize('shape', ['bare', 'wrapped', 'wrapped twice', 'wrapped group', 'supplied by the wrapper'])
+async def test_a_sandbox_on_the_agent_itself_replaces_the_session_directory(tmp_path: Path, shape: str) -> None:
     working_dirs: list[str] = []
     sandbox = tmp_path / 'sandbox'
     sandbox.mkdir()
 
-    class Sandbox(AbstractCapability[None]):
-        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            return LocalWorkspaceBackend(sandbox)
-
+    class Probe(AbstractCapability[None]):
         async def before_run(self, ctx: RunContext[None]) -> None:
             working_dirs.append(await ctx.workspace.working_dir())
 
-    agent = Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[Sandbox()])
+    class Sandbox(Probe):
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return LocalWorkspaceBackend(sandbox)
+
+    class SandboxWrapper(WrapperCapability[None]):
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return LocalWorkspaceBackend(sandbox)
+
+    capability = {
+        'bare': Sandbox(),
+        'wrapped': WrapperCapability(Sandbox()),
+        'wrapped twice': WrapperCapability(WrapperCapability(Sandbox())),
+        'wrapped group': WrapperCapability(CombinedCapability([Sandbox()])),
+        'supplied by the wrapper': SandboxWrapper(Probe()),
+    }[shape]
+    agent = Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[capability])
     await Session(agent, deps=None, workspace=tmp_path).prompt('go')
     assert working_dirs == [str(sandbox.resolve())]
 
