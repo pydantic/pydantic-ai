@@ -190,29 +190,38 @@ def _convert_html(html: str) -> tuple[str, str]:
     soup = BeautifulSoup(html, 'html.parser')
     # `markdownify` repeatedly scans each descendant's converted text as it walks back up the
     # tree. Blockquotes, definition items, and list items also indent every line at each level.
-    # Estimate scans beyond 16 levels before conversion so a small, deeply nested page cannot
-    # produce a huge intermediate string or hold the GIL for seconds at a time. The first 16
-    # levels cost a fixed multiple of the input size and keep ordinary pages unchanged.
+    # Estimate scans beyond 16 levels and indentation at any depth before conversion so a small,
+    # deeply nested page cannot produce a huge intermediate string or hold the GIL for seconds.
     cost = 0
-    pending: list[tuple[PageElement, int, int]] = [(soup, 0, 0)]
+    pending: list[tuple[PageElement, int, int, int]] = [(soup, 0, 0, 0)]
     while pending:
-        node, depth, indent_depth = pending.pop()
+        node, depth, indent_depth, indent_width = pending.pop()
         if node.next_sibling is not None:
-            pending.append((node.next_sibling, depth, indent_depth))
+            pending.append((node.next_sibling, depth, indent_depth, indent_width))
         if isinstance(node, Tag):
             depth += 1
             if node.name in ('blockquote', 'dd', 'li'):
                 indent_depth += 1
+                if node.name == 'li' and isinstance(node.parent, Tag) and node.parent.name == 'ol':
+                    start_attr = node.parent.get('start')
+                    start_digits = 1
+                    if isinstance(start_attr, str) and start_attr.isdecimal():
+                        start_digits = len(start_attr.lstrip('0')) or 1
+                    marker_width = max(start_digits, len(str(len(node.parent.contents)))) + 3
+                    indent_width += marker_width
+                else:
+                    indent_width += 4
+            # A tag can emit line breaks even without any text children (for example, `<br>`).
+            cost += indent_width
             work = 8 * (indent_depth + 1) + sum(len(str(value)) for value in node.attrs.values())
             if node.contents:
-                pending.append((node.contents[0], depth, indent_depth))
-        elif isinstance(node, NavigableString):
-            indent_work = 4 * indent_depth * node.count('\n')
+                pending.append((node.contents[0], depth, indent_depth, indent_width))
+        else:
+            assert isinstance(node, NavigableString)
+            indent_work = indent_width * node.count('\n')
             work = len(node) + indent_work
             # Indentation can dominate even within the first 16 levels.
             cost += indent_depth * len(node) + indent_work
-        else:
-            work = 0
         cost += max(depth - 16, 0) * work
         if cost > _MAX_HTML_CONVERSION_COST:
             raise ModelRetry('Failed to convert HTML: the document is too complex')

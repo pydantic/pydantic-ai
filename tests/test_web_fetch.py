@@ -832,6 +832,20 @@ class TestMarkdownConverter:
             _convert_html(html)
         assert time.perf_counter() - started < 3
 
+    def test_shallow_generated_line_breaks_are_bounded(self):
+        """Tags that create line breaks count even without newline text nodes."""
+        html = '<dl>' + '<dd>' * 13 + 'x<br>' * 320_000 + '</dd>' * 13 + '</dl>'
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+
+    def test_wide_ordered_list_marker_is_bounded(self):
+        """A large list start must count towards indentation on every continuation line."""
+        html = '<ol start="' + '9' * 4300 + '"><li>' + 'x\n' * 10_000 + '</li></ol>'
+        started = time.perf_counter()
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+        assert time.perf_counter() - started < 3
+
     @pytest.mark.parametrize(
         'html',
         [
