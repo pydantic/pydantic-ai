@@ -172,6 +172,7 @@ jobs:
       # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
       # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
+        id: install
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
       - name: Test GitHub agentic workflow policy
@@ -285,9 +286,10 @@ jobs:
 
       # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
       # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
-      # that script enforces. `!cancelled()` reports type errors even when a pre-commit hook failed.
+      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
+      # policy check does not hide type errors.
       - name: Type-check with Pyright
-        if: ${{ !cancelled() && needs.classify.outputs.pyright_changed == 'true' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
         env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so

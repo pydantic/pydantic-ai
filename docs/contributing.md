@@ -142,7 +142,8 @@ PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py
 ```
 
 `make typecheck-changed` checks only the files whose content changed since Pyright last passed plus
-everything that transitively imports them. It records what passed under your git directory, so the
+everything that transitively imports them, but its fallbacks below check the whole project, so prefer
+targeted runs while iterating. It records what passed under your git directory, so the
 record is per-worktree and never committed. CI runs the same target, and there it checks everything:
 GitHub Actions always sets `CI`, and on seeing it `make typecheck-changed` narrows nothing and hands
 the whole project to `make typecheck-pyright`.
@@ -167,8 +168,8 @@ A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI set
 The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
 wall time: `auto` is up to one worker per logical core, and a positive integer caps them. Only
 `make typecheck-pyright` reads it, so `make typecheck-changed` picks it up only on a run that hands
-the whole project over: `CI`, an interpreter older than Python 3.11, or a Pyright configuration it cannot
-reproduce. A run it narrows, or runs itself over the reduced set, stays single-process.
+the whole project over: `CI`, an interpreter older than Python 3.11, or a Pyright configuration it
+cannot reproduce. A run it narrows, or runs itself over the reduced set, stays single-process.
 
 ```bash
 export PYRIGHT_THREADS=auto
