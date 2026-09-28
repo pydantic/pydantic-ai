@@ -246,6 +246,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             raise ValueError('pass either `sandbox` or `ref`, not both')
         if type(sandbox_timeout) is not int or not 10 <= sandbox_timeout <= 86_400:
             raise ValueError('sandbox_timeout must be an integer between 10 and 86400 seconds')
+        # Checked here, as `ModalSandbox` does, so a bad value fails before any app lookup or image build.
+        if idle_timeout is not None and (type(idle_timeout) is not int or idle_timeout < 1):
+            raise ValueError('idle_timeout must be a positive integer or None')
         if image is not None and not isinstance(image, str):
             modal_sdk = importlib.import_module('modal')
             if not isinstance(image, modal_sdk.Image):

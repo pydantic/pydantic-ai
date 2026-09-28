@@ -713,6 +713,10 @@ class TestCreate:
         [
             {'sandbox_timeout': 9},
             {'sandbox_timeout': 86401},
+            {'idle_timeout': 0},
+            {'idle_timeout': -5},
+            {'idle_timeout': True},
+            {'idle_timeout': 1.5},
             {'image': 42},
             {'env': {'TOKEN': 42}},
         ],
