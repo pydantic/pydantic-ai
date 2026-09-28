@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import anyio.to_thread
@@ -25,6 +28,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
 )
 from pydantic_ai_harness.capability_creation import (
+    AuthoredCapability,
     CapabilityCreation,
     CapabilityCreationToolset,
     CapabilityStore,
@@ -400,6 +404,44 @@ class TestCapabilityCreationToolset:
         assert 'authored and validated' in result
         assert 'MarkerCapability' in result
         assert 'next agent run' in result
+
+    async def test_parallel_store_mutations_run_one_at_a_time(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Parallel tool calls share one manifest: overlapping read-modify-write cycles would lose updates.
+        release = threading.Event()
+
+        class HeldStore(CapabilityStore):
+            def write(self, name: str, code: str) -> AuthoredCapability:
+                if name == 'first':
+                    release.wait(timeout=30)  # hang guard; the test sets it
+                return super().write(name, code)
+
+        store = HeldStore(tmp_path)
+        toolset = CapabilityCreationToolset(store)
+        offloaded: list[object] = []
+        run_sync = anyio.to_thread.run_sync
+
+        async def recording_run_sync(func: Callable[..., Any], *args: Any) -> Any:
+            offloaded.append(func)
+            return await run_sync(func, *args)
+
+        monkeypatch.setattr(anyio.to_thread, 'run_sync', recording_run_sync)
+        try:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(toolset.author_capability, 'first', VALID_CODE)
+                await anyio.wait_all_tasks_blocked()
+                tg.start_soon(toolset.author_capability, 'second', VALID_CODE)
+                tg.start_soon(toolset.disable_authored_capability, 'first')
+                await anyio.wait_all_tasks_blocked()
+                assert len(offloaded) == 1
+                release.set()
+        finally:
+            release.set()
+        assert [(record.name, record.status) for record in store.list_all()] == [
+            ('first', 'disabled'),
+            ('second', 'active'),
+        ]
 
     async def test_author_validation_failure_message(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
