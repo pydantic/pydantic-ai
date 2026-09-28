@@ -64,6 +64,16 @@ except ImportError as error:  # pragma: no cover - exercised by the isolated mis
 logger = logging.getLogger(__name__)
 
 _AUTH_MESSAGE = 'E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+_MISSING_KEY_MESSAGE = 'No E2B API key found. Set E2B_API_KEY in the environment.'
+
+
+def _auth_error(error: e2b.AuthenticationException) -> WorkspaceUnavailableError:
+    """Report an `AuthenticationException`, telling a missing key apart from a rejected one."""
+    # The SDK raises `API key is required` itself, before any request, when no key is configured.
+    if str(error).startswith('API key is required'):
+        return WorkspaceUnavailableError(_MISSING_KEY_MESSAGE)
+    return WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}')
+
 
 # envd's own messages and Go's errno text, most specific first: making a directory where a file
 # exists says both "already exists" and "not a directory", and "is not a directory" must not
@@ -311,7 +321,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 'Create it there, or pass a working_dir that exists.'
             )
         if isinstance(error, e2b.AuthenticationException):
-            return WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}')
+            return _auth_error(error)
         if isinstance(error, e2b.SandboxNotFoundException) and sandbox_id is not None:
             return WorkspaceUnavailableError(_unavailable_message(sandbox_id))
         if isinstance(error, e2b.FileNotFoundException):
@@ -637,7 +647,7 @@ async def kill_sandbox(sandbox_id: str) -> None:
     try:
         await e2b.AsyncSandbox.kill(sandbox_id)
     except e2b.AuthenticationException as error:
-        raise WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}') from error
+        raise _auth_error(error) from error
 
 
 async def _is_running(sandbox: e2b.AsyncSandbox) -> bool:

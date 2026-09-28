@@ -74,6 +74,9 @@ async def test_destroy_is_idempotent_and_maps_rejected_credentials(fake_e2b: Fak
     assert str(exc.value) == (
         'Credentials rejected. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
     )
+    fake_e2b.kill_error = AuthenticationException('API key is required, please visit the API Keys tab')
+    with pytest.raises(WorkspaceUnavailableError, match=r'^No E2B API key found\. Set E2B_API_KEY'):
+        await provider.destroy(ref)
 
 
 def test_capability_uses_workspace_contract() -> None:
