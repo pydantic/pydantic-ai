@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -12,6 +11,7 @@ import pytest
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._docs_examples import python_blocks, run_block
+from .conftest import skip_temporal_sandbox_on_314
 
 _PAGE = 'docs/harness/durable-execution.md'
 
@@ -36,12 +36,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-# Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14.
-@pytest.mark.skipif(
-    sys.version_info >= (3, 14),
-    reason='temporalio sandbox is incompatible with Python 3.14 '
-    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
-)
+@skip_temporal_sandbox_on_314
 def test_temporal_example(workspace: Path) -> None:
     pytest.importorskip('temporalio')
     _run('coder_temporal.py', workspace)
