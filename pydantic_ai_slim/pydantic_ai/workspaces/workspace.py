@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 import anyio
+from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
@@ -383,6 +384,14 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, SupportsCommands):
             # The backend may provide native filesystem methods later.
             return _ShellFilesystem(backend)
+        members = get_protocol_members(SupportsFilesystem)
+        missing = sorted(name for name in members if not hasattr(backend, name))
+        if len(missing) < len(members):
+            # A backend that meant to implement it but missed a method would otherwise get no hint which.
+            raise UserError(
+                'This workspace does not support filesystem operations: its backend implements only part of '
+                f'`SupportsFilesystem` and lacks {", ".join(f"`{name}`" for name in missing)}.'
+            )
         raise UserError(
             'This workspace does not support filesystem operations. Attach a backend that implements '
             '`SupportsFilesystem` or `SupportsCommands`.'

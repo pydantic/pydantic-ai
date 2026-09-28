@@ -39,6 +39,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
+    FileEntry,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     SupportsCommands,
@@ -444,6 +445,37 @@ async def test_backend_without_commands_or_filesystem_explains_what_to_attach() 
     assert await workspace.working_dir() == '/workspace'
     with pytest.raises(UserError, match='does not support filesystem operations'):
         await workspace.read_text('data.txt')
+
+
+async def test_backend_with_part_of_the_filesystem_protocol_names_what_it_lacks() -> None:
+    class NoExistsBackend(WorkspaceBackend):
+        @property
+        def ref(self) -> None:
+            return None
+
+        async def working_dir(self) -> str:
+            return '/workspace'
+
+        async def read_bytes(self, path: str) -> bytes:
+            raise NotImplementedError
+
+        async def write_bytes(self, path: str, data: bytes) -> None:
+            raise NotImplementedError
+
+        async def stat(self, path: str) -> FileEntry:
+            raise NotImplementedError
+
+        async def list_dir(self, path: str) -> Sequence[FileEntry]:
+            raise NotImplementedError
+
+        async def make_dir(self, path: str) -> None:
+            raise NotImplementedError
+
+        async def remove(self, path: str) -> None:
+            raise NotImplementedError
+
+    with pytest.raises(UserError, match=r'part of `SupportsFilesystem` and lacks `exists`\.$'):
+        await Workspace(NoExistsBackend()).read_text('data.txt')
 
 
 async def test_run_only_backend_writes_binary_and_odd_names_through_the_shell(tmp_path: Path) -> None:
