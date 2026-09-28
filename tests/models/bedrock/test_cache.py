@@ -34,6 +34,7 @@ pytestmark = [
         pytest.param('us.amazon.nova-lite-v1:0', False, id='nova'),
     ],
 )
+@pytest.mark.moves_cache_prefix(reason='the second run restarts the same prompt, dropping the first run tool turn')
 async def test_bedrock_single_tool_choice_preserves_cache(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,

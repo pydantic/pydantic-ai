@@ -51,7 +51,7 @@ class CassettePrefixViolation:
     later_block: str
 
 
-def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None:
+def check_cache_prefix_stability(node: pytest.Item, cassette: Path | Cassette) -> None:
     """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
     if (marker := node.get_closest_marker('moves_cache_prefix')) is not None:
         reason = marker.kwargs.get('reason')
@@ -62,8 +62,9 @@ def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None
             )
         return
 
-    violations = list(iter_cassette_prefix_violations(cassette_path))
+    violations = list(iter_cassette_prefix_violations(cassette))
     if violations:
+        cassette_path = cassette if isinstance(cassette, Path) else cassette.path
         details = '\n'.join(
             f'{cassette_path} [{violation.shape}] pair {violation.pair_index}, {violation.level} block '
             f'{violation.block_index}:\n  earlier: {violation.earlier_block}\n  later:   {violation.later_block}'
@@ -254,15 +255,43 @@ def recorded_request_body(request: dict[str, Any]) -> Any:
     return body
 
 
-def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePrefixViolation]:
-    """Yield prompt-cache prefix violations from one cassette.
+def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any, Any]]:
+    """Yield `(method, uri, body, response_body)` for each request in a cassette file on disk."""
+    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
+    if not is_str_dict(cassette):
+        return
+    raw_interactions = cassette.get('interactions')
+    if not _is_list(raw_interactions):
+        return
+    for interaction in raw_interactions:
+        if is_str_dict(interaction) and is_str_dict(request := interaction.get('request')):
+            response = interaction.get('response')
+            # Responses share the request body layout of both cassette formats.
+            response_body = recorded_request_body(response) if is_str_dict(response) else None
+            yield request.get('method'), request.get('uri'), recorded_request_body(request), response_body
+
+
+def _loaded_cassette_requests(cassette: Cassette) -> Iterator[tuple[Any, Any, Any, Any]]:
+    """Yield `(method, uri, body, response_body)` for each request cassetter already parsed, so the file is not read again."""
+    for interaction in cassette.interactions:
+        request = interaction.request
+        body = request.body.content if request.body.body_type == 'json' else None
+        response_body = interaction.response.body
+        yield (
+            request.method,
+            request.uri,
+            body,
+            response_body.content if response_body.body_type in ('json', 'text') else None,
+        )
+
+
+def iter_cassette_prefix_violations(cassette: Path | Cassette) -> Iterator[CassettePrefixViolation]:
+    """Yield prompt-cache prefix violations from one cassette, either a file on disk or one cassetter loaded.
 
     Across 1,177 cassettes on 2026-07-15, this found 15 deliberately prefix-moving pairs in ten
     cassettes. Requests are grouped by host and provider shape so unrelated endpoints are not paired.
     """
-    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
-    if not is_str_dict(cassette):
-        return
+    requests = _yaml_cassette_requests(cassette) if isinstance(cassette, Path) else _loaded_cassette_requests(cassette)
     # Group by (host, path, shape): only requests to the same endpoint share a provider cache, so the
     # path must be part of the key. Otherwise a token-count or compaction sub-endpoint, a different
     # model or deployment carried in the path, or any other sibling endpoint on the same host would be
@@ -270,18 +299,12 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
     requests_by_endpoint: dict[tuple[str, str, str], list[tuple[list[PrefixBlock], list[str]]]] = defaultdict(list)
     response_inputs: dict[tuple[str, str], list[PrefixBlock]] = {}
 
-    raw_interactions = cassette.get('interactions')
-    if not _is_list(raw_interactions):
-        return
-    interactions = raw_interactions
-    for interaction in interactions:
+    for method, uri, body, response_body in requests:
         if not (
-            is_str_dict(interaction)
-            and is_str_dict(request := interaction.get('request'))
-            and isinstance(method := request.get('method'), str)
+            isinstance(method, str)
             and method.upper() == 'POST'
-            and is_str_dict(body := recorded_request_body(request))
-            and isinstance(uri := request.get('uri'), str)
+            and is_str_dict(body)
+            and isinstance(uri, str)
             and (canonical := canonical_prefix_blocks(body, uri)) is not None
         ):
             continue
@@ -297,24 +320,20 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
                     + response_inputs[(uri, previous_id)]
                     + [block for block in blocks if block[0] == 'messages']
                 )
-            response = interaction.get('response')
-            if is_str_dict(response):
-                # Responses share the request body layout of both cassette formats.
-                response_body = recorded_request_body(response)
-                if is_str_dict(response_body) and isinstance(raw_stream := response_body.get('string'), str):
-                    response_body = raw_stream
-                if isinstance(response_body, str):
-                    events = [json.loads(line[6:]) for line in response_body.splitlines() if line.startswith('data: {')]
-                    response_body = next(
-                        (
-                            event.get('response')
-                            for event in events
-                            if is_str_dict(event) and event.get('type') == 'response.completed'
-                        ),
-                        None,
-                    )
-                if is_str_dict(response_body) and isinstance(response_id := response_body.get('id'), str):
-                    response_inputs[(uri, response_id)] = [block for block in blocks if block[0] == 'messages']
+            if is_str_dict(response_body) and isinstance(raw_stream := response_body.get('string'), str):
+                response_body = raw_stream
+            if isinstance(response_body, str):
+                events = [json.loads(line[6:]) for line in response_body.splitlines() if line.startswith('data: {')]
+                response_body = next(
+                    (
+                        event.get('response')
+                        for event in events
+                        if is_str_dict(event) and event.get('type') == 'response.completed'
+                    ),
+                    None,
+                )
+            if is_str_dict(response_body) and isinstance(response_id := response_body.get('id'), str):
+                response_inputs[(uri, response_id)] = [block for block in blocks if block[0] == 'messages']
         deferred_tools = anthropic_deferred_tool_blocks(body) if shape == 'anthropic' else []
         parsed_uri = urlparse(uri)
         requests_by_endpoint[(parsed_uri.hostname or '', parsed_uri.path, shape)].append((blocks, deferred_tools))
