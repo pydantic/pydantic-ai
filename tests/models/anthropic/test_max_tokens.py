@@ -27,7 +27,7 @@ pytestmark = [
 ]
 
 
-@dataclass
+@dataclass(frozen=True)
 class MaxTokensCase:
     model_name: str
     model_settings: AnthropicModelSettings
