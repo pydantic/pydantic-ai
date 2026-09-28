@@ -173,7 +173,7 @@ The `finally` kills the sandbox even when setup or the run fails. To keep it ins
 
 ## Preview a dev server
 
-With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, connect with `e2b.AsyncSandbox.connect(ref.id)` and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then `kill_sandbox(ref)` as below. Do not leave a public preview running longer than necessary.
+With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, connect with `sandbox = await e2b.AsyncSandbox.connect(ref.id)` and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then `await kill_sandbox(ref)` as below. Do not leave a public preview running longer than necessary.
 
 ## Clean up
 
