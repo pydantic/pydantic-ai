@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -311,21 +312,40 @@ class TestWorkspaceDiscovery:
         # later step sees the same listing and tool as its first.
         assert seen[2] == seen[0]
 
-    async def test_claude_fallback_and_stem_name(self, tmp_path: Path) -> None:
+    async def test_claude_folder_and_stem_name(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan things.')
         seen: list[tuple[str | None, list[str]]] = []
         parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[SubAgents()])
         await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert seen[0][0] is not None and '- planner' in seen[0][0]
 
-    async def test_agents_root_without_the_leaf_folder(self, tmp_path: Path) -> None:
-        # `.agents/` exists, so `.claude/` is not consulted even though only it has the leaf.
+    async def test_claude_folder_loads_when_agents_root_exists(self, tmp_path: Path) -> None:
+        # A workspace that uses `.agents/` for something else still loads agents from `.claude/`.
         (tmp_path / '.agents').mkdir()
         _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan.')
         seen: list[tuple[str | None, list[str]]] = []
         parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[SubAgents()])
         await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert seen[0] == (None, [])
+        assert seen[0][0] is not None and '- planner' in seen[0][0]
+
+    async def test_agents_folder_shadows_claude_folder(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'worker.md', '---\nname: worker\ndescription: agents\n---\nWork.')
+        _write_agent(tmp_path / '.claude' / 'agents', 'worker.md', '---\nname: worker\ndescription: claude\n---\nWork.')
+        _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan.')
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
+            listing = await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1
+        assert listing is not None
+        assert '- worker: agents' in listing and 'claude' not in listing
+        assert '- planner' in listing
+
+    async def test_claude_symlinked_to_agents_loads_once_without_warning(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
+        (tmp_path / '.claude').symlink_to(tmp_path / '.agents', target_is_directory=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            listing = await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path))
+        assert listing is not None and '- planner' in listing
 
     async def test_no_workspace_skips_convention_discovery(self) -> None:
         # Neither the home root nor the host's cwd stands in for a missing workspace, but a folder
@@ -359,7 +379,7 @@ class TestWorkspaceDiscovery:
         listing = await _listing(SubAgents(), LocalWorkspaceBackend(Path.home()))
         assert listing is not None and '- planner' in listing
 
-    async def test_no_workspace_warns_about_the_claude_fallback(self) -> None:
+    async def test_no_workspace_warns_about_the_claude_folder(self) -> None:
         _write_agent(Path.cwd() / '.claude' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'\.claude') as record:
             assert await _listing(SubAgents(), None) is None

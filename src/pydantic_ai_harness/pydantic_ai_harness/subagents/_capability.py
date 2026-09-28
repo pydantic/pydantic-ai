@@ -90,13 +90,14 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     it. A `SubAgent` can restrict which keys it accepts (`SubAgent.models`).
 
     Sub-agents are also loaded from disk by default: each markdown agent definition
-    under `.agents/agents/` (or `.claude/agents/`) in the run's workspace becomes a
+    under `.agents/agents/` and `.claude/agents/` in the run's workspace becomes a
     delegate, built with the parent's model. Folders are read at the start of every
     run, through `ctx.workspace`, or through `workspace` when set. Disk delegates get no tools
     by default (`inherit_tools` is `False`); set `inherit_tools=True` to expose the
     parent's tools, or pass a `tool_resolver` to map their frontmatter tool names.
     Disk delegates coexist with explicitly-passed ones; explicitly-passed agents take
-    precedence, then earlier folders. A disk delegate whose
+    precedence. Convention folders use `.agents/` before `.claude/`; explicit folder sequences use
+    earlier folders before later ones. A disk delegate whose
     name is already taken is skipped with a warning. Configure or disable this with
     `agent_folders`; see also `agent_overrides` and `tool_resolver`.
 
@@ -158,8 +159,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     workspace (`ctx.workspace`), or through `workspace` when set.
 
     - a folder-name `str` (the default `'agents'` is the conventional layout): load
-      from `.agents/<name>/` under the workspace's working directory, falling back to
-      `.claude/<name>/` when `.agents/` is absent. Skipped when the run has no workspace,
+      from both `.agents/<name>/` and `.claude/<name>/` under the workspace's working
+      directory, in that order. Skipped when the run has no workspace,
       with a `HarnessDeprecationWarning` when this process's working directory or the home
       directory has that folder, which earlier releases read.
     - a sequence of paths in the workspace, absolute or relative to its working
@@ -444,18 +445,19 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if self._warned_host_folders:
             return
         for root in roots:
-            folder = (root / '.agents' if await (root / '.agents').is_dir() else root / '.claude') / name
-            if await folder.is_dir():
-                self._warned_host_folders.add(str(folder))
-                warnings.warn(
-                    f'`SubAgents` did not load the agent definitions in `{folder}`: definitions are now read '
-                    'through a workspace only. Pass '
-                    f'`SubAgents(workspace=LocalWorkspaceBackend({str(root)!r}))` to keep loading them, or '
-                    '`agent_folders=None` to turn discovery off.',
-                    category=HarnessDeprecationWarning,
-                    stacklevel=2,
-                )
-                return
+            for hidden in ('.agents', '.claude'):
+                folder = root / hidden / name
+                if await folder.is_dir():
+                    self._warned_host_folders.add(str(folder))
+                    warnings.warn(
+                        f'`SubAgents` did not load the agent definitions in `{folder}`: definitions are now read '
+                        'through a workspace only. Pass '
+                        f'`SubAgents(workspace=LocalWorkspaceBackend({str(root)!r}))` to keep loading them, or '
+                        '`agent_folders=None` to turn discovery off.',
+                        category=HarnessDeprecationWarning,
+                        stacklevel=2,
+                    )
+                    return
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Run the parent agent, then drop this run's delegation counts so they don't accumulate."""
