@@ -231,6 +231,11 @@ penalties, `parallel_tool_calls`, `thinking`, and `service_tier`. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
 
+CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
+missing from the Python CLAI runs on fails right away, naming the install command, instead
+of on the next prompt. TypeSafe's Jev needs the `typesafe` extra: `pip install "pydantic-clai2[typesafe]"`,
+or from a pydantic-ai checkout, `uv run --package pydantic-clai2 --extra typesafe clai2`.
+
 Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
 which core supports but does not currently include in that model catalog. Complete
