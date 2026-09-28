@@ -550,6 +550,21 @@ CLEARED_BARGE_IN = Finding(
     matches=_speech_cleared_after_barge_in,
 )
 
+ASYNC_BATCH_OF_THREE = Finding(
+    id='SIM-19',
+    title=(
+        'with asynchronous (`NON_BLOCKING`) Gemini tool calls, a `tool_call` message of three or more calls leaves '
+        'a reservation after the model answered the batch, so `wait_for_reply()` hangs (two calls are fine)'
+    ),
+    tracked_by='one reply per batch (#8765) also for asynchronous calls; found by this simulator',
+    codes=frozenset({'wait.hang'}),
+    providers=GEMINI,
+    matches=lambda sim, violation: (
+        _gemini_behavior(sim, 'talks_through_tool_calls')
+        and any(len(response.tool_calls) > 2 for response in sim.truth.responses.values())
+    ),
+)
+
 LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     id='SIM-18',
     title=(
@@ -583,6 +598,7 @@ KNOWN_FINDINGS.extend(
         CLEARED_BARGE_IN,
         EXTENDED_THINKING_PARALLEL_CALLS,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
+        ASYNC_BATCH_OF_THREE,
         SEND_DURING_RECONNECT,
         LIVE_BATCH_RESERVATIONS,
         LIVE_QUEUED_TEXT_RESERVATIONS,

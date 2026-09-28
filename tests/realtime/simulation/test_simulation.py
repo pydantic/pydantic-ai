@@ -341,6 +341,16 @@ def test_known_gemini_cut_off_unstarted_turn_ends_the_wait_early() -> None:
     reproduce('SIM-13', GeminiSimulation(), scenario)
 
 
+@known('SIM-19')
+def test_known_gemini_async_batch_of_three_leaves_a_reservation() -> None:
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools(count=3)
+        sim.settle()
+
+    reproduce('SIM-19', async_gemini(), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
