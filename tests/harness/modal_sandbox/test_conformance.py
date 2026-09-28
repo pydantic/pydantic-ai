@@ -39,6 +39,11 @@ class TestFakeModalSandboxBackend(WorkspaceBackendSuite):
         return ModalSandboxBackend()
 
     @pytest.fixture
+    def fresh_backend(self, backend: ModalSandboxBackend) -> Callable[[], WorkspaceBackend]:
+        # `backend` points the fake Modal at the host directory; each call starts another sandbox there.
+        return ModalSandboxBackend
+
+    @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return _attach
 
@@ -46,9 +51,18 @@ class TestFakeModalSandboxBackend(WorkspaceBackendSuite):
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _terminate
 
+    @pytest.mark.skip(reason="the fake's terminate does not stop commands running on the host; the live tier checks it")
+    async def test_destroying_environment_during_command_raises_unavailable(
+        self,
+        destructive_backend: Callable[[], WorkspaceBackend] | None,
+        destroy_environment: Callable[[WorkspaceBackend], Awaitable[None]] | None,
+        has_real_posix_shell: bool,
+    ) -> None: ...
 
+
+# The live tier runs without coverage; in CI only its gate fixtures run, to skip it.
 @pytest.mark.modal_live
-class TestLiveModalSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover - live tier runs without coverage
+class TestLiveModalSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
     # One event loop for the class: Modal's client keeps a gRPC channel bound to the loop it was
     # first used on. A class-scoped async fixture is what holds that loop open between tests.
     @pytest.fixture(scope='class')

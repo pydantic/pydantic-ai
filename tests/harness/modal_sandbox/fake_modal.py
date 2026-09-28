@@ -128,29 +128,14 @@ class _HangingAioCall:
         await anyio.sleep_forever()
 
 
-class _DelayedAioCall(_AioCallable):
-    """An `.aio` that returns after `delay` seconds, like output still draining after the process exited."""
-
-    def __init__(self, fn: Callable[..., Any], delay: float) -> None:
-        super().__init__(fn)
-        self._delay = delay
-
-    async def aio(self, *args: Any, **kwargs: Any) -> Any:
-        await anyio.sleep(self._delay)
-        return self._fn(*args, **kwargs)
-
-
 class _FakeStream:
-    """Mimics the whole-output `.read.aio()` surface used by the backend."""
+    """Mimics the async-iterable output stream the backend reads with `async for`."""
 
     def __init__(self, data: bytes, hangs: bool = False, delay: float = 0.0, error: Exception | None = None) -> None:
         self._data = data
         self._hangs = hangs
         self._delay = delay
         self._error = error
-        self.read = (
-            _HangingAioCall() if hangs else _DelayedAioCall(self._read, delay) if delay else _AioCallable(self._read)
-        )
 
     async def __aiter__(self) -> AsyncGenerator[bytes, None]:
         if self._hangs:
@@ -161,9 +146,6 @@ class _FakeStream:
         if self._error is not None:
             raise self._error
         yield self._data
-
-    def _read(self) -> bytes:
-        return self._data
 
 
 class _FakeProcess:
@@ -497,46 +479,43 @@ class FakeSandbox:
             **{key: value for key, value in (env or {}).items() if value is not None},
         }
         cwd = workdir or self.workdir or str(self._control.host_root)
-        try:
-            process = subprocess.Popen(
-                argv, cwd=cwd, env=variables, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
-            )
-            assert process.stdout is not None and process.stderr is not None
-            streams = {process.stdout: bytearray(), process.stderr: bytearray()}
-            active = list(streams)
-            for stream in streams:
-                os.set_blocking(stream.fileno(), False)
-            deadline = time.monotonic() + timeout if timeout is not None else None
-            exited_at: float | None = None
-            # Modal reports exit separately from pipe EOF; drain while running to avoid
-            # pipe backpressure, then allow a short grace for output already in flight.
-            while active:
-                now = time.monotonic()
-                if process.poll() is not None and exited_at is None:
-                    exited_at = now
-                if exited_at is not None and now - exited_at >= 0.1:
-                    break
-                if deadline is not None and now >= deadline and exited_at is None:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                    stdout, stderr = bytes(streams[process.stdout]), bytes(streams[process.stderr])
-                    process.stdout.close()
-                    process.stderr.close()
-                    return _FakeProcess(stdout, stderr, -1, None, False)
-                ready = select.select(active, [], [], 0.01)[0]
-                for stream in ready:
-                    chunk = os.read(stream.fileno(), 65536)
-                    if chunk:
-                        streams[stream].extend(chunk)
-                    else:
-                        active.remove(stream)
-            code = process.wait()
-            stdout, stderr = bytes(streams[process.stdout]), bytes(streams[process.stderr])
-            process.stdout.close()
-            process.stderr.close()
-        except FileNotFoundError:
-            # A program that doesn't exist is an ordinary exit code 127, as from `sh`.
-            return _FakeProcess(b'', b'', 127, None, False)
+        process = subprocess.Popen(
+            argv, cwd=cwd, env=variables, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
+        )
+        assert process.stdout is not None and process.stderr is not None
+        streams = {process.stdout: bytearray(), process.stderr: bytearray()}
+        active = list(streams)
+        for stream in streams:
+            os.set_blocking(stream.fileno(), False)
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        exited_at: float | None = None
+        # Modal reports exit separately from pipe EOF; drain while running to avoid
+        # pipe backpressure, then allow a short grace for output already in flight.
+        while active:
+            now = time.monotonic()
+            if process.poll() is not None and exited_at is None:
+                exited_at = now
+            if exited_at is not None and now - exited_at >= 0.1:
+                break
+            # Modal's own exec deadline: reached only when the backend's stop is slower than it.
+            if deadline is not None and now >= deadline and exited_at is None:  # pragma: lax no cover
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+                stdout, stderr = bytes(streams[process.stdout]), bytes(streams[process.stderr])
+                process.stdout.close()
+                process.stderr.close()
+                return _FakeProcess(stdout, stderr, -1, None, False)
+            ready = select.select(active, [], [], 0.01)[0]
+            for stream in ready:
+                chunk = os.read(stream.fileno(), 65536)
+                if chunk:
+                    streams[stream].extend(chunk)
+                else:
+                    active.remove(stream)
+        code = process.wait()
+        stdout, stderr = bytes(streams[process.stdout]), bytes(streams[process.stderr])
+        process.stdout.close()
+        process.stderr.close()
         return _FakeProcess(stdout, stderr, code, None, False)
 
     def _exec(
