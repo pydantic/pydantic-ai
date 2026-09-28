@@ -16,3 +16,6 @@ def reserved_usage_limits(limits: UsageLimits | None) -> UsageLimits | None:
     if limits is None or limits.request_limit is None:
         return limits
     return replace(limits, request_limit=max(0, limits.request_limit - 1))
+
+
+_SEEDED_HARNESS_TYPE_ERROR: int = 'not an int'
