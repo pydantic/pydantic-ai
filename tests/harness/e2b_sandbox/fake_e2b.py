@@ -26,14 +26,11 @@ import types
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from functools import wraps
 from pathlib import Path
-from types import CoroutineType
-from typing import IO, TYPE_CHECKING, Literal, ParamSpec, Protocol, TypeVar
+from typing import IO, TYPE_CHECKING, Literal, Protocol
 
 import anyio
 import anyio.lowlevel
-import anyio.to_thread
 from e2b import CommandExitException, CommandResult, FileType, WriteInfo
 from e2b.exceptions import (
     AuthenticationException,
@@ -419,8 +416,8 @@ class _HostCommandHandle(FakeCommandHandle):
             await anyio.sleep(0.01)
         # Killing the sandbox also ends its processes, so the exit alone does not mean it lives.
         self._sandbox.check_alive()
-        stdout, stderr = await anyio.to_thread.run_sync(lambda: (self.stdout, self.stderr))
-        await anyio.to_thread.run_sync(self.close)
+        stdout, stderr = self.stdout, self.stderr
+        self.close()
         if exit_code != 0:
             raise CommandExitException(
                 stderr=stderr, stdout=stdout, exit_code=exit_code, error=f'exit status {exit_code}'
@@ -446,7 +443,7 @@ class _HostCommands(FakeCommands):
         assert background is True, 'the backend always starts commands in the background'
         assert self._control.host_root is not None
         # E2B runs `/bin/bash -l -c`; the host drops `-l` so the developer's login files stay out.
-        out, err = await anyio.to_thread.run_sync(lambda: (tempfile.TemporaryFile(), tempfile.TemporaryFile()))
+        out, err = tempfile.TemporaryFile(), tempfile.TemporaryFile()
         # macOS lacks the `setsid` executable: emulate its group isolation via
         # Popen's POSIX session flag while retaining the same registration shell.
         args = shlex.split(cmd)
@@ -454,19 +451,18 @@ class _HostCommands(FakeCommands):
         if isolated:
             cmd = f'sh -c {shlex.quote(args[3])}'
         try:
-            process = await anyio.to_thread.run_sync(
-                lambda: subprocess.Popen(
-                    ['/bin/bash', '-c', cmd],
-                    start_new_session=isolated,
-                    cwd=cwd or self._control.host_root,
-                    env={**os.environ, **(envs or {})},
-                    stdout=out,
-                    stderr=err,
-                )
+            process = subprocess.Popen(
+                ['/bin/bash', '-c', cmd],
+                start_new_session=isolated,
+                cwd=cwd or self._control.host_root,
+                env={**os.environ, **(envs or {})},
+                stdout=out,
+                stderr=err,
             )
         except BaseException:
             # No handle exists yet to own these files if spawning fails.
-            await anyio.to_thread.run_sync(lambda: (out.close(), err.close()))
+            out.close()
+            err.close()
             raise
         # envd reaps every process it starts; without this, a killed command whose waiter was
         # cancelled stays a zombie that `kill -0` still reports as alive.
@@ -489,20 +485,6 @@ def _host_errors(path: str) -> Generator[None]:
         raise InvalidArgumentException(f"path '{path}' is not a directory") from e
 
 
-_P = ParamSpec('_P')
-_T = TypeVar('_T')
-
-
-def _host_io(fn: Callable[_P, CoroutineType[object, object, _T]]) -> Callable[_P, CoroutineType[object, object, _T]]:
-    """Offload the host-backed fake's filesystem request."""
-
-    @wraps(fn)
-    async def call(*args: _P.args, **kwargs: _P.kwargs) -> _T:
-        return await anyio.to_thread.run_sync(lambda: anyio.run(lambda: fn(*args, **kwargs)))
-
-    return call
-
-
 class _HostFilesystem(FakeFilesystem):
     """Mirrors `sandbox.files` on the host filesystem, so commands and file calls share one tree."""
 
@@ -519,7 +501,6 @@ class _HostFilesystem(FakeFilesystem):
             f'host fake refused {path!r}: it is outside the host root'
         )
 
-    @_host_io
     async def read(
         self,
         path: str,
@@ -535,7 +516,6 @@ class _HostFilesystem(FakeFilesystem):
         with _host_errors(path):
             return bytearray(Path(path).read_bytes())
 
-    @_host_io
     async def write(
         self,
         path: str,
@@ -552,7 +532,6 @@ class _HostFilesystem(FakeFilesystem):
             Path(path).write_bytes(data.encode() if isinstance(data, str) else data)
         return WriteInfo(name=posixpath.basename(path), type=FileType.FILE, path=path)
 
-    @_host_io
     async def get_info(self, path: str, user: str | None = None, request_timeout: float | None = None) -> FakeEntryInfo:
         self.users.append(user)
         del request_timeout
@@ -560,7 +539,6 @@ class _HostFilesystem(FakeFilesystem):
         with _host_errors(path):
             return self._host_entry(path)
 
-    @_host_io
     async def list(
         self,
         path: str,
@@ -576,14 +554,12 @@ class _HostFilesystem(FakeFilesystem):
             children = sorted(Path(path).iterdir())
         return [self._host_entry(posixpath.join(path, child.name)) for child in children]
 
-    @_host_io
     async def exists(self, path: str, user: str | None = None, request_timeout: float | None = None) -> bool:
         self.users.append(user)
         del request_timeout
         await self._check(path)
         return Path(path).exists()
 
-    @_host_io
     async def make_dir(self, path: str, user: str | None = None, request_timeout: float | None = None) -> bool:
         self.users.append(user)
         del request_timeout
@@ -593,7 +569,6 @@ class _HostFilesystem(FakeFilesystem):
         Path(path).mkdir(parents=True, exist_ok=True)
         return created
 
-    @_host_io
     async def remove(self, path: str, user: str | None = None, request_timeout: float | None = None) -> None:
         self.users.append(user)
         del request_timeout
@@ -645,7 +620,7 @@ class FakeSandbox:
         self.killed = True
         for handle in self.commands.handles:
             if isinstance(handle, _HostCommandHandle):
-                await anyio.to_thread.run_sync(handle.close)
+                handle.close()
         return True
 
     def check_alive(self) -> None:
