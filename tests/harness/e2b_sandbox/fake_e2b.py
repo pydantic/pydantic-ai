@@ -119,14 +119,14 @@ class FakeCommandHandle:
         control: FakeE2B,
         sandbox: FakeSandbox,
         *,
-        pid: int,
+        command: str,
         stdout: str,
         stderr: str,
         exit_code: int,
     ) -> None:
         self._control = control
         self._sandbox = sandbox
-        self._pid = pid
+        self._command = command
         self._stdout = stdout
         self._stderr = stderr
         self._exit_code = exit_code
@@ -149,10 +149,7 @@ class FakeCommandHandle:
         self._sandbox.check_alive()
         if self._control.wait_error is not None:
             raise self._control.wait_error
-        if (
-            self._control.command_hangs
-            and 'kill -TERM ' not in self._sandbox.commands.calls[self._pid - self._control.next_pid].command
-        ):
+        if self._control.command_hangs and 'kill -TERM ' not in self._command:
             await anyio.sleep_forever()
         if self._exit_code != 0:
             # The real SDK raises on a non-zero exit instead of returning a result.
@@ -205,7 +202,7 @@ class FakeCommands:
         handle = FakeCommandHandle(
             self._control,
             self._sandbox,
-            pid=self._control.next_pid + len(self.handles),
+            command=cmd,
             stdout=stdout,
             stderr=stderr,
             exit_code=exit_code,
@@ -378,11 +375,12 @@ class _HostCommandHandle(FakeCommandHandle):
         self,
         control: FakeE2B,
         sandbox: FakeSandbox,
+        command: str,
         process: subprocess.Popen[bytes],
         out: IO[bytes],
         err: IO[bytes],
     ) -> None:
-        super().__init__(control, sandbox, pid=process.pid, stdout='', stderr='', exit_code=0)
+        super().__init__(control, sandbox, command=command, stdout='', stderr='', exit_code=0)
         self.process = process
         self._out = out
         self._err = err
@@ -462,7 +460,7 @@ class _HostCommands(FakeCommands):
         # envd reaps every process it starts; without this, a killed command whose waiter was
         # cancelled stays a zombie that `kill -0` still reports as alive.
         threading.Thread(target=process.wait, daemon=True).start()
-        handle = _HostCommandHandle(self._control, self._sandbox, process, out, err)
+        handle = _HostCommandHandle(self._control, self._sandbox, cmd, process, out, err)
         self.handles.append(handle)
         return handle
 
@@ -704,7 +702,6 @@ class FakeE2B:
     read_error: Exception | None = None
     is_running_error: Exception | None = None
     sandbox_is_running: bool = True
-    next_pid: int = 4242
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 
@@ -783,6 +780,6 @@ if TYPE_CHECKING:
     _fake_entry_conforms: _EntryInfoSurface = FakeEntryInfo(name='n', path='/n', type=FileType.FILE, size=0)
     _real_entry_conforms: _EntryInfoSurface = e2b.EntryInfo.__new__(e2b.EntryInfo)
     _fake_handle_conforms: _CommandHandleSurface = FakeCommandHandle(
-        FakeE2B(), FakeSandbox(FakeE2B(), 'sbx'), pid=1, stdout='', stderr='', exit_code=0
+        FakeE2B(), FakeSandbox(FakeE2B(), 'sbx'), command='true', stdout='', stderr='', exit_code=0
     )
     _real_handle_conforms: _CommandHandleSurface = e2b.AsyncCommandHandle.__new__(e2b.AsyncCommandHandle)
