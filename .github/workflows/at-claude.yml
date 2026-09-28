@@ -41,10 +41,10 @@ jobs:
       - name: Get PR info
         if: github.event.issue.pull_request || github.event.pull_request
         id: pr-info
-        # Review events record the commit the reviewer was looking at, so pin to
-        # it rather than the live PR head, which the author may have moved since.
-        # issue_comment events carry no commit, so they fall back to the live
-        # head and at-claude-fork checks it against the comment time.
+        # Review events record the commit the review was made on, so use it
+        # rather than the current PR head. issue_comment events carry no commit,
+        # so they use the current head, which at-claude-fork compares with the
+        # comment time.
         run: |
           PR_NUMBER=${{ github.event.pull_request.number || github.event.issue.number }}
           PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
@@ -118,7 +118,7 @@ jobs:
     # Least privilege: on forks Claude may only read code and comment (see the
     # restricted --allowedTools below — no push / pr create), so this job runs
     # with read-only `contents` and passes this job's token to the action (see
-    # `github_token` below). It never gets write access to repository code.
+    # `github_token` below).
     permissions:
       contents: read
       pull-requests: write
@@ -127,12 +127,10 @@ jobs:
     steps:
       - name: Reject commits newer than the @claude comment
         # issue_comment events carry no commit SHA, so get-pr-info reads the PR
-        # head after the comment was posted. If the author pushed in between,
-        # Claude would run on code the maintainer never saw (TOCTOU). The
-        # committer date is set by the author, so this narrows the race rather
-        # than closing it; the read-only permissions and tool allowlist below
-        # remain the real boundary. Every lookup and conversion is a standalone
-        # assignment so a failure stops the job instead of passing the check.
+        # head after the comment was posted. If new commits arrived in between,
+        # ask for a fresh comment so Claude answers about the code the comment
+        # was written against. Each lookup is a standalone assignment so a
+        # failed lookup stops the job.
         if: github.event_name == 'issue_comment'
         run: |
           commit_at=$(gh api "repos/${{ github.repository }}/commits/${HEAD_SHA}" --jq '.commit.committer.date')
@@ -179,8 +177,8 @@ jobs:
         # emits a `diff --git a/<old> b/<new>` header for every changed file,
         # including renames, so matching those lines cannot miss a path.
         #
-        # The same pinned diff is saved for Claude, since `gh pr diff` would show
-        # the live PR rather than the checked-out commit.
+        # The same diff is saved for Claude, since `gh pr diff` would show the
+        # current PR rather than the checked-out commit.
         run: |
           gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' > "$RUNNER_TEMP/pr.diff"
 
@@ -206,18 +204,16 @@ jobs:
         run: sudo apt-get install -y bubblewrap
 
       # Passing `prompt` puts the action in agent mode. In tag mode (an @claude
-      # mention with no prompt) it fetches the live `pull/<N>/head` and checks
-      # it out, replacing the pinned commit above; agent mode leaves the
-      # checkout alone, so Claude reads exactly the commit checked above.
+      # mention with no prompt) it fetches the current `pull/<N>/head` and
+      # checks it out over the commit above; agent mode keeps the checkout, so
+      # Claude reads the commit selected in get-pr-info.
       #
-      # `github_token` makes the action use this job's read-only token instead
-      # of exchanging OIDC for its App token, which always requests
-      # `contents: write`. `--setting-sources user` skips the repo's
-      # `.claude/settings.json`, whose allow list (`make`, `uv run`, ...) is
-      # meant for trusted branches (it also skips the repo CLAUDE.md), and
-      # `--disallowedTools` denies those commands even if a settings source
-      # allows them. `rg` is denied because `rg --pre <cmd>` runs a command;
-      # the built-in Grep tool covers searching.
+      # `github_token` makes the action use this job's token and permissions
+      # instead of its App token. This job only reads code and comments, so
+      # `--setting-sources user` skips the repo's `.claude/settings.json` (and
+      # CLAUDE.md), whose allow list covers building and running the project,
+      # and `--disallowedTools` keeps those commands off. Searching uses the
+      # built-in Grep tool.
       - uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
