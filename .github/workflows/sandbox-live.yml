@@ -48,8 +48,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # Resolves `all`, and rejects a name that is not a provider in this tree, so the
-      # matrix below only ever sees names the script knows.
+      # Resolves `all`, drops repeated names, and rejects a name that is not a provider in
+      # this tree, so the matrix below starts each known provider once.
       - id: plan
         env:
           REQUESTED: ${{ inputs.providers }}
@@ -59,7 +59,7 @@ jobs:
           import json, os, sys
           present = json.loads(os.environ["PRESENT"])
           requested = os.environ["REQUESTED"]
-          providers = present if requested == "all" else json.loads(requested)
+          providers = present if requested == "all" else list(dict.fromkeys(json.loads(requested)))
           unknown = [name for name in providers if name not in present]
           if unknown or not providers:
               sys.exit(f"No live tier to run for {requested!r}; providers in this tree: {present}")
