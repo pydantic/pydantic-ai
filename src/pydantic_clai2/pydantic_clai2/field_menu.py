@@ -82,9 +82,9 @@ def shown(value: JsonValue) -> str:
     return value if isinstance(value, str) else json.dumps(value)
 
 
-def first_error(exc: ValidationError) -> str:
+def first_error(exc: ValueError) -> str:
     """The first validation message, which is all a one-line hint has room for."""
-    return exc.errors()[0]['msg']
+    return exc.errors()[0]['msg'] if isinstance(exc, ValidationError) else str(exc)
 
 
 class FieldMenu:

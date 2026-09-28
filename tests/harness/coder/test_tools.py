@@ -8,18 +8,19 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 from .._recording_durability import RecordingDurability
-from .._tool_calls import call_tool
+from .._tool_calls import call_tool, call_tools
 
 
 @dataclass
@@ -147,8 +148,20 @@ class TestCoder:
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
         assert len(default.split()) < 180
         assert all(principle in default for principle in ('DRY', 'YAGNI', 'SOLID'))
+        assert 'delete any scratch files you created' in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
+
+    async def test_file_tool_mistakes_do_not_end_the_run(self, tmp_path: Path) -> None:
+        """Consecutive denied writes come back as retries until `MAX_FILE_TOOL_RETRIES` is spent."""
+        denied: tuple[str, dict[str, object]] = ('write_file', {'path': '/elsewhere/probe.py', 'content': 'x'})
+        coder = Coder[None](repo_context=False, sub_agents=False)
+        workspace = LocalWorkspaceBackend(working_dir=tmp_path)
+        results = await call_tools([coder], [denied] * MAX_FILE_TOOL_RETRIES, workspace=workspace)
+        assert len(results) == MAX_FILE_TOOL_RETRIES
+        assert all('the file tools only work inside it' in result for result in results)
+        with pytest.raises(UnexpectedModelBehavior, match=f'exceeded max retries count of {MAX_FILE_TOOL_RETRIES}'):
+            await call_tools([coder], [denied] * (MAX_FILE_TOOL_RETRIES + 1), workspace=workspace)
 
     @pytest.mark.parametrize(
         ('unrestricted', 'files'),
