@@ -410,18 +410,16 @@ class TestRun:
         removed = fake_e2b.sandboxes[0].files.removed
         assert [path.rsplit('-', 1)[0] for path in removed] == ['/tmp/pydantic-e2b-pgid']
 
-    async def test_command_uses_utf8_locale_unless_overridden(self, fake_e2b: FakeE2B) -> None:
+    async def test_command_env_adds_nothing_of_its_own(self, fake_e2b: FakeE2B) -> None:
+        # E2B decodes output as UTF-8 whatever the locale, so no locale is forced on commands.
         backend = await started()
         await backend.run(['printf', 'é'])
-        envs = fake_e2b.sandboxes[0].commands.calls[-1].envs
-        assert envs is not None and envs['LC_ALL'] == 'C.UTF-8'
-        await backend.run(['true'], env={'LC_ALL': 'en_US.UTF-8'})
-        assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'LC_ALL': 'en_US.UTF-8'}
+        assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {}
 
     async def test_env_reaches_the_command(self, fake_e2b: FakeE2B) -> None:
         backend = await started()
         await backend.run(['env'], env={'FOO': 'bar'})
-        assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'LC_ALL': 'C.UTF-8', 'FOO': 'bar'}
+        assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'FOO': 'bar'}
 
     async def test_configured_env_reaches_an_attached_sandbox_under_the_commands_own(self, fake_e2b: FakeE2B) -> None:
         # Creation `envs` never reach a sandbox made elsewhere, so the configured env rides on
@@ -430,11 +428,7 @@ class TestRun:
             ref=WorkspaceRef(provider='e2b', id='sbx-keep'), env={'BASE': 'configured', 'SHARED': 'configured'}
         )
         await backend.run(['env'], env={'SHARED': 'command'})
-        assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {
-            'LC_ALL': 'C.UTF-8',
-            'BASE': 'configured',
-            'SHARED': 'command',
-        }
+        assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'BASE': 'configured', 'SHARED': 'command'}
 
     async def test_commands_start_in_the_configured_working_dir(self, fake_e2b: FakeE2B) -> None:
         # E2B has no create-time working directory, so the backend applies it per command.

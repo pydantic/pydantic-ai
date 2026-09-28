@@ -177,7 +177,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
-| `env` | Environment variables every command gets. Default: `None`. Commands default to `LC_ALL=C.UTF-8` (override it with `env`); images without that locale fall back to the C locale. Nothing from your machine's environment reaches the sandbox. |
+| `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. |
 
 Commands run on the asyncio event loop only: the E2B SDK reads their output with asyncio tasks, so under Trio `run` raises `UserError`.
 

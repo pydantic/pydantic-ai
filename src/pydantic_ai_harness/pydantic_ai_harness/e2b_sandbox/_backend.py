@@ -567,8 +567,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 handle = await sandbox.commands.run(
                     launch,
                     background=True,
-                    # Explicit caller settings take precedence over the portable UTF-8 default.
-                    envs={'LC_ALL': 'C.UTF-8', **(self._env or {}), **(env or {})},
+                    envs={**(self._env or {}), **(env or {})},
                     cwd=self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
                     user=self._user,
