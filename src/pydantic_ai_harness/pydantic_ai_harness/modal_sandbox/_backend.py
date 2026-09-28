@@ -301,7 +301,12 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # Modal runs its clients on its own event-loop thread.
             await anyio.to_thread.run_sync(importlib.import_module, 'modal')
             ref = self._ref
-            sandbox = await self._attach(ref.id) if ref is not None else await self._create()
+            if ref is not None:
+                sandbox = await self._attach(ref.id)
+            else:
+                sandbox = await self._create()
+                # Logged at creation, so the ID survives whatever later ends the run.
+                logger.info('Created Modal sandbox %s', sandbox.object_id)
             self._sandbox = sandbox
             self._ref = WorkspaceRef(provider='modal', id=sandbox.object_id)
             return sandbox

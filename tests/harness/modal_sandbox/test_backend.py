@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import time
 import types
@@ -44,6 +45,15 @@ async def test_destroy_ref_does_not_attach_or_create(fake_modal: FakeModal) -> N
     assert fake_modal.attach_ids == [ref.id]
     assert fake_modal.owned_creates == 1
     assert fake_modal.sandboxes[0].shutting_down
+
+
+async def test_create_logs_the_new_sandbox_id(fake_modal: FakeModal, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=_backend.__name__):
+        owner = await started()
+        assert owner.ref is not None
+        # Attaching to an existing sandbox creates nothing, so it logs nothing.
+        await ModalSandboxBackend(ref=owner.ref).get_sandbox()
+    assert [record.getMessage() for record in caplog.records] == [f'Created Modal sandbox {owner.ref.id}']
 
 
 async def test_auth_failure_classifies_reason_without_echoing_secret(fake_modal: FakeModal) -> None:
