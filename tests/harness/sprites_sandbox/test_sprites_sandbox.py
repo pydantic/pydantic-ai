@@ -45,8 +45,6 @@ from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBa
 from .conftest import live_token
 from .fake_sprites import SpriteTransport
 
-pytestmark = pytest.mark.anyio
-
 
 def context(conversation: str = 'chat') -> RunContext[None]:
     return RunContext(deps=None, model=TestModel(), usage=RunUsage(), conversation_id=conversation, run_id='run')
