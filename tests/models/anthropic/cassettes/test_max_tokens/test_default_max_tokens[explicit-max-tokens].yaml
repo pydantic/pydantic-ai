@@ -58,7 +58,7 @@ interactions:
         - type: thinking
           thinking: |-
             17 * 23 = ?
-            
+
             Let me calculate this step by step:
             17 * 23 = 17 * 20 + 17 * 3
             = 340 + 51
