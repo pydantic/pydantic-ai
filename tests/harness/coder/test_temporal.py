@@ -27,7 +27,7 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
@@ -97,6 +97,47 @@ class CoderWorkflow:
         return (await coder_agent.run(prompt)).output
 
 
+def _delegate(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """The parent delegates a write to `self`; the delegate writes the file; each then answers with its tool result."""
+    first = messages[0].parts[-1]
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(returns[-1].model_response_str())])
+    if isinstance(first, UserPromptPart) and first.content == 'Delegate it':
+        return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'Write it'})])
+    return ModelResponse(
+        parts=[ToolCallPart('write_file', {'path': 'delegated.txt', 'content': 'from the delegate\n'})]
+    )
+
+
+async def _stream_delegate(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    for part in _delegate(messages, info).parts:
+        if isinstance(part, TextPart):
+            yield part.content
+        else:
+            assert isinstance(part, ToolCallPart)
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+
+delegating_agent = Agent(
+    FunctionModel(_delegate, stream_function=_stream_delegate),
+    name='delegating_coder_agent',
+    deps_type=type(None),
+    capabilities=[
+        LocalWorkspace[None](WORK),
+        Coder[None](),
+        TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class DelegatingWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await delegating_agent.run(prompt)).output
+
+
 @pytest.fixture(scope='module')
 def anyio_backend() -> str:
     """Temporal's Python SDK runs on asyncio."""
@@ -154,6 +195,27 @@ async def test_file_and_shell_tools_run_as_activities(client: Client, workspace:
     assert edited == 'Edited notes.txt.'
     assert read.endswith('1\thello from temporal\n')
     assert shell.startswith('hello from temporal\ndone\n')
+
+
+async def test_delegation_to_self_runs_in_the_workflow(client: Client, workspace: Path) -> None:
+    """An activity has no `ctx.model` to run an agent on, so the delegate to `self` runs in the workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DelegatingWorkflow],
+        plugins=[AgentPlugin(delegating_agent)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_SANDBOXED),
+    ):
+        output = await client.execute_workflow(
+            DelegatingWorkflow.run,
+            'Delegate it',
+            id='test_coder_temporal_delegation',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=60),
+        )
+
+    assert (workspace / 'delegated.txt').read_text() == 'from the delegate\n'
+    assert 'Wrote 18 chars (1 lines) to delegated.txt.' in output
 
 
 def test_workspace_capabilities_register_their_toolsets() -> None:
