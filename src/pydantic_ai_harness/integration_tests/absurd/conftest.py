@@ -62,9 +62,15 @@ async def async_conn(db_dsn: str) -> AsyncIterator[AsyncConnection[TupleRow]]:
 
 
 @pytest.fixture
-async def absurd(async_conn: AsyncConnection[TupleRow]) -> AsyncIterator[AsyncAbsurd]:
-    """Yield an Absurd client with an isolated queue."""
-    client = AsyncAbsurd(async_conn, queue_name=f'test_{uuid4().hex[:8]}')
+def queue_name() -> str:
+    """A queue name unique to the test, so runs on a kept database cannot collide."""
+    return f'test_{uuid4().hex[:8]}'
+
+
+@pytest.fixture
+async def absurd(async_conn: AsyncConnection[TupleRow], queue_name: str) -> AsyncIterator[AsyncAbsurd]:
+    """Yield an Absurd client on its own queue, dropped after the test."""
+    client = AsyncAbsurd(async_conn, queue_name=queue_name)
     await client.create_queue()
     try:
         yield client

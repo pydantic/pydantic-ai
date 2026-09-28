@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Literal
-from uuid import uuid4
 
 import pytest
 from absurd_sdk import AsyncAbsurd, AsyncTaskContext, JsonValue
@@ -136,18 +135,11 @@ EXPECTED_OUTPUT = {
 }
 
 
-async def _queue(
-    async_conn: AsyncConnection[TupleRow], queue: str, agent: Agent[object, WorkflowOutput]
-) -> AsyncAbsurd:
-    absurd = AsyncAbsurd(async_conn, queue_name=queue)
-    await absurd.create_queue()
-
+def _register(absurd: AsyncAbsurd, agent: Agent[object, WorkflowOutput]) -> None:
     @absurd.register_task(name='workflow')
     async def workflow(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:
         result = await agent.run('Run the SRE investigation now.')
         return result.output.model_dump(mode='json')
-
-    return absurd
 
 
 @pytest.mark.parametrize('case', CASES)
@@ -155,11 +147,10 @@ class TestPydanticAiAbsurdCheckpoints:
     """Checkpoints recorded by `pydantic-ai-absurd` 0.8.0 match the ones written here."""
 
     async def test_resumes_a_run_recorded_by_pydantic_ai_absurd(
-        self, case: str, async_conn: AsyncConnection[TupleRow]
+        self, case: str, absurd: AsyncAbsurd, async_conn: AsyncConnection[TupleRow], queue_name: str
     ) -> None:
         executions: list[str] = []
-        queue = f'compat_{uuid4().hex[:8]}'
-        absurd = await _queue(async_conn, queue, _agent(*CASES[case], executions))
+        _register(absurd, _agent(*CASES[case], executions))
         spawned = await absurd.spawn(
             'workflow', None, max_attempts=2, retry_strategy={'kind': 'fixed', 'base_seconds': 0}
         )
@@ -167,10 +158,12 @@ class TestPydanticAiAbsurdCheckpoints:
         for name, state in GOLDEN[case].items():
             await async_conn.execute(
                 'SELECT absurd.set_task_checkpoint_state(%s, %s, %s, %s, %s)',
-                (queue, spawned['task_id'], name, json.dumps(state), claimed['run_id']),
+                (queue_name, spawned['task_id'], name, json.dumps(state), claimed['run_id']),
             )
         # The recording worker died after its last checkpoint; the next attempt resumes the task.
-        await async_conn.execute('SELECT absurd.fail_run(%s, %s, %s)', (queue, claimed['run_id'], '{"type": "crash"}'))
+        await async_conn.execute(
+            'SELECT absurd.fail_run(%s, %s, %s)', (queue_name, claimed['run_id'], '{"type": "crash"}')
+        )
         await absurd.work_batch(batch_size=1)
 
         result = await absurd.fetch_task_result(spawned['task_id'])
@@ -180,15 +173,14 @@ class TestPydanticAiAbsurdCheckpoints:
         assert executions == (['report_finding:retry'] if CASES[case][1] else [])
 
     async def test_fresh_run_writes_the_same_checkpoints(
-        self, case: str, async_conn: AsyncConnection[TupleRow]
+        self, case: str, absurd: AsyncAbsurd, async_conn: AsyncConnection[TupleRow], queue_name: str
     ) -> None:
-        queue = f'compat_{uuid4().hex[:8]}'
-        absurd = await _queue(async_conn, queue, _agent(*CASES[case], []))
+        _register(absurd, _agent(*CASES[case], []))
         await absurd.spawn('workflow', None)
         await absurd.work_batch(batch_size=1)
 
         cursor = await async_conn.execute(
-            sql.SQL('SELECT checkpoint_name, state FROM absurd.{}').format(sql.Identifier(f'c_{queue}'))
+            sql.SQL('SELECT checkpoint_name, state FROM absurd.{}').format(sql.Identifier(f'c_{queue_name}'))
         )
         stored = {name: state for name, state in await cursor.fetchall()}
         golden = GOLDEN[case]
