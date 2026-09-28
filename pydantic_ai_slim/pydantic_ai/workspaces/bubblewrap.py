@@ -48,7 +48,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
             *('--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'),
             *('--bind', working_dir, working_dir),
             *self._bwrap_args,
-            *('--chdir', working_dir, '--'),
+            *('--chdir', working_dir),
         ]
 
     async def run(
@@ -72,10 +72,12 @@ class BubblewrapWorkspace(WrapperWorkspace):
             # Through `sh`, a missing program exits 127 as the contract says, not with `bwrap`'s own 1.
             argv = ['sh', '-c', 'exec "$@"', 'sh', *command]
         sandbox = await self._sandbox()
-        result = await self.wrapped.run([*sandbox, *argv], env=env, timeout=timeout)
+        # Set inside the sandbox, not on `bwrap` itself, so a `PATH` or `LD_PRELOAD` can't swap out `bwrap`.
+        env_args = [arg for name, value in (env or {}).items() for arg in ('--setenv', name, value)]
+        result = await self.wrapped.run([*sandbox, *env_args, '--', *argv], timeout=timeout)
         if result.exit_code != 0 and not self._sandbox_works:
             # `bwrap` exits like the command when it can't start one, so tell the two apart once.
-            probe = await self.wrapped.run([*sandbox, 'true'])
+            probe = await self.wrapped.run([*sandbox, '--', 'true'])
             if probe.exit_code != 0:
                 raise WorkspaceUnavailableError(
                     'bubblewrap could not start a sandbox; install `bwrap` on the host that runs the commands '

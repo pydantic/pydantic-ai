@@ -62,9 +62,26 @@ async def test_commands_run_in_bwrap_on_the_wrapped_host(tools: FakeRemoteTools,
 
     assert (argv.exit_code, argv.stdout, shell.stdout) == (0, 'a b', 'hi')
     assert tools.bwrap_calls == [
-        f'{_sandbox_args(working_dir)} --tmpfs /secrets --chdir {working_dir} -- sh -c exec "$@" sh printf %s a b',
-        f'{_sandbox_args(working_dir)} --tmpfs /secrets --chdir {working_dir} -- sh -c printf "%s" "$GREETING"',
+        f'{_sandbox_args(working_dir)} --tmpfs /secrets --chdir {working_dir} --setenv GREETING hi -- '
+        'sh -c exec "$@" sh printf %s a b',
+        f'{_sandbox_args(working_dir)} --tmpfs /secrets --chdir {working_dir} --setenv GREETING hi -- '
+        'sh -c printf "%s" "$GREETING"',
     ]
+
+
+async def test_the_call_env_reaches_only_the_sandboxed_command(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """A model-controlled `PATH` must not pick which `bwrap` runs."""
+    impostor = tmp_path / 'impostor'
+    impostor.mkdir()
+    (impostor / 'bwrap').write_text(f'#!/bin/sh\ntouch {impostor}/escaped\n')
+    (impostor / 'bwrap').chmod(0o755)
+    workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+
+    result = await workspace.run(['sh', '-c', 'printf %s "$PATH"'], env={'PATH': f'{impostor}:{os.environ["PATH"]}'})
+
+    assert result.stdout.startswith(str(impostor))
+    assert not (impostor / 'escaped').exists()
+    assert len(tools.bwrap_calls) == 1
 
 
 async def test_network_is_shared_only_when_asked(tools: FakeRemoteTools, tmp_path: Path) -> None:

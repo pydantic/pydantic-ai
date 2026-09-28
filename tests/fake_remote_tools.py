@@ -27,7 +27,10 @@ printf '%s\\n' "$*" >> "$bin/bwrap-calls"
 for arg in "$@"; do
     if [ "$arg" = --fake-fail ]; then echo 'bwrap: setting up uid map: Permission denied' >&2; exit 1; fi
 done
-while [ "$1" != -- ]; do shift; done
+while [ "$1" != -- ]; do
+    if [ "$1" = --setenv ]; then export "$2=$3"; shift 2; fi
+    shift
+done
 shift
 exec "$@"
 """
