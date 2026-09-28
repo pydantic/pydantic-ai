@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces.ssh import _STOP  # pyright: ignore[reportPrivateUsage]
 
 from .fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
 
@@ -110,16 +112,30 @@ async def test_stopping_a_command_kills_its_process_group_on_the_host(tools: Fak
     remote = subprocess.Popen(['sh', '-c', f': {tag}; sleep 60; :'], start_new_session=True)
     bystander = subprocess.Popen(['sh', '-c', ': __pydantic_ai_ssh_job_other; sleep 60; :'], start_new_session=True)
     try:
-        with anyio.fail_after(10):
-            await SSHWorkspaceBackend('box')._stop(tag)  # pyright: ignore[reportPrivateUsage]
-            await anyio.to_thread.run_sync(remote.wait)
+        await SSHWorkspaceBackend('box')._stop(tag)  # pyright: ignore[reportPrivateUsage]
 
+        # `wait` in a thread can't be cancelled, so it carries its own deadline.
+        assert await anyio.to_thread.run_sync(remote.wait, 10) != 0
         assert bystander.poll() is None
     finally:
         remote.kill()
         bystander.kill()
         remote.wait()
         bystander.wait()
+
+
+@pytest.mark.parametrize('shell', [path for name in ('dash', 'bash', 'sh') if (path := shutil.which(name))])
+async def test_the_stop_script_works_in_every_posix_shell(shell: str) -> None:
+    """Remote hosts run it with their own `sh`, which is dash on Debian and Ubuntu."""
+    tag = '__pydantic_ai_ssh_job_fedcba9876543210'
+    remote = subprocess.Popen([shell, '-c', f': {tag}; sleep 60; :'], start_new_session=True)
+    try:
+        await anyio.run_process([shell, '-c', _STOP, shell, tag])
+
+        assert await anyio.to_thread.run_sync(remote.wait, 10) != 0
+    finally:
+        remote.kill()
+        remote.wait()
 
 
 async def test_a_login_banner_stays_out_of_the_output(tools: FakeRemoteTools) -> None:
