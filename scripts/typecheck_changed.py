@@ -332,6 +332,16 @@ def _check_in_ci(run: _BudgetedRunner) -> int:
         return _check_everything(run, 'the Pyright file list is not one this script can reproduce')
     universe = _tracked_files()
     tracked = set(universe)
+    # A file directly under an execution environment root is a top-level module to every file in that
+    # environment, so naming modules from those roots too gives a changed `tests/anyio.py` an edge
+    # from everything that imports `anyio`. Packages still come from the import roots alone, which
+    # keeps the relative imports under `tests/` resolving; see `_Project.import_roots`.
+    roots = sorted({*project.import_roots, *project.environment_roots}, key=len, reverse=True)
+    modules = _module_map(universe, roots)
+    claimants: defaultdict[str, set[str]] = defaultdict(set)
+    for path in universe:
+        for name in _module_names(path, roots):
+            claimants[name].add(path)
     for path in changed:
         # `classify` only lists Pyright inputs, so a file that is not Python is configuration,
         # dependencies or the command that runs Pyright, and reaches every file.
@@ -340,12 +350,11 @@ def _check_in_ci(run: _BudgetedRunner) -> int:
         # A deleted or moved file's importers are found only through the graph it left.
         if path not in tracked:
             return _check_everything(run, f'`{path}` was deleted or moved')
-    # A file directly under an execution environment root is a top-level module to every file in that
-    # environment, so naming modules from those roots too gives a changed `tests/anyio.py` an edge
-    # from everything that imports `anyio`. Packages still come from the import roots alone, which
-    # keeps the relative imports under `tests/` resolving; see `_Project.import_roots`.
-    roots = sorted({*project.import_roots, *project.environment_roots}, key=len, reverse=True)
-    modules = _module_map(universe, roots)
+        # The map keeps one file per module name, which need not be the one Pyright resolves, so a
+        # changed file that shares its name with another could have importers the graph misses.
+        shared = next((name for name in _module_names(path, roots) if len(claimants[name]) > 1), None)
+        if shared is not None:
+            return _check_everything(run, f'`{path}` shares the module name `{shared}` with another file')
     imports = {path: _imports_of(path, modules, project.import_roots) for path in universe}
     reached = _reached(changed, [], {}, imports)
     checkable = [path for path in universe if _is_checked(path, project)]
@@ -368,8 +377,11 @@ def _check_in_ci(run: _BudgetedRunner) -> int:
     if paths:
         skipped = 'the rest of the project' if checked_harness else f'`{"`, `".join(_HARNESS_SCOPE)}`'
         print(f'Type-checking {len(paths)} of {len(checkable)} files: no changed file reaches {skipped}.')
+    # The same options `make typecheck-pyright` passes.
     threads = os.environ.get('PYRIGHT_THREADS', '')
-    return run(*_pyright_commands(['--threads', threads] if threads else [], paths, nested))
+    version = os.environ.get('PYRIGHT_PYTHON', '')
+    options = [*(['--threads', threads] if threads else []), *(['--pythonversion', version] if version else [])]
+    return run(*_pyright_commands(options, paths, nested))
 
 
 def _check_everything(run: Runner, reason: str) -> int:

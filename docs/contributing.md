@@ -164,10 +164,9 @@ Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a c
 or a new top-level module that could shadow an installed one; or a change reaching more than half the
 project. It then runs Pyright over every tracked file Pyright reports on, minus the `tests/` files
 that did not change; a first run has no record to compare them against, so it checks all of them.
-Only three things hand the whole project to `make typecheck-pyright`: `CI`, unless it can skip a
-side as described above, an interpreter older
-than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright configuration it
-cannot reproduce.
+Only three things hand the whole project to `make typecheck-pyright`: `CI` (unless it can skip a
+side, as above), an interpreter older than Python 3.11, which is what it needs to read
+`pyproject.toml`, and a Pyright configuration it cannot reproduce.
 
 A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
 The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less

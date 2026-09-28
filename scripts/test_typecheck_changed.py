@@ -522,13 +522,13 @@ def test_ci_skips_the_harness_when_a_change_does_not_reach_it(
     assert 'no changed file reaches `src/pydantic_ai_harness`, `src/pydantic_clai2`' in capsys.readouterr().out
 
 
-def test_ci_checks_everything_when_a_change_reaches_both_sides(project: Path, monkeypatch: pytest.MonkeyPatch):
+def test_ci_checks_everything_when_a_core_change_reaches_the_harness(project: Path, monkeypatch: pytest.MonkeyPatch):
     _add_harness(project)
 
     assert _typecheck_in_ci(monkeypatch, 'pkg_src/pkg/leaf.py').commands == _FULL_RUN
 
 
-def test_ci_checks_everything_for_a_change_on_both_sides(project: Path, monkeypatch: pytest.MonkeyPatch):
+def test_ci_checks_everything_when_both_sides_changed(project: Path, monkeypatch: pytest.MonkeyPatch):
     _add_harness(project)
 
     recorder = _typecheck_in_ci(monkeypatch, 'pkg_src/pkg/aside.py', 'tests/harness/test_cap.py')
@@ -545,7 +545,7 @@ def test_ci_checks_everything_for_a_change_the_graph_cannot_place(
     assert _typecheck_in_ci(monkeypatch, changed, 'pkg_src/pkg/aside.py').commands == _FULL_RUN
 
 
-def test_ci_reaches_what_a_new_top_level_module_shadows(project: Path, monkeypatch: pytest.MonkeyPatch):
+def test_ci_reaches_the_importers_of_a_module_under_an_environment_root(project: Path, monkeypatch: pytest.MonkeyPatch):
     # `tests` is an execution environment root, so `tests/shadow.py` is the `shadow` that
     # `tests/harness/test_cap.py` imports.
     _add_harness(project, environment_root=True)
@@ -562,6 +562,39 @@ def test_ci_hands_pyright_its_threads_on_a_scoped_run(project: Path, monkeypatch
     recorder = _typecheck_in_ci(monkeypatch, 'tests/harness/test_cap.py')
 
     assert recorder.commands == [[*_PYRIGHT, '--threads', 'auto', *_HARNESS_FILES]]
+
+
+def test_ci_checks_a_nested_project_that_imports_the_harness(project: Path, monkeypatch: pytest.MonkeyPatch):
+    # As `.github/scripts` imports `pydantic_ai_harness`.
+    _add_harness(project)
+    _add_nested_project(project)
+    _write(project, '.github/scripts/tool.py', 'from harness.cap import CAP\n\nTOOL = CAP\n')
+    _stage(project)
+
+    recorder = _typecheck_in_ci(monkeypatch, 'src/pydantic_ai_harness/harness/cap.py')
+
+    assert recorder.commands == [[*_PYRIGHT, *_HARNESS_FILES], _NESTED_RUN]
+
+
+@pytest.mark.parametrize('duplicate', ['pkg_src/pkg/aside.pyi', 'tests/pkg/aside.py'])
+def test_ci_checks_everything_when_a_changed_module_shares_its_name(
+    project: Path, monkeypatch: pytest.MonkeyPatch, duplicate: str
+):
+    # A stub, or a module under an execution environment root, answers to the same name.
+    _add_harness(project, environment_root=True)
+    _write(project, duplicate, 'ASIDE: int\n')
+    _stage(project)
+
+    assert _typecheck_in_ci(monkeypatch, 'pkg_src/pkg/aside.py').commands == _FULL_RUN
+
+
+def test_ci_hands_pyright_the_requested_python_version_on_a_scoped_run(project: Path, monkeypatch: pytest.MonkeyPatch):
+    _add_harness(project)
+    monkeypatch.setenv('PYRIGHT_PYTHON', '3.12')
+
+    recorder = _typecheck_in_ci(monkeypatch, 'tests/harness/test_cap.py')
+
+    assert recorder.commands == [[*_PYRIGHT, '--pythonversion', '3.12', *_HARNESS_FILES]]
 
 
 def test_ci_checks_only_a_reached_nested_project(project: Path, monkeypatch: pytest.MonkeyPatch):

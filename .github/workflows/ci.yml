@@ -317,7 +317,8 @@ jobs:
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
-          # 156 s, so 200 keeps the same headroom.
+          # 156 s, so 200 keeps the same headroom. A run that skips the harness packages or the rest
+          # of the project gets the same budget, so a slowdown there may first fail on `main`.
           PYRIGHT_TIME_BUDGET: "200"
           PYRIGHT_CHANGED_FILES: ${{ needs.classify.outputs.pyright_changed_files }}
           UV_NO_SYNC: "1"
