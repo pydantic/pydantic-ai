@@ -36,31 +36,59 @@ DEVICE = {
 TOKEN = {'access_token': 'secret-access-token', 'token_type': 'bearer', 'scope': 'read:user'}
 
 
+def scrub_device_grant_request(request: RawRequest) -> RawRequest:
+    """Keep the device grant's one-time codes out of recorded requests."""
+    request = cassette_hooks.before_record_request(request)
+    if request.body is not None:
+        form = parse_qs(request.body.decode())
+        for key in ('device_code', 'refresh_token'):
+            if key in form:
+                form[key] = ['scrubbed']
+        request.body = urlencode(form, doseq=True).encode()
+    return request
+
+
+def scrub_device_grant_response(response: RawResponse) -> RawResponse:
+    """Keep the device grant's codes and tokens out of recorded responses."""
+    response = cassette_hooks.before_record_response(response)
+    if response.body is not None:
+        data: dict[str, object] = json.loads(response.body)
+        for key in ('device_code', 'user_code', 'access_token', 'refresh_token'):
+            if key in data:
+                data[key] = 'scrubbed'
+        response.body = json.dumps(data).encode()
+    return response
+
+
 @pytest.fixture(scope='module')
 def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
-    """Keep the device grant's one-time codes and tokens out of the cassettes."""
+    return {
+        **vcr_config,
+        'before_record_request': scrub_device_grant_request,
+        'before_record_response': scrub_device_grant_response,
+    }
 
-    def scrub_request(request: RawRequest) -> RawRequest:
-        request = cassette_hooks.before_record_request(request)
-        if request.body is not None:
-            form = parse_qs(request.body.decode())
-            for key in ('device_code', 'refresh_token'):
-                if key in form:
-                    form[key] = ['scrubbed']
-            request.body = urlencode(form, doseq=True).encode()
-        return request
 
-    def scrub_response(response: RawResponse) -> RawResponse:
-        response = cassette_hooks.before_record_response(response)
-        if response.body is not None:
-            data: dict[str, object] = json.loads(response.body)
-            for key in ('device_code', 'user_code', 'access_token', 'refresh_token'):
-                if key in data:
-                    data[key] = 'scrubbed'
-            response.body = json.dumps(data).encode()
-        return response
-
-    return {**vcr_config, 'before_record_request': scrub_request, 'before_record_response': scrub_response}
+def test_device_grant_hooks_scrub_codes_and_tokens():
+    request = scrub_device_grant_request(
+        RawRequest(
+            method='POST',
+            uri='https://github.com/login/oauth/access_token',
+            headers={'content-type': ['application/x-www-form-urlencoded']},
+            body=b'client_id=abc&device_code=secret-device-code&grant_type=urn',
+        )
+    )
+    # `client_id` is one of the fields the shared hook already blanks.
+    assert request.body == b'client_id=scrubbed&device_code=scrubbed&grant_type=urn'
+    response = scrub_device_grant_response(
+        RawResponse(status=200, headers={'content-type': ['application/json']}, body=json.dumps(DEVICE).encode())
+    )
+    assert json.loads(response.body or b'') == {**DEVICE, 'device_code': 'scrubbed', 'user_code': 'scrubbed'}
+    assert (
+        scrub_device_grant_request(RawRequest(method='GET', uri='https://github.com/', headers={}, body=None)).body
+        is None
+    )
+    assert scrub_device_grant_response(RawResponse(status=204, headers={}, body=None)).body is None
 
 
 @pytest.mark.vcr

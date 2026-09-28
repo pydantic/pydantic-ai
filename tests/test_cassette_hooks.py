@@ -135,6 +135,13 @@ def test_smart_characters_are_normalized():
     assert response.body == snapshot(b'{"text": "\\"quoted\\" -- it\'s..."}')
 
 
+def test_json_array_body_is_normalized_without_scrubbing():
+    response = before_record_response(
+        _response(body='[{"access_token": "kept"}, "\u2019"]'.encode(), **{'content-type': 'application/json'})
+    )
+    assert response.body == b'[{"access_token": "kept"}, "\'"]'
+
+
 def test_non_json_body_under_json_content_type_is_kept():
     response = before_record_response(_response(body=b'\x00\x01 not json', **{'content-type': 'application/json'}))
     assert response.body == b'\x00\x01 not json'
@@ -143,6 +150,7 @@ def test_non_json_body_under_json_content_type_is_kept():
 def test_empty_bodies_pass_through():
     assert before_record_request(_request(body=None)).body is None
     assert before_record_response(_response(body=b'')).body == b''
+    assert before_record_response(_response(body=b'plain', **{'content-type': 'text/plain'})).body == b'plain'
 
 
 def test_aws_account_id_is_scrubbed_from_request_uri():
