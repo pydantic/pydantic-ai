@@ -20,7 +20,7 @@ pip:
 pip install "pydantic-ai-harness[e2b,anthropic]"
 ```
 
-Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples' Anthropic model.
+The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -87,6 +87,8 @@ async def run_python(ctx: RunContext, code: str) -> str:
 
 Shell commands run as the `user` account, and files the backend creates are owned by it. E2B's file service still reads and writes with its own root privileges, so Unix permissions do not restrict file operations; do not rely on them to keep file tools out of a path.
 
+E2B file reads reject FIFOs rather than waiting for a writer. An ordinary read performs a shell FIFO check before downloading the file. E2B's file API omits looping symlinks from directory listings.
+
 A background child that inherits stdout or stderr can keep `run()` waiting for the SDK stream to close after the main command exits. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
 
 ### What a timeout stops
@@ -127,8 +129,6 @@ Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sa
 ## Preview a dev server
 
 With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, connect with `e2b.AsyncSandbox.connect(ref.id)` and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then `kill_sandbox(ref)` as below. Do not leave a public preview running longer than necessary.
-
-E2B file reads reject FIFOs rather than waiting for a writer. An ordinary read performs a shell FIFO check before downloading the file. E2B's file API omits looping symlinks from directory listings.
 
 ## Clean up
 
