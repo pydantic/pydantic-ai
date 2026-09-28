@@ -39,7 +39,8 @@ agent = Agent(
     'anthropic:claude-opus-5-5',
     capabilities=[LocalWorkspace('.'), Coder()],
 )
-agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
+result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
+print(result.output)
 ```
 
 File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, or Sprites); the rest of the code stays the same. Commands run without an allowlist, and the file tools' path limits don't apply to them.
@@ -55,7 +56,7 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 
 ### The command environment
 
-Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, so they find your tools and their configuration and use your locale, and nothing else from your environment. Pass only what they need with `env=`:
+Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, so they find your tools and their configuration and use your locale, and nothing else from your environment. `python`, `pytest` and other tools resolve through that `PATH`, so when you start the agent with `uv run` they come from the agent project's virtualenv, not necessarily the workspace's; pass `LocalWorkspace('.', env={'PATH': ...})` to point commands at the workspace's own interpreter. Pass only what they need with `env=`:
 
 ```python {names="defined"}
 import os
