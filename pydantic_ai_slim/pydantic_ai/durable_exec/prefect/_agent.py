@@ -83,6 +83,7 @@ _reject_workspace_in_flow: RejectWorkspaceInContainer[Any] = RejectWorkspaceInCo
 - `tool_task_config_by_name=` → use per-tool `metadata={'prefect': ...}` or a `SetToolMetadata` capability.
 - `event_stream_handler_task_config=` → set `event_stream_handler_task_config=` on `PrefectDurability`.
 - `prefectify_toolset_func=` → not supported on the capability path; open an issue if you need it.
+Inside a flow, this wrapper refuses a workspace; with the capability, attach one to the agent (such as `LocalWorkspace`) or pass `workspace=` to the run methods.
 In-flight flow runs will not resume from cache across the migration and re-execute live on retry; let them finish first if that matters.""",
     category=PydanticAIDeprecationWarning,
 )
