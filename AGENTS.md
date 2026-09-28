@@ -113,7 +113,7 @@ The project uses:
 - `pyright` via `make typecheck`
 - `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
-    - `pytest-recording` and `vcrpy` for recording and playing back requests to model APIs
+- `cassetter` for recording and playing back requests to model APIs
 - Documentation is published by [pydantic/unified-docs](https://github.com/pydantic/docs).
   `docs/navigation.yml` owns the Pydantic AI sidebar, routes, and redirects; `tests/test_examples.py`
   tests all code examples in the docs (including docstrings).

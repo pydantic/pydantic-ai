@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import os
 import sys
 from collections.abc import Iterator
 from datetime import datetime
@@ -71,12 +70,6 @@ def blockbuster_enabled() -> bool:
     """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal
     startup failure into a hang. https://github.com/pydantic/pydantic-ai/issues/8821"""
     return False
-
-
-@pytest.fixture(autouse=True)
-def recording_plugin_in_subprocesses(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep child pytest processes on the same recording plugin as this suite."""
-    monkeypatch.setenv('PYTEST_ADDOPTS', f'{os.getenv("PYTEST_ADDOPTS", "")} -p no:cassetter')
 
 
 @pytest.fixture
