@@ -1,0 +1,161 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1388"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: Think about it, then say what 17*23 is.
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDIxTOu9kjOGGTcx3XBoMIdbMycq7X8VBi9V5IjD2PXLfzLxixtIdv86lHqLYGbGYUjPuvy323id4b6s7k9WKBkYGUVayrgEai9jXcRgq4APY/wbVDZbcsxL+gZ5ZeV9TfvBshVZ0lnOfwu0rIvo+SMzGVgR+DgIzhwAQfSCcJ3tLgdBI6jJdRZKjJKCT7S5LF+uzxZZ+qjHRQ/3jG2/FZXUFN3sVyWvoMAntrcHhP8iFGUl6x4zZaFFsEOuzkooe/XsfKuB7U9ulvw8WJvBdwmNrmQB0qlcQTDdfcquDtrRMrwTfUv/sVnxSY9doyv5NL9Oq2/sXlY0n+GUZBcts7ZlnE0bkh/o80DyLXZnZXSGbaB4AM+gtypz9YHE5sgTJCeyuI5DFMYG7wMSaUBuBpFviim+OSa7bWDS8jQVsuIGf09SL++PRW9JiCJS0HtM1A5sDBsjzQGfAvW51TEu0Muz/1BHCMk8OGo7WAUdxu6FSenqal6Xkhzstu5Kbiv+oj8RLcaqKYK3pM/AAvizHfigAwd9cFpSVBawo+l9QYtYOtDNoebRHypZHP5vrKtQmTK2j20Zev1d8twy7vlsfG9UUek01mSzes5stj+pn45JH4Yo/LRpdLeIb5K77t9rVJx7YKpkU1MWbyalcKNxfbOxljQjt/fbAf1rnk6voexLh1ynaiBiMnb/ruFHhpvNrLiLbbBNIU6G2SXOmqmlq8wyYdzuICPPEL1AeTqoJ/h4YAQ==
+            type: thinking
+          - text: |-
+              **17 × 23 = 391**
+
+              17 × 20 = 340 and 17 × 3 = 51, and 340 + 51 = 391.
+            type: text
+        - role: user
+          content:
+          - text: And times two?
+            type: text
+        model: claude-sonnet-5-5
+        stream: false
+        system:
+        - type: text
+          text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
+        thinking:
+          type: adaptive
+          block_binding:
+            prefix_mismatch_behavior: error
+  response:
+    status: 400
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ed2b2291efb95e4f1f21ef58fe7e69b2-00271c322c74d3fe-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        type: error
+        error:
+          type: invalid_request_error
+          message: "messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \"drop_block\". The `system` prompt differs from the one this block was created with."
+        request_id: req_011CfWMeeWaFuAwMvWXqqk6N
+  recorded_at: 2026-09-28T19:03:26.400348+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "284"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: Think about it, then say what 17*23 is.
+            type: text
+        model: claude-sonnet-5-5
+        output_config:
+          effort: xhigh
+        stream: false
+        system:
+        - type: text
+          text: You are a helpful assistant. Answer briefly.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-08feb3fe3debdafd81519432a32b4330-b30de5b18989677e-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-5-5
+        id: msg_011CfWMeabgrWSuw3iNyFTR4
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDIxTOu9kjOGGTcx3XBoMIdbMycq7X8VBi9V5IjD2PXLfzLxixtIdv86lHqLYGbGYUjPuvy323id4b6s7k9WKBkYGUVayrgEai9jXcRgq4APY/wbVDZbcsxL+gZ5ZeV9TfvBshVZ0lnOfwu0rIvo+SMzGVgR+DgIzhwAQfSCcJ3tLgdBI6jJdRZKjJKCT7S5LF+uzxZZ+qjHRQ/3jG2/FZXUFN3sVyWvoMAntrcHhP8iFGUl6x4zZaFFsEOuzkooe/XsfKuB7U9ulvw8WJvBdwmNrmQB0qlcQTDdfcquDtrRMrwTfUv/sVnxSY9doyv5NL9Oq2/sXlY0n+GUZBcts7ZlnE0bkh/o80DyLXZnZXSGbaB4AM+gtypz9YHE5sgTJCeyuI5DFMYG7wMSaUBuBpFviim+OSa7bWDS8jQVsuIGf09SL++PRW9JiCJS0HtM1A5sDBsjzQGfAvW51TEu0Muz/1BHCMk8OGo7WAUdxu6FSenqal6Xkhzstu5Kbiv+oj8RLcaqKYK3pM/AAvizHfigAwd9cFpSVBawo+l9QYtYOtDNoebRHypZHP5vrKtQmTK2j20Zev1d8twy7vlsfG9UUek01mSzes5stj+pn45JH4Yo/LRpdLeIb5K77t9rVJx7YKpkU1MWbyalcKNxfbOxljQjt/fbAf1rnk6voexLh1ynaiBiMnb/ruFHhpvNrLiLbbBNIU6G2SXOmqmlq8wyYdzuICPPEL1AeTqoJ/h4YAQ==
+        - type: text
+          text: |-
+            **17 × 23 = 391**
+
+            17 × 20 = 340 and 17 × 3 = 51, and 340 + 51 = 391.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 41
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 78
+          output_tokens_details:
+            thinking_tokens: 30
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-28T19:03:26.152887+00:00

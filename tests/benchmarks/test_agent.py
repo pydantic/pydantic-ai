@@ -17,7 +17,7 @@ from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-pytestmark = [pytest.mark.anyio, pytest.mark.benchmark]
+pytestmark = [pytest.mark.benchmark]
 
 
 @pytest.fixture
