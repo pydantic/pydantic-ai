@@ -59,7 +59,8 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
     """Runtime for a newly created Sprite; an unknown runtime fails on first use."""
 
     working_dir: str | None = None
-    """Absolute directory commands start in and relative paths resolve against; `None` uses the Sprite's default."""
+    """Absolute directory commands start in and relative paths resolve against; `None` uses the Sprite's default.
+    Created on a new Sprite; an attached Sprite must already have it."""
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, on top of the Sprite's own; a command's `env` is layered on top."""

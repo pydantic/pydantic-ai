@@ -101,7 +101,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN` too. Pass `workspace='new'` to start a fresh Sprite even when the message history names one.
 
-`runtime` only shapes a new Sprite, and an unknown one raises a clear error on first use; `working_dir` and `env` apply to every command, including after you reattach. A selected command directory is checked before execution; a missing directory raises `FileNotFoundError`.
+`runtime` only shapes a new Sprite, and an unknown one raises a clear error on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
 
 Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
@@ -149,7 +149,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder
 | Option | What it does |
 | --- | --- |
 | `runtime` | Runtime for a new Sprite. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. A default Sprite runs as non-root `sprite` in `/home/sprite`; use relative paths or set `working_dir=` for portable code. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. A default Sprite runs as non-root `sprite` in `/home/sprite`; use relative paths or set `working_dir=` for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
 | `env` | Environment variables every command gets. Nothing from your machine's environment reaches the Sprite. |
 | `client` | A `sprites.AsyncSpritesClient` to share across runs on one event loop, or to set its base URL or timeout. You close it; `SpritesSandbox` never does. |
 

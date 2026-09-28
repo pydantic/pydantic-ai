@@ -284,8 +284,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     and closes it in `aclose()`.
     The backend does not delete the Sprite; that is the application's job, through the native
     handle. Commands run under `/bin/sh -c` with `shell=True`, in the Sprite's own environment
-    plus `env`. File writes go through the Sprite's filesystem API; the other file operations
-    run as shell commands.
+    plus `env`. A `working_dir` is created on a Sprite the backend creates; an attached or
+    caller-supplied Sprite must already have it. File writes go through the Sprite's filesystem
+    API; the other file operations run as shell commands.
     """
 
     def __init__(
@@ -308,6 +309,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._uncertain_create = False
         self._runtime = runtime
         self._working_dir = absolute_path('working_dir', working_dir)
+        # A Sprite this backend creates starts without `working_dir`; it is made on first acquisition.
+        self._working_dir_pending = sandbox is None and ref is None and self._working_dir is not None
         self._env = dict(env or {})
         # `working_dir` as the Sprite resolves it (`pwd -P`): the protocol reports a canonical absolute path.
         self._resolved_working_dir: str | None = None
@@ -347,78 +350,105 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         command or file call itself, as `WorkspaceUnavailableError`.
         """
         async with self._lock:
-            if (sandbox := self._sandbox) is not None and not (fetched and self._unfetched):
-                return sandbox
+            sandbox = await self._acquire(fetched=fetched)
+            if self._working_dir_pending:
+                # Still pending after a failed or cancelled attempt, so the next acquisition retries it.
+                await self._make_working_dir(sandbox)
+            return sandbox
 
-            client = self._client
-            if client is None:
-                # The SDK reads no environment variable, so the token comes from `SPRITE_TOKEN` here.
-                token = os.getenv('SPRITE_TOKEN')
-                if not token:
-                    raise WorkspaceUnavailableError(_AUTH_MESSAGE)
-                client = await new_client(token)
-                self._client = client
+    async def _make_working_dir(self, sandbox: AsyncSprite) -> None:
+        directory = self._working_dir
+        assert directory is not None
+        # Run from `/`: exec refuses to start in a `dir` that does not exist.
+        result = await self._run(
+            ['mkdir', '-p', '--', directory],
+            timeout=_INTERNAL_EXEC_TIMEOUT,
+            capture_stderr=False,
+            check_working_dir=False,
+            sandbox=sandbox,
+            cwd='/',
+        )
+        if result.exit_code != 0:
+            raise WorkspaceError(
+                f'Could not create working_dir {directory!r} in Sprite {sandbox.name!r}: '
+                f'`mkdir -p` exited {result.exit_code}: {result.stderr.strip()}'
+            )
+        self._working_dir_pending = False
 
-            ref = self._ref
-            if not fetched and ref is not None and ref.id == self._attached_name:
-                self._sandbox = sandbox = client.sprite(ref.id)
-                self._unfetched = True
-                return sandbox
+    async def _acquire(self, *, fetched: bool) -> AsyncSprite:
+        """Create or attach to the Sprite; the caller holds `_lock`."""
+        if (sandbox := self._sandbox) is not None and not (fetched and self._unfetched):
+            return sandbox
 
-            async def acquire() -> AsyncSprite:
-                with anyio.move_on_after(_ACQUIRE_TIMEOUT):
-                    if ref is not None:
-                        try:
-                            sandbox = await client.get_sprite(ref.id)
-                        except NotFoundError as error:
-                            if self._uncertain_create:
-                                # A 404 during eventual visibility is not proof that creation failed.
-                                raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
+        client = self._client
+        if client is None:
+            # The SDK reads no environment variable, so the token comes from `SPRITE_TOKEN` here.
+            token = os.getenv('SPRITE_TOKEN')
+            if not token:
+                raise WorkspaceUnavailableError(_AUTH_MESSAGE)
+            client = await new_client(token)
+            self._client = client
+
+        ref = self._ref
+        if not fetched and ref is not None and ref.id == self._attached_name:
+            self._sandbox = sandbox = client.sprite(ref.id)
+            self._unfetched = True
+            return sandbox
+
+        async def acquire() -> AsyncSprite:
+            with anyio.move_on_after(_ACQUIRE_TIMEOUT):
+                if ref is not None:
+                    try:
+                        sandbox = await client.get_sprite(ref.id)
+                    except NotFoundError as error:
+                        if self._uncertain_create:
+                            # A 404 during eventual visibility is not proof that creation failed.
+                            raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
+                        raise
+                else:
+                    try:
+                        sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
+                    except (NetworkError, TimeoutError, SpriteError) as error:
+                        if isinstance(error, SpriteError) and not (
+                            isinstance(error, NetworkError) or '(status 409)' in str(error)
+                        ):
                             raise
-                    else:
+                        # The create may have committed even if lookup is not yet visible. Keep its
+                        # preallocated name for failure hooks and use lookup only on future attempts.
+                        self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+                        self._uncertain_create = True
                         try:
-                            sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
-                        except (NetworkError, TimeoutError, SpriteError) as error:
-                            if isinstance(error, SpriteError) and not (
-                                isinstance(error, NetworkError) or '(status 409)' in str(error)
-                            ):
-                                raise
-                            # The create may have committed even if lookup is not yet visible. Keep its
-                            # preallocated name for failure hooks and use lookup only on future attempts.
-                            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                            self._uncertain_create = True
-                            try:
-                                sandbox = await client.get_sprite(self._new_sprite_name)
-                            except (NotFoundError, NetworkError, TimeoutError):
-                                raise error from None
-                    # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
-                    self._sandbox = sandbox
-                    self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
-                    self._uncertain_create = False
-                    self._attached_name = sandbox.name
-                    self._unfetched = False
-                    return sandbox
-                # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
-                # control plane is a transport failure, which propagates for a retry;
-                # `WorkspaceTimeoutError` is reserved for command deadlines.
-                if ref is None:
-                    # A timed-out create may have committed; a subsequent call must only look it up.
-                    self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                    self._uncertain_create = True
-                action = 'creation' if ref is None else 'connection'
-                raise TimeoutError(
-                    f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
-                    'the Sprites control plane may be unreachable.'
-                )
+                            sandbox = await client.get_sprite(self._new_sprite_name)
+                        except (NotFoundError, NetworkError, TimeoutError):
+                            raise error from None
+                # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
+                self._sandbox = sandbox
+                self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
+                self._uncertain_create = False
+                self._attached_name = sandbox.name
+                self._unfetched = False
+                return sandbox
+            # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
+            # control plane is a transport failure, which propagates for a retry;
+            # `WorkspaceTimeoutError` is reserved for command deadlines.
+            if ref is None:
+                # A timed-out create may have committed; a subsequent call must only look it up.
+                self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+                self._uncertain_create = True
+            action = 'creation' if ref is None else 'connection'
+            raise TimeoutError(
+                f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
+                'the Sprites control plane may be unreachable.'
+            )
 
-            try:
-                # Creation runs to completion even if the caller is cancelled, so a Sprite that
-                # was created is never left unnamed; attaching creates nothing and stays cancellable.
-                return await (acquire() if ref is not None else _run_to_completion(acquire))
-            except SpriteError as error:
-                if (mapped := _map_error(error, None if ref is None else ref.id)) is None:
-                    raise
-                raise mapped from error
+        try:
+            # Creation runs to completion even if the caller is cancelled, so a Sprite that
+            # was created is never left unnamed; attaching creates nothing and stays cancellable.
+            return await (acquire() if ref is not None else _run_to_completion(acquire))
+        except SpriteError as error:
+            if (mapped := _map_error(error, None if ref is None else ref.id)) is None:
+                raise
+            raise mapped from error
 
     async def aclose(self) -> None:
         """Close the `AsyncSpritesClient` this backend created, if it created one.
@@ -468,7 +498,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 sandbox = await self._get_sandbox()
                 raise WorkspaceError(
                     f'Could not determine the working directory of Sprite {sandbox.name!r}: '
-                    f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}. Use absolute paths.'
+                    f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}.'
                 )
             self._resolved_working_dir = printed
         return self._resolved_working_dir
@@ -493,31 +523,29 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         timeout: float | None = None,
         capture_stderr: bool = True,
         check_working_dir: bool = True,
+        sandbox: AsyncSprite | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
         """`run` inside an operation, with the switches the backend's own commands need.
 
         `capture_stderr=False` skips reading a stopped command's stderr capture back, and
-        `check_working_dir=False` skips the `working_dir` check: both are for the backend's own
-        commands, which must not recurse into another capture read or check.
+        `check_working_dir=False` skips confirming a missing `working_dir` on failure: both are for
+        the backend's own commands, which must not recurse into another capture read or check. `sandbox` is for a
+        command run while `_lock` is held, and `cwd` replaces `working_dir` as the directory.
         """
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
-        directory = self._working_dir
+        directory = cwd or self._working_dir
         marker = f'pydantic-ai-end-{uuid.uuid4().hex}'
         capture = f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}'
         # `env` runs inside the wrapper: a `sh` such as dash drops variables whose names are not shell
         # identifiers from the environment it passes on.
         args = _ending_with(marker, capture, _with_env(command_argv(command, shell), {**self._env, **(env or {})}))
 
-        # Acquiring the Sprite has its own bound; the command's deadline starts after it and covers
-        # the working-directory check.
-        sandbox = await self._get_sandbox()
+        # Acquiring the Sprite has its own bound; the command's deadline starts after it.
+        if sandbox is None:
+            sandbox = await self._get_sandbox()
         deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
-        if directory is not None and check_working_dir:
-            # Sprites exec silently ignores a nonexistent `dir`; reject it before running user work.
-            check = await self._run(['test', '-d', directory], timeout=timeout, check_working_dir=False)
-            if check.exit_code != 0:
-                raise FileNotFoundError(directory)
         exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
         code = -1
         interrupted = False
@@ -563,10 +591,34 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 raise mapped from error
             raise
         await _close_command(exec_command)
+        if (
+            code == 1
+            and check_working_dir
+            and directory is not None
+            and marker.encode() not in exec_command.get_stdout()
+        ):
+            # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
+            # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
+            await self._check_working_dir(sandbox, directory)
         stdout, stderr = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
         if code == 137:
             await _check_sigkill_sprite(sandbox)
         return CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
+
+    async def _check_working_dir(self, sandbox: AsyncSprite, directory: str) -> None:
+        """Raise `WorkspaceError` if `directory` does not exist in the Sprite."""
+        check = await self._run(
+            ['test', '-d', directory],
+            timeout=_INTERNAL_EXEC_TIMEOUT,
+            check_working_dir=False,
+            sandbox=sandbox,
+            cwd='/',
+        )
+        if check.exit_code != 0:
+            raise WorkspaceError(
+                f'working_dir {directory!r} does not exist in Sprite {sandbox.name}. '
+                'Create it there, or pass a working_dir that exists.'
+            )
 
     async def _collect_stderr(self, path: str) -> str:
         """The stderr capture of a timed-out command, or `''` if it cannot be read."""

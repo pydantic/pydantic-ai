@@ -15,7 +15,7 @@ once the client has attached, which the fake takes to be the client's stdin EOF 
 Sprite replays the last 16 or 64 KiB printed before that; the fake takes the worst case and replays
 nothing. An exec URL longer than `SpriteTransport.url_limit` is refused with HTTP 414, as the live
 Sprite refuses one of about 40 KB. File writes (`AsyncSpritePath.stat` and `write_bytes`) go to the
-same host directory.
+same host directory. An exec in a missing `dir` fails as the live Sprite's does.
 
 Deletion follows the SDK: `destroy_sprite` (and `AsyncSprite.delete()`) returns once the API accepts
 the request, after which `get_sprite` raises `NotFoundError` and an exec handshake with the deleted
@@ -71,9 +71,15 @@ class FakeExecSocket:
         self.attached = False
         self._frames: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._loop = loop
+        argv, cwd = self.query['cmd'], self.query.get('dir', [str(sprite_transport.root)])[0]
+        if not Path(cwd).is_dir():
+            # Like the live Sprite (2026-09-28): a missing `dir` fails the exec with status 1 and a
+            # `chdir` message on stdout, once the client has attached.
+            argv = ['sh', '-c', 'cat >/dev/null; printf "chdir to \\`%s\\`: No such file or directory\\n" "$1"; exit 1']
+            argv, cwd = [*argv, 'sh', cwd], str(sprite_transport.root)
         self.process = subprocess.Popen(
-            self.query['cmd'],
-            cwd=self.query.get('dir', [str(sprite_transport.root)])[0],
+            argv,
+            cwd=cwd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

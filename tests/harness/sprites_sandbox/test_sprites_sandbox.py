@@ -7,7 +7,6 @@ import signal
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import anyio
 import httpx
@@ -455,43 +454,56 @@ class TestSpritesSandbox:
         assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
         assert deadlines[-1] >= acquired_at[0] + 60
 
-    async def test_run_deadline_covers_the_working_directory_check(
-        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        connect = transport.connect
-        commands: list[list[str]] = []
-
-        async def held_check(url: str, **kwargs: Any) -> Any:
-            command = parse_qs(urlsplit(url).query)['cmd'][5:]
-            commands.append(command)
-            if command[:2] == ['test', '-d']:
-                await anyio.Event().wait()  # Held until the deadline cancels it.
-            return await connect(url, **kwargs)
-
-        monkeypatch.setattr('sprites.websocket.connect', held_check)
-        backend = SpritesSandboxBackend(working_dir=str(tmp_path))
+    async def test_a_created_sprite_gets_its_working_directory(self, transport: SpriteTransport) -> None:
+        directory = transport.root / 'new' / 'nested'
+        backend = SpritesSandboxBackend(working_dir=str(directory))
         await backend.get_sandbox()
-        with anyio.fail_after(60):
-            with pytest.raises(WorkspaceTimeoutError, match=r'after 0.2 seconds'):
-                await backend.run(['echo', 'ran'], timeout=0.2)
-        assert ['echo', 'ran'] not in commands
+        assert directory.is_dir()
+        assert (await backend.run(['pwd'])).stdout == f'{directory}\n'
 
-    async def test_missing_working_directory_raises_before_the_command_runs(
-        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    async def test_a_working_directory_that_cannot_be_made_is_retried(self, transport: SpriteTransport) -> None:
+        (transport.root / 'blocker').write_text('')
+        directory = transport.root / 'blocker' / 'work'
+        backend = SpritesSandboxBackend(working_dir=str(directory))
+        with pytest.raises(
+            WorkspaceError,
+            match=r"^Could not create working_dir '.*/blocker/work' in Sprite '.*': `mkdir -p` exited 1: mkdir: ",
+        ):
+            await backend.run(['true'])
+        (transport.root / 'blocker').unlink()
+        assert (await backend.run(['pwd'])).stdout == f'{directory}\n'
+        assert len(transport.created) == 1
+
+    async def test_an_attached_sprite_without_the_working_directory_fails_the_command(
+        self, transport: SpriteTransport
     ) -> None:
-        connect = transport.connect
-
-        async def ignoring_missing_dir(url: str, **kwargs: Any) -> Any:
-            # Like Sprites, run in the default directory when `dir` does not exist.
-            parts = urlsplit(url)
-            query = [(key, value) for key, value in parse_qsl(parts.query) if key != 'dir' or Path(value).is_dir()]
-            return await connect(parts._replace(query=urlencode(query)).geturl(), **kwargs)
-
-        monkeypatch.setattr('sprites.websocket.connect', ignoring_missing_dir)
-        backend = SpritesSandboxBackend(working_dir=str(tmp_path / 'missing'))
-        with pytest.raises(FileNotFoundError):
+        transport.names.add('remote')
+        directory = transport.root / 'missing'
+        backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'), working_dir=str(directory))
+        with pytest.raises(WorkspaceError) as caught:
             await backend.run(['touch', 'ran'])
+        assert type(caught.value) is WorkspaceError
+        assert str(caught.value) == (
+            f"working_dir '{directory}' does not exist in Sprite remote. "
+            'Create it there, or pass a working_dir that exists.'
+        )
+        assert not directory.exists()
         assert not (transport.root / 'ran').exists()
+        # Confirmed from `/` only after the command failed, not before every command.
+        failed, check = transport.execs
+        assert failed.query['cmd'][5:] == ['touch', 'ran']
+        assert (check.query['cmd'][-3:], check.query['dir']) == (['test', '-d', str(directory)], ['/'])
+
+    async def test_a_failing_command_in_an_existing_working_directory_is_not_checked(
+        self, transport: SpriteTransport
+    ) -> None:
+        transport.names.add('remote')
+        backend = SpritesSandboxBackend(
+            ref=WorkspaceRef(provider='sprites', id='remote'), working_dir=str(transport.root)
+        )
+        result = await backend.run('echo "chdir to nowhere"; exit 1', shell=True)
+        assert (result.exit_code, result.stdout) == (1, 'chdir to nowhere\n')
+        assert len(transport.execs) == 1
 
     async def test_failed_acquisition_keeps_the_client_for_a_retry(self, transport: SpriteTransport) -> None:
         transport.get_error = SpriteError('lookup failed')
@@ -654,8 +666,10 @@ class TestSpritesSandbox:
     ) -> None:
         result = await SpritesSandboxBackend(working_dir=str(transport.root)).run(['echo', 'a b'])
         assert (result.exit_code, result.stdout) == (0, 'a b\n')
-        check, socket = transport.execs
-        assert check.query['cmd'][-3:] == ['test', '-d', str(transport.root)]
+        make, socket = transport.execs
+        # The backend created the Sprite, so it made `working_dir` first, from `/`.
+        assert make.query['cmd'][-4:] == ['mkdir', '-p', '--', str(transport.root)]
+        assert make.query['dir'] == ['/']
         # The wrapper ends both streams with a marker; the fake conformance suite checks separation.
         assert socket.query['cmd'][:2] == ['sh', '-c']
         assert socket.query['cmd'][5:] == ['echo', 'a b']
