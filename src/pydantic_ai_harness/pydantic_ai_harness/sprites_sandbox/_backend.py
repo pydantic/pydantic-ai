@@ -187,6 +187,11 @@ async def _close_command(command: WSCommand) -> None:
             command.ws.transport.abort()
 
 
+async def _close_client(client: AsyncSpritesClient | None) -> None:
+    if client is not None and (error := await _cleanup_call(client.aclose, timeout=_CLOSE_TIMEOUT)) is not None:
+        logger.warning('Could not close Sprites SDK client: %r', error)
+
+
 def _map_error(error: Exception, sprite_name: str | None) -> WorkspaceError | None:
     """Translate a Sprites failure, or return `None` for one that propagates as is.
 
@@ -364,7 +369,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         The Sprite is untouched: the next operation opens a fresh client and reattaches by `ref`.
         A caller-supplied `client=` or `sandbox=` handle is never closed. `SpritesSandbox`
         calls this for the backend it supplied when each run ends. A close that fails or times out
-        is logged, not raised, and the client is kept so the next `aclose()` tries again.
+        is logged, not raised.
         """
         if not self._owns_client:
             return
@@ -372,16 +377,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         async def close() -> None:
             # Under the lock, so a Sprite still being created is recorded before its client closes.
             async with self._lock:
-                client = self._client
-                if client is None:
-                    return
-                error = await _cleanup_call(client.aclose, timeout=_CLOSE_TIMEOUT)
-                if error is not None:
-                    # Kept, so a later `aclose()` tries again.
-                    logger.warning('Could not close Sprites SDK client: %r', error)
-                else:
-                    self._client = None
-                    self._sandbox = None
+                client, self._client, self._sandbox = self._client, None, None
+            await _close_client(client)
 
         # Finished even when the caller (a run being cancelled) is cancelled meanwhile.
         await _run_to_completion(close)
@@ -394,15 +391,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         finally:
             self._operations -= 1
             if self._operations == 0 and self._close_after_operation and self._owns_client:
-                # Detached before the close is awaited, so an operation starting meanwhile opens its
-                # own client instead of using this one while it closes.
+                # Detached before any await, so an operation starting meanwhile opens its own client.
                 client, self._client, self._sandbox = self._client, None, None
-                if client is not None:
-                    close = client.aclose
-                    if (
-                        error := await _run_to_completion(lambda: _cleanup_call(close, timeout=_CLOSE_TIMEOUT))
-                    ) is not None:
-                        logger.warning('Could not close Sprites SDK client: %r', error)
+                await _run_to_completion(lambda: _close_client(client))
 
     async def working_dir(self) -> str:
         async with self._operation():

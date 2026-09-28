@@ -513,17 +513,14 @@ class TestSpritesSandbox:
         await injected.aclose()
         assert transport.close_calls == 0
 
-    async def test_failed_close_is_logged_and_retried_by_the_next_aclose(
-        self, transport: SpriteTransport, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_failed_close_is_logged(self, transport: SpriteTransport, caplog: pytest.LogCaptureFixture) -> None:
         owned = SpritesSandboxBackend()
         await owned.get_sandbox()
         transport.close_error = RuntimeError('close failed')
         await owned.aclose()
         assert 'Could not close Sprites SDK client' in caplog.text
         await owned.aclose()
-        await owned.aclose()
-        assert transport.close_calls == 2
+        assert transport.close_calls == 1
 
     async def test_cancelled_aclose_finishes_the_close_first(self, transport: SpriteTransport) -> None:
         owned = SpritesSandboxBackend()
