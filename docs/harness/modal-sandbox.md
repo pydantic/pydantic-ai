@@ -111,6 +111,41 @@ The ref holds no credentials, so the process that reattaches needs your Modal cr
 
 Already have a `modal.Sandbox`? Pass `workspace=ModalSandboxBackend(sandbox=sandbox)` to a run, with `ModalSandboxBackend` from `pydantic_ai_harness.modal_sandbox`. `ModalSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. A backend's `get_sandbox()` returns its `modal.Sandbox`.
 
+## Prepare a sandbox before the run
+
+To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
+
+```python {names="defined"}
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
+
+
+async def main() -> None:
+    backend = ModalSandboxBackend(working_dir='/root/project')
+    workspace = Workspace(backend)
+    await workspace.write_text('calc.py', 'def add(a, b):\n    return a - b\n')
+    await workspace.run(['pip', 'install', 'pytest'], timeout=300)
+    ref = backend.ref  # set once the sandbox exists
+    assert ref is not None
+    try:
+        result = await agent.run('Fix the bug in calc.py.', workspace=backend)
+        print(result.output)
+    finally:
+        await ModalSandbox().destroy(ref)
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+Read `backend.ref` before the run: a failed run returns no result to take it from.
+
 ## Clean up
 
 The sandbox keeps running, and billing, after the run ends. Pydantic AI never terminates it. Terminate it with the ref you stored:
