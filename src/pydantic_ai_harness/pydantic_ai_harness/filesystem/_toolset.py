@@ -593,13 +593,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         return _Scope(facade, bounds, workspace)
 
     @asynccontextmanager
-    async def _changing(self, scope: _Scope, resolved: str) -> AsyncGenerator[None]:
-        """Let one write or edit at a time read and replace `resolved` in this workspace.
+    async def _changing(self, scope: _Scope, real: str) -> AsyncGenerator[None]:
+        """Let one write or edit at a time read and replace the file at `real` in this workspace.
 
         Workspace I/O suspends between a call's read and its write, so without this two concurrent
-        edits both start from the same content and the later write drops the earlier change.
+        edits both start from the same content and the later write drops the earlier change. Keyed
+        by the real path, so a symlink and its target share a turn; where real paths go unchecked
+        (`root_dir='/'` without patterns) it is the path as written.
         """
-        key = (id(scope.given), resolved)
+        key = (id(scope.given), real)
         entry = self._path_locks.setdefault(key, _PathLock())
         entry.users += 1
         try:
@@ -731,10 +733,16 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         patterns are matched against the real path too, so a symlink to a
         protected file (`envlink -> .env`) is protected as well.
         """
+        return (await self._safe_resolve_real(scope, path, write=write, check_allowed=check_allowed))[0]
+
+    async def _safe_resolve_real(
+        self, scope: _Scope, path: str, *, write: bool = False, check_allowed: bool = True
+    ) -> tuple[str, str]:
+        """`_safe_resolve`, also returning the real path (the same spelling when real paths go unchecked)."""
         resolved, real = await self._resolve_path(scope, path)
         for spelling in dict.fromkeys((resolved, real)):
             self._check_access(posixpath.relpath(spelling, scope.root), write=write, check_allowed=check_allowed)
-        return resolved
+        return resolved, real
 
     async def _stat(self, scope: _Scope, resolved: str) -> FileEntry | None:
         """The entry at `resolved`, or `None` when nothing is there (including below a file)."""
@@ -965,8 +973,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         *,
         expected_hash: str | None = None,
     ) -> str:
-        resolved = await self._safe_resolve(scope, path, write=True)
-        async with self._changing(scope, resolved):
+        resolved, real = await self._safe_resolve_real(scope, path, write=True)
+        async with self._changing(scope, real):
             entry = await self._stat(scope, resolved)
             if entry is not None and entry.is_dir:
                 raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
@@ -1113,8 +1121,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         *,
         expected_hash: str | None = None,
     ) -> str:
-        resolved = await self._safe_resolve(scope, path, write=True)
-        async with self._changing(scope, resolved):
+        resolved, real = await self._safe_resolve_real(scope, path, write=True)
+        async with self._changing(scope, real):
             entry = await self._stat(scope, resolved)
             if entry is None or entry.is_dir:
                 raise FileNotFoundError(f'File not found: {path}')

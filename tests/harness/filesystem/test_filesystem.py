@@ -822,12 +822,13 @@ class HeldWriteWorkspace:
     """In-memory storage whose first write to `held` waits for `release`, after that call has read and checked the file.
 
     Every operation is a plain checkpoint, with no worker thread, so `wait_all_tasks_blocked` sees
-    exactly where each call has stopped.
+    exactly where each call has stopped. `links` maps a symlink's path to its target's.
     """
 
-    def __init__(self, files: dict[str, bytes], *, held: str) -> None:
+    def __init__(self, files: dict[str, bytes], *, held: str, links: dict[str, str] | None = None) -> None:
         self.files = files
         self.held = held
+        self.links = links or {}
         self.writing = anyio.Event()
         self.release = anyio.Event()
 
@@ -838,19 +839,24 @@ class HeldWriteWorkspace:
     async def working_dir(self) -> str:
         return '/work'
 
+    async def realpath(self, path: str) -> str:
+        await anyio.lowlevel.checkpoint()
+        return self.links.get(path, path)
+
     async def read_bytes(self, path: str) -> bytes:
         await anyio.lowlevel.checkpoint()
-        return self.files[path]
+        return self.files[self.links.get(path, path)]
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         if path == self.held and not self.writing.is_set():
             self.writing.set()
             await self.release.wait()
         await anyio.lowlevel.checkpoint()
-        self.files[path] = data
+        self.files[self.links.get(path, path)] = data
 
     async def stat(self, path: str) -> FileEntry:
         await anyio.lowlevel.checkpoint()
+        path = self.links.get(path, path)
         if path in self.files:
             return FileEntry(name=posixpath.basename(path), path=path, is_dir=False, size=len(self.files[path]))
         if path == '/work':
@@ -901,6 +907,23 @@ class TestConcurrentChanges:
 
         returns = [part.content for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
         assert len(returns) == 2 and all(str(content).startswith('Edited a.py.') for content in returns)
+        assert workspace.files['/work/a.py'] == b'import new\nnew()\n'
+
+    async def test_edits_through_a_symlink_and_its_target_take_turns(self) -> None:
+        toolset = FileSystem[None]().get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        workspace = HeldWriteWorkspace(
+            {'/work/a.py': b'import old\nold()\n'}, held='/work/a.py', links={'/work/alias.py': '/work/a.py'}
+        )
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(partial(toolset.edit_file, 'a.py', 'import old', 'import new', workspace=workspace))
+            await workspace.writing.wait()
+            tg.start_soon(partial(toolset.edit_file, 'alias.py', 'old()', 'new()', workspace=workspace))
+            # The edit through the link either finishes or waits its turn before the held edit goes ahead.
+            await anyio.wait_all_tasks_blocked()
+            workspace.release.set()
+
         assert workspace.files['/work/a.py'] == b'import new\nnew()\n'
 
     async def test_write_checked_against_a_hash_waits_for_a_pending_edit(self) -> None:
