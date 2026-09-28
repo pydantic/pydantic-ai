@@ -304,7 +304,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         engines to retry.
         """
         if isinstance(error, e2b.InvalidArgumentException) and 'cwd ' in str(error) and 'does not exist' in str(error):
-            return FileNotFoundError(str(error))
+            # Only `run` passes a cwd, and it is always the configured `working_dir`: typically an
+            # attached sandbox that never had it, since a created one gets it made.
+            return WorkspaceError(
+                f'working_dir {self._working_dir!r} does not exist in E2B sandbox {sandbox_id}. '
+                'Create it there, or pass a working_dir that exists.'
+            )
         if isinstance(error, e2b.AuthenticationException):
             return WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}')
         if isinstance(error, e2b.SandboxNotFoundException) and sandbox_id is not None:
@@ -473,7 +478,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 sandbox = await self.get_sandbox()
                 raise WorkspaceError(
                     f'Could not determine the working directory of E2B sandbox {sandbox.sandbox_id}: '
-                    f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}. Use absolute paths.'
+                    f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}.'
                 )
             self._resolved_working_dir = printed
         return self._resolved_working_dir

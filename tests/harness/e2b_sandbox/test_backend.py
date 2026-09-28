@@ -1008,3 +1008,21 @@ async def test_timeout_stops_a_command_run_with_a_different_locale(
     finally:
         for handle in fake_e2b.sandboxes[0].commands.handles:
             handle.close()
+
+
+async def test_attaching_with_a_missing_working_dir_says_what_to_do(
+    fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_e2b.new_sandbox('sbx-old')
+    backend = await started(ref=WorkspaceRef(provider='e2b', id='sbx-old'), working_dir='/srv/app')
+
+    async def missing_cwd(*args: Any, **kwargs: Any) -> Any:
+        # E2B's refusal when a command's cwd is not there.
+        raise InvalidArgumentException("cwd '/srv/app' does not exist")
+
+    monkeypatch.setattr(fake_e2b.sandboxes[0].commands, 'run', missing_cwd)
+    with pytest.raises(WorkspaceError) as caught:
+        await backend.run(['pwd'])
+    assert str(caught.value) == (
+        "working_dir '/srv/app' does not exist in E2B sandbox sbx-old. Create it there, or pass a working_dir that exists."
+    )
