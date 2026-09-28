@@ -15,7 +15,10 @@ from anyio.abc import SocketAttribute, SocketStream
 from anyio.to_thread import run_sync
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, on_event
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.shell import (
@@ -300,6 +303,20 @@ class TestShellTool:
         assert recorder.finished.exit_code is None
         assert recorder.finished.total_lines == 0
         assert recorder.output == ''
+
+    async def test_a_bare_toolset_starts_no_command(self, tmp_path: Path) -> None:
+        toolset = Shell[object](denied_commands=[], tools=['shell']).get_toolset()
+        assert toolset is not None
+
+        def call(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('shell', {'command': 'true', 'mode': 'background'})])
+
+        agent = Agent(FunctionModel(call), capabilities=[LocalWorkspace(tmp_path)], toolsets=[toolset])
+        with pytest.raises(UserError, match=r'Pass `capabilities=\[Shell\(\)\]` rather than its toolset'):
+            await agent.run('go')
+        # The call fails before launching, so no job directory is left behind.
+        jobs = tmp_path / '.pydantic-ai-harness' / 'shell'
+        assert not jobs.exists() or not any(jobs.iterdir())
 
 
 class TestLifecycle:
