@@ -23,7 +23,7 @@ from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanag
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal, cast
 
-from anyio import Lock
+from anyio import Lock, fail_after
 from anyio.lowlevel import RunVar
 from pydantic_core import to_json
 from typing_extensions import TypedDict, assert_never
@@ -1166,6 +1166,7 @@ class GoogleRealtimeModel(RealtimeModel):
         # explicit opt-out alongside a policy would silently reconnect into a model that remembers
         # nothing, so it fails loudly instead.
         reconnect = settings.get('reconnect')
+        handshake_timeout = settings.get('handshake_timeout', 30.0)
         if reconnect is not None and settings.get('google_enable_session_resumption') is False:
             raise UserError(
                 'A `reconnect` policy requires Gemini session resumption, but '
@@ -1205,7 +1206,10 @@ class GoogleRealtimeModel(RealtimeModel):
                     # A gateway route needs nothing extra here: the relay routes the SDK's native
                     # Vertex Bidi path, and the gateway bearer auth reaches the handshake via a
                     # static header set on the client at build time (see `_set_google_ws_gateway_auth`).
-                    session = await opening.__aenter__()
+                    # The SDK waits for `setup_complete` without a deadline of its own, so a server that
+                    # accepts the socket and never answers the setup would hang the dial forever.
+                    with fail_after(handshake_timeout):
+                        session = await opening.__aenter__()
             cm = opening
             return session
 
@@ -1242,10 +1246,16 @@ class GoogleRealtimeModel(RealtimeModel):
                 # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
                 # status, so surface it as a `RealtimeError` rather than letting it escape untyped.
                 raise RealtimeError(model_name=self.model, message=f'WebSocket error during connect: {e}') from e
+            except TimeoutError as e:
+                # `handshake_timeout` ran out (or the socket's own opening timeout did) before the
+                # session was set up: a `RealtimeError`, like an OpenAI-protocol handshake that times out.
+                raise RealtimeError(
+                    model_name=self.model, message='Timed out waiting for the Gemini Live session setup to complete'
+                ) from e
             except OSError as e:
-                # The connection never came up: DNS failure, refused, reset, or the dial timing out
-                # (`TimeoutError` is an `OSError`). No HTTP status exists, so this is a `RealtimeError`
-                # too, rather than a bare built-in from what looks like an ordinary model call.
+                # The connection never came up: DNS failure, refused, or reset. No HTTP status exists,
+                # so this is a `RealtimeError` too, rather than a bare built-in from what looks like an
+                # ordinary model call.
                 raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
@@ -1398,8 +1408,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         Accepts `BinaryAudio` (raw PCM16, 16kHz, mono), a `str` text turn, `TextContext` (text sent
         with `turn_complete=False`, so it waits for the next turn), `BinaryImage` (a live video
         frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
-        automatic VAD), and a `ToolResult`'s `respond` is ignored: Gemini answers a tool-call frame by
-        itself once every call in it has a result.
+        automatic VAD).
         """
         input_index = self._inputs_received
         self._inputs_received += 1

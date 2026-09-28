@@ -40,9 +40,9 @@ ends the session, including from [a tool that hangs up](tools.md#ending-the-sess
 ## Connection and handshake
 
 The connection is opened when the `session()` context is entered, and the shared
-`handshake_timeout` setting (default 30 seconds) bounds how long the session waits for each
-realtime protocol handshake event on providers with an explicit handshake (OpenAI, Azure OpenAI,
-and xAI). A handshake that times out raises
+`handshake_timeout` setting (default 30 seconds) bounds how long the session waits for the
+provider handshake: each handshake event on OpenAI, Azure OpenAI, and xAI, and the whole session
+setup on Gemini. A handshake that times out raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError]; a rejected WebSocket upgrade raises
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (see [Errors](#errors)).
 

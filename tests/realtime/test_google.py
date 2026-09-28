@@ -1845,6 +1845,43 @@ async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
     assert exc_info.value.message == snapshot('Could not reach the realtime API: connection refused')
 
 
+@pytest.mark.parametrize('on_model', [False, True], ids=['session_settings', 'model_settings'])
+async def test_connect_bounds_handshake_with_handshake_timeout(on_model: bool) -> None:
+    # `google-genai` waits for the server's `setup_complete` with no deadline of its own, so a server that
+    # accepts the socket and never answers the setup would hang `connect` forever. `handshake_timeout`
+    # bounds the dial, like it bounds the OpenAI-protocol handshake, and the timeout surfaces as a
+    # `RealtimeError` naming the model. Not a VCR test: a recording can't hold a server that never answers.
+    abandoned = anyio.Event()
+
+    class _HangingConnect:
+        async def __aenter__(self) -> Any:
+            try:
+                await anyio.sleep_forever()
+            finally:
+                abandoned.set()
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _HangingConnect:
+            return _HangingConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    settings = RealtimeModelSettings(handshake_timeout=0.01)
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=client),
+        settings=settings if on_model else None,
+    )
+    with pytest.raises(RealtimeError) as exc_info:
+        async with _connect(model, 'x', model_settings=None if on_model else settings):
+            pass  # pragma: no cover
+    assert abandoned.is_set()
+    assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
+    assert exc_info.value.message == snapshot('Timed out waiting for the Gemini Live session setup to complete')
+
+
 async def test_connect_continues_after_empty_server_turn() -> None:
     session = _RecordingSession([[], [_turn('hi')]])
 
