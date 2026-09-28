@@ -11,7 +11,7 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, AgentRunResultEvent, RunContext
+from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai.capabilities import Capability, Hooks
 from pydantic_ai.exceptions import ContentFilterError, UserError
@@ -459,6 +459,35 @@ async def test_instruction_updates_multiple_blocks_and_later_sources():
         assert request.instructions is not None and request.instructions.endswith('\n\nA')
         history = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
     assert updates == [[], [('agent:two', 'B')], [('agent:one', None)], [('agent:one', 'A'), ('agent:two', 'C')]]
+
+
+async def test_instruction_updates_resumed_request_keeps_baseline():
+    prefixes: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prefixes.append(info.instructions)
+        if len(prefixes) == 1:
+            raise RuntimeError('Request failed.')
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), deps_type=str)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[str]) -> str:
+        return ctx.deps
+
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='Request failed'):
+            await agent.run('Continue.', deps='A')
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    result = await agent.run(deps='B', message_history=history)
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instruction_baseline is not None
+    assert {key: entry.part.content for key, entry in request.instruction_baseline.items()} == {'agent:state': 'A'}
+    assert [part.content for part in request.parts if isinstance(part, InstructionDeltaPart)] == ['B']
+    assert prefixes == [prefixes[0]] * 2
 
 
 @pytest.mark.parametrize('inline', [False, True])

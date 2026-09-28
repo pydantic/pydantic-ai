@@ -834,6 +834,7 @@ def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
         run_id=request.run_id,
         conversation_id=request.conversation_id,
         metadata=request.metadata,
+        instruction_baseline=request.instruction_baseline,
     )
 
 
