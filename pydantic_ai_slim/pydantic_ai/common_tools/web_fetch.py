@@ -43,7 +43,7 @@ _upstream_process_text: Callable[[MarkdownConverter, NavigableString, set[str] |
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
-_MAX_HTML_CONVERSION_COST = 250_000_000
+_MAX_HTML_CONVERSION_COST = 20_000_000
 
 
 class WebFetchResult(TypedDict):
@@ -190,20 +190,27 @@ def _convert_html(html: str) -> tuple[str, str]:
     soup = BeautifulSoup(html, 'html.parser')
     # `markdownify` repeatedly scans each descendant's converted text as it walks back up the
     # tree. Blockquotes, definition items, and list items also indent every line at each level.
-    # Estimate those scans before conversion so a small, deeply nested page cannot produce a
-    # huge intermediate string or hold the GIL for seconds at a time.
+    # Estimate scans beyond 16 levels before conversion so a small, deeply nested page cannot
+    # produce a huge intermediate string or hold the GIL for seconds at a time. The first 16
+    # levels cost a fixed multiple of the input size and keep ordinary pages unchanged.
     cost = 0
     pending: list[tuple[PageElement, int, int]] = [(soup, 0, 0)]
     while pending:
         node, depth, indent_depth = pending.pop()
+        if node.next_sibling is not None:
+            pending.append((node.next_sibling, depth, indent_depth))
         if isinstance(node, Tag):
             depth += 1
             if node.name in ('blockquote', 'dd', 'li'):
                 indent_depth += 1
-            cost += 8 * depth * indent_depth
-            pending.extend((child, depth, indent_depth) for child in reversed(node.contents))
+            work = 8 * (indent_depth + 1) + sum(len(str(value)) for value in node.attrs.values())
+            if node.contents:
+                pending.append((node.contents[0], depth, indent_depth))
         elif isinstance(node, NavigableString):
-            cost += depth * (len(node) + 4 * indent_depth * node.count('\n'))
+            work = len(node) + 4 * indent_depth * node.count('\n')
+        else:
+            work = 0
+        cost += max(depth - 16, 0) * work
         if cost > _MAX_HTML_CONVERSION_COST:
             raise ModelRetry('Failed to convert HTML: the document is too complex')
     return _extract_title(html), _MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)

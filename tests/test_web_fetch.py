@@ -816,6 +816,14 @@ class TestMarkdownConverter:
             _convert_html(html)
         assert time.perf_counter() - started < 3
 
+    def test_deeply_nested_empty_tags_are_bounded(self):
+        """Generated line breaks must count towards work even without descendant text."""
+        html = '<q>' * 120 + '<br>' * 30_000 + '</q>' * 120
+        started = time.perf_counter()
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+        assert time.perf_counter() - started < 3
+
     @pytest.mark.parametrize(
         'html',
         [
@@ -832,14 +840,14 @@ class TestMarkdownConverter:
 
         `markdownify` on its own takes minutes on the whitespace and list shapes: a run of spaces
         restarts its whitespace regexes at every character, and each `<li>` recounts its previous
-        siblings. The nested page can't be converted at all (it exceeds the recursion limit), but
-        finding that out must not take long either, and neither may normalizing text among tens of
-        thousands of siblings. The bound is generous; the point is that it isn't minutes.
+        siblings. The nested page can't be converted at all, but finding that out must not take
+        long either, and neither may normalizing text among tens of thousands of siblings. The
+        bound is generous; the point is that it isn't minutes.
         """
         start = time.perf_counter()
         try:
             _convert_html(html)
-        except RecursionError:
+        except (RecursionError, ModelRetry):
             assert html.startswith('<div>x<div>')
         assert time.perf_counter() - start < 10
 
