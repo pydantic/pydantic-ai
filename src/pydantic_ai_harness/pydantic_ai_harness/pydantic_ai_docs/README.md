@@ -61,7 +61,6 @@ directory. With neither path set, every call goes straight to the remote source.
 | --- | --- | --- |
 | `local_docs_path` | `None` | Pyai docs checkout inside the run workspace. Relative paths use the workspace working directory. Falls back to the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable, then to the remote source. |
 | `cache` | `True` | Memoize each returned doc for one agent run, so repeated reads within that run do not repeat workspace or network I/O. |
-| `workspace` | `None` | A workspace backend to read the checkout from instead of the run's, such as `LocalWorkspaceBackend('/opt/pydantic-ai')`. |
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set
 `cache=False` to re-read or re-fetch on every call within a run.

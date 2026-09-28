@@ -1,8 +1,8 @@
 """Detached jobs: commands started inside the run's workspace that outlive the call that started them.
 
 `Job.launch` runs a short POSIX `sh` launcher through `workspace.run`. The launcher starts a
-wrapper shell in its own session (`setsid` when the workspace has it, else `nohup` in a
-process group of its own or the launcher's) and returns once the wrapper is running. The wrapper publishes `status.json` --
+wrapper shell in its own session (`setsid` when the workspace has it, else `nohup` in the
+launcher's process group) and returns once the wrapper is running. The wrapper publishes `status.json` --
 `{"pid": <wrapper pid>, "exit_code": null}` -- before running the command, appends the
 command's output to log files next to it, and publishes the exit code when the command ends.
 Each job's files live in one owner-only directory below `.pydantic-ai-harness/shell` in the
@@ -48,24 +48,40 @@ unset __harness_stopped
 trap __harness_stopped=1 TERM
 publish null
 while [ -z "$__harness_stopped" ] && [ ! -e "$dir/launch.ready" ]; do
+  kill -0 "$5" 2> /dev/null || [ -e "$dir/launch.ready" ] || __harness_stopped=1
   sleep 0.1 2> /dev/null || [ -n "$__harness_stopped" ] || sleep 1
 done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
 fi
-[ -z "$__harness_stopped" ] || {{ publish 143; exit 143; }}
-sh -c "$3" < /dev/null >> "$out" 2>> "$err"
+(
+  [ -z "$__harness_stopped" ] && [ ! -e "$dir/stop" ] || exit 143
+  exec sh -c "$3"
+) < /dev/null >> "$out" 2>> "$err"
 publish $?
 """
-"""The job's supervisor: arguments are the job directory, the log mode, the command, and the file limit.
+"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, and the launcher's PID.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
 a trap with an action is reset in a child. Stopping the group therefore still records how the
 command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation leaves `exit_code` null.
 The trap also records the signal, so a job stopped before its command starts (the wrapper waits
-for `launch.ready` first) never starts it and publishes `143` instead.
+for `launch.ready` first) never starts it and publishes `143` instead. A launcher that dies
+before `launch.ready` (a cancelled or timed-out launch) counts as a stop too, so the wrapper
+never waits for it forever.
+
+A `SIGTERM` that lands while the command's subshell is being forked, before its default signal
+handling is in place, is lost. `Job.kill` therefore creates the job's `stop` file before
+signalling, and the subshell checks for it once a signal would end it.
+"""
+
+_SIGNAL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
+"""Send signal `$1` to `$2`, first creating the stop file `$3` the wrapper checks before starting the command.
+
+`true` rather than `:`, as a failed redirection on a special builtin exits the shell (the job
+directory may be gone).
 """
 
 _LAUNCHER = """if [ "$exclusive" = 1 ]; then
@@ -75,15 +91,12 @@ else
 fi
 if [ "$mode" = combined ]; then : > "$dir/output.log"; else : > "$dir/stdout.log"; : > "$dir/stderr.log"; fi
 if command -v setsid > /dev/null 2>&1; then
-  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" < /dev/null > /dev/null 2>&1 &
+  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
   pid=$!; group=$pid
 else
-  set -m 2> /dev/null
-  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" < /dev/null > /dev/null 2>&1 &
+  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
   pid=$!; group=-
-  for leader in $pid $$; do
-    if [ "$(ps -o pgid= -p $leader 2> /dev/null | tr -d ' ')" = "$leader" ]; then group=$leader; break; fi
-  done
+  if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
 while [ ! -e "$dir/status.json" ]; do sleep 0.1 2> /dev/null || sleep 1; done
 : > "$dir/launch.ready"
@@ -97,11 +110,9 @@ has detached it: some workspaces kill the launching process group as soon as it 
 The workspace run is bounded by `CONTROL_TIMEOUT`. `sleep 1` stands in where `sleep`
 takes only whole seconds.
 
-Without `setsid`, `set -m` asks the shell to start the wrapper in a process group of its own;
-bash does this without a terminal, dash does not. Failing that, the job stays in the launcher's
-process group, which is only the job's to signal when the workspace started the launcher as a
-group leader (the local workspace starts every command in a new session). Otherwise the group may
-hold the workspace's own processes, so it is reported as `-` and only the wrapper's PID is
+Without `setsid`, the job stays in the launcher's process group, which is only the job's to
+signal when the workspace started the launcher as a group leader (the local workspace starts
+every command in a new session). Otherwise it is reported as `-` and only the wrapper's PID is
 signalled, which does not stop the command.
 """
 
@@ -288,7 +299,8 @@ class Job:
         """
         target = f'-{self.pgid}' if self.pgid is not None else str(self.pid)
         result = await self.workspace.run(
-            ['sh', '-c', 'kill -s "$1" -- "$2"', 'kill', name, target], timeout=CONTROL_TIMEOUT
+            ['sh', '-c', _SIGNAL_SCRIPT, 'kill', name, target, posixpath.join(self.directory, 'stop')],
+            timeout=CONTROL_TIMEOUT,
         )
         if result.exit_code == 0:
             return True

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -17,27 +16,20 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
-try:
-    from temporalio import workflow
-    from temporalio.client import Client
-    from temporalio.testing import WorkflowEnvironment
-    from temporalio.worker import Replayer, Worker
-    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+pytest.importorskip('temporalio')
 
-    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-except ImportError:  # pragma: lax no cover
-    pytest.skip('temporalio not installed', allow_module_level=True)
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import Replayer, Worker
+from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
-# Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14.
-if sys.version_info >= (3, 14):  # pragma: lax no cover
-    pytest.skip(
-        'temporalio sandbox is incompatible with Python 3.14 '
-        '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
-        allow_module_level=True,
-    )
-
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
+from tests.harness.conftest import skip_temporal_sandbox_on_314
+
+pytestmark = skip_temporal_sandbox_on_314
 
 _vetoes: list[str] = []
 

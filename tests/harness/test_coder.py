@@ -1,12 +1,15 @@
+import importlib
 import subprocess
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
+import pydantic_ai.capabilities.local_workspace
 import pydantic_ai_harness.coder
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Capability
+from pydantic_ai.capabilities import Capability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
@@ -64,6 +67,25 @@ async def test_bundled_coder_agent_preserves_explicit_workspace_identity(tmp_pat
     assert result.workspace is workspace
 
 
+def _posix_only(*_: object, **__: object) -> NoReturn:
+    raise NotImplementedError('LocalWorkspaceBackend requires a POSIX host.')
+
+
+async def test_coder_agent_imports_on_a_non_posix_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `LocalWorkspace` refuses a non-POSIX host when constructed; the bundled agent must still import there.
+    import pydantic_ai_harness.coder._agent as module
+
+    monkeypatch.setattr(pydantic_ai.capabilities.local_workspace, 'LocalWorkspaceBackend', _posix_only)
+    try:
+        agent = importlib.reload(module).coder_agent
+    finally:
+        monkeypatch.undo()
+        importlib.reload(module)
+    assert not any(isinstance(item, LocalWorkspace) for item in agent.root_capability.capabilities)
+    with pytest.raises(UserError, match='`Coder` needs a workspace'):
+        await agent.run('go', model=TestModel(call_tools=[]))
+
+
 def test_coder_agent_export_is_lazy() -> None:
     result = subprocess.run(
         [
@@ -115,5 +137,7 @@ def test_coder_members_and_parameters() -> None:
 
 
 async def test_no_workspace_fails_the_run_naming_coder() -> None:
-    with pytest.raises(UserError, match='`Coder` needs a workspace'):
+    with pytest.raises(UserError, match='`Coder` needs a workspace') as raised:
         await Agent(TestModel(), capabilities=[Coder()]).run('go')
+    assert 'from pydantic_ai.capabilities import LocalWorkspace' in str(raised.value)
+    assert '- LocalWorkspace: .' in str(raised.value)

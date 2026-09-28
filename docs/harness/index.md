@@ -96,7 +96,7 @@ limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's te
 
 By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored.
 
-Step Persistence's file and SQLite stores and Media's disk and SQLite stores are not routed through the run's workspace: their directory and database paths, when given, are paths on the machine running the agent. Code Mode mounts also use paths on that machine. This is expected to change in a future release.
+Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and Code Mode mounts use paths on the machine running the agent, not the run's workspace.
 
 `FileSystem`'s `root_dir` limits only the file tools, not `Shell` commands.
 
@@ -229,7 +229,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations |
+| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations. See [what works on each engine](durable-execution.md) for Coder, Shell, and FileSystem |
 | [AWS Lambda durability](aws-lambda.md) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |

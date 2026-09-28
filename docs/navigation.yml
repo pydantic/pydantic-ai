@@ -274,6 +274,9 @@ navigation:
           - page: "Modal Sandbox"
             path: "harness/modal-sandbox.md"
             slug: "harness/modal-sandbox"
+          - page: "Durable Execution"
+            path: "harness/durable-execution.md"
+            slug: "harness/durable-execution"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:

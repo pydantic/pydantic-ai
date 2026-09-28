@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -113,8 +112,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
-                A run with a workspace always runs its tool calls sequentially, and warns
-                unless this is `'sequential'`.
+                A run with a workspace always runs its tool calls sequentially.
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
@@ -271,17 +269,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
-        # DBOS numbers steps as they start. Parallel tools making several workspace steps each would
-        # start them in a timing-dependent order, and recovery would replay results into the wrong calls.
+        # DBOS numbers steps as they start; parallel tools making several workspace steps each could
+        # replay recorded results into the wrong calls on recovery.
         mode = self._parallel_execution_mode
-        if self.in_durable_context and ctx.workspace.attached and mode != 'sequential':
-            warnings.warn(
-                f'DBOS runs tool calls one at a time when a workspace is attached, overriding '
-                f'`parallel_execution_mode={mode!r}`: parallel workspace calls could not be recovered reliably. '
-                "Pass `DBOSDurability(parallel_execution_mode='sequential')` to silence this warning.",
-                UserWarning,
-                stacklevel=2,
-            )
+        if self.in_durable_context and ctx.workspace.attached:
             mode = 'sequential'
         with agent.parallel_tool_call_execution_mode(mode):
             return await handler()

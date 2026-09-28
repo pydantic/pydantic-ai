@@ -183,9 +183,9 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
 
 class FilesystemOnlyWorkspaceBackend(WorkspaceBackend, SupportsFilesystem):
-    """Expose a fake workspace's native filesystem without command execution."""
+    """Expose a fake backend's native filesystem without command execution."""
 
-    def __init__(self, inner: FakeWorkspace) -> None:
+    def __init__(self, inner: FakeWorkspace | ProviderBackend) -> None:
         self.inner = inner
 
     @property

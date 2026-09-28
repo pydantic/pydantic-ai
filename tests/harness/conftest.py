@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import sys
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -34,7 +35,22 @@ if TYPE_CHECKING:
 else:
     from dirty_equals import IsDatetime, IsInstance, IsNow, IsPartialDict, IsStr
 
-__all__ = ('IsDatetime', 'IsInstance', 'IsNow', 'IsPartialDict', 'IsStr', 'agent_run_names')
+__all__ = (
+    'IsDatetime',
+    'IsInstance',
+    'IsNow',
+    'IsPartialDict',
+    'IsStr',
+    'agent_run_names',
+    'skip_temporal_sandbox_on_314',
+)
+
+skip_temporal_sandbox_on_314 = pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason='temporalio sandbox is incompatible with Python 3.14 '
+    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
+)
+"""Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14."""
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False

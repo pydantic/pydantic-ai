@@ -96,9 +96,17 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 
 _DOCS_DIR = _ROOT / '../../docs/harness'
 # `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
-# and `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, so the
-# capability-page checks do not apply to either.
-_NON_CAPABILITY_PAGES = {'clai2.md', 'examples.md', 'gh-aw.md', 'index.md', 'media.md', 'mutation-testing.md'}
+# `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `durable-execution.md` is a
+# guide across capabilities, so the capability-page checks do not apply to them.
+_NON_CAPABILITY_PAGES = {
+    'clai2.md',
+    'durable-execution.md',
+    'examples.md',
+    'gh-aw.md',
+    'index.md',
+    'media.md',
+    'mutation-testing.md',
+}
 _ACP_PAGE = 'acp.md'
 
 _SOURCE_LINK = 'github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/'

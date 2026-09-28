@@ -5,7 +5,6 @@ from __future__ import annotations
 import gc
 import json
 import re
-import sys
 import warnings
 from collections.abc import Generator
 from datetime import timedelta
@@ -20,22 +19,22 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
-try:
-    from dbos import DBOS, DBOSConfig
-    from temporalio import workflow
-    from temporalio.client import Client
-    from temporalio.testing import WorkflowEnvironment
-    from temporalio.worker import Worker
-    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+pytest.importorskip('dbos')
+pytest.importorskip('temporalio')
 
-    from pydantic_ai.durable_exec.dbos import DBOSDurability
-    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-except ImportError:  # pragma: lax no cover
-    pytest.skip('dbos and temporalio not installed', allow_module_level=True)
+from dbos import DBOS, DBOSConfig
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import Worker
+from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
+from tests.harness.conftest import skip_temporal_sandbox_on_314
 
 
 @pytest.fixture
@@ -210,12 +209,7 @@ class ShellRestartWorkflow(PydanticAIWorkflow):
         return [str(p.content) for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
 
 
-# Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14.
-@pytest.mark.skipif(
-    sys.version_info >= (3, 14),
-    reason='temporalio sandbox is incompatible with Python 3.14 '
-    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
-)
+@skip_temporal_sandbox_on_314
 @pytest.mark.anyio
 async def test_temporal_new_worker_keeps_shell_cwd(tmp_path: Path) -> None:
     global _restart_ready, _restart_continue
