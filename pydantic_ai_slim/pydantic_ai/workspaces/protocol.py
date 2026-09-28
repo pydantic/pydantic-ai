@@ -28,8 +28,8 @@ from pydantic_ai.messages import WorkspaceRef
 
 # These protocols are frozen once released: conformance is structural, so adding a member
 # would silently break every existing backend. New operations go on concrete types or on new
-# optional `Supports*` protocols. Data carriers declare read-only properties so that plain
-# attributes, frozen dataclass fields, and properties all conform.
+# optional `Supports*` protocols. New fields on `CommandResult` and `FileEntry` must carry
+# defaults so backends keep constructing them.
 __all__ = (
     'CommandResult',
     'FileEntry',
@@ -37,9 +37,7 @@ __all__ = (
     'WorkspaceCommand',
     'WorkspaceError',
     'WorkspaceOutputLimitError',
-    'WorkspaceFileEntry',
     'WorkspaceRef',
-    'WorkspaceResult',
     'WorkspaceReadOnlyError',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
@@ -92,66 +90,30 @@ class WorkspaceReadOnlyError(WorkspaceError, PermissionError):
     """
 
 
-class WorkspaceResult(Protocol):
-    """The result of a completed command; backends may return their own objects with these fields."""
-
-    @property
-    def exit_code(self) -> int:
-        """The real exit code of the process. Non-zero is a normal result, not an error."""
-        ...
-
-    @property
-    def stdout(self) -> str:
-        """Captured standard output."""
-        ...
-
-    @property
-    def stderr(self) -> str:
-        """Captured standard error."""
-        ...
-
-
 @dataclass(frozen=True, kw_only=True)
 class CommandResult:
-    """A [`WorkspaceResult`][pydantic_ai.workspaces.WorkspaceResult] any backend can return."""
+    """The result of a completed command."""
 
     exit_code: int
+    """The real exit code of the process. Non-zero is a normal result, not an error."""
     stdout: str
+    """Captured standard output."""
     stderr: str
-
-
-class WorkspaceFileEntry(Protocol):
-    """Metadata about a file or directory; backends may return their own objects with these fields."""
-
-    @property
-    def name(self) -> str:
-        """Base name of the entry."""
-        ...
-
-    @property
-    def path(self) -> str:
-        """Absolute POSIX path of the entry inside the workspace."""
-        ...
-
-    @property
-    def is_dir(self) -> bool:
-        """Whether the entry is a directory, following a symlink to its target."""
-        ...
-
-    @property
-    def size(self) -> int | None:
-        """Size in bytes for a regular file when known; `None` is allowed (the shell fallback can measure it)."""
-        ...
+    """Captured standard error."""
 
 
 @dataclass(frozen=True, kw_only=True)
 class FileEntry:
-    """A [`WorkspaceFileEntry`][pydantic_ai.workspaces.WorkspaceFileEntry] any backend can return."""
+    """Metadata about a file or directory."""
 
     name: str
+    """Base name of the entry."""
     path: str
+    """Absolute POSIX path of the entry inside the workspace."""
     is_dir: bool
+    """Whether the entry is a directory, following a symlink to its target."""
     size: int | None
+    """Size in bytes for a regular file when known; `None` is allowed (the shell fallback can measure it)."""
 
 
 @runtime_checkable
@@ -168,7 +130,7 @@ class SupportsCommands(Protocol):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> WorkspaceResult:
+    ) -> CommandResult:
         """Execute a command with stdin at EOF, returning complete output or raising an error.
 
         Undecodable stdout/stderr bytes are replaced with U+FFFD, never dropped.
@@ -206,11 +168,11 @@ class SupportsFilesystem(Protocol):
         """Write bytes to a file, creating missing parents and writing through an existing symlink."""
         ...
 
-    async def stat(self, path: str) -> WorkspaceFileEntry:
+    async def stat(self, path: str) -> FileEntry:
         """Return metadata for a file or directory."""
         ...
 
-    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         """List the entries of a directory (non-recursive)."""
         ...
 

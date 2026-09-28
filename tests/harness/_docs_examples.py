@@ -108,7 +108,11 @@ def run_block(
         return model
 
     try:
-        with mock.patch.object(models, 'infer_model', infer_model):
+        # A durable worker rebuilds a model named by a string with its own `infer_model` import.
+        with (
+            mock.patch.object(models, 'infer_model', infer_model),
+            mock.patch('pydantic_ai.durable_exec._base.infer_model', infer_model),
+        ):
             if _TEMPORAL_ADDRESS in example.source:
                 namespace = _run_temporal_script(example)
             else:

@@ -15,10 +15,10 @@ from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import (
+    FileEntry,
     LocalWorkspaceBackend,
     Workspace,
     WorkspaceError,
-    WorkspaceFileEntry,
     WorkspaceRef,
 )
 from pydantic_ai_harness.tool_output_limits import (
@@ -67,10 +67,10 @@ class _FilesystemOnly:
     async def write_bytes(self, path: str, data: bytes) -> None:
         await self._local.write_bytes(path, data)
 
-    async def stat(self, path: str) -> WorkspaceFileEntry:
+    async def stat(self, path: str) -> FileEntry:
         return await self._local.stat(path)  # pragma: no cover - not used by the store
 
-    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         return await self._local.list_dir(path)  # pragma: no cover - not used by the store
 
     async def make_dir(self, path: str) -> None:

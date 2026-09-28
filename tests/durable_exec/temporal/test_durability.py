@@ -95,7 +95,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
+from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
 from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
@@ -170,7 +170,7 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsInt, IsList, IsStr
-    from ...workspace_fakes import FakeWorkspace, FakeWorkspaceResult
+    from ...workspace_fakes import FakeWorkspace
     from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
@@ -4771,15 +4771,11 @@ class WorkspaceProbePolicy(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> FakeWorkspaceResult:
+    ) -> CommandResult:
         assert activity.in_activity()
         result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
         assert self.ref is not None
-        return FakeWorkspaceResult(
-            exit_code=result.exit_code,
-            stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}',
-            stderr=result.stderr,
-        )
+        return replace(result, stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}')
 
 
 class WorkspaceProbeCapability(AbstractCapability[WorkspaceProbeDeps]):

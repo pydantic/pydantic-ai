@@ -14,6 +14,7 @@ import anyio
 from pydantic_ai.exceptions import UserError
 
 from .protocol import (
+    CommandResult,
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
@@ -21,10 +22,8 @@ from .protocol import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
-    WorkspaceFileEntry,
     WorkspaceOutputLimitError,
     WorkspaceRef,
-    WorkspaceResult,
     validate_timeout,
 )
 from .unavailable import UnavailableWorkspace
@@ -182,12 +181,13 @@ class _ShellFilesystem(SupportsFilesystem):
                 await self._raise_for_error(result, path)
 
             quoted_destination = shlex.quote(destination)
-            # Copy first to preserve mode bits; commit only after decoding succeeds.
+            # Copy first to preserve mode bits, and stop if that fails (an unreadable file, say) rather
+            # than replace the file with a default mode; commit only after decoding succeeds.
             result = await self._backend.run(
                 f'if test -d {quoted_destination}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
                 f'elif test -e {quoted_destination} && ! test -w {quoted_destination}; '
                 f'then status={_SHELL_EXIT_PERMISSION}; else '
-                f'{{ test -f {quoted_destination} && cp {quoted_destination} {quoted_decoded}; }}; '
+                f'if test -f {quoted_destination}; then cp {quoted_destination} {quoted_decoded}; fi && '
                 f'base64 -d < {quoted_temporary} > {quoted_decoded} '
                 f'&& mv -f {quoted_decoded} {quoted_destination}; '
                 f'status=$?; fi; rm -f {quoted_temporary} {quoted_decoded}; exit $status',
@@ -322,9 +322,10 @@ class _ShellFilesystem(SupportsFilesystem):
             shell=True,
         )
         await self._raise_for_error(result, path)
-        return _decode_sized(result.stdout, path).decode()
+        # Keep undecodable POSIX name bytes, as `list_dir` does, so its paths resolve too.
+        return _decode_sized(result.stdout, path).decode(errors='surrogateescape')
 
-    async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
+    async def _raise_for_error(self, result: CommandResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:
             return
         if result.exit_code == _SHELL_EXIT_NOT_FOUND:
@@ -399,7 +400,7 @@ class Workspace(WorkspaceBackend):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> WorkspaceResult:
+    ) -> CommandResult:
         """Run a command in the working directory and wait for it.
 
         To start elsewhere, prefix a shell command with `cd <shlex-quoted dir> && `.
@@ -437,11 +438,11 @@ class Workspace(WorkspaceBackend):
         """Write bytes to a file, creating missing parents and replacing existing contents."""
         await self._filesystem.write_bytes(await self.resolve(path), data)
 
-    async def stat(self, path: str) -> WorkspaceFileEntry:
+    async def stat(self, path: str) -> FileEntry:
         """Return metadata for a file or directory."""
         return await self._filesystem.stat(await self.resolve(path))
 
-    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         """List the entries of a directory (non-recursive)."""
         return await self._filesystem.list_dir(await self.resolve(path))
 
