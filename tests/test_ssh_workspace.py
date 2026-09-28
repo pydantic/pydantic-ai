@@ -110,10 +110,10 @@ async def test_stopping_a_command_kills_its_process_group_on_the_host(tools: Fak
     remote = subprocess.Popen(['sh', '-c', f': {tag}; sleep 60; :'], start_new_session=True)
     bystander = subprocess.Popen(['sh', '-c', ': __pydantic_ai_ssh_job_other; sleep 60; :'], start_new_session=True)
     try:
-        # `_stop` gives the group a second after `SIGTERM` before `SIGKILL`, so it is gone once this returns.
-        await SSHWorkspaceBackend('box')._stop(tag)  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(10):
+            await SSHWorkspaceBackend('box')._stop(tag)  # pyright: ignore[reportPrivateUsage]
+            await anyio.to_thread.run_sync(remote.wait)
 
-        assert remote.poll() is not None
         assert bystander.poll() is None
     finally:
         remote.kill()
@@ -146,6 +146,19 @@ async def test_stderr_from_a_background_child_after_the_command_is_kept(tools: F
 async def test_an_empty_argv_is_rejected(tools: FakeRemoteTools) -> None:
     with pytest.raises(ValueError, match='command must not be empty'):
         await SSHWorkspaceBackend('box').run([])
+
+
+async def test_a_timeout_is_raised_about_on_time(tools: FakeRemoteTools) -> None:
+    """Stopping the remote command costs one round trip, not the `SIGKILL` grace period."""
+    backend = SSHWorkspaceBackend('box')
+    await backend.working_dir()
+    started = anyio.current_time()
+
+    with pytest.raises(WorkspaceTimeoutError):
+        await backend.run(['sleep', '30'], timeout=0.5)
+
+    # About 0.6s here; waiting out the grace period would make it at least 1.5s.
+    assert anyio.current_time() - started < 1.45
 
 
 async def test_invalid_configuration_fails_at_construction(tools: FakeRemoteTools) -> None:

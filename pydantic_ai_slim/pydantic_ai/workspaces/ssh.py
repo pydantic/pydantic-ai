@@ -40,16 +40,19 @@ _STOP = r"""me=$(ps -o pgid= -p $$ | tr -d ' ')
 groups=$(ps -A -o pgid=,args= | grep -F -e "$1" | awk -v me="$me" '$1 != me { print $1 }' | sort -u)
 [ -n "$groups" ] || exit 0
 for group in $groups; do kill -TERM -- "-$group" 2> /dev/null; done
-sleep 1
-for group in $groups; do kill -KILL -- "-$group" 2> /dev/null; done
+(sleep 1; for group in $groups; do kill -KILL -- "-$group" 2> /dev/null; done) < /dev/null > /dev/null 2>&1 &
 exit 0"""
 """Stop the process groups whose command line holds the tag `$1`, leaving out this script's own group.
 
 `sshd` starts each command in a session of its own, so its group is the command's; a detached command
 that started a session of its own (the harness `Shell`'s jobs) is in another group and keeps running.
+The `SIGKILL` for groups that outlast `SIGTERM` comes a second later in the background, with its output
+closed so `sshd` doesn't wait for it, so a stop costs one round trip.
 """
 
-_STOP_TIMEOUT = 15.0
+_STOP_TIMEOUT = 5.0
+"""Bounds how late a stopped command's timeout or cancellation is raised when the host stops answering."""
+
 _MIN_TIMEOUT = 0.001
 """What's left of a timeout the working directory used up, so the command times out rather than running unbounded."""
 
