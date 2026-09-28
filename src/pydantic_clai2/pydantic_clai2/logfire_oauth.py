@@ -23,7 +23,16 @@ import anyio
 import httpx
 from anyio import to_thread
 from keyring.errors import KeyringError
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 
 from pydantic_ai.exceptions import UserError
 
@@ -69,9 +78,10 @@ class Tokens(BaseModel):
 
 
 _STORE: TypeAdapter[dict[str, Tokens]] = TypeAdapter(dict[str, Tokens])
+_ENTRIES: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 _WRITES = threading.Lock()
 _UNSAVED: dict[str, Tokens] = {}
-_logouts = 0
+_logouts: int = 0
 _MIN_INTERVAL = 1.0
 """Bumped by `forget()`, so a sign-in or refresh that started earlier knows not to save."""
 """Sign-ins the keyring or file refused, kept in memory so they last this session; guarded by `_WRITES`."""
@@ -80,9 +90,16 @@ _MIN_INTERVAL = 1.0
 def _load_all() -> dict[str, Tokens]:
     try:
         raw = load_codex_credentials(account=ACCOUNT)
-        return _STORE.validate_json(raw) if raw else {}
+        entries = _ENTRIES.validate_json(raw) if raw else {}
     except (UserError, ValidationError, UnicodeDecodeError, KeyringError, OSError):
         return {}  # An unreadable (or concurrently deleted) store means signing in again, not a failed connection.
+    store: dict[str, Tokens] = {}
+    for resource, entry in entries.items():
+        try:
+            store[resource] = Tokens.model_validate(entry)
+        except ValidationError:
+            continue  # One unreadable sign-in means signing in to that URL again, not losing the others.
+    return store
 
 
 def load(resource: str) -> Tokens | None:

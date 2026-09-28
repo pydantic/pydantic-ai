@@ -538,6 +538,20 @@ class TestDeviceAuth:
                 client.post(RESOURCE)
 
 
+def test_an_unreadable_sign_in_does_not_discard_the_others() -> None:
+    other = 'https://other.test/mcp'
+    save_codex_credentials(
+        value=json.dumps({RESOURCE: stored().model_dump(mode='json'), other: {'access_token': 'partial'}}),
+        account=logfire_oauth.ACCOUNT,
+    )
+    kept = load(RESOURCE)
+    assert kept is not None and kept.access_token == 'access-1'
+    assert load(other) is None
+    assert logfire_oauth._save(other, stored(), logfire_oauth._logouts) is None  # pyright: ignore[reportPrivateUsage]
+    assert load(RESOURCE) is not None
+    assert load(other) is not None
+
+
 def test_status_forget_and_unreadable_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(keyring, 'delete_password', emptied)
     assert status(resource=RESOURCE, read_only=True) == 'signed out'
