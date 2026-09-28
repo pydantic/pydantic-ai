@@ -32,6 +32,9 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     An unknown template raises `WorkspaceUnavailableError` on first use.
     """
 
+    allow_internet_access: bool = True
+    """Whether a newly created workspace may reach the internet."""
+
     sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT
     """Total lifetime of the sandbox in seconds, applied on create and on attach.
 
@@ -44,9 +47,6 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also on an attached workspace; nothing is read from the host."""
-
-    allow_internet_access: bool = True
-    """Whether a newly created workspace may reach the internet."""
 
     def __post_init__(self) -> None:
         if self.defer_loading:
@@ -77,8 +77,8 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
         return E2BSandboxBackend(
             ref=ref,
             template=self.template,
+            allow_internet_access=self.allow_internet_access,
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
-            allow_internet_access=self.allow_internet_access,
         )

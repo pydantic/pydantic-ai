@@ -170,11 +170,11 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 
 | Option | What it does |
 | --- | --- |
-| `template` | E2B template name or ID for a new sandbox. Default: E2B's `base`. An unknown template fails on first use. |
-| `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
+| `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. The default E2B image runs commands as `user` in `/home/user`; prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
-| `env` | Environment variables every command gets. Commands default to `LC_ALL=C.UTF-8` (override it with `env`); images without that locale fall back to the C locale. Nothing from your machine's environment reaches the sandbox. |
+| `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
+| `env` | Environment variables every command gets. Default: `None`. Commands default to `LC_ALL=C.UTF-8` (override it with `env`); images without that locale fall back to the C locale. Nothing from your machine's environment reaches the sandbox. |
 
 Commands run on the asyncio event loop only: the E2B SDK reads their output with asyncio tasks, so under Trio `run` raises `UserError`.
 

@@ -180,6 +180,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         template: E2B template name or ID a newly created sandbox runs; E2B's default when `None`.
             An unknown template raises `WorkspaceUnavailableError` on first use. Custom templates
             need `/bin/bash` and `/bin/sh`; without `setsid`, stop targets only the leader.
+        allow_internet_access: Whether a newly created sandbox may reach the internet.
         sandbox_timeout: Total lifetime of the sandbox in seconds, applied when it is created and
             again when attaching to it. When it runs out, E2B pauses the sandbox rather than
             killing it, and attaching resumes it. The default, 3600, is the most E2B's Hobby plan
@@ -190,7 +191,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             `pwd -P` on first use.
         env: Environment variables every command gets, on a created or an attached sandbox;
             per-command `env` is layered on top. Nothing is read from the host environment.
-        allow_internet_access: Whether a newly created sandbox may reach the internet.
     """
 
     def __init__(
@@ -199,10 +199,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox: e2b.AsyncSandbox | None = None,
         ref: WorkspaceRef | None = None,
         template: str | None = None,
+        allow_internet_access: bool = True,
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
-        allow_internet_access: bool = True,
     ) -> None:
         if ref is not None and ref.provider != 'e2b':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
