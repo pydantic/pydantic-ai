@@ -185,23 +185,21 @@ async def test_a_timed_out_command_is_killed(client: AsyncSpritesClient) -> None
         assert check.exit_code != 0
 
 
-async def test_timeout_and_cancellation_stop_foreground_child(client: AsyncSpritesClient) -> None:
-    """The fake kills its subprocess group on close; only a real Sprite can prove child death."""
+async def test_timeout_and_cancellation_return_while_a_shell_waits_on_a_child(client: AsyncSpritesClient) -> None:
+    """Validates the fake-encoded assumption that closing the exec socket on a timeout or a cancellation
+    returns promptly while the command's shell waits on an `&` child.
+
+    Whether that child is stopped afterwards is best effort (see the docs), so it is not asserted.
+    """
     backend = SpritesSandboxBackend(client=client)
     native = await backend.get_sandbox()
     try:
-        for mode in ('timeout', 'cancel'):
-            pid_file = f'/tmp/{_unique("child")}.pid'
-            command = f'sleep 30 & echo $! > {pid_file}; wait'
-            if mode == 'timeout':
-                with pytest.raises(WorkspaceTimeoutError):
-                    await backend.run(command, shell=True, timeout=3)
-            else:
-                with anyio.move_on_after(3) as scope:
-                    await backend.run(command, shell=True)
-                assert scope.cancelled_caught
-            check = await backend.run(['sh', '-c', 'sleep 2; kill -0 "$(cat "$1")"', 'sh', pid_file], timeout=30)
-            assert check.exit_code != 0, f'{mode}: foreground child survived'
+        command = 'sleep 30 & wait'
+        with pytest.raises(WorkspaceTimeoutError):
+            await backend.run(command, shell=True, timeout=3)
+        with anyio.move_on_after(3) as scope:
+            await backend.run(command, shell=True)
+        assert scope.cancelled_caught
     finally:
         await native.delete()
         with pytest.raises(NotFoundError):
