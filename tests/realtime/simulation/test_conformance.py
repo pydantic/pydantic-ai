@@ -30,13 +30,13 @@ pytestmark = [
 
 
 @pytest.mark.parametrize(
-    'cassette',
+    'recording',
     [pytest.param(path, id=f'{path.parent.name}/{path.stem}') for path in websocket_cassettes()]
     if imports_successful()
     else [],
 )
-async def test_cassette_obeys_the_codec_lifecycle(cassette: Path) -> None:
-    for events in await replay_codec_events(cassette):
+async def test_cassette_obeys_the_codec_lifecycle(recording: Path) -> None:
+    for events in await replay_codec_events(recording):
         checker = LifecycleChecker()
         for event in events:
             checker.feed(event)
