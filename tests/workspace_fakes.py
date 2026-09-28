@@ -70,7 +70,13 @@ def _make_dir(files: dict[str, bytes], directories: set[str], path: str) -> None
     directories.add(path)
 
 
-def _remove(files: dict[str, bytes], directories: set[str], path: str) -> None:
+_WORKING_DIR = '/workspace'
+
+
+def _remove(files: dict[str, bytes], directories: set[str], path: str, working_dir: str) -> None:
+    # Like real backends, never remove the working directory or one of its ancestors.
+    if path == working_dir or working_dir.startswith(f'{path.rstrip("/")}/'):
+        raise ValueError('cannot remove the workspace root or its ancestor')
     if path in files:
         del files[path]
         return
@@ -135,7 +141,7 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def working_dir(self) -> str:
         await self.ensure_ready()
-        return '/workspace'
+        return _WORKING_DIR
 
     async def read_bytes(self, path: str) -> bytes:
         await self.ensure_ready()
@@ -164,7 +170,7 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def remove(self, path: str) -> None:
         await self.ensure_ready()
-        _remove(self.files, self.directories, path)
+        _remove(self.files, self.directories, path, _WORKING_DIR)
 
     async def exists(self, path: str) -> bool:
         await self.ensure_ready()
@@ -238,7 +244,7 @@ class RecordingWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         return CommandResult(exit_code=0, stdout='connected', stderr='')
 
     async def working_dir(self) -> str:
-        return '/workspace'
+        return _WORKING_DIR
 
 
 class _CommandWorkspaceBackend(WorkspaceBackend, SupportsCommands, Protocol):
@@ -420,7 +426,7 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def remove(self, path: str) -> None:
         files = await self._files()
-        _remove(files, self._directories(), path)
+        _remove(files, self._directories(), path, await self.working_dir())
 
     async def exists(self, path: str) -> bool:
         files = await self._files()
