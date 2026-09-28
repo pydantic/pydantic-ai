@@ -69,7 +69,7 @@ class SmartGrep(AbstractCapability[AgentDepsT]):
     that can run commands and has `rg` on its `PATH` (the `coder` extra
     installs it for a local workspace); the tool is not offered on one that
     cannot run commands, and a run without a workspace fails at its start.
-    Install the `smart-grep` extra for syntax-aware chunking of fourteen
+    Install the `smart-grep` extra for syntax-aware chunking of fifteen
     languages beyond Python; without it, those files are cut into overlapping
     line windows.
     """

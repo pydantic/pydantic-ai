@@ -1,4 +1,4 @@
-"""`SmartGrep` syntax-aware chunking for fourteen languages beyond Python (tree-sitter).
+"""`SmartGrep` syntax-aware chunking for fifteen languages beyond Python (tree-sitter).
 
 Ported from Code Puppy's `code_puppy_core_plugins/jev_grep` tests.
 """
@@ -567,3 +567,8 @@ def test_tree_sitter_edge_cases(path: str, text: str, parser: str, symbols: set[
 
 def test_file_without_declarations_uses_windows() -> None:
     assert source_chunks('// just a comment\n', 'only.go')[1] == 'overlapping-lines'
+
+
+def test_nesting_deeper_than_the_stack_falls_back_to_windows() -> None:
+    text = 'namespace a {\n' * 500 + 'int f() { return 1; }\n' + '}\n' * 500
+    assert source_chunks(text, 'deep.cpp')[1] == 'overlapping-lines'

@@ -1,4 +1,4 @@
-"""tree-sitter `Syntax` for fourteen languages beyond Python.
+"""tree-sitter `Syntax` for fifteen languages beyond Python.
 
 JavaScript/TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Kotlin, Swift, Scala, Bash and Lua.
 

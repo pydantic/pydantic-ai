@@ -221,6 +221,18 @@ async def test_discover_respects_gitignore_and_reports_paths_as_spelled(tmp_path
     assert (await discover(_workspace(tmp_path), 'src', glob='*.txt')).chunks == []
 
 
+async def test_discover_stays_inside_the_working_directory(tmp_path: Path) -> None:
+    project, outside = tmp_path / 'project', tmp_path / 'outside'
+    project.mkdir()
+    outside.mkdir()
+    (outside / 'secret.py').write_text('token = 1\n')
+    (project / 'link').symlink_to(outside)
+    workspace = _workspace(project)
+    for directory in ('..', str(outside), 'link'):
+        with pytest.raises(ModelRetry, match='outside the working directory'):
+            await discover(workspace, directory)
+
+
 async def test_discover_enforces_byte_and_file_budgets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     (tmp_path / 'a.py').write_text('x = 1\n' * 50)
     (tmp_path / 'b.py').write_text('y = 1\n')

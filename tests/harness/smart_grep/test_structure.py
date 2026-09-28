@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pydantic_ai_harness.smart_grep._chunks import (
     Chunk,
     _chunks_from_ranges as chunks_from_ranges,  # pyright: ignore[reportPrivateUsage]
+    source_chunks,
     windows,
 )
 from pydantic_ai_harness.smart_grep._structure import Range, structure_ranges
@@ -67,3 +68,7 @@ def test_ranges_past_the_last_line_are_ignored() -> None:
         ['a = 1'], 'x.py', [Range(start=1, end=1, symbol='a'), Range(start=3, end=4, symbol=None)]
     )
     assert chunks == [Chunk(path='x.py', line=1, end_line=1, text='a = 1', symbol='a')]
+
+
+def test_python_without_statements_uses_windows() -> None:
+    assert source_chunks('# only a comment\n', 'empty.py')[1] == 'overlapping-lines'

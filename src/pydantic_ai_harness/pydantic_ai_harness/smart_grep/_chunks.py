@@ -1,7 +1,7 @@
 """Discovery and chunking: turn a workspace directory into judgeable source snippets.
 
 Source files are split along their syntax tree (see `_structure.py`): functions and methods stay whole,
-long declarations split into the blocks inside them. Python uses the stdlib `ast`; fourteen more languages
+long declarations split into the blocks inside them. Python uses the stdlib `ast`; fifteen more languages
 use tree-sitter (`_treesitter.py`), where regions that do not parse fall back to overlapping line windows.
 Other file types, and Python that does not parse, are cut into line windows entirely. Line coverage is
 exact: every non-blank line lands in at least one snippet.
@@ -106,17 +106,24 @@ def _chunks_from_ranges(lines: list[str], path: str, ranges: list[Range]) -> lis
 def source_chunks(text: str, path: str) -> tuple[list[Chunk], str]:
     """Chunk one file's text. Returns `(chunks, parser name)`."""
     lines = text.splitlines()
-    if path.endswith('.py'):
-        try:
-            ranges = python_ranges(text)
-        except (SyntaxError, ValueError, RecursionError):
-            ranges = []
-        if ranges:
-            return _chunks_from_ranges(lines, path, ranges), 'python'
-    elif parsed := treesitter_ranges(text, path):
+    try:
+        parsed = _parse(text, path)
+    except RecursionError:  # nested deeper than the stack allows, in either parser's tree walk
+        parsed = None
+    if parsed:
         ranges, parser = parsed
         return _chunks_from_ranges(lines, path, ranges), parser
     return windows(lines, path), 'overlapping-lines'
+
+
+def _parse(text: str, path: str) -> tuple[list[Range], str] | None:
+    if not path.endswith('.py'):
+        return treesitter_ranges(text, path)
+    try:
+        ranges = python_ranges(text)
+    except (SyntaxError, ValueError):
+        return None
+    return (ranges, 'python') if ranges else None
 
 
 async def list_files(workspace: Workspace, root: str, glob: str | None) -> tuple[list[str], list[tuple[str, str]]]:
@@ -150,6 +157,13 @@ async def _read(workspace: Workspace, path: str) -> bytes | OSError:
         return exc
 
 
+async def _require_inside_working_dir(workspace: Workspace, root: str, directory: str) -> None:
+    """Refuse a directory outside the working directory, symlinks followed: its source would go to the judge."""
+    cwd, real = await asyncio.gather(workspace.realpath(await workspace.working_dir()), workspace.realpath(root))
+    if posixpath.commonpath([cwd, real]) != cwd:
+        raise ModelRetry(f'`{directory}` is outside the working directory; smart_grep only searches inside it.')
+
+
 async def discover(workspace: Workspace, directory: str, glob: str | None = None) -> Discovery:
     """Read and chunk every eligible file under `directory`, a workspace path.
 
@@ -157,6 +171,7 @@ async def discover(workspace: Workspace, directory: str, glob: str | None = None
     spelled the directory: relative to the working directory, or absolute.
     """
     root = await workspace.resolve(directory)
+    await _require_inside_working_dir(workspace, root, directory)
     paths, unreadable = await list_files(workspace, root, glob)
     found = Discovery(files=len(paths), skipped=unreadable)
     texts: list[tuple[str, str]] = []

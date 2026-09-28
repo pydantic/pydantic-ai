@@ -107,7 +107,9 @@ calibrated, so check a few searches and adjust it if results are too sparse or t
 
 ## Privacy
 
-`smart_grep` sends the query, the shortlisted snippets and their paths to the judge model's provider. The
+`smart_grep` sends the query, the shortlisted snippets and their paths to the judge model's provider. It only searches
+inside the workspace's working directory (symlinks followed), so the model can't send source from elsewhere
+on the machine. The
 default instructions tell the model to honor requests to keep code local by using local search instead; pick a
 local judge model if no source may leave the machine.
 

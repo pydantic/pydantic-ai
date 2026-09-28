@@ -20,7 +20,7 @@ pip:
 pip install "pydantic-ai-harness[smart-grep]"
 ```
 
-The extra adds tree-sitter grammars for syntax-aware chunking of fourteen languages beyond Python; without it,
+The extra adds tree-sitter grammars for syntax-aware chunking of fifteen languages beyond Python; without it,
 those files are cut into overlapping line windows. Add `pydantic-ai-slim[typesafe]` and set `TYPESAFE_API_KEY`
 to judge with Jev.
 

@@ -191,7 +191,8 @@ agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartGrep(model='test')
   (default discovery instructions; `''` for none).
 - Judge usage is not added to the run's usage or limits; bound cost with `candidates`. A failed judgment
   fails the search as a tool failure the model sees.
-- Sends the query, snippets and paths to the judge's provider.
+- Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working
+  directory (symlinks followed), else `ModelRetry`.
 
 ## Shell
 
