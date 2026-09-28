@@ -497,8 +497,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         result: e2b.CommandResult | None = None
         # The token is allocated before the start RPC: a lost ACK must not make the
         # remote group undiscoverable. setsid isolates this invocation from other jobs.
-        pgid_file = f'/tmp/pydantic-e2b-pgid-{uuid.uuid4().hex}'
-        claim = f'{pgid_file}.claim'
+        claim = f'/tmp/pydantic-e2b-pgid-{uuid.uuid4().hex}'
+        pgid_file = f'{claim}/pgid'
         # The launcher and canceller race on one atomic mkdir. A cancelled late launcher
         # exits before user code; if launch wins, the canceller waits for its registration.
         # Keep a cancellation claim when the start ACK is lost so a late RPC stays fenced.
@@ -513,9 +513,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 f'if mkdir {claim} 2>/dev/null; then exit 0; fi; '
                 f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
                 'sleep 0.1; i=$((i+1)); done; '
-                # A registered launcher already consumed its claim, so both files can go; a claim
-                # this stop won is kept to fence a late start.
-                f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -f {pgid_file}; rmdir {claim}; '
+                # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
+                f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
                 'p=${record%%:*}; '
                 # Match creation time before signalling: a reused PID belongs to another run.
                 '[ "$(ps -o lstart= -p "$p")" = "${record#*:}" ] || exit 0; '
@@ -576,7 +575,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             if result is not None:
                 with anyio.move_on_after(0.5, shield=True):
                     try:
-                        await sandbox.files.remove(pgid_file, user=self._user)
                         await sandbox.files.remove(claim, user=self._user)
                     except Exception:
                         pass

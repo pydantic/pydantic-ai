@@ -343,7 +343,6 @@ class TestRun:
         match = re.search(r'/tmp/pydantic-e2b-pgid-[0-9a-f]+', launch)
         assert match is not None
         assert not Path(match.group()).exists()
-        assert not Path(f'{match.group()}.claim').exists()
 
     async def test_cancel_before_remote_start_fences_late_start_and_retry(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -426,8 +425,7 @@ class TestRun:
         backend = await started()
         await backend.run(['true'])
         removed = fake_e2b.sandboxes[0].files.removed
-        assert [path.rsplit('-', 1)[0] for path in removed] == ['/tmp/pydantic-e2b-pgid'] * 2
-        assert removed[1] == f'{removed[0]}.claim'
+        assert [path.rsplit('-', 1)[0] for path in removed] == ['/tmp/pydantic-e2b-pgid']
 
     async def test_command_uses_utf8_locale_unless_overridden(self, fake_e2b: FakeE2B) -> None:
         backend = await started()
