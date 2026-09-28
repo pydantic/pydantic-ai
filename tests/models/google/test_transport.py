@@ -36,7 +36,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
 

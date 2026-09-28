@@ -43,7 +43,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_TOOL_NAME,
@@ -152,6 +152,78 @@ async def test_capability_tool_call_uses_serving_providers_wire_window(boundary:
     result = await agent.run('go', message_history=history)
 
     assert result.output == 'done'
+
+
+@pytest.mark.parametrize(('boundary', 'provider_name'), _INVALID_WIRE_BOUNDARIES)
+async def test_capability_prepare_tools_governs_a_tool_the_wire_window_admits(
+    boundary: CompactionPart, provider_name: str
+):
+    """A tool admitted on anchored evidence still answers to its owner's `prepare_tools`.
+
+    The mirror of `test_capability_tool_call_uses_serving_providers_wire_window`, which pins that
+    such a call is *not* refused. Admitting it is only half an answer: authorization and filtering
+    have to read the same set. The conservative window drops the load, so `active_capability_ids`
+    alone reports the capability inactive and nothing dispatches to it — while the gate, reading the
+    provider-exact window, admits its tool. A capability using `prepare_tools` as a permission
+    filter would be bypassed, the same fail-open as a processor-injected load reached from the other
+    direction.
+
+    The test explicitly stamps `ModelResponse.provider_name`; a bare `FunctionModel` would exercise
+    the missing-provenance fallback instead, where the two windows agree and nothing is admitted.
+    """
+    prepare_tools_calls: list[list[str]] = []
+    loaded_ids_seen: list[list[str]] = []
+
+    class FilteringGuarded(Capability[Any]):
+        """Uses `prepare_tools` as a permission filter over its own tool."""
+
+        async def prepare_tools(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            prepare_tools_calls.append(sorted(tool_def.name for tool_def in tool_defs))
+            loaded_ids_seen.append(sorted(ctx.loaded_capability_ids))
+            return [tool_def for tool_def in tool_defs if tool_def.name != 'guarded_tool']
+
+    def guarded_tool() -> str:  # pragma: no cover
+        return 'ran'
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(True for _ in iter_message_parts(messages, ModelRequest, RetryPromptPart)):
+            return _provider_response([make_text_response('done').parts[0]], provider_name)
+        return _provider_response([ToolCallPart(tool_name='guarded_tool', args={}, tool_call_id='g1')], provider_name)
+
+    capability = FilteringGuarded(
+        id='guarded', description='Guarded.', toolsets=[FunctionToolset([guarded_tool])], defer_loading=True
+    )
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+    history = [
+        ModelResponse(
+            parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='load')], provider_name=provider_name
+        ),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(content={}, tool_call_id='load'),
+                ToolAvailabilityDeltaPart(tools_added=['guarded_tool']),
+            ]
+        ),
+        ModelResponse(parts=[boundary]),
+    ]
+
+    result = await agent.run('go', message_history=history)
+
+    executed = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'guarded_tool'
+    ]
+    assert executed == []
+    # The filter ran with the capability treated as active, and it removed the tool.
+    assert prepare_tools_calls[0] == snapshot(['guarded_tool'])
+    # And it ran off the retrospective supplement alone: the conservative window legitimately
+    # dropped the load, so the prospective set does not name the capability. That gap is the whole
+    # point — the filter has to follow whatever the gate authorizes from, not the narrower set.
+    assert loaded_ids_seen[0] == snapshot([])
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot(["Unknown tool name: 'guarded_tool'. Available tools: 'load_capability'"])
 
 
 async def test_compaction_inside_serving_response_does_not_reset_tool_evidence():

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
 from ._operation import (
@@ -20,6 +22,26 @@ ConfigT = TypeVar('ConfigT')
 ParamsT_bound = TypeVar('ParamsT_bound')
 WireT_bound = TypeVar('WireT_bound')
 ResultT_bound = TypeVar('ResultT_bound')
+
+_IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_durable_unit', default=False)
+
+
+def in_durable_unit() -> bool:
+    """Whether the current task is running a durable unit's body, set by `CallableOperationBackend`.
+
+    In-process engines need it where their own container check stays true inside a unit (Prefect's
+    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call from a tool goes direct.
+    """
+    return _IN_DURABLE_UNIT.get()
+
+
+@contextmanager
+def durable_unit_scope() -> Generator[None]:
+    token = _IN_DURABLE_UNIT.set(True)
+    try:
+        yield
+    finally:
+        _IN_DURABLE_UNIT.reset(token)
 
 
 class BoundDurableOperation(Generic[ParamsT_bound, WireT_bound, ResultT_bound], Protocol):
@@ -106,7 +128,8 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
             cache_key = operation.cache_identity.project(params)
 
             async def body() -> object:
-                return operation.result_codec.dump(await operation.handler(params))
+                with durable_unit_scope():
+                    return operation.result_codec.dump(await operation.handler(params))
 
             payload = await self.execute(
                 operation_id=operation.operation_id,
