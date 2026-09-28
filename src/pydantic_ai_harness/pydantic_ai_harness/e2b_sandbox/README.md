@@ -181,6 +181,14 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 
 Install the `temporal` extra too:
 
+uv:
+
+```bash
+uv add "pydantic-ai-harness[e2b,anthropic,temporal]"
+```
+
+pip:
+
 ```bash
 pip install "pydantic-ai-harness[e2b,anthropic,temporal]"
 ```
