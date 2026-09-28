@@ -109,7 +109,8 @@ def require_workspace(workspace: Workspace, owner: str) -> None:
     if not workspace.attached:
         raise UserError(
             f'`{owner}` needs a workspace, but none is attached to this run. '
-            "Add `LocalWorkspace('.')` (this machine) or a sandbox capability such as `ModalSandbox()` "
+            "Add `LocalWorkspace('.')` (this machine; `from pydantic_ai.capabilities import LocalWorkspace`, "
+            'or `- LocalWorkspace: .` in an agent spec) or a sandbox capability such as `ModalSandbox()` '
             "to the agent's capabilities, or pass `workspace=` to the run. "
             'See https://pydantic.dev/docs/ai/workspace/'
         )

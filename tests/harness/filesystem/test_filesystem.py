@@ -431,7 +431,9 @@ class TestRootDir:
         (tmp_path / 'src').mkdir()
         capabilities = [FileSystem[None](root_dir=tmp_path / 'src')]
         assert await call_tools(capabilities, [], workspace=LocalWorkspaceBackend(tmp_path)) == []
-        with pytest.raises(UserError, match=r"The working directory '.*' is outside root_dir '.*/src'"):
+        with pytest.raises(
+            UserError, match=r"The working directory '.*' is outside root_dir '.*/src'.*`LocalWorkspace\('.*/src'\)`"
+        ):
             await call_tool(capabilities, 'list_directory', {}, workspace=LocalWorkspaceBackend(tmp_path))
 
     async def test_the_boundary_is_resolved_once_per_run(self, tmp_path: Path) -> None:
