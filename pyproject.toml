@@ -602,7 +602,7 @@ snap = ["create"]
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.git*,*.svg,*.lock,*.css,*.yaml,src/pydantic_ai_harness/integration_tests/absurd/fixtures/absurd.sql'
+skip = '.git*,*.svg,*.lock,*.css,*.yaml,tests/harness/absurd/fixtures/absurd.sql'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'

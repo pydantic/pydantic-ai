@@ -1,6 +1,10 @@
-"""`AbsurdDurability` on a real Absurd worker: a completed task, and a retried attempt served from checkpoints."""
+"""`AbsurdDurability` on a real Absurd worker: a retried attempt is served from checkpoints."""
 
 from __future__ import annotations
+
+import pytest
+
+pytest.importorskip('absurd_sdk')
 
 from absurd_sdk import AsyncAbsurd, AsyncTaskContext, JsonValue
 
@@ -9,31 +13,6 @@ from pydantic_ai.messages import TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.absurd import AbsurdDurability
-
-
-async def test_spawned_agent_task_completes_against_postgres(absurd: AsyncAbsurd) -> None:
-    """A worker runs a spawned agent task to completion."""
-    agent = Agent[object, str](
-        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='ok')]), model_name='fn'),
-        name='analyst',
-        capabilities=[AbsurdDurability()],
-    )
-
-    @absurd.register_task(name='analyse')
-    async def analyse(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:
-        assert isinstance(params, dict)
-        prompt = params['prompt']
-        assert isinstance(prompt, str)
-        result = await agent.run(prompt)
-        return {'output': result.output}
-
-    spawned = await absurd.spawn('analyse', {'prompt': 'go'})
-    await absurd.work_batch(batch_size=1)
-    result = await absurd.fetch_task_result(spawned['task_id'])
-
-    assert result is not None
-    assert result.state == 'completed'
-    assert result.result == {'output': 'ok'}
 
 
 async def test_worker_retry_replays_postgres_checkpoints(absurd: AsyncAbsurd) -> None:

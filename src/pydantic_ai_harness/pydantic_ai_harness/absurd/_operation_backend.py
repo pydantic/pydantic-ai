@@ -4,26 +4,30 @@ import dataclasses
 from collections.abc import Awaitable, Callable
 from typing import TypeGuard
 
+from pydantic import TypeAdapter
+
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.durable_exec import (
     CallableOperationBackend,
     DurableOperationId,
     JournalOperationNamer,
+    ModelRequestId,
     RoleBasedOperationConfig,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
 )
+from pydantic_ai.messages import ModelResponse, ModelResponseStreamEvent
+from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters
 
 from ._context import current_async_task_context
 
 _ToolsetOperationId = ToolsetGetToolsId | ToolsetGetInstructionsId | ToolsetValidateToolArgumentsId | ToolsetCallToolId
 
-# A `pydantic-ai-absurd` tool-call checkpoint holds the tool's raw return value, and a control-flow
-# exception (`ModelRetry`, `CallDeferred`, ...) propagates out of the step without a checkpoint.
-# This backend writes the same shape, so a run started under `pydantic-ai-absurd` resumes here.
-# The one result that has no raw form is a `ToolReturn` object, which goes under this reserved key.
+# A tool-call checkpoint holds the tool's raw return value, and a control-flow exception
+# (`ModelRetry`, `CallDeferred`, ...) propagates out of the step without a checkpoint. The one result
+# that has no raw form is a `ToolReturn` object, which goes under this reserved key.
 _ENVELOPE_KEY = '__pydantic_ai_harness_absurd_tool_result__'
 _RAW_RESULT_KINDS = frozenset({'tool_return', 'tool_content_result'})
 
@@ -32,10 +36,9 @@ _NO_CONFIG = RoleBasedOperationConfig[None](model=None, event=None, capability=N
 
 
 class AbsurdOperationNamer(JournalOperationNamer):
-    """Journal naming, plus `pydantic-ai-absurd`'s names for toolsets without an `id`.
+    """Journal naming, where a toolset without an `id` drops the `__<id>` segment.
 
-    `pydantic-ai-absurd` named an id-less toolset's steps without the `__<id>` segment
-    (`agent__mcp_server.call_tool`), so those names are kept for checkpoints to line up.
+    For example `agent__mcp_server.call_tool`, so such toolsets can be checkpointed too.
     """
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
@@ -64,12 +67,33 @@ def _is_envelope(stored: object) -> TypeGuard[dict[str, object]]:
     )
 
 
+_response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
+_events_adapter: TypeAdapter[list[ModelResponseStreamEvent]] = TypeAdapter(list[ModelResponseStreamEvent])
+
+
+async def _from_stream_checkpoint(stored: object) -> object:
+    """Read a `request_stream` checkpoint, including one written by the older `AbsurdAgent` wrapper.
+
+    That wrapper stored a bare `ModelResponse` with no captured events, so the events are rebuilt
+    from the response parts.
+    """
+    if not is_str_dict(stored) or 'response' in stored:
+        return stored
+    completed = CompletedStreamedResponse(
+        _response_adapter.validate_python(stored),
+        model_request_parameters=ModelRequestParameters(),
+        replay_events=True,
+    )
+    events = [event async for event in completed]
+    return {'response': stored, 'events': _events_adapter.dump_python(events, mode='json')}
+
+
 def _to_checkpoint(payload: object) -> object:
-    """Reduce an encoded `CallToolResult` to what `pydantic-ai-absurd` would have stored."""
+    """Reduce an encoded `CallToolResult` to the stored checkpoint: the raw return value."""
     assert is_str_dict(payload)
     kind = payload.get('kind')
     if kind not in _RAW_RESULT_KINDS:
-        # Control flow: raising keeps it out of the checkpoint table, as in `pydantic-ai-absurd`.
+        # Control flow: raising keeps it out of the checkpoint table, so the call runs again on replay.
         raise _UncheckpointedResult(payload)
     result = payload['result']
     if kind == 'tool_return' and _is_tool_return_object(result):
@@ -105,6 +129,8 @@ class AbsurdOperationBackend(CallableOperationBackend[None]):
         del cache_key, config
         task_ctx = current_async_task_context()
         assert task_ctx is not None
+        if isinstance(operation_id, ModelRequestId) and operation_id.streaming:
+            return await _from_stream_checkpoint(await task_ctx.step(name, body))
         if not isinstance(operation_id, ToolsetCallToolId):
             return await task_ctx.step(name, body)
 

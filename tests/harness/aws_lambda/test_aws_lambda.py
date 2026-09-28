@@ -46,8 +46,8 @@ from pydantic_ai_harness.aws_lambda import (
     run_durable,
 )
 
-from .._fake_mcp import FakeMCPToolset
 from .conftest import FakeDurableContext
+from .test_aws_lambda_mcp import FakeMCPToolset
 
 _READINESS_WAIT_TIMEOUT = 5.0
 

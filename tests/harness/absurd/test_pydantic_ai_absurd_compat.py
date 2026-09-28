@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+
+pytest.importorskip('absurd_sdk')
+pytest.importorskip('fastmcp')
+
 from absurd_sdk import AsyncAbsurd, AsyncTaskContext, JsonValue
 from fastmcp import FastMCP
 from psycopg import AsyncConnection, sql

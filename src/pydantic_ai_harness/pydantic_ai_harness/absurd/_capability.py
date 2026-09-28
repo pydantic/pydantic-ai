@@ -4,9 +4,6 @@ Absurd (`absurd-sdk`) is a Postgres-based durable-execution engine. This module
 checkpoints an agent's I/O -- model requests, MCP calls, and function tool calls
 -- into Absurd steps (`ctx.step(...)`), so a worker crash mid-run resumes from
 the last completed step instead of restarting the run.
-
-The step names and checkpoint payloads match the `pydantic-ai-absurd` package by
-Marcelo Trylesinski, so a run started under one package can resume under the other.
 """
 
 from __future__ import annotations
@@ -69,9 +66,6 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
     to the agent. Step results are stored in Postgres as JSON, so a checkpointed tool's return
     value must be JSON-serializable.
 
-    Step names and checkpoint payloads match the `pydantic-ai-absurd` package, so a task started
-    under it resumes under this capability.
-
     Example:
         ```python {test="skip"}
         from absurd_sdk import AsyncAbsurd, AsyncTaskContext, JsonValue
@@ -95,7 +89,7 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         durable_unit_noun='step',
         durable_container_noun='task',
         codec=JSON_CODEC,
-        # `pydantic-ai-absurd` checkpoints function and MCP toolsets only; dynamic toolsets run as-is.
+        # Function and MCP toolsets are checkpointed; dynamic toolsets run as-is.
         wrapped_toolset_kinds=frozenset({'function', 'mcp'}),
         toolset_lifecycles={'function': 'enter-never', 'mcp': 'enter-never'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
@@ -150,7 +144,7 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         super()._bind_to_agent(agent)
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        # `pydantic-ai-absurd` accepts toolsets without an `id` and keys their wrappers by instance.
+        # A toolset without an `id` is still checkpointed; its wrapper is keyed by instance.
         if ts.id is not None:
             return super()._wrap_and_register_leaf(ts)
         if (existing := self._id_less_wrappers.get(id(ts))) is not None:
@@ -168,7 +162,7 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         return (wrapped or toolset).visit_and_replace(lambda ts: self._id_less_wrappers.get(id(ts), ts))
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode for every run, as `pydantic-ai-absurd` does."""
+        """Apply the configured parallel-execution mode to every run, inside a task or not."""
         agent = self.agent
         assert agent is not None
         with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
