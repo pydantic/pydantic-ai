@@ -602,23 +602,36 @@ def test_unsupported_native_output_raises(
 
 
 @pytest.mark.vcr
-def test_opus_5_5_basemodel_output_falls_back_to_auto(
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        pytest.param(
+            'claude-opus-5-5', CityInfo(city='Tokyo', country='Japan', population=14000000), id='claude-opus-5-5'
+        ),
+        pytest.param(
+            'claude-sonnet-5-5', CityInfo(city='Tokyo', country='Japan', population=13960000), id='claude-sonnet-5-5'
+        ),
+    ],
+)
+def test_basemodel_output_falls_back_to_auto_without_forcing(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
     request_capture: RequestCapture,
+    model_name: str,
+    expected: CityInfo,
 ) -> None:
-    """Claude Opus 5.5 rejects a forced `tool_choice`, so a bare structured `output_type` still completes.
+    """Claude Opus 5.5 and Sonnet 5.5 reject a forced `tool_choice`, so a bare structured `output_type` still completes.
 
-    Tool Output resolves to a forced choice of the output tool, which Opus 5.5 answers with a 400
+    Tool Output resolves to a forced choice of the output tool, which these models answer with a 400
     (`tool_choice: type "tool" and "any" are not supported for this model`). The profile's
     `anthropic_supports_forced_tool_choice=False` makes it fall back to `auto` with the tools filtered
     to the output tool, and the model calls it anyway.
     """
-    model = anthropic_model('claude-opus-5-5', capture=True)
+    model = anthropic_model(model_name, capture=True)
     agent = Agent(model, output_type=CityInfo)
     result = agent.run_sync('Give me information about Tokyo')
 
-    assert result.output == snapshot(CityInfo(city='Tokyo', country='Japan', population=14000000))
+    assert result.output == expected
     body = request_capture.bodies('/v1/messages')[0]
     assert body.get('tool_choice') == snapshot({'type': 'auto'})
     assert body['tools'] == snapshot(
