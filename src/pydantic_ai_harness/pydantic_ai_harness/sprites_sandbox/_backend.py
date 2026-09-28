@@ -441,14 +441,19 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return self._ref
 
     async def get_sandbox(self) -> AsyncSprite:
-        """Return the typed `sprites.AsyncSprite`, creating or attaching to it on first use.
+        """Return the typed `sprites.AsyncSprite`, for Sprites features the workspace API does not cover.
 
-        This is the Sprite handle, not the `AsyncSpritesClient` passed as `client=`. A handle
-        obtained before `aclose()` belongs to the closed client; call this again for a fresh one.
+        On a backend with no Sprite yet, this creates one (which Sprites bills) or attaches to the one
+        `ref` names, just like the first operation. Attaching by `ref` to a Sprite that no longer
+        exists raises `WorkspaceUnavailableError`; it does not create a replacement. After that it
+        returns the cached handle without checking that the Sprite still exists: one deleted
+        elsewhere surfaces on the next operation. Calling this does not make you responsible for
+        deleting the Sprite; whoever holds the `ref` decides, as before.
 
-        The lock serializes concurrent first uses -- two callers each creating a Sprite
-        would leave the loser billed and unreferenced. Attaching by `ref` to a Sprite that
-        no longer exists raises `WorkspaceUnavailableError`; it does not create a replacement.
+        The handle belongs to the backend's `AsyncSpritesClient`, and this never returns a handle the
+        backend built without looking the Sprite up. Once `aclose()` closes the backend's own client,
+        handles from it stop working, so call this again. A backend you build yourself outside a run
+        opens its own client, which you close with `aclose()`.
 
         Raises:
             UserError: The event loop is not asyncio.

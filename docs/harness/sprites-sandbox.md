@@ -154,7 +154,7 @@ async def delete_sprite(ref: WorkspaceRef) -> None:
     await SpritesSandbox().destroy(ref)
 ```
 
-`destroy(ref)` deletes by Sprite id without attaching or waking it, and a Sprite that no longer exists returns quietly. Only destroy Sprites you own. Use `backend(ref)` to construct a lazy backend for an existing Sprite; `get_sandbox()` returns its native `sprites.AsyncSprite`. See [Sprite lifecycle](https://docs.sprites.dev/concepts/lifecycle/).
+`destroy(ref)` deletes by Sprite id without attaching or waking it, and a Sprite that no longer exists returns quietly. Only destroy Sprites you own. Use `backend(ref)` to construct a lazy backend for an existing Sprite; `get_sandbox()` attaches to it and returns its native `sprites.AsyncSprite` (on a backend with no Sprite yet, it creates one). A backend you build yourself outside a run opens its own client, which you close with `aclose()`; after that, call `get_sandbox()` again for a working handle. See [Sprite lifecycle](https://docs.sprites.dev/concepts/lifecycle/).
 
 A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails. If creation's reply was lost, the ref may identify a Sprite that is not yet visible to the API; a lookup failure does not prove it was never created:
 
