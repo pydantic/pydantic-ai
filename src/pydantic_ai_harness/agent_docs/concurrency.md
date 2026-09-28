@@ -33,9 +33,9 @@ garbage collector" or "the caller remembers" is a bug, not a design.
   must still be stored on, and drained by, the enclosing context manager (core:
   `RealtimeSession._start_pump` is lazy and `__aexit__` drains it).
 - Prefer a task group, whose `async with` encloses everything the children
-  touch, over loose tasks. `ShellToolset.run_command` reads stdout and stderr
-  as two children of one group inside one `fail_after`, so a timeout cancels
-  both readers together (`shell/_toolset.py`). Avoid
+  touch, over loose tasks. Core's `LocalWorkspaceBackend.run` reads stdout and
+  stderr as two children of one group inside one `move_on_after`, so a timeout
+  cancels both readers together (`pydantic_ai/workspaces/local.py`). Avoid
   `asyncio.gather(..., return_exceptions=False)` when one failure should stop
   the batch: it propagates the first failure while siblings keep running.
   `return_exceptions=True` is fine for a cleanup-only drain.
@@ -48,8 +48,8 @@ garbage collector" or "the caller remembers" is a bug, not a design.
   still holds the shared loop. Pass `name=` when there are many of a kind.
 - A subprocess is a resource like any other. Every `anyio.open_process` needs
   an owner that waits on it, closes its pipes, and kills its process group on
-  the failure path. `ShellToolset` tracks background processes in a dict that
-  `__aexit__` terminates and cleans up (`shell/_toolset.py`), and
+  the failure path. `ShellToolset` tracks its detached workspace jobs in a dict
+  that `__aexit__` terminates and cleans up (`shell/_toolset.py`), and
   `LocalStackContainer` pairs a startup `fail_after` with a shielded teardown
   (`localstack/_container.py`).
 
@@ -63,10 +63,10 @@ before writing cleanup.
 
 - Shield cleanup that must complete under an outer `anyio` cancel. Your
   `finally` and each child's cleanup are unprotected unless they shield
-  themselves. `ShellToolset` waits for a killed process and drains its pipes
-  under `anyio.CancelScope(shield=True)` (`shell/_toolset.py`),
-  `ModalSandboxSession` shields both creation and teardown and bounds each with
-  `move_on_after` so a shield can never hang (`modal_sandbox/_session.py`), and
+  themselves. The `shell` tool stops a cancelled job and removes its files under
+  `anyio.move_on_after(..., shield=True)` (`shell/_persistent.py`),
+  `ModalSandboxBackend.run` cancels its reader tasks first and only then shields
+  the wait for them (`modal_sandbox/_backend.py`), and
   `_monty_exec.py` shields the interpreter's cleanup. Do not shield task-group
   exit alone: `TaskGroup.__aexit__` already shields the parent's remaining wait
   once the first cancel reaches it (anyio #695).
@@ -80,8 +80,8 @@ before writing cleanup.
 - One owner per deadline. Core's `FunctionToolset.call_tool` enforces exactly
   one scope for the per-tool timeout, so a longer per-tool value replaces the
   agent default instead of being capped by it. A harness toolset that owns a
-  transport owns its own deadline at that transport: `ShellToolset` applies
-  `timeout_seconds` around the readers, `LocalStackContainer` applies
+  transport owns its own deadline at that transport: `ShellToolset` passes
+  `timeout_seconds` to `workspace.run`, `LocalStackContainer` applies
   `_startup_timeout` around readiness, `SubAgentToolset` applies
   `timeout_seconds` with `asyncio.wait_for` around the child run. Do not stack
   a second scope over one of these.
@@ -184,16 +184,13 @@ before writing cleanup.
 - Reach the real trigger. Level-cancellation behavior needs a real outer
   `anyio` cancel scope, not a bare `CancelledError` raise; Trio behavior needs
   the `trio` parametrization this suite already runs, not a mental model of it.
-- Know which backend a suite runs under before you trust it. anyio's pytest
-  plugin parametrizes `anyio_backend` over every installed backend, and
-  `anyio[trio]` is in the dev group, so the default is asyncio and Trio:
-  `tests/shell` and `tests/filesystem` take that default (collect them and
-  every test id ends in `[asyncio]` or `[trio]`), with individual tests opting
-  out via `@pytest.mark.anyio(backends=['asyncio'])`. A suite goes asyncio-only
-  by overriding the `anyio_backend` fixture at module level to return
-  `'asyncio'`, which `tests/subagents` and `tests/filesystem/test_events.py`
-  do. That override is why `SubAgentToolset.delegate_task` can use
-  `asyncio.wait_for` today. Reach for `anyio` primitives by default
-  (`fail_after`, `Lock`, task groups); before you remove an `anyio_backend`
-  override, grep the package for `asyncio.` and convert or skip each hit, and
-  keep `aws_lambda` asyncio-only because its bridge owns a real asyncio loop.
+- Know which backend a suite runs under before you trust it. Every `async def`
+  test runs via anyio's pytest plugin (`anyio_mode = "auto"`), and the root
+  `anyio_backend` fixture picks the backend from `--anyio-backend` (asyncio by
+  default; pass `--anyio-backend=trio` to run under Trio). The whole harness
+  suite is asyncio-only: `tests/harness/conftest.py` overrides `anyio_backend`
+  to return `'asyncio'`. That override is why `SubAgentToolset.delegate_task`
+  can use `asyncio.wait_for` today. Reach for `anyio` primitives by default
+  (`fail_after`, `Lock`, task groups); before you remove that override, grep
+  the package for `asyncio.` and convert or skip each hit, and keep
+  `aws_lambda` asyncio-only because its bridge owns a real asyncio loop.

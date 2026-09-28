@@ -36,13 +36,6 @@ from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 from .._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def build_run_context() -> RunContext[None]:
     return RunContext[None](

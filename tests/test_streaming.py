@@ -97,8 +97,6 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
 
-pytestmark = pytest.mark.anyio
-
 
 class Foo(BaseModel):
     a: int

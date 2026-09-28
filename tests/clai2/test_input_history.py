@@ -4,7 +4,6 @@ import io
 import os
 from pathlib import Path
 
-import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -15,13 +14,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.input_history import input_history
 from pydantic_clai2.settings_store import SettingsStore
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 async def test_history_survives_reopening(tmp_path: Path) -> None:

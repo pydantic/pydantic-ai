@@ -37,14 +37,6 @@ from pydantic_ai_harness.code_mode._streaming import decode_partial_args
 
 from .test_speculation import observe, prepared_toolset
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
 
 def _branch_code(taken: str, other: str) -> str:
     """A snippet with literal calls on both branches, so the watcher launches both."""

@@ -24,13 +24,6 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import CoreHookName, PluginHost, SessionEnd, SessionStart, Transcript, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 @dataclass(kw_only=True)
 class Ping(CapabilityEvent, namespace='clai_test'):

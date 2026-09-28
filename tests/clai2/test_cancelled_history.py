@@ -12,13 +12,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session
 from pydantic_clai2.interrupts import Interrupts
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 @pytest.mark.parametrize('stage', ['before_run', 'before_model', 'stream'])
 async def test_sigint_retains_request_and_partial_response(stage: str) -> None:

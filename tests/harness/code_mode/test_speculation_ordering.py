@@ -10,15 +10,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.code_mode import CodeMode
 
-pytestmark = pytest.mark.anyio
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize('native_write', [False, True])
 async def test_read_waits_for_preceding_sequential_write(native_write: bool) -> None:
     value = 'before'

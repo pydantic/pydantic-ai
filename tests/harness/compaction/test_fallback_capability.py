@@ -19,13 +19,6 @@ from pydantic_ai_harness.compaction import (
     pin,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def history() -> list[ModelMessage]:
     return [ModelRequest.user_text_prompt('old ' * 100), ModelResponse(parts=[TextPart('reply')])]

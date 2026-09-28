@@ -55,14 +55,6 @@ from pydantic_ai_harness.step_persistence import (
 from pydantic_ai_harness.step_persistence._context import current_run_id
 from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Restrict async tests to asyncio (Agent.run uses `asyncio.create_task`)."""
-    return 'asyncio'
-
 
 def build_run_context(
     deps: object = None,

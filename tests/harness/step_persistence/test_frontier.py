@@ -24,13 +24,6 @@ from pydantic_ai_harness.step_persistence import (
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 @pytest.mark.parametrize('stream', [False, True])
 async def test_input_checkpoint_on_first_model_failure(stream: bool) -> None:

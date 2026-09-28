@@ -16,8 +16,6 @@ from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, lo
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 
-pytestmark = pytest.mark.anyio
-
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
 )
@@ -53,11 +51,6 @@ def scripted(values: list[str | BaseException]) -> tuple[list[str], CodexAuth]:
         return value
 
     return prompts, CodexAuth(Console(file=io.StringIO()), read_line=paste)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 async def test_credentials_round_trip() -> None:

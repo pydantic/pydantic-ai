@@ -14,13 +14,6 @@ from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, 
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
     output = io.StringIO()

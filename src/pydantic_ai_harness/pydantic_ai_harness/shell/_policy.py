@@ -9,6 +9,8 @@ from collections.abc import Awaitable, Callable
 from typing import Concatenate, ParamSpec, TypeVar
 
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai_harness._workspace import raise_tool_failure
 
 _P = ParamSpec('_P')
 _ToolsetT = TypeVar('_ToolsetT')
@@ -34,19 +36,26 @@ _RECOVERABLE_ERRNOS: dict[int | None, str] = {
 def recoverable(
     fn: Callable[Concatenate[_ToolsetT, _P], Awaitable[str]],
 ) -> Callable[Concatenate[_ToolsetT, _P], Awaitable[str]]:
-    """Convert model-correctable errors into `ModelRetry`.
+    """Convert model-correctable errors into `ModelRetry`, and workspace refusals into `ToolFailed`.
 
     pyai only feeds `ModelRetry` back to the model as a retry prompt; any other
     exception propagates and aborts the whole run. A denied command, a command
     the OS refuses to spawn, and a working directory the model's own earlier
     command destroyed are all things the model can recover from, so surface them
-    as a retry instead of crashing the agent.
+    as a retry instead of crashing the agent. A read-only workspace, an expired
+    control deadline, or another deliberate workspace failure is reported as a
+    failed call instead (see `raise_tool_failure`); a workspace that is gone
+    still ends the run.
     """
 
     @functools.wraps(fn)
     async def wrapper(self: _ToolsetT, *args: _P.args, **kwargs: _P.kwargs) -> str:
         try:
             return await fn(self, *args, **kwargs)
+        # Before `PermissionError` and `OSError`: `WorkspaceReadOnlyError` is a `PermissionError`
+        # and `WorkspaceTimeoutError` a `TimeoutError`, and neither is a policy denial.
+        except WorkspaceError as e:
+            raise_tool_failure(e)
         except PermissionError as e:
             raise ModelRetry(str(e)) from e
         except OSError as e:

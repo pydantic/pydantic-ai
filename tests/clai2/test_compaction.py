@@ -20,13 +20,6 @@ from pydantic_clai2.plugins import PluginHost, SessionEnd, Transcript
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.test_app_edges import inputs
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def make_host(conversation: Transcript | Session[None, str] | None = None, **settings: JsonValue) -> PluginHost[None]:
     host = PluginHost[None](

@@ -1,4 +1,4 @@
-"""`FileSystem` options added for single-writer coding agents: `cwd`, `content_hashes`, `max_read_chars`, and batch edits."""
+"""`FileSystem` options added for single-writer coding agents: `content_hashes`, `max_read_chars`, batch edits, a root above the working directory, and `max_retries`."""
 
 import os
 from pathlib import Path
@@ -6,17 +6,12 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.filesystem import FILE_SYSTEM_TOOL_NAMES, FileSystem, FileSystemToolset, Replacement
 
-from .._tool_calls import call_tool
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from .._tool_calls import call_tool, call_tools
 
 
 def toolset(root: Path, **settings: object) -> FileSystemToolset[None]:
@@ -26,15 +21,20 @@ def toolset(root: Path, **settings: object) -> FileSystemToolset[None]:
     return built
 
 
-async def call(root: Path, name: str, arguments: dict[str, object], **settings: object) -> str:
+async def call(
+    root: Path, name: str, arguments: dict[str, object], *, working_dir: Path | None = None, **settings: object
+) -> str:
+    """Call a tool of a `FileSystem` bounded by `root`, in a workspace at `working_dir` (by default `root`)."""
     capability = FileSystem[None](root_dir=root, **settings)  # pyright: ignore[reportArgumentType]
-    return await call_tool([capability], name, arguments)
+    return await call_tool([capability], name, arguments, workspace=LocalWorkspaceBackend(working_dir or root))
 
 
 class TestContentHashes:
     async def test_schema_omits_expected_hash(self, tmp_path: Path) -> None:
         model = TestModel(call_tools=[])
-        await Agent(model, capabilities=[FileSystem(root_dir=tmp_path, content_hashes=False)]).run('Inspect')
+        await Agent(model, capabilities=[FileSystem(root_dir=tmp_path, content_hashes=False)]).run(
+            'Inspect', workspace=LocalWorkspaceBackend(tmp_path)
+        )
         assert model.last_model_request_parameters is not None
         schemas = {t.name: t.parameters_json_schema for t in model.last_model_request_parameters.function_tools}
         assert 'expected_hash' not in schemas['write_file']['properties']
@@ -42,7 +42,9 @@ class TestContentHashes:
         assert 'replacements' in schemas['edit_file']['properties']
 
         model = TestModel(call_tools=[])
-        await Agent(model, capabilities=[FileSystem(root_dir=tmp_path)]).run('Inspect')
+        await Agent(model, capabilities=[FileSystem(root_dir=tmp_path)]).run(
+            'Inspect', workspace=LocalWorkspaceBackend(tmp_path)
+        )
         assert model.last_model_request_parameters is not None
         schemas = {t.name: t.parameters_json_schema for t in model.last_model_request_parameters.function_tools}
         assert 'expected_hash' in schemas['write_file']['properties']
@@ -116,7 +118,9 @@ class TestReplacements:
 
     async def test_direct_method_keeps_single_pair(self, tmp_path: Path) -> None:
         (tmp_path / 'f.txt').write_text('one')
-        assert (await toolset(tmp_path).edit_file('f.txt', 'one', 'two')).startswith('Edited f.txt.')
+        assert (
+            await toolset(tmp_path).edit_file('f.txt', 'one', 'two', workspace=LocalWorkspaceBackend(tmp_path))
+        ).startswith('Edited f.txt.')
         assert (tmp_path / 'f.txt').read_text() == 'two'
         assert Replacement(old_text='a', new_text='b').new_text == 'b'
 
@@ -161,7 +165,9 @@ class TestMaxReadChars:
             FileSystem[None](root_dir=tmp_path, max_read_chars=0)
 
 
-class TestCwd:
+class TestRootAboveTheWorkingDirectory:
+    """A `root_dir` above the working directory: relative paths resolve from the working directory."""
+
     @pytest.mark.parametrize('search_path', ['.', 'src', '../shared'])
     @pytest.mark.parametrize(
         'name,arguments',
@@ -182,19 +188,24 @@ class TestCwd:
         directory.mkdir(exist_ok=True)
         target = directory / 'AGENTS.md'
         target.write_text('Project instructions')
-        capability = FileSystem[None](root_dir=tmp_path, cwd=project, tools=FILE_SYSTEM_TOOL_NAMES)
+        capability = FileSystem[None](root_dir=tmp_path, tools=FILE_SYSTEM_TOOL_NAMES)
+        workspace = LocalWorkspaceBackend(project)
 
-        discovered = await call_tool([capability], name, {'path': search_path, **arguments})
+        discovered = await call_tool([capability], name, {'path': search_path, **arguments}, workspace=workspace)
         path = discovered.partition(':')[0].partition('  (')[0]
         assert path == os.path.relpath(target, project)
 
         decoy = project / target.relative_to(tmp_path)
         decoy.parent.mkdir(parents=True, exist_ok=True)
         decoy.write_text('Different instructions')
-        assert 'Project instructions' in await call_tool([capability], 'read_file', {'path': path})
-        await call_tool([capability], 'edit_file', {'path': path, 'old_text': 'Project', 'new_text': 'Updated'})
+        assert 'Project instructions' in await call_tool([capability], 'read_file', {'path': path}, workspace=workspace)
+        await call_tool(
+            [capability], 'edit_file', {'path': path, 'old_text': 'Project', 'new_text': 'Updated'}, workspace=workspace
+        )
         assert target.read_text() == 'Updated instructions'
-        await call_tool([capability], 'write_file', {'path': path, 'content': 'Replaced instructions'})
+        await call_tool(
+            [capability], 'write_file', {'path': path, 'content': 'Replaced instructions'}, workspace=workspace
+        )
         assert target.read_text() == 'Replaced instructions'
         assert decoy.read_text() == 'Different instructions'
 
@@ -217,59 +228,86 @@ class TestCwd:
             (project / filename).write_text('content')
         capability = FileSystem[None](
             root_dir=tmp_path,
-            cwd=project,
             tools=FILE_SYSTEM_TOOL_NAMES,
             allowed_patterns=['project/*.txt'],
             denied_patterns=['project/denied.txt'],
-            protected_patterns=['project/allowed.txt'],
+            read_only_patterns=['project/allowed.txt'],
         )
+        workspace = LocalWorkspaceBackend(project)
 
-        result = await call_tool([capability], name, arguments)
+        result = await call_tool([capability], name, arguments, workspace=workspace)
         path = result.partition(':')[0].partition('  (')[0]
         assert path == 'allowed.txt'
-        assert 'content' in await call_tool([capability], 'read_file', {'path': path})
-        assert 'protected' in await call_tool([capability], 'write_file', {'path': path, 'content': 'changed'})
+        assert 'content' in await call_tool([capability], 'read_file', {'path': path}, workspace=workspace)
+        assert 'protected' in await call_tool(
+            [capability], 'write_file', {'path': path, 'content': 'changed'}, workspace=workspace
+        )
         assert (project / 'allowed.txt').read_text() == 'content'
 
     @pytest.mark.parametrize('content_hashes', [False, True])
-    async def test_tool_schemas_describe_cwd_relative_inputs(self, tmp_path: Path, content_hashes: bool) -> None:
+    async def test_tool_schemas_describe_relative_inputs(self, tmp_path: Path, content_hashes: bool) -> None:
         model = TestModel(call_tools=[])
         await Agent(
             model,
             capabilities=[FileSystem(root_dir=tmp_path, tools=FILE_SYSTEM_TOOL_NAMES, content_hashes=content_hashes)],
-        ).run('Inspect tools')
+        ).run('Inspect tools', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         for tool in model.last_model_request_parameters.function_tools:
             description = tool.parameters_json_schema['properties']['path']['description']
-            assert 'relative to `cwd`' in description
+            assert 'relative to the working directory' in description
 
-    async def test_relative_paths_resolve_from_cwd(self, tmp_path: Path) -> None:
+    async def test_relative_paths_resolve_from_the_working_directory(self, tmp_path: Path) -> None:
         project = tmp_path / 'project'
         project.mkdir()
         (tmp_path / 'shared.txt').write_text('outside the project')
-        built = toolset(tmp_path, cwd=project)
-        await built.write_file('local.txt', 'inside')
+        built = toolset(tmp_path)
+        workspace = LocalWorkspaceBackend(project)
+        await built.write_file('local.txt', 'inside', workspace=workspace)
         assert (project / 'local.txt').read_text() == 'inside'
-        assert 'outside the project' in await built.read_file('../shared.txt')
-        assert 'outside the project' in await built.read_file(str(tmp_path / 'shared.txt'))
-        assert await built.list_directory('.') == await built.list_directory('../project')
+        assert 'outside the project' in await built.read_file('../shared.txt', workspace=workspace)
+        assert 'outside the project' in await built.read_file(str(tmp_path / 'shared.txt'), workspace=workspace)
+        assert await built.list_directory('.', workspace=workspace) == await built.list_directory(
+            '../project', workspace=workspace
+        )
 
     @pytest.mark.skipif(os.name == 'nt', reason='POSIX symlinks')
-    async def test_file_info_reports_the_symlink_at_cwd(self, tmp_path: Path) -> None:
+    async def test_file_info_reports_the_symlink_in_the_working_directory(self, tmp_path: Path) -> None:
         project = tmp_path / 'project'
         project.mkdir()
         (tmp_path / 'target.txt').write_text('shared')
         (project / 'link.txt').symlink_to(tmp_path / 'target.txt')
         (tmp_path / 'link.txt').write_text('a regular file at the root with the same name')
-        info = await toolset(tmp_path, cwd=project).file_info('link.txt')
+        info = await toolset(tmp_path).file_info('link.txt', workspace=LocalWorkspaceBackend(project))
         assert 'symlink' in info and 'target.txt' in info
-
-    def test_cwd_must_be_inside_root(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError, match='outside root_dir'):
-            toolset(tmp_path / 'root', cwd=tmp_path)
 
     async def test_traversal_is_still_bounded_by_root(self, tmp_path: Path) -> None:
         project = tmp_path / 'root' / 'project'
         project.mkdir(parents=True)
-        result = await call(tmp_path / 'root', 'read_file', {'path': '../../outside.txt'}, cwd=project)
-        assert 'outside the root directory' in result
+        result = await call(tmp_path / 'root', 'read_file', {'path': '../../outside.txt'}, working_dir=project)
+        root = (tmp_path / 'root').resolve()
+        assert (
+            f'`{root.parent}/outside.txt` is outside root_dir `{root}`; the file tools only work inside it.' in result
+        )
+        assert f'Create or clone it inside `{root}`, or use a shell tool if you have one.' in result
+
+
+class TestMaxRetries:
+    """Each denied write asks the model to retry, and the budget bounds how many in a row the run survives."""
+
+    DENIED_WRITE: tuple[str, dict[str, object]] = ('write_file', {'path': '../outside.txt', 'content': 'x'})
+
+    async def test_default_is_the_agent_budget(self, tmp_path: Path) -> None:
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'write_file' exceeded max retries count of 1"):
+            await call_tools([FileSystem[None]()], [self.DENIED_WRITE] * 2, workspace=LocalWorkspaceBackend(tmp_path))
+
+    async def test_budget_bounds_consecutive_failures(self, tmp_path: Path) -> None:
+        capabilities = [FileSystem[None](max_retries=3)]
+        results = await call_tools(capabilities, [self.DENIED_WRITE] * 3, workspace=LocalWorkspaceBackend(tmp_path))
+        assert len(results) == 3
+        assert all('outside the project root' in result for result in results)
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
+            await call_tools(capabilities, [self.DENIED_WRITE] * 4, workspace=LocalWorkspaceBackend(tmp_path))
+
+    def test_must_not_be_negative(self) -> None:
+        with pytest.raises(ValueError, match='max_retries must be a non-negative integer, got -1'):
+            FileSystem(max_retries=-1)

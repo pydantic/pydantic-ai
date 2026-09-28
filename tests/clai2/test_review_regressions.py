@@ -22,13 +22,6 @@ from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.test_plugin_loader import Harness
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def test_package_relative_import_and_fresh_source(tmp_path: Path) -> None:
     harness = Harness(tmp_path)

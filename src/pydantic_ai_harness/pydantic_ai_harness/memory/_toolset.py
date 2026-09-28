@@ -12,11 +12,15 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
+from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai_harness._workspace import raise_tool_failure
 from pydantic_ai_harness.memory._store import (
+    FileStore,
     MemoryConflictError,
     MemoryMutation,
     MemoryOperation,
+    MemoryPathEscapeError,
     MemorySearchMatch,
     MemorySearchResult,
     MemoryStore,
@@ -288,6 +292,14 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.delete_memory, name='delete_memory')
         self.add_function(self.search_memory, name='search_memory')
 
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools = await super().get_tools(ctx)
+        store, _ = self._capability.resolve_scope(ctx)
+        # A store with its own workspace need not inherit the run's read-only policy.
+        if isinstance(store, FileStore) and store.workspace is None and ctx.workspace.read_only:
+            return {name: tool for name, tool in tools.items() if name not in {'write_memory', 'delete_memory'}}
+        return tools
+
     async def write_memory(
         self,
         ctx: RunContext[AgentDepsT],
@@ -361,6 +373,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     _set_span_result(span, 'ok', chars=len(updated), replayed=mutation.replayed)
                     return result
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
+            except WorkspaceError as exc:
+                _set_span_error(span, exc)
+                raise_tool_failure(exc)
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -390,6 +408,9 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     )
                 _set_span_result(span, 'ok', chars=len(memory_file.content))
                 return memory_file.content + (_READ_TRUNCATION_MARKER if memory_file.truncated else '')
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -437,6 +458,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     _set_span_result(span, result['status'], replayed=mutation.replayed)
                     return result
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
+            except WorkspaceError as exc:
+                _set_span_error(span, exc)
+                raise_tool_failure(exc)
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise

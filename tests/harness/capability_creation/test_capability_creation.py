@@ -4,19 +4,29 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceRef,
+)
 from pydantic_ai_harness.capability_creation import (
+    AuthoredCapability,
     CapabilityCreation,
     CapabilityCreationToolset,
     CapabilityStore,
@@ -25,15 +35,6 @@ from pydantic_ai_harness.capability_creation import (
     validate_capability_file,
 )
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
 
 VALID_CODE = """
 from dataclasses import dataclass
@@ -393,6 +394,33 @@ class TestCapabilityCreationToolset:
         assert 'MarkerCapability' in result
         assert 'next agent run' in result
 
+    async def test_parallel_store_mutations_run_one_at_a_time(self, tmp_path: Path) -> None:
+        # Parallel tool calls share one manifest: overlapping read-modify-write cycles would lose updates.
+        release = threading.Event()
+
+        class HeldStore(CapabilityStore):
+            def write(self, name: str, code: str) -> AuthoredCapability:
+                if name == 'first':
+                    release.wait(timeout=30)  # hang guard; the test sets it
+                return super().write(name, code)
+
+        store = HeldStore(tmp_path)
+        toolset = CapabilityCreationToolset(store)
+        try:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(toolset.author_capability, 'first', VALID_CODE)
+                await anyio.wait_all_tasks_blocked()
+                tg.start_soon(toolset.author_capability, 'second', VALID_CODE)
+                tg.start_soon(toolset.disable_authored_capability, 'first')
+                await anyio.wait_all_tasks_blocked()
+                release.set()
+        finally:
+            release.set()
+        assert [(record.name, record.status) for record in store.list_all()] == [
+            ('first', 'disabled'),
+            ('second', 'active'),
+        ]
+
     async def test_author_validation_failure_message(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
         result = await toolset.author_capability('bad', NO_SUBCLASS_CODE)
@@ -471,8 +499,8 @@ class TestCapabilityCreationCapability:
 class TestEndToEnd:
     async def test_authored_capability_injected_and_runs(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
-        store.write('marker', VALID_CODE)
-        agent = Agent(TestModel(), capabilities=store.load_active())
+        await anyio.to_thread.run_sync(store.write, 'marker', VALID_CODE)
+        agent = Agent(TestModel(), capabilities=await anyio.to_thread.run_sync(store.load_active))
         result = await agent.run('go')
         returns = [
             part.content
@@ -484,5 +512,26 @@ class TestEndToEnd:
 
     async def test_capability_creation_tools_wired(self, tmp_path: Path) -> None:
         agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
-        result = await agent.run('go')
+        result = await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert result.output is not None
+
+    @pytest.mark.parametrize('workspace', ['none', 'read-only', 'sandbox'])
+    async def test_refuses_a_workspace_that_is_not_this_machine_and_writable(
+        self, tmp_path: Path, workspace: str
+    ) -> None:
+        backends: dict[str, WorkspaceBackend | None] = {
+            'none': None,
+            'read-only': ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))),
+            'sandbox': _Sandbox(tmp_path),
+        }
+        agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
+        with pytest.raises(UserError, match='imports model-written Python into the agent process'):
+            await agent.run('go', workspace=backends[workspace])
+
+
+class _Sandbox(LocalWorkspaceBackend):
+    """A backend that names a provider other than this machine."""
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        return WorkspaceRef(provider='sandbox', id='box-1')

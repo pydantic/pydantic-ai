@@ -41,8 +41,6 @@ from pydantic_clai2.spinners import (
 )
 from tests.clai2.menu_script import Script, make_context, pick
 
-pytestmark = pytest.mark.anyio
-
 PromptT = TypeVar('PromptT')
 CODE_PUPPY_BUILTINS = (
     'puppy',
@@ -65,11 +63,6 @@ CODE_PUPPY_BUILTINS = (
     'fistBump',
     'aesthetic',
 )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def catalogue(tmp_path: Path, *, selected: str = DEFAULT_SPINNER, registered: tuple[Spinner, ...] = ()) -> Spinners:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from opentelemetry.trace import Tracer
 
 from pydantic_ai import Agent, AgentSpec, DeferredToolRequests, ModelRetry, RunContext
 from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -31,6 +33,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.memory import (
     FileStore,
     InMemoryStore,
@@ -47,13 +50,6 @@ from pydantic_ai_harness.memory import (
     SqliteMemoryStore,
 )
 from tests.harness._recording_durability import RecordingDurability
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _ctx(
@@ -78,6 +74,41 @@ def _ctx(
         run_id=run_id,
         tracer=tracer,
     )
+
+
+async def test_memory_symlink_escape_is_model_retry(tmp_path: Path) -> None:
+    root = tmp_path / 'store'
+    (root / 'main').mkdir(parents=True)
+    (tmp_path / 'outside.md').write_text('secret')
+    os.symlink(tmp_path / 'outside.md', root / 'main' / 'topic.md')
+    toolset = MemoryToolset(Memory[None](store=FileStore('.', workspace=LocalWorkspaceBackend(root))))
+    with pytest.raises(ModelRetry, match='outside the store directory'):
+        await toolset.read_memory(_ctx(), 'topic')
+    with pytest.raises(ModelRetry, match='outside the store directory'):
+        await toolset.write_memory(_ctx(), 'new', file='topic')
+    with pytest.raises(ModelRetry, match='outside the store directory'):
+        await toolset.delete_memory(_ctx(), 'topic')
+    assert (tmp_path / 'outside.md').read_text() == 'secret'
+
+
+async def test_file_store_recovers_corrupt_receipts(tmp_path: Path) -> None:
+    root = tmp_path / 'store'
+    root.mkdir()
+    (root / '.memory-operations.json').write_text('not json')
+    toolset = MemoryToolset(Memory[None](store=FileStore('.', workspace=LocalWorkspaceBackend(root))))
+    assert (await toolset.write_memory(_ctx(), 'new'))['status'] == 'created'
+    assert (root / 'main' / 'MEMORY.md').read_text() == 'new\n'
+
+
+async def test_file_store_hides_mutations_on_read_only_run(tmp_path: Path) -> None:
+    ctx = _ctx()
+    ctx.workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+    toolset = MemoryToolset(Memory[None](store=FileStore('.memory')))
+    assert set(await toolset.get_tools(ctx)) == {'read_memory', 'search_memory'}
+    with pytest.raises(ToolFailed):
+        await toolset.write_memory(ctx, 'hello')
+    with pytest.raises(ToolFailed):
+        await toolset.delete_memory(ctx, 'topic')
 
 
 def _latest_instructions(messages: list[ModelMessage]) -> str:
@@ -811,10 +842,16 @@ class TestInjection:
             captured.append(_latest_memory_context(messages))
             return ModelResponse(parts=[TextPart('done')])
 
-        await Agent(
+        agent = Agent(
             FunctionModel(model),
-            capabilities=[Memory(store=FileStore(root), guidance='', max_tokens=20, max_memory_size=25)],
-        ).run('go')
+            capabilities=[Memory(store=FileStore('memory'), guidance='', max_tokens=20, max_memory_size=25)],
+        )
+        # The store keeps its files in the run's workspace, so a run without one fails at its start.
+        with pytest.raises(
+            UserError, match=r"`Memory\(store=FileStore\(\.\.\.\)\)` keeps memory files in the run's workspace"
+        ):
+            await agent.run('go')
+        await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert len(captured[0]) <= 80
         assert 'm' * 26 not in captured[0]
         assert 'search_memory' in captured[0]
@@ -1323,7 +1360,7 @@ class TestConfigurationAndSpecs:
 
     def test_from_spec_backends_and_cross_backend_validation(self, tmp_path: Path) -> None:
         assert isinstance(Memory.from_spec().store, InMemoryStore)
-        assert isinstance(Memory.from_spec(backend='file', directory=str(tmp_path)).store, FileStore)
+        assert isinstance(Memory.from_spec(backend='file', directory='memory').store, FileStore)
         assert isinstance(
             Memory.from_spec(backend='sqlite', database=str(tmp_path / 'memory.db')).store, SqliteMemoryStore
         )

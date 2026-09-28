@@ -16,6 +16,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 from pydantic_ai_harness.experimental.acp import (
     AcpFileSystemToolset,
@@ -26,9 +28,8 @@ from pydantic_ai_harness.experimental.acp import (
     acp_filesystem,
     acp_terminal,
 )
+from tests.harness._tool_calls import call_tool
 from tests.harness.experimental.acp._acp_clients import RecordingClient
-
-pytestmark = pytest.mark.anyio
 
 
 def _ctx() -> RunContext[None]:
@@ -98,7 +99,7 @@ async def test_read_file_reads_through_the_client() -> None:
 async def test_write_file_writes_through_the_client() -> None:
     client = RecordingClient()
     ts = AcpFileSystemToolset[None](client=client, session_id='sid')
-    result = await ts.write_file('/ws/b.py', 'data')
+    result = await ts.write_file(_ctx(), '/ws/b.py', 'data')
     assert client.writes == [('/ws/b.py', 'data', 'sid')]
     assert client.files['/ws/b.py'] == 'data'
     assert '/ws/b.py' in result  # confirmation names the path so the model knows the write landed
@@ -110,7 +111,7 @@ async def test_relative_paths_resolve_against_the_session_cwd() -> None:
     client = RecordingClient({'/ws/src/a.py': 'code'})
     ts = AcpFileSystemToolset[None](client=client, session_id='sid', cwd='/ws')
     assert await ts.read_file('src/a.py') == 'code'
-    await ts.write_file('src/b.py', 'new')
+    await ts.write_file(_ctx(), 'src/b.py', 'new')
     assert client.reads == [('/ws/src/a.py', 'sid')]
     assert client.writes == [('/ws/src/b.py', 'new', 'sid')]
 
@@ -161,15 +162,18 @@ async def test_acp_filesystem_read_only_client_reads_via_acp_and_writes_locally(
         session_id=session.session_id,
     )
     capability = acp_filesystem(session)
-    assert isinstance(capability, Toolset)
-    toolset = capability.toolset
-    assert isinstance(toolset, AcpFileSystemToolset)
+    assert capability is not None
 
-    assert await toolset.read_file('notes.txt') == 'hello'
+    assert await call_tool([capability], 'read_file', {'path': 'notes.txt'}) == 'hello'
     assert client.reads == [(str(tmp_path / 'notes.txt'), 'sid')]  # the read routed through the editor
-    await toolset.write_file('out.txt', 'data')
+    await call_tool([capability], 'write_file', {'path': 'out.txt', 'content': 'data'})
     assert client.writes == []  # the client was never asked to write
     assert (tmp_path / 'out.txt').read_text() == 'data'  # the write landed on local disk
+    # With a session workspace configured, the write goes through it instead.
+    read_only = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+    refused = await call_tool([capability], 'write_file', {'path': 'other.txt', 'content': 'data'}, workspace=read_only)
+    assert refused == READ_ONLY_FAILURE
+    assert not (tmp_path / 'other.txt').exists()
 
 
 @pytest.mark.parametrize(

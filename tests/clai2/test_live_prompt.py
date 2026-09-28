@@ -31,13 +31,6 @@ from pydantic_clai2.live_prompt import LivePrompt
 from pydantic_clai2.prompt_completion import CompletionWorker
 from tests.clai2.surface_terminal import SurfaceTerminal
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 @asynccontextmanager
 async def editor(*, output: io.StringIO | None = None) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
