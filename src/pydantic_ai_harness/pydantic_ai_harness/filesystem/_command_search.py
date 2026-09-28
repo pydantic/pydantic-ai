@@ -84,17 +84,19 @@ async def run_posix_search(
             + canonical
             + f'grep {flags} -e "$pattern" -- "$file" > "$tmp"; code=$?; '
             'if [ "$code" -gt 1 ]; then rm -f -- "$tmp"; exit "$code"; fi; '
-            'while IFS= read -r line; do printf "%s\\0%s\\0%s\\n" "$file" "$real" "$line"; done < "$tmp"; '
+            # With -n, every output line is numbered except the `--` between context groups.
+            'while IFS= read -r line; do [ "$line" = -- ] && continue; '
+            'printf "%s\\0%s\\0%s\\n" "$file" "$real" "$line"; done < "$tmp"; '
             'done; rm -f -- "$tmp"\' sh ' + shlex.quote(pattern)
         )
-    # Capture enumeration's status before sorting: a failed git/find must not masquerade
-    # as an empty successful search through the pipeline's final xargs status.
+    # Capture enumeration's and sort's statuses separately: a failed git/find/sort must not
+    # masquerade as an empty successful search through the pipeline's final xargs status.
     script = (
         f'cd {shlex.quote(cwd)} || exit\n'
         '{ list=$(mktemp) || exit 2; '
         f'{{ {enumeration}; }} > "$list"; code=$?; '
-        'if [ "$code" -eq 0 ]; then LC_ALL=C sort -z "$list" | '
-        f'{processing}; code=$?; fi; rm -f -- "$list"; '
+        'if [ "$code" -eq 0 ]; then LC_ALL=C sort -z -o "$list" "$list"; code=$?; fi; '
+        f'if [ "$code" -eq 0 ]; then {processing} < "$list"; code=$?; fi; rm -f -- "$list"; '
         f'echo "{_STATUS}$code" >&2; }} | head -c {_MAX_OUTPUT_BYTES}'
     )
     result = await workspace.run(script, shell=True, timeout=120)
