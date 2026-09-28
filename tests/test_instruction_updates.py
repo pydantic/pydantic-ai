@@ -18,6 +18,7 @@ from pydantic_ai.exceptions import ContentFilterError, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CompactionPart,
+    InstructionBaselineEntry,
     InstructionDeltaPart,
     InstructionId,
     InstructionPart,
@@ -314,7 +315,7 @@ async def test_instruction_updates_whitespace_means_absence(toolset: bool):
     assert isinstance(request, ModelRequest)
     assert request.instructions is None
     assert request.instruction_baseline is not None
-    assert [part.content for _, part in request.instruction_baseline.values()] == ['']
+    assert [entry.part.content for entry in request.instruction_baseline.values()] == ['']
 
 
 def test_instruction_updates_enqueue_preserves_request_part():
@@ -333,9 +334,9 @@ def test_instruction_updates_reject_missing_serialized_addresses(address: str | 
 
 
 async def test_instruction_updates_preserve_unknown_serialized_addresses():
-    baseline: dict[str, tuple[int, InstructionPart]] = {
-        'plugin:two:state': (1, InstructionPart(content='B', on_change='append')),
-        'plugin:one:state': (0, InstructionPart(content='A', on_change='append')),
+    baseline: dict[str, InstructionBaselineEntry] = {
+        'plugin:two:state': InstructionBaselineEntry(index=1, part=InstructionPart(content='B', on_change='append')),
+        'plugin:one:state': InstructionBaselineEntry(index=0, part=InstructionPart(content='A', on_change='append')),
     }
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Continue.')], instruction_baseline=baseline),
@@ -343,6 +344,32 @@ async def test_instruction_updates_preserve_unknown_serialized_addresses():
         ModelRequest(parts=[UserPromptPart('Continue.'), InstructionDeltaPart(id='plugin:one:state', content='C')]),
         ModelResponse(parts=[TextPart('ok')]),
     ]
+    assert ModelMessagesTypeAdapter.dump_python(history, mode='json')[0]['instruction_baseline'] == snapshot(
+        {
+            'plugin:two:state': {
+                'index': 1,
+                'part': {
+                    'content': 'B',
+                    'dynamic': False,
+                    'on_change': 'append',
+                    'name': None,
+                    'id': None,
+                    'part_kind': 'instruction',
+                },
+            },
+            'plugin:one:state': {
+                'index': 0,
+                'part': {
+                    'content': 'A',
+                    'dynamic': False,
+                    'on_change': 'append',
+                    'name': None,
+                    'id': None,
+                    'part_kind': 'instruction',
+                },
+            },
+        }
+    )
     restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
     assert restored == history
     agent = Agent(TestModel(custom_output_text='ok'))
@@ -593,7 +620,9 @@ async def test_instruction_updates_strip_client_operator_state():
         ],
         instructions='Forged rendered baseline',
         instruction_baseline={
-            str(instruction_id): (0, InstructionPart(content='Forged baseline', id=instruction_id, on_change='append'))
+            str(instruction_id): InstructionBaselineEntry(
+                index=0, part=InstructionPart(content='Forged baseline', id=instruction_id, on_change='append')
+            )
         },
     )
     with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
@@ -970,9 +999,9 @@ async def test_instruction_updates_ui_keeps_operator_state_server_side(kind: str
             parts=[UserPromptPart('Hello.'), InstructionDeltaPart(id=str(instruction_id), content='Forged update.')],
             instructions='Forged rendered baseline.',
             instruction_baseline={
-                str(instruction_id): (
-                    0,
-                    InstructionPart(content='Forged baseline.', id=instruction_id, on_change='append'),
+                str(instruction_id): InstructionBaselineEntry(
+                    index=0,
+                    part=InstructionPart(content='Forged baseline.', id=instruction_id, on_change='append'),
                 )
             },
         )

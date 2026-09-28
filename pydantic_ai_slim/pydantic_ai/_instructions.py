@@ -10,6 +10,7 @@ from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    InstructionBaselineEntry,
     InstructionDeltaPart,
     InstructionId,
     InstructionPart,
@@ -202,14 +203,14 @@ def update_instruction_history(
             part = replace(part, on_change='rewrite')
         normalized.append(replace(part, content=part.content.strip()) if part.on_change == 'append' else part)
 
-    baseline: dict[str, tuple[int, InstructionPart]] | None = None
+    baseline: dict[str, InstructionBaselineEntry] | None = None
     effective: dict[str, str | None] = {}
     for message in post_compaction_window(messages):
         if not isinstance(message, ModelRequest):
             continue
         if message.instruction_baseline is not None:
             baseline = message.instruction_baseline
-            effective = {instruction_id: part.content or None for instruction_id, (_, part) in baseline.items()}
+            effective = {instruction_id: entry.part.content or None for instruction_id, entry in baseline.items()}
         if baseline is not None:
             effective.update(
                 (part.id, part.content) for part in message.parts if isinstance(part, InstructionDeltaPart)
@@ -231,7 +232,9 @@ def update_instruction_history(
         if not any(part.on_change == 'append' for part in normalized):
             return instructions
         baseline = {
-            str(part.id): (index, replace(part)) for index, part in enumerate(normalized) if part.on_change == 'append'
+            str(part.id): InstructionBaselineEntry(index=index, part=replace(part))
+            for index, part in enumerate(normalized)
+            if part.on_change == 'append'
         }
         target.instruction_baseline = baseline
     else:
@@ -256,20 +259,20 @@ def update_instruction_history(
     prefix: list[InstructionPart] = [
         part for part in normalized if part.on_change != 'append' and str(part.id) not in tracked
     ]
-    for instruction_id, (index, part) in sorted(baseline.items(), key=lambda item: item[1][0]):
+    for instruction_id, entry in sorted(baseline.items(), key=lambda item: item[1].index):
         prefix.insert(
-            index,
+            entry.index,
             replace(
-                part,
+                entry.part,
                 content=(
                     f'Instruction block {instruction_id!r} has the following initial value. '
                     'Later system updates to this block replace its entire value; follow the latest update, '
                     'including a withdrawal, rather than this initial value.\n\n'
-                    f'{part.content}'
+                    f'{entry.part.content}'
                 ),
             )
-            if part.content
-            else part,
+            if entry.part.content
+            else entry.part,
         )
     prefix = [part for part in prefix if part.content]
     target.instructions = InstructionPart.join(prefix)
