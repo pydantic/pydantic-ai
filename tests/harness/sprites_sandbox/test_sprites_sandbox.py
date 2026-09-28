@@ -620,6 +620,30 @@ class TestSpritesSandbox:
         assert failed.query['cmd'][5:] == ['touch', 'ran']
         assert (check.query['cmd'][-3:], check.query['dir']) == (['test', '-d', str(directory)], ['/'])
 
+    async def test_the_working_directory_check_stays_within_the_command_timeout(
+        self, transport: SpriteTransport
+    ) -> None:
+        transport.names.add('remote')
+        directory = transport.root / 'missing'
+        backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'), working_dir=str(directory))
+        transport.release_stdin_eof = asyncio.Event()
+        caught: list[WorkspaceTimeoutError] = []
+
+        async def run() -> None:
+            with pytest.raises(WorkspaceTimeoutError) as error:
+                await backend.run(['true'], timeout=0.5)
+            caught.append(error.value)
+
+        with anyio.fail_after(120):  # Hang guard only.
+            async with anyio.create_task_group() as group:
+                group.start_soon(run)
+                await transport.exec_started.wait()
+                # The command fails in the missing directory; the `test -d` that follows stalls.
+                transport.exec_latency = 45
+                transport.release_stdin_eof.set()
+        assert str(caught[0]) == 'Command timed out after 0.5 seconds'
+        assert caught[0].stdout == f'chdir to `{directory}`: No such file or directory\n'
+
     async def test_a_command_in_an_existing_working_directory_is_one_exec(self, transport: SpriteTransport) -> None:
         """No `test -d` runs before or after a command, whether it succeeds or fails."""
         transport.names.add('remote')

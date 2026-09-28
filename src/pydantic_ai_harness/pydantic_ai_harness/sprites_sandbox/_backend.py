@@ -735,6 +735,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 raise mapped from error
             raise
         await _close_command(exec_command)
+        stdout, stderr = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
+        result = CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
         if (
             code == 1
             and check_working_dir
@@ -743,25 +745,34 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         ):
             # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
             # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
-            await self._check_working_dir(sandbox, directory)
-        stdout, stderr = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
+            await self._check_working_dir(sandbox, directory, result, timeout=timeout, deadline=deadline.deadline)
         if code == 137:
             await _check_sigkill_sprite(sandbox)
-        return CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
+        return result
 
-    async def _check_working_dir(self, sandbox: AsyncSprite, directory: str) -> None:
-        """Raise `WorkspaceError` if `directory` does not exist in the Sprite."""
-        check = await self._run(
-            ['test', '-d', directory],
-            timeout=_INTERNAL_EXEC_TIMEOUT,
-            check_working_dir=False,
-            sandbox=sandbox,
-            cwd='/',
-        )
-        if check.exit_code != 0:
-            raise WorkspaceError(
-                f'working_dir {directory!r} does not exist in Sprite {sandbox.name}. '
-                'Create it there, or pass a working_dir that exists.'
+    async def _check_working_dir(
+        self, sandbox: AsyncSprite, directory: str, failed: CommandResult, *, timeout: float | None, deadline: float
+    ) -> None:
+        """Raise `WorkspaceError` if `directory` does not exist in the Sprite.
+
+        The check counts against the `failed` command's `timeout`, which ends at `deadline`.
+        """
+        with anyio.CancelScope(deadline=deadline) as scope:
+            check = await self._run(
+                ['test', '-d', directory],
+                timeout=_INTERNAL_EXEC_TIMEOUT,
+                check_working_dir=False,
+                sandbox=sandbox,
+                cwd='/',
+            )
+            if check.exit_code != 0:
+                raise WorkspaceError(
+                    f'working_dir {directory!r} does not exist in Sprite {sandbox.name}. '
+                    'Create it there, or pass a working_dir that exists.'
+                )
+        if scope.cancelled_caught:
+            raise WorkspaceTimeoutError(
+                f'Command timed out after {timeout:g} seconds', stdout=failed.stdout, stderr=failed.stderr
             )
 
     async def _collect_stderr(self, path: str) -> str:
