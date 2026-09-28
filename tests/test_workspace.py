@@ -7,6 +7,8 @@ import base64
 import math
 import os
 import re
+import shutil
+import stat
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -362,6 +364,9 @@ async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) 
         for operation in (workspace.read_bytes, workspace.stat):
             with pytest.raises(OSError, match='not a regular file'):
                 await operation('fifo')
+        with pytest.raises(OSError, match='not a regular file'):
+            await workspace.write_bytes('fifo', b'data')
+    assert stat.S_ISFIFO(fifo.lstat().st_mode)
 
 
 async def test_local_write_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
@@ -1688,3 +1693,19 @@ async def test_shell_remove_symlink_to_root_only_removes_link(tmp_path: Path) ->
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root)))
     await workspace.remove(str(alias))
     assert not alias.is_symlink()
+
+
+async def test_shell_read_names_a_missing_utility(tmp_path: Path) -> None:
+    """Without `dd`, reads fail naming it rather than as damaged output."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for tool in ('base64', 'cp', 'find', 'mkdir', 'mv', 'readlink', 'rm', 'wc', 'cat', 'stat', 'head', 'tr', 'sed'):
+        found = shutil.which(tool)
+        assert found is not None
+        (bin_dir / tool).symlink_to(found)
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'a.txt').write_text('hello')
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root, env={'PATH': str(bin_dir)})))
+    with pytest.raises(WorkspaceError, match=r'^The workspace has no `dd`, which its file operations need'):
+        await workspace.read_text('a.txt')

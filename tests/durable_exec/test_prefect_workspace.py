@@ -8,6 +8,7 @@ adds what only Prefect has.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -138,7 +139,7 @@ async def test_prefect_flow_retry_replays_workspace_tasks_and_run_ids() -> None:
     )
 
 
-async def test_prefect_run_ids_without_a_workspace_differ_across_a_flow_retry() -> None:
+async def test_prefect_run_ids_without_a_workspace_are_fresh_uuid7s() -> None:
     agent = Agent(TestModel(), name='prefect_run_id', capabilities=[PrefectDurability()])
     ids: list[str] = []
 
@@ -149,6 +150,8 @@ async def test_prefect_run_ids_without_a_workspace_differ_across_a_flow_retry() 
             raise RuntimeError('retry')
 
     await run()
+    # Without a workspace, a run inside a flow gets the same fresh UUID7 as outside one.
+    assert [uuid.UUID(run_id).version for run_id in ids] == [7, 7]
     assert ids[0] != ids[1]
 
 
