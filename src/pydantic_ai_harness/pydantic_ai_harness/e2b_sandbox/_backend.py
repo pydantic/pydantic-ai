@@ -235,7 +235,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 # never retrieved when every caller was cancelled first.
                 task.add_done_callback(lambda done: done.cancelled() or done.exception())
                 self._acquisition = task
-            return await asyncio.shield(task)
+            # `asyncio.wait`, not `asyncio.shield`: on 3.14 a shield cancelled before its task fails
+            # reports that failure to the loop exception handler even though it is retrieved above.
+            await asyncio.wait([task])
+            return task.result()
         return await self._acquire()
 
     async def _acquire_detached(self) -> e2b.AsyncSandbox:
