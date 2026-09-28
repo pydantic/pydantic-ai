@@ -41,7 +41,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 

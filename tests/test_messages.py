@@ -1,15 +1,19 @@
+import cProfile
 import json
+import os
 import re
+import subprocess
 import sys
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
@@ -52,15 +56,20 @@ from pydantic_ai import (
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserError,
     UserPromptPart,
     VideoUrl,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
+    _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
+    _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    CachePoint,
     CompactionPart,
+    FileUrl,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     RealtimeSessionErrorEvent,
@@ -639,6 +648,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {},
             'cost': None,
         }
@@ -684,6 +694,7 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {'reasoning_tokens': 3},
             'cost': None,
             'future_tokens': 42,
@@ -703,7 +714,6 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert loaded.usage.__dict__['future_tokens'] == 42
 
 
-@pytest.mark.anyio
 async def test_legacy_vendor_message_history_replays_through_agent():
     """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
 
@@ -836,6 +846,7 @@ def test_file_part_serialization_roundtrip():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -851,6 +862,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -1460,7 +1472,7 @@ def test_tool_return_content_with_url_field_not_coerced_to_image_url():
 
 
 def test_tool_return_content_with_explicit_image_url():
-    """Test that ImageUrl with explicit 'kind' discriminator is correctly deserialized."""
+    """A tool return carrying the mapping we dump for an `ImageUrl` is deserialized back into one."""
     from pydantic_ai.messages import ToolReturnPart
 
     serialized_history = r"""[
@@ -1474,6 +1486,7 @@ def test_tool_return_content_with_explicit_image_url():
             "tool_name": "image_tool",
             "content": {
               "url": "https://example.com/image.png",
+              "media_type": "image/png",
               "kind": "image-url"
             },
             "tool_call_id": "call_1",
@@ -1496,7 +1509,7 @@ def test_tool_return_content_with_explicit_image_url():
 
 
 def test_tool_return_content_nested_multimodal():
-    """Test that nested MultiModalContent types with explicit discriminators work."""
+    """Mappings carrying our dumped multimodal shape are deserialized wherever they sit in a tool return."""
     from pydantic_ai.messages import ToolReturnPart
 
     serialized_history = r"""[
@@ -1506,11 +1519,11 @@ def test_tool_return_content_nested_multimodal():
             "tool_name": "mixed_tool",
             "content": {
               "images": [
-                {"url": "https://example.com/img1.jpg", "kind": "image-url"},
-                {"url": "https://example.com/img2.png", "kind": "image-url"}
+                {"url": "https://example.com/img1.jpg", "media_type": "image/jpeg", "kind": "image-url"},
+                {"url": "https://example.com/img2.png", "media_type": "image/png", "kind": "image-url"}
               ],
               "documents": [
-                {"url": "https://example.com/doc.pdf", "kind": "document-url"}
+                {"url": "https://example.com/doc.pdf", "media_type": "application/pdf", "kind": "document-url"}
               ],
               "regular_data": [
                 {"url": "/api/path", "id": 123, "name": "test"}
@@ -1556,6 +1569,222 @@ def test_tool_return_content_nested_multimodal():
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
 
 
+@pytest.mark.parametrize(
+    'content,expected,expected_dump',
+    [
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report'},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report'}),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report'}),
+            id='no-media-type',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report.png'},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png'}),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png'}),
+            id='no-media-type-but-inferable-url',
+        ),
+        pytest.param(
+            {
+                'kind': 'binary',
+                'media_type': 'text/plain',
+                'attachment': {'kind': 'image-url', 'url': 'https://example.com/report'},
+            },
+            snapshot(
+                {
+                    'kind': 'binary',
+                    'media_type': 'text/plain',
+                    'attachment': {'kind': 'image-url', 'url': 'https://example.com/report'},
+                }
+            ),
+            snapshot(
+                {
+                    'kind': 'binary',
+                    'media_type': 'text/plain',
+                    'attachment': {'kind': 'image-url', 'url': 'https://example.com/report'},
+                }
+            ),
+            id='under-kind-colliding-parent',
+        ),
+        pytest.param(
+            {'result': {'kind': 'image-url', 'url': 'https://example.com/report'}},
+            snapshot({'result': {'kind': 'image-url', 'url': 'https://example.com/report'}}),
+            snapshot({'result': {'kind': 'image-url', 'url': 'https://example.com/report'}}),
+            id='under-plain-parent',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'label': 'x'},
+            snapshot({'kind': 'image-url', 'label': 'x'}),
+            snapshot({'kind': 'image-url', 'label': 'x'}),
+            id='kind-without-url',
+        ),
+        pytest.param(
+            {'kind': 'video-url', 'url': 'https://youtu.be/lCdaVNyHtjU'},
+            snapshot({'kind': 'video-url', 'url': 'https://youtu.be/lCdaVNyHtjU'}),
+            snapshot({'kind': 'video-url', 'url': 'https://youtu.be/lCdaVNyHtjU'}),
+            id='no-media-type-on-a-url-that-always-infers',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''}),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''}),
+            id='empty-media-type',
+        ),
+        pytest.param(
+            {'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'},
+            snapshot(UploadedFile(file_id='file-1', provider_name='openai')),
+            snapshot(
+                {
+                    'file_id': 'file-1',
+                    'provider_name': 'openai',
+                    'vendor_metadata': None,
+                    'kind': 'uploaded-file',
+                    'media_type': 'application/octet-stream',
+                    'identifier': 'c86d26',
+                }
+            ),
+            id='uploaded-file-without-media-type',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': 'image/png'},
+            snapshot(ImageUrl(url='https://example.com/report', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': '43ecae',
+                }
+            ),
+            id='shape-we-dump',
+        ),
+    ],
+)
+def test_tool_return_url_items_rehydrate_only_with_media_type(
+    content: dict[str, Any], expected: Any, expected_dump: Any
+):
+    """A tool return reconstructs a URL item only from a mapping naming a media type, and it always dumps.
+
+    `FileUrl` infers its media type from the URL when it was given none, and a URL with no usable
+    extension raises `Could not infer media type` on the *dump*, long after the load that built the
+    object ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)) — so the dump is
+    asserted for every case, because that is the leg the requirement buys. An empty `media_type` is
+    not one: `FileUrl` infers whenever it is falsy.
+
+    The requirement stops at the URL kinds. `UploadedFile` falls back to `application/octet-stream`
+    instead of raising and `BinaryContent.media_type` is a required field, so both keep rehydrating
+    from the fields they declare.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    assert message_part(loaded, ToolReturnPart).content == expected
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(loaded))[0]['parts'][0]['content'] == expected_dump
+    assert ModelMessagesTypeAdapter.dump_python(loaded)[0]['parts'][0]['content'] == expected_dump
+
+
+def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():
+    """A mapping that spells one of our items out in full is that item, extra keys and all.
+
+    Whatever separates our shape from a mapping that stops short of it — `BinaryContent`'s required
+    fields here, a `media_type` for a URL item — cannot separate it from a mapping that *is* our shape
+    with a key added, and the added key goes with the mapping. `docs/message-history.md` names this
+    boundary — keep `kind` off a dictionary that has to come back verbatim.
+    """
+    content = {'kind': 'binary', 'data': 'eA==', 'media_type': 'text/plain', 'label': 'keep'}
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    assert message_part(loaded, ToolReturnPart).content == snapshot(BinaryContent(data=b'x', media_type='text/plain'))
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(loaded))[0]['parts'][0]['content'] == snapshot(
+        {
+            'data': 'eA==',
+            'media_type': 'text/plain',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'identifier': '11f6ad',
+        }
+    )
+
+
+def test_user_prompt_multimodal_rehydrates_without_media_type():
+    """The `media_type` requirement is scoped to the tool-return arm.
+
+    `UserContent` shares the `MultiModalContent` definition, so gating it in place would change what a
+    user prompt accepts. A prompt's content is the caller's own attachment rather than whatever a tool
+    chose to return, and it keeps rehydrating from `kind` and `url` alone.
+    """
+    user_content_ta: TypeAdapter[UserContent] = TypeAdapter(UserContent)
+
+    loaded = user_content_ta.validate_python({'kind': 'image-url', 'url': 'https://example.com/report'})
+
+    assert loaded == snapshot(ImageUrl(url='https://example.com/report'))
+
+
+def test_message_json_schema_keeps_the_multimodal_definitions_intact():
+    """The tool-return gate adds no definition of its own to a generated JSON schema.
+
+    It wraps each choice of the `MultiModalContent` union where it stands. Copying the members instead
+    would duplicate them under `$defs`, and two definitions competing for one name make pydantic rename
+    *both* — moving keys that `UserPromptPart` references and that any OpenAPI document generated from
+    `ModelMessage` publishes, for users who never return a file from a tool.
+    """
+    defs = ModelMessagesTypeAdapter.json_schema()['$defs']
+
+    assert {content_type.__name__ for content_type in MULTI_MODAL_CONTENT_TYPES} <= defs.keys()
+    assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['ImageUrl'])
+
+
+# Run out-of-process because `PYDANTIC_DISABLE_PLUGINS` is read once, when pydantic is imported.
+_GATE_WITHOUT_PYDANTIC_PLUGINS = """
+from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+loaded = ModelMessagesTypeAdapter.validate_python(
+    [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 't',
+                    'tool_call_id': 'c',
+                    'content': {'kind': 'image-url', 'url': 'https://example.com/report'},
+                }
+            ],
+        }
+    ]
+)
+content = loaded[0].parts[0].content
+assert type(content) is dict, content
+"""
+
+
+def test_tool_return_gate_holds_without_a_pydantic_plugin():
+    """The gate must not depend on whether anything registered a pydantic plugin.
+
+    `logfire` registers one, and it is installed wherever this suite normally runs, so a gate that
+    quietly needs a plugin passes here and fails for a user who installed `pydantic-ai-slim` on its
+    own. Rewriting `_media_type` to a required field on a copy of each dataclass schema did exactly
+    that: the requirement reached the built core schema and never reached the validator.
+    """
+    result = subprocess.run(
+        [sys.executable, '-c', _GATE_WITHOUT_PYDANTIC_PLUGINS],
+        capture_output=True,
+        text=True,
+        env={**os.environ, 'PYDANTIC_DISABLE_PLUGINS': '1'},
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_multi_modal_content_types_matches_union():
     """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
     and that is_multi_modal_content correctly narrows types."""
@@ -1565,6 +1794,13 @@ def test_multi_modal_content_types_matches_union():
         get_args(m)[0] if get_origin(m) is Annotated else m for m in get_args(get_args(MultiModalContent)[0])
     }
     assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
+
+    # `_FILE_URL_KINDS` drives both the tool-return gate and the Vercel adapter's media-type completion,
+    # so a `FileUrl` added to the union or dropped from the tuple would escape both silently and reopen
+    # issue #4190 for that kind.
+    file_url_types = {ImageUrl, AudioUrl, DocumentUrl, VideoUrl}
+    assert {m for m in union_members if issubclass(m, FileUrl)} == file_url_types
+    assert set(_FILE_URL_KINDS) == {content_type.kind for content_type in file_url_types}
 
     # Positive cases: each multimodal type is recognized
     assert is_multi_modal_content(ImageUrl(url='https://example.com/image.png'))
@@ -1606,11 +1842,11 @@ def test_every_multimodal_type_rehydrates_as_tool_return_content():
     """Every `MultiModalContent` type, dumped as scalar `ToolReturnPart.content`, must rehydrate to
     its own subclass through `ModelMessagesTypeAdapter` — not collapse to a plain dict.
 
-    Guards the `ToolReturnContent` discriminator's type-specific-field gate (`_MULTIMODAL_FIELDS`):
-    if a future `MultiModalContent` type serialized without a `url`/`media_type`/`file_id` key, the
-    gate would route its dumped dict to the `mapping` branch and silently stop rehydrating it. The
-    factory must cover exactly `MULTI_MODAL_CONTENT_TYPES`, so a new type forces a deliberate update.
-    `BinaryContent` uses a non-image media type so it isn't narrowed to `BinaryImage`.
+    Guards the `MultiModalContent` arm of `ToolReturnContent`: if a future type's dumped dict didn't
+    validate against its own union member, it would fall through to the `Mapping` arm and silently
+    stop rehydrating. The factory must cover exactly `MULTI_MODAL_CONTENT_TYPES`, so a new type
+    forces a deliberate update. `BinaryContent` uses a non-image media type so it isn't narrowed to
+    `BinaryImage`.
     """
     samples: dict[type, MultiModalContent] = {
         ImageUrl: ImageUrl(url='https://example.com/a.png'),
@@ -1629,8 +1865,7 @@ def test_every_multimodal_type_rehydrates_as_tool_return_content():
         reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
         part = message_part(reloaded, ToolReturnPart)
         assert type(part.content) is cls, (
-            f'{cls.__name__} did not rehydrate through the discriminator gate '
-            f'(got {type(part.content).__name__}) — a `_MULTIMODAL_FIELDS` mismatch would cause this'
+            f'{cls.__name__} did not rehydrate through the `MultiModalContent` arm (got {type(part.content).__name__})'
         )
 
 
@@ -1647,8 +1882,8 @@ def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: Bi
     must round-trip via `ModelMessagesTypeAdapter` in both `validate_json` (the wire path)
     and `validate_python` (the replay path used by UI adapters that already parsed JSON).
 
-    Without the explicit `Discriminator` on `ToolReturnContent`, smart-union resolution picks
-    `Mapping`/`Sequence`/`Any` over the discriminated `MultiModalContent` branch in
+    Without `ToolReturnContent`'s explicit left-to-right resolution, smart-union picks
+    `Mapping`/`Sequence`/`Any` over the discriminated `MultiModalContent` arm in
     `validate_python`, leaving binary leaves as plain dicts.
 
     Uses `tiny_audio` (non-image `BinaryContent`) to focus on rehydration, not the
@@ -1683,12 +1918,12 @@ def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: Bi
     ],
 )
 def test_tool_return_dict_reusing_kind_without_type_field_stays_mapping(content: dict[str, str]):
-    """A user dict that reuses one of our `kind` values but lacks a type-specific field
-    (`media_type`/`file_id`) is left as a plain mapping rather than forced through
-    `MultiModalContent` validation (which would raise a hard `ValidationError`).
+    """A user dict that reuses one of our `kind` values but isn't a valid instance of that type is
+    left as a plain mapping rather than forced through `MultiModalContent` validation.
 
-    The discriminator is wired into core `ToolReturnContent`, so this guards every
-    `ModelMessagesTypeAdapter` round trip, not just the UI adapters.
+    It fails the `MultiModalContent` arm — every member requires at least one of `url`/`media_type`/
+    `file_id` — and lands on `Mapping`. `ToolReturnContent` is wired into the core message types, so
+    this guards every `ModelMessagesTypeAdapter` round trip, not just the UI adapters.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
@@ -1715,10 +1950,9 @@ def test_tool_return_dict_reusing_kind_with_type_field_stays_mapping(content: di
     """A user dict that reuses a `kind` value AND carries a type field (`media_type`/`url`/`file_id`)
     but isn't a valid instance of that type must stay a plain mapping, not raise.
 
-    The discriminator gates such a dict into the `multimodal` branch on the `kind`+field heuristic;
-    `_validate_multimodal_or_passthrough` falls back to the raw dict when `MultiModalContent` validation
-    fails, and `_serialize_multimodal_or_passthrough` dumps it without a spurious serializer warning —
-    together matching the pre-discriminator behavior where these fell through to the `Any` arm.
+    `ToolReturnContent` resolves left to right, so such a dict fails the `MultiModalContent` arm and
+    lands on `Mapping`, where it round-trips unchanged and dumps without a spurious
+    `PydanticSerializationUnexpectedValue` warning.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
@@ -1747,12 +1981,11 @@ def test_tool_return_dict_reusing_kind_with_type_field_stays_mapping(content: di
 )
 @pytest.mark.parametrize('nested', [False, True], ids=['top-level', 'nested-in-sequence'])
 def test_tool_return_dict_unhashable_kind_stays_mapping(kind: object, nested: bool):
-    """A client dict whose `kind` is unhashable must not crash the discriminator with a `TypeError`.
+    """A client dict whose `kind` is unhashable must round-trip as a plain mapping, not crash.
 
-    The discriminator's `kind in _MULTIMODAL_KINDS` membership test raises `TypeError` on an unhashable
-    `kind` (`list`/`dict`/`bytearray`); the `isinstance(kind, str)` guard routes it to the `mapping`
-    branch instead, where it round-trips as a plain mapping — the same graceful handling of malformed
-    client input as the `_js_binary_to_bytes` hardening.
+    An unhashable `kind` (`list`/`dict`/`bytearray`) can't match the `Literal` tag of any
+    `MultiModalContent` member, so the dict falls through to the `Mapping` arm — the same graceful
+    handling of malformed client input as the `_js_binary_to_bytes` hardening.
     """
     inner: dict[str, Any] = {'kind': kind, 'media_type': 'image/png', 'data': 'YWJj'}
     content: Any = [inner] if nested else inner
@@ -1764,6 +1997,175 @@ def test_tool_return_dict_unhashable_kind_stays_mapping(kind: object, nested: bo
     loaded = ModelMessagesTypeAdapter.validate_python([dumped])
     part = message_part(loaded, ToolReturnPart)
     assert part.content == content
+
+
+def test_tool_return_content_json_paths_make_no_per_node_python_calls():
+    """`ToolReturnContent`'s JSON paths must resolve their arms in Rust, never once per node.
+
+    A callable `pydantic.Discriminator` on this recursive union is invoked once per JSON value node —
+    951 times for the 37 KB payload in [issue #7472](https://github.com/pydantic/pydantic-ai/issues/7472) — so deserializing a large structured tool return costs
+    thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
+    Temporal activity resolution and replay.
+
+    Counting Python calls rather than timing is what makes this pin usable in CI: the count is far
+    steadier than a wall-clock threshold, which would either flake on a noisy runner or be loose
+    enough to catch nothing. It is not perfectly machine-independent, though — the delta is 0 on a
+    developer machine but around 110 on some CI runners, from something ambient that has never been
+    tracked down — so the bound has to clear that. The gap it separates is enormous: a per-node
+    Python call costs ~2,770 extra calls here, one per JSON value node in the larger payload, so a
+    bound of 1,000 sits an order of magnitude above the noise and well under the regression. `cProfile` rather than a `sys.setprofile` callback
+    because the interpreter does not trace the callback's own body, leaving it unmeasurable by
+    coverage.
+
+    `dump_json` is pinned alongside `validate_json` because it is the leg that notices the two ways
+    the `_StrPassthrough` arm can be lost: `pydantic.InstanceOf[str]` builds the same validator but
+    attaches a wrap serializer, and deleting the arm outright drops strings onto `Any`. Both
+    reintroduce a Python call per string node on the dump path while leaving `validate_json` flat.
+
+    Scoped to the JSON paths deliberately: `validate_python` still costs a Python frame per *sequence*
+    node inside pydantic's own `sequence_validator`, which predates this union and is untouched here.
+    """
+
+    def payload(rows: int) -> bytes:
+        row = {'title': 'x' * 8, 'attrs': {f'k{i}': 'v' for i in range(6)}, 'tags': ['t'] * 4}
+        content = [dict(row) for _ in range(rows)]
+        message = {
+            'parts': [{'tool_name': 't', 'content': content, 'tool_call_id': 'c', 'part_kind': 'tool-return'}],
+            'kind': 'request',
+        }
+        return json.dumps([message]).encode()
+
+    def python_calls(raw: bytes, dump: bool) -> int:
+        messages = ModelMessagesTypeAdapter.validate_json(raw)  # build the (de)serializer outside the measurement
+        ModelMessagesTypeAdapter.dump_json(messages)
+
+        profiler = cProfile.Profile()
+        profiler.enable()
+        try:
+            if dump:
+                ModelMessagesTypeAdapter.dump_json(messages)
+            else:
+                ModelMessagesTypeAdapter.validate_json(raw)
+        finally:
+            profiler.disable()
+        return sum(entry.callcount for entry in profiler.getstats())
+
+    # 100x the nodes: a per-node Python call turns a handful of calls into tens of thousands.
+    for dump in (False, True):
+        small, large = python_calls(payload(2), dump), python_calls(payload(200), dump)
+        direction = 'dump_json' if dump else 'validate_json'
+        assert large - small < 1_000, f'{direction} cost {large - small} extra Python calls for a 100x larger payload'
+
+
+def test_multimodal_nested_in_kind_colliding_mapping_rehydrates():
+    """A multimodal leaf must rehydrate even when its parent dict reuses one of our `kind` values.
+
+    The parent here carries `media_type` as well, so it is not the media-type requirement that rejects
+    it — it is `BinaryContent`'s missing `data`. It lands on `Mapping`, whose values are still resolved
+    through the union — so reordering the arms, or reintroducing a fallback that returns a failed
+    multimodal candidate's subtree unvalidated, silently downgrades the leaf to a plain dict and loses
+    it on the next round-trip.
+
+    `files` is not asserted: `_split_content` only walks top-level content and top-level list items,
+    so a leaf nested under a mapping never reaches it — before or after this change.
+    """
+    content: dict[str, Any] = {
+        'kind': 'binary',
+        'media_type': 'text/plain',
+        'attachment': ImageUrl(url='https://example.com/x.png'),
+    }
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    part = message_part(loaded, ToolReturnPart)
+    assert part.content == content
+    reloaded: Any = part.content
+    assert type(reloaded['attachment']) is ImageUrl
+
+
+def test_tool_return_mapping_with_non_str_key_stays_mapping():
+    """A tool return keyed by anything other than `str` round-trips instead of failing validation.
+
+    The `Mapping[str, ToolReturnContent]` arm rejects a non-`str` key, which used to abort the whole
+    `ModelMessagesTypeAdapter` load; left-to-right resolution falls through to the `Any` arm and keeps
+    the value as it is.
+
+    The trade that buys: `Any` doesn't recurse, so a multimodal leaf under a non-`str` key stays a
+    plain dict instead of rehydrating. It only bites a python-mode dump, which is the only path that
+    preserves a non-`str` key at all — JSON stringifies it, so the leaf reaches the `Mapping` arm and
+    rehydrates as usual. Both directions are pinned below.
+    """
+    content: dict[Any, Any] = {1: 'int key', 'nested': {(2, 3): 'tuple key'}}
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+
+    part = message_part(loaded, ToolReturnPart)
+    assert part.content == content
+
+    nested_file: dict[Any, Any] = {1: ImageUrl(url='https://example.com/x.png')}
+    messages = [ModelRequest(parts=[ToolReturnPart(tool_name='t', content=nested_file, tool_call_id='c')])]
+
+    via_python = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+    via_json = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    kept_int_key: Any = message_part(via_python, ToolReturnPart).content
+    assert kept_int_key[1] == snapshot(
+        {
+            'url': 'https://example.com/x.png',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'image-url',
+            'media_type': 'image/png',
+            'identifier': 'f27cce',
+        }
+    )
+    stringified_key: Any = message_part(via_json, ToolReturnPart).content
+    assert stringified_key['1'] == ImageUrl(url='https://example.com/x.png')
+
+
+class _Flavour(str, Enum):
+    """A `str` subclass of the kind a tool might legitimately return."""
+
+    VANILLA = 'vanilla'
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        pytest.param('plain', id='str'),
+        pytest.param(_Flavour.VANILLA, id='str-subclass'),
+        pytest.param(b'raw bytes', id='bytes'),
+        pytest.param(bytearray(b'raw bytearray'), id='bytearray'),
+    ],
+)
+def test_tool_return_string_like_content_is_not_treated_as_a_sequence(value: Any):
+    """`str`, `bytes` and `bytearray` must survive python-mode validation as their own type.
+
+    All three are `Sequence`s, so the `Sequence[ToolReturnContent]` arm could shred them into
+    per-character/per-byte lists. [PR #6191](https://github.com/pydantic/pydantic-ai/pull/6191)'s approving review named that short-circuit by hand and
+    nothing pinned it.
+
+    The `str` subclass case guards `_StrPassthrough`'s `is_instance_schema` specifically: swapping it
+    for the shorter `Annotated[str, Strict()]` coerces the subclass to a plain `str` and fails here.
+    It does not guard the arm's existence — deleting the arm entirely leaves a `str` on `Any`, which
+    also preserves the subclass; `test_tool_return_content_json_paths_make_no_per_node_python_calls`
+    is what catches that, on its `dump_json` leg.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=value, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+
+    part = message_part(loaded, ToolReturnPart)
+    assert part.content == value
+    assert type(part.content) is type(value)
 
 
 def test_tool_return_part_list_structure_preserved():
@@ -2491,6 +2893,7 @@ def test_speech_part_serialization_roundtrip():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -2505,6 +2908,7 @@ def test_speech_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
                 'state': 'complete',
             },
         ]
@@ -2665,7 +3069,6 @@ def test_prepare_messages_passes_through_without_speech_parts():
     assert prepared[1] is history[1]
 
 
-@pytest.mark.anyio
 async def test_agent_run_with_speech_history():
     """History from a realtime session (containing both speaker variants) replays through
     `agent.run(message_history=...)` against a standard model: the seam converts the parts before the
@@ -2706,7 +3109,6 @@ async def test_agent_run_with_speech_history():
     )
 
 
-@pytest.mark.anyio
 async def test_agent_run_with_speech_only_response():
     """A custom model returning only realtime `SpeechPart`s yields their transcript as text output.
 
@@ -2723,7 +3125,6 @@ async def test_agent_run_with_speech_only_response():
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
-@pytest.mark.anyio
 async def test_openai_mapping_of_prepared_speech_history():
     """A real provider model's message mapping handles realtime session history once it has passed
     through `prepare_messages`, which the framework applies before every request.
@@ -2742,7 +3143,6 @@ async def test_openai_mapping_of_prepared_speech_history():
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
-@pytest.mark.anyio
 async def test_unprepared_speech_history_raises():
     """A `SpeechPart` that reaches an adapter unconverted raises rather than silently vanishing.
 
@@ -2756,7 +3156,6 @@ async def test_unprepared_speech_history_raises():
         await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_function_model_estimates_usage_from_unprepared_speech():
     """`FunctionModel.request()` doesn't run `prepare_messages`, so user speech can arrive unconverted;
     its transcript still counts toward estimated usage — the same as its converted text form — rather
@@ -2886,3 +3285,93 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_user_prompt_part_content_must_be_a_str_or_sequence():
+    """A non-sequence like a `dict` is iterable, so without a guard every model mapper would send its keys as the prompt.
+
+    A unit test rather than a VCR test: the guard fires before any request is built, so there is nothing to record.
+    """
+    error = re.escape(
+        '`UserPromptPart.content` must be a `str` or a sequence of `UserContent` items, got `dict`. '
+        'Serialize the value yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) '
+        'or `pydantic_ai.format_as_xml()`.'
+    )
+
+    with pytest.raises(ValueError, match=error):
+        UserPromptPart(cast(Any, {'name': 'John', 'height': 6}))
+
+    # Non-string keys used to reach `assert_never` and raise a bare `AssertionError` from inside the model mapper.
+    with pytest.raises(ValueError, match=error):
+        UserPromptPart(cast(Any, {1: 'John'}))
+
+    # Deserialized message history is validated by Pydantic before `__post_init__` runs.
+    with pytest.raises(ValidationError):
+        ModelMessagesTypeAdapter.validate_python(
+            [{'kind': 'request', 'parts': [{'part_kind': 'user-prompt', 'content': {'name': 'John'}}]}]
+        )
+
+    # `bytes` is a `Sequence` of `int`, so it is named as the container the caller actually passed.
+    with pytest.raises(
+        ValueError, match=re.escape('must be a `str` or a sequence of `UserContent` items, got `bytes`')
+    ):
+        UserPromptPart(cast(Any, b'hello'))
+
+    # Valid content is unaffected.
+    assert UserPromptPart('hello').content == 'hello'
+    assert UserPromptPart(['hello', ImageUrl('https://example.com/image.png')]).content == [
+        'hello',
+        ImageUrl('https://example.com/image.png'),
+    ]
+
+
+def test_user_prompt_part_content_items_must_be_user_content():
+    """A `list` passes the container check, so without a per-item check the mapper is where it goes wrong.
+
+    Each item reaches an exhaustive match in every model's message mapper, which raises a bare
+    `AssertionError: Expected code to be unreachable` on anything that is not `UserContent`.
+    """
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            '`UserPromptPart.content[0]` must be a `UserContent` item, got `dict`. Serialize the value '
+            'yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) or '
+            '`pydantic_ai.format_as_xml()`.'
+        ),
+    ):
+        UserPromptPart(cast(Any, [{'name': 'John'}, {'name': 'Jane'}]))
+
+    # The index is the caller's way back to the item, which matters once the good items outnumber the bad one.
+    with pytest.raises(
+        ValueError, match=re.escape('`UserPromptPart.content[1]` must be a `UserContent` item, got `int`')
+    ):
+        UserPromptPart(cast(Any, ['hello', 7]))
+
+    # `BinaryImage` is what an image `BinaryContent` narrows to on validation, and it is not in the tuple
+    # by name, so a subclass has to be accepted for a round-tripped image to survive this guard.
+    image = BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')
+    assert UserPromptPart([image]).content == [image]
+
+    # Every member of the union is accepted, so adding one cannot be forgotten here.
+    assert UserPromptPart(['hello', TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()])
+
+
+def test_user_content_types_matches_union():
+    """`_USER_CONTENT_TYPES` is what the guard checks against, so a new `UserContent` member has to reach it.
+
+    Mirrors `test_multi_modal_content_types_matches_union`: without this, adding a member to the union would
+    leave the guard refusing it as if the user had written something unsupported.
+    """
+    union_members = {
+        get_args(m)[0] if get_origin(m) is Annotated else m
+        for member in get_args(UserContent)
+        for m in (get_args(get_args(member)[0]) if get_origin(member) is Annotated else (member,))
+    }
+    assert set(_USER_CONTENT_TYPES) == union_members
+
+
+async def test_agent_run_rejects_non_sequence_user_prompt():
+    """The same guard reached through the public API, where the prompt becomes a `UserPromptPart` inside the run."""
+    agent = Agent(TestModel())
+    with pytest.raises(ValueError, match='must be a `str` or a sequence of `UserContent` items, got `dict`'):
+        await agent.run(cast(Any, {'name': 'John'}))

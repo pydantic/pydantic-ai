@@ -67,6 +67,7 @@ from ..messages import (
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
@@ -131,6 +132,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'deepseek',
         'fireworks',
         'github',
+        'github-copilot',
         'heroku',
         'litellm',
         'moonshotai',
@@ -379,8 +381,28 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     run_step: int
     """The request step being selected, starting at `1`."""
 
+    prompt: str | Sequence[UserContent] | None = None
+    """The run's user prompt, as [`RunContext.prompt`][pydantic_ai.tools.RunContext.prompt] holds it.
+
+    When a run resumes from a history ending in a request, without a new prompt, this is that request's prompt.
+    """
+
     messages: list[ModelMessage]
-    """The message history available before this request step."""
+    """The messages the selected model will be sent for this step, ending with the request being routed.
+
+    This is what [`RunContext.messages`][pydantic_ai.tools.RunContext.messages] holds for the step, minus
+    what is only added once the model is selected: the request's
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] and, on a fresh run's first step,
+    its system prompt parts. Earlier requests keep the instructions they were sent with.
+
+    When a run resumes from a response with tool calls still to run, the step's request is their
+    results, which don't exist before the model is selected, so the messages end with that response.
+    They also end with the response when it's a suspended one being continued, as no request is sent.
+
+    It's a new list, so adding or removing messages doesn't change the run's. Don't change the
+    messages in it: they're the run's own, except for the request being routed on a run's first
+    step, which is built for selection, so changing it has no effect on what's sent.
+    """
 
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
@@ -688,6 +710,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             raise UserError('Native structured output is not supported by this model.')
         if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
+        if params.allow_text_output and not self.profile.get('supports_text_output', True):
+            raise UserError(
+                'Text output is not supported by this model. Give the agent one structured `output_type`, '
+                'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
+            )
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
@@ -974,11 +1001,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
-        if item.provider_name != self.system:
-            raise UserError(
-                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
-                f'Expected `provider_name` to be `{self.system!r}`.'
-            )
+        _utils.validate_uploaded_file_provider(item, system=self.system, model_type_name=type(self).__name__)
 
     @staticmethod
     def _get_instruction_parts(
@@ -1462,8 +1485,9 @@ This global setting allows you to disable request to most models, e.g. to make s
 make costly requests to a model during tests.
 
 The testing models [`TestModel`][pydantic_ai.models.test.TestModel],
-[`FunctionModel`][pydantic_ai.models.function.FunctionModel] and
-[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] are not affected by this setting, nor is
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel],
+[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] and
+[`TestImageGenerationModel`][pydantic_ai.images.TestImageGenerationModel] are not affected by this setting, nor is
 [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel],
 which runs inference locally and so has no per-call provider cost.
 """
@@ -1477,8 +1501,9 @@ def check_allow_model_requests() -> None:
     [`Model.request_stream`][pydantic_ai.models.Model.request_stream],
     [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens],
     [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages],
-    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed] and
-    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens].
+    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed],
+    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens] and
+    [`ImageGenerationModel.generate`][pydantic_ai.images.ImageGenerationModel.generate].
 
     Methods that produce their result locally don't need it — for example
     [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel]'s `count_tokens`, which tokenizes with
@@ -1664,8 +1689,9 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
-    # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
+    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI, Snowflake, GitHub Copilot and OpenAI Codex need to
+    # be checked before OpenAI, as they are in `OpenAIChatCompatibleProvider` or
+    # `OpenAIResponsesCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
 
@@ -1690,6 +1716,10 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
+    elif model_kind == 'github-copilot':
+        from .github_copilot import GitHubCopilotModel
+
+        return GitHubCopilotModel(model_name, provider=provider)
     elif model_kind == 'openai-codex':
         from .openai_codex import OpenAICodexModel
 
@@ -1718,6 +1748,10 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'typesafe':
+        from .typesafe import TypeSafeModel
+
+        return TypeSafeModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

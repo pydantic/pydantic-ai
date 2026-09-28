@@ -62,7 +62,6 @@ with try_import() as mcp_imports_successful:
 
     from pydantic_ai.mcp import MCPToolset
 
-pytestmark = pytest.mark.anyio
 
 instruction_part_ta = TypeAdapter(InstructionPart)
 

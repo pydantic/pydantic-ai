@@ -1,6 +1,6 @@
 ---
 name: add-new-model
-description: Add support for a newly-released LLM model in pydantic-ai (e.g. openai:gpt-5.6, anthropic:claude-sonnet-5). Use when a provider ships a new model id and you need to wire literals, profile flags, and tests to recognize it. Handles SDK-lag, gateway list conventions, and capability probing.
+description: Add support for a newly-released language or image generation model in pydantic-ai (e.g. openai:gpt-5.6, anthropic:claude-sonnet-5, openai:gpt-image-2). Use when a provider ships a new model id and you need to wire literals, profile flags, adapters, and tests to recognize it. Handles SDK-lag, gateway list conventions, capability probing, and direct image-model geometry.
 user-invocable: true
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, WebFetch, WebSearch, AskUserQuestion
 ---
@@ -17,6 +17,12 @@ Wire a newly-released provider model into pydantic-ai. Optimized for the common 
 ## Inputs
 
 User invokes with `provider` + `model id` (e.g. `openai gpt-5.6`). If missing, ask via `AskUserQuestion`.
+
+## Image generation models
+
+Image-only models use a separate public surface from conversational models. If the model is consumed by `ImageGenerator`, update `KnownImageGenerationModelName` in `pydantic_ai_slim/pydantic_ai/images/__init__.py`, the relevant direct provider adapter, and its tests; do not also change conversational `KnownModelName`, profiles, gateway aliases, `ImageGenerationTool`, or `models/<provider>.py` unless that surface is explicitly supported and in scope. Add only the public model IDs the project intends to support, and do not infer or automatically add dated snapshots.
+
+Keep common, provider-agnostic controls in `images/settings.py`, but import provider-specific setting types from the official SDK. Put model-specific size and aspect-ratio validation or mapping in the private `images/_<provider>_geometry.py` helper, and update the public support matrix in `docs/image-generation.md`. Verify geometry against official documentation; if the provider does not publish exact output shapes, probe every documented aspect-ratio and resolution combination for every supported model and record the evidence. Prefer deterministic table tests for the full matrix, adding one representative VCR cassette only when the new model or wire behavior needs integration coverage rather than recording every image combination.
 
 ## Step 1 — Verify the model exists at the provider
 
@@ -71,6 +77,29 @@ new id has neither until genai-prices ships an entry and this repo's lock picks 
 Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContext.context_window_used`
 is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
 instead. Open the genai-prices PR alongside the model add and link the two.
+
+Check the current catalogs of other providers that host the new model before scoping that PR.
+For example, OpenRouter may publish `openai/<id>` and a `YYYYMMDD` canonical slug on release day
+even when OpenAI's own model list exposes only the base id. Add a separate genai-prices entry
+for each confirmed host with its own published rates; do not infer Bedrock or Azure availability
+from an older sibling model.
+
+Compare the new price entry's `match` with the adjacent model families in the same provider file,
+and accept the same id forms they do, even before the provider publishes a snapshot. That way a
+later snapshot gets the same price and context data. The forms differ per provider file:
+
+| genai-prices file | Forms the siblings accept |
+|---|---|
+| `openai.yml` | base id + `-YYYY-MM-DD` |
+| `anthropic.yml` | base id + `-YYYYMMDD` (Claude Opus entries also take `claude-opus-X.Y` / `claude-X-Y-opus` aliases) |
+| `google.yml` (Vertex Claude) | base id + `@YYYYMMDD` |
+| `aws.yml` (Bedrock) | `global.` and `us.`/`eu.`/`jp.`/`au.` profiles, bare `anthropic.` id, and `-v1` / `-v1:0` suffixes |
+| `openrouter.yml` | slug + `:beta` |
+
+Dump the siblings' clauses before writing yours rather than copying one PR's shape (see #8635 and
+genai-prices #709). Test the base and suffixed forms, including the canonical model id. This match
+rule does not add a speculative id to Pydantic AI's model-name literals. Its profile prefix should
+resolve the same capabilities for either form.
 
 ## Step 4 — SDK pin check
 
@@ -185,7 +214,13 @@ check. Keep the model-specific evidence concise:
   ```
   plus a docstring note to drop the literal once the `anthropic` pin is bumped past the release that adds it. This is the in-repo pattern (commit `87e7ccf39`, PR #5849, added the `claude-fable-5` bridge; `526b065e2` later dropped it and bumped the floor to `anthropic>=0.108.0`). The bridge lands green immediately — no need to split the PR for Anthropic. NOTE: `ModelParam` ≠ `anthropic.types.model.Model`; check `ModelParam` (it's the superset the repo actually consumes, and may carry ids `Model` doesn't).
 - **Capability flags live as `startswith` prefix tuples in `profiles/anthropic.py`** inside `anthropic_model_profile()` (+ the module-level `_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES`). A new family is NOT a literal-only add — it almost always needs at least one profile override (a literal-only add is only right when the family truly inherits every default branch, which is rare). Probe and set each independently: `models_that_support_json_schema_output`, `supports_adaptive`, `supports_effort`, `supports_xhigh_effort`, `disallows_budget_thinking`, `disallows_sampling_settings`, `supports_task_budgets`, `supports_tool_search`, code-exec version, `anthropic_supports_fast_speed`. Default-`False` flags (e.g. fast speed) are subtractive — just omit the id from that tuple.
-- **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; the Claude Fable 5.1 / Claude Mythos 5.1 pair reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
+- **A point release inherits every flag of its base id silently.** The tuples are `startswith` prefixes, so `'claude-opus-5'` already matches `claude-opus-5-5` (as `'claude-fable-5'` matches `claude-fable-5-1`): before you touch anything, the new id resolves to the base model's profile. Tests stay green and nothing warns, so the only way to find a divergence is to read the model's migration guide and probe side by side with the base id. Opus 5.5 looked like an Opus 5 mirror and broke default `output_type` runs with a 400 until it opted out of forcing. Where a flag must *not* carry over, carve the id out explicitly (`startswith('claude-opus-5') and not startswith('claude-opus-5-5')`).
+- **Read the migration guide's "breaking changes" before probing.** Anthropic's `platform.claude.com/docs/en/models/<id>/migration-guide` and `whats-new-<id>` pages list every divergence from the previous model and name which other models share it (e.g. "the first three also apply on Claude Fable 5.1"). Those map straight onto profile flags, and they tell you what to probe.
+- **Bump the SDK through the 7-day quarantine rather than bridging, once the SDK lists the id.** `exclude-newer = "7 days"` in the root `pyproject.toml` keeps a same-day `anthropic` release out of the lock; admit exactly that release with a timestamp cutoff under `[tool.uv.exclude-newer-package]` (one second past its last artifact's PyPI `upload_time`, plus a `TODO` to remove it once the global window covers it — past that date it turns into a ceiling), raise the floor in `pydantic_ai_slim/pyproject.toml`, run `uv lock --upgrade-package anthropic`, and refresh the gh-aw runner's own lock with `uv lock --script .github/scripts/pydantic-ai-runner` (no CI step checks it, so a stale one stays green while silently dropping its pinned hashes). File a tracking issue for removing the cutoff and link it from the `TODO`. Precedents: #7989 (1.3.0), #8637 (1.8.0). The local-`Literal` bridge below is the fallback for when no SDK release lists the id yet.
+- **An SDK bump is a real change: pyright `models/anthropic.py` and the Anthropic tests against it.** 1.8.0 renamed the citations request TypedDict to `BetaCitationsConfigParamParam` (`BetaCitationsConfigParam` became a response model, and passing it into a request param broke a dict assertion) and widened `BetaInputTransformation` to a union with `thinking_mismatch_allowed`.
+- **Opus 5.5 skips thinking on trivial prompts at its default `medium` effort.** A cassette test that needs a thinking block (e.g. `stale_thinking_block_history`) has to raise `anthropic_effort` for it.
+- **A point release falls into its base model's price entry.** The base entries' prefix and `contains` clauses (`starts_with: claude-opus-5`) also capture `claude-opus-5-5`. So until the new entry exists, `calc_price` returns the *old* model's price with no error: genai-prices 0.1.7 priced Opus 5.5 at Opus 5's $5/$25 instead of $4/$20. Check `calc_price(..., model_ref='<new-id>')` against the published price. The genai-prices PR has to narrow the base entry's clauses so they stop at the base model, keeping every form they matched before and pinning those forms with a positive test (genai-prices #671, #709), as well as add the new entry per Step 3b.
+- **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; Claude Fable 5.1, Claude Mythos 5.1, and Claude Opus 5.5 reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
 - **Tests:** profile-flag unit tests go in `tests/profiles/test_anthropic.py` (NOT `tests/models/test_anthropic.py`). Forced-tool-choice / `_prepare_tools_and_tool_choice` fallback tests go in `tests/models/test_tool_choice_unit.py`. The capability behaviors keyed on shared flags (sampling drop, budget-thinking reject, xhigh) are already covered by the opus-4-7/4-8 parametrized tests — adding the new id to those lists is redundant once a dedicated profile test asserts the flags.
 - **`tests/test_capability_spec.py::test_model_json_schema_with_capabilities`** snapshots the whole `KnownModelName` enum. Refresh it by running THAT TEST ALONE with `--inline-snapshot=fix` — running the whole file can pull in unrelated `snapshot()` blocks and abort the fix.
 - **`providers/bedrock.py` `bedrock_structured_output_unsupported`**: only relevant if the new id is actually served on Bedrock. A direct-API-only model (not in Bedrock's foundation-model list) doesn't belong there; don't add it speculatively just because the mirrored PR did.
@@ -214,11 +249,17 @@ check. Keep the model-specific evidence concise:
   1. `LatestGoogleModelNames` in `models/google.py` (`GoogleModelName = str | LatestGoogleModelNames` — the `str` arm is permissive at typecheck time, but the enumeration test only walks the `Literal` arm).
   2. `models/_known_model_names.py` — **four** blocks: `gateway/google-cloud:`, `gateway/google:`, `google-cloud:`, `google:` (older add-model PRs that only edit three blocks or `models/__init__.py` are stale; KnownModelName moved in #5803).
 - **No SDK-lag bridge needed.** `google-genai` does not ship a model-id Literal the enumeration test consumes — the local `LatestGoogleModelNames` Literal *is* the source of truth. Adding the id lands green immediately.
-- **Profile is substring-gated, with one per-id list.** `profiles/google.py` keys off `'gemini-3' in model_name` (thinking level, tool combination, server-side tool invocations, MIME types in tool returns) and `'pro' in model_name and 'flash' not in model_name` (always-on thinking). The exception is `_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL`, a `startswith` tuple that already holds both pro previews and the 3.7 and 3.8 flash ids — so probe every new id rather than assuming the Gemini-3 branch covers it. Probe all four levels with `generateContent` and `thinkingConfig.thinkingLevel` (`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`); a 400 on `MINIMAL` alone means the id belongs in the tuple. The flag expresses a **floor** and nothing else: an id that accepts `MINIMAL` but rejects `LOW` or `MEDIUM` cannot be modelled by it — flag such an id against #8022 rather than shipping a profile that mismaps two levels. Probe too when the release notes claim any other capability divergence (no thinking, image-only, Pro always-on).
+- **Profile is substring-gated, with one per-model level table.** `profiles/google.py` keys off `'gemini-3' in model_name` (thinking level, tool combination, server-side tool invocations, MIME types in tool returns) and `'pro' in model_name and 'flash' not in model_name` (always-on thinking). The exception is `_MODEL_THINKING_LEVELS`, a `startswith` table mapping id prefixes to their documented level sets that already holds both pro previews, the 3.7 and 3.8 flash ids, and `gemini-3.1-flash-lite-image` — so probe every new id rather than assuming the Gemini-3 branch covers it. Probe all four levels with `generateContent` and `thinkingConfig.thinkingLevel` (`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`); any 400 means the id needs an entry in the table carrying exactly the levels it accepts (non-contiguous sets like `minimal, high` are fine — unsupported unified efforts snap to the nearest documented level). Probe too when the release notes claim any other capability divergence (no thinking, image-only, Pro always-on).
 - **API verification:** `curl -s "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=$GOOGLE_API_KEY"` (key is often in the main worktree `.env`, not every linked worktree). Confirm exact ids; do **not** invent dated snapshots or `-preview` suffixes. Specialized / limited-access models (e.g. Flash Cyber via CodeMender) are out of scope unless they appear in that public listing.
 - **Gateway support is opt-out, not opt-in.** The enumeration test generates `gateway/{google,google-cloud}:*` for every `LatestGoogleModelNames` entry **except** those listed in `UNSUPPORTED_GATEWAY_MODEL_NAMES` in `tests/models/test_model_names.py`. Mirror the most recent sibling series: if `gemini-3.5-flash` is in the gateway KnownModelName blocks (not in the unsupported set), new flash siblings go there too. Only add to `UNSUPPORTED_GATEWAY_MODEL_NAMES` when the gateway actually rejects the id.
 - **Snapshots / tests:** hand-add the new ids in sorted position in `tests/test_capability_spec.py::test_model_json_schema_with_capabilities` (plain sorted string list). Mirror-only adds skip new VCR by default; #5527 recorded one for `gemini-3.5-flash` but that is not required for a pure name add.
 - **Docs:** example snippets often hard-code a recent flash id (`docs/models/google.md`, `docs/capabilities/thinking.md`) — leave them alone unless the docs maintain a model registry table (they currently do not).
+
+Google image-model landmines:
+
+- Direct image generation has a separate public literal, `KnownImageGenerationModelName` in `pydantic_ai_slim/pydantic_ai/images/__init__.py`. When the task is scoped to `ImageGenerator`, update and test this literal independently; do not automatically widen the change to conversational `KnownModelName`, gateway aliases, profiles, and capability snapshots unless those surfaces are explicitly in scope.
+- `Client().models.list()` returns a lazy pager. Keep the client in a named variable until iteration finishes; constructing it inline can let it be closed before the pager sends its request. The endpoint can still list deprecated preview image IDs, so cross-check the official deprecation page and add only current IDs.
+- Probe image settings on the exact model and API surface. For `gemini-3.1-flash-image`, the minimum `generateContent` value is `ImageConfigDict(image_size='512')`; the superficially similar literal `'0.5K'` is invalid and returns HTTP 400. `gemini-3.1-flash-lite-image` supports only 1K output. Do not transfer value spellings between model families or API examples without a live check.
 
 ### Others
 

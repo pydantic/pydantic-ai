@@ -5,17 +5,15 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
-import re
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from importlib.util import find_spec
 from types import ModuleType, NoneType
 from typing import Any
 
-import httpx2
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import NamedSpec
@@ -25,7 +23,6 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
-    ImageGeneration,
     PrepareTools,
     ResolveModelId,
     SelectModel,
@@ -44,6 +41,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -51,11 +49,13 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.models import (
     KnownModelName,
     Model,
+    ModelRequestContext,
     ModelResolutionContext,
     ModelSelectionContext,
 )
@@ -63,7 +63,6 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
-    ImageGenerationTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
@@ -71,7 +70,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage
 
@@ -81,19 +80,11 @@ from .capability_models import (
     build_run_context as _build_run_context,
     make_text_response,
 )
-from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, try_import
-
-_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
-
-with try_import() as openai_imports:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
+from .conftest import IsDatetime, IsStr, iter_message_parts
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 # --- NativeOrLocalTool tests ---
@@ -613,527 +604,6 @@ class TestWebFetchCapability:
 
         cap = WebFetch(local=my_fetch)
         assert isinstance(cap.local, Tool)
-
-
-class TestImageGenerationCapability:
-    def test_image_gen_init_params_match_builtin_tool(self):
-        """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
-        import dataclasses
-        import inspect
-
-        # partial_images is excluded — not useful for subagent fallback (no streaming).
-        # optional is excluded — applies to wire-side dropping, not local-fallback config.
-        builtin_fields = {
-            f.name
-            for f in dataclasses.fields(ImageGenerationTool)
-            if f.name not in ('kind', 'optional', 'partial_images')
-        }
-        builtin_fields.remove('model')
-        builtin_fields.add('image_model')
-        # Subtract framework-inherited kw-only params from `AbstractCapability`
-        # (forwarded so `dataclasses.replace` round-trips through the custom `__init__`).
-        init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
-            'self',
-            'native',
-            'local',
-            'fallback_subagent_model',
-            'fallback_model',
-            'id',
-            'defer_loading',
-            'description',
-        }
-        assert init_params == builtin_fields
-
-    def test_image_generation_default(self):
-        """ImageGeneration() provides only builtin, no local fallback."""
-        cap = ImageGeneration()
-        builtins = cap.get_native_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], ImageGenerationTool)
-        # No default local
-        assert cap.local is None
-        assert cap.get_toolset() is None
-
-    def test_image_generation_with_custom_local(self):
-        """ImageGeneration(local=custom) → provides custom local fallback."""
-        from pydantic_ai.tools import Tool
-
-        def my_gen(prompt: str) -> str:
-            return 'image_url'  # pragma: no cover
-
-        cap = ImageGeneration(local=my_gen)
-        assert isinstance(cap.local, Tool)
-        assert cap.get_toolset() is not None
-
-    def test_image_generation_with_subagent_model(self):
-        """ImageGeneration(fallback_subagent_model=...) creates a local fallback tool."""
-        from pydantic_ai.tools import Tool
-
-        cap = ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4')
-        assert isinstance(cap.local, Tool)
-        assert cap.get_toolset() is not None
-        builtins = cap.get_native_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], ImageGenerationTool)
-
-    def test_image_generation_forwards_config_to_builtin(self):
-        """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
-        cap = ImageGeneration(
-            action='generate',
-            background='opaque',
-            input_fidelity='high',
-            moderation='low',
-            image_model='gpt-image-2',
-            output_compression=80,
-            output_format='jpeg',
-            quality='high',
-            size='1024x1024',
-            aspect_ratio='16:9',
-        )
-        builtins = cap.get_native_tools()
-        assert len(builtins) == 1
-        tool = builtins[0]
-        assert isinstance(tool, ImageGenerationTool)
-        assert tool.action == 'generate'
-        assert tool.background == 'opaque'
-        assert tool.input_fidelity == 'high'
-        assert tool.moderation == 'low'
-        assert tool.model == 'gpt-image-2'
-        assert tool.output_compression == 80
-        assert tool.output_format == 'jpeg'
-        assert tool.quality == 'high'
-        assert tool.size == '1024x1024'
-        assert tool.aspect_ratio == '16:9'
-
-    def test_image_generation_fallback_merges_custom_native_with_overrides(self):
-        """A custom native instance produces a local fallback tool.
-
-        What that fallback is actually handed is asserted through `agent.run` by
-        `tests/test_fallback_native_factory.py::test_instance_native_config_is_merged_for_fallback`.
-        """
-        from pydantic_ai.tools import Tool
-
-        custom_native = ImageGenerationTool(quality='high', size='1024x1024')
-        cap = ImageGeneration(
-            native=custom_native,
-            fallback_subagent_model='openai-responses:gpt-5.4',
-            output_format='jpeg',  # capability-level override
-        )
-        assert isinstance(cap.local, Tool)
-        assert cap.get_toolset() is not None
-
-    def test_image_generation_callable_native_with_fallback(self):
-        """When native is a callable, the fallback local tool still gets created."""
-        from pydantic_ai.tools import Tool
-
-        cap = ImageGeneration(
-            native=lambda ctx: ImageGenerationTool(quality='high'),
-            fallback_subagent_model='openai-responses:gpt-5.4',
-        )
-        # Callable native can't be resolved at init time, but local fallback is still created
-        assert isinstance(cap.local, Tool)
-        assert cap.get_toolset() is not None
-
-    def test_image_generation_subagent_model_and_local_conflict(self):
-        """ImageGeneration(fallback_subagent_model=..., local=func) raises UserError."""
-
-        def my_gen(prompt: str) -> str:
-            return 'image_url'  # pragma: no cover
-
-        with pytest.raises(UserError, match='cannot specify both `fallback_subagent_model` and `local`'):
-            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', local=my_gen)
-
-    def test_image_generation_subagent_model_with_local_false(self):
-        """ImageGeneration(fallback_subagent_model=..., local=False) raises UserError."""
-        with pytest.raises(UserError, match='cannot specify both `fallback_subagent_model` and `local`'):
-            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', local=False)
-
-    def test_image_generation_deprecated_fallback_model_argument(self):
-        """`fallback_model=` still configures the subagent, and warns at the caller's own line."""
-        with pytest.warns(
-            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
-        ) as record:
-            cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
-        assert [warning.filename for warning in record] == [__file__]
-        assert cap.fallback_subagent_model == 'openai-responses:gpt-5.4'
-        assert cap.get_toolset() is not None
-
-    def test_image_generation_deprecated_fallback_model_attribute(self):
-        """Reading and writing `.fallback_model` proxies `fallback_subagent_model`, and warns."""
-        cap = ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4')
-        with pytest.warns(
-            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
-        ):
-            assert cap.fallback_model == 'openai-responses:gpt-5.4'  # pyright: ignore[reportDeprecated]
-        with pytest.warns(
-            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
-        ):
-            cap.fallback_model = 'openai-responses:gpt-5.5'  # pyright: ignore[reportDeprecated]
-        assert cap.fallback_subagent_model == 'openai-responses:gpt-5.5'
-
-    def test_image_generation_rejects_both_model_names(self):
-        """Both spellings at once is a mistake to report, not one to resolve silently."""
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `fallback_subagent_model`'):
-            ImageGeneration(
-                fallback_subagent_model='openai-responses:gpt-5.4', fallback_model='openai-responses:gpt-5.5'
-            )
-
-    async def test_image_generation_callable_subagent_model(self, allow_model_requests: None):
-        """ImageGeneration with async callable `fallback_subagent_model` resolves the model per-run."""
-        from pydantic_ai.messages import BinaryImage, FilePart
-
-        image_data = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
-
-        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[FilePart(content=BinaryImage(data=image_data, media_type='image/png'))])
-
-        inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
-
-        async def model_factory(ctx: RunContext) -> FunctionModel:
-            return inner_model
-
-        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=model_factory)])
-        result = await agent.run('Generate a test image')
-        assert result.output == 'done'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "test"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=54, output_tokens=5),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='generate_image',
-                            content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png'),
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='done')],
-                    usage=RequestUsage(input_tokens=54, output_tokens=6),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-    async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
-        """Callable `fallback_subagent_model` returning an image-only model name is caught at call time."""
-
-        def model_factory(ctx: RunContext) -> str:
-            return 'openai-responses:gpt-image-1'
-
-        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=model_factory)])
-        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
-            await agent.run('Generate a test image')
-
-    async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
-        """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
-
-        # FunctionModel that returns text but no image — triggers UnexpectedModelBehavior
-        def no_image_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='No image generated.')])
-
-        inner_model = FunctionModel(no_image_model_fn, profile=ModelProfile(supports_image_output=True))
-
-        call_count = 0
-
-        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-            return ModelResponse(parts=[TextPart(content='gave up')])
-
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=inner_model)])
-        result = await agent.run('Generate a test image')
-        assert result.output == 'gave up'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "test"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=54, output_tokens=5),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        RetryPromptPart(
-                            content='Exceeded maximum output retries (1)',
-                            tool_name='generate_image',
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=66, output_tokens=7),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-    @pytest.mark.parametrize(
-        'provider, model_name, suggestion',
-        [
-            ('openai-responses', 'gpt-image-2', 'openai-responses:gpt-5.5'),
-            ('openai-responses', 'gpt-image-1.5', 'openai-responses:gpt-5.5'),
-            ('openai-responses', 'gpt-image-1', 'openai-responses:gpt-5.4'),
-            ('openai-responses', 'gpt-image-1-mini', 'openai-responses:gpt-5.4'),
-            ('google', 'imagen-3.0-generate-002', 'google:gemini-3-pro-image'),
-            ('google', 'imagen-3.0-fast-generate-001', 'google:gemini-3-pro-image'),
-        ],
-    )
-    def test_image_generation_rejects_image_only_model(self, provider: str, model_name: str, suggestion: str):
-        """Using a dedicated image model raises a clear error with a conversational alternative."""
-        with pytest.raises(
-            UserError,
-            match=re.escape(
-                f'{model_name!r} is a dedicated image generation model that cannot be used as '
-                f'`fallback_subagent_model` directly. Use a conversational model with image generation '
-                f'support instead, e.g. {suggestion!r}.'
-            ),
-        ):
-            ImageGeneration(fallback_subagent_model=f'{provider}:{model_name}')
-
-    @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
-    @pytest.mark.vcr()
-    async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
-        """The fallback subagent sends factory-produced native config with capability overrides."""
-        from pydantic_ai.messages import BinaryImage
-
-        sent_bodies: list[dict[str, Any]] = []
-
-        async def capture_request(request: httpx2.Request) -> None:
-            sent_bodies.append(_REQUEST_BODY_ADAPTER.validate_json(request.content))
-
-        def native_factory(ctx: RunContext[Any]) -> ImageGenerationTool:
-            return ImageGenerationTool(quality='low')
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # If we see a tool return, the image was generated — return final text
-            if any(
-                isinstance(part, ToolReturnPart)
-                for msg in messages
-                if isinstance(msg, ModelRequest)
-                for part in msg.parts
-            ):
-                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
-
-            # First call: invoke the generate_image tool
-            assert info.function_tools, 'Expected generate_image tool to be available'
-            tool = info.function_tools[0]
-            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
-
-        async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
-            inner_model = OpenAIResponsesModel(
-                'gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key, http_client=http_client)
-            )
-            outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-            agent = Agent(
-                outer_model,
-                capabilities=[
-                    ImageGeneration(
-                        native=native_factory,
-                        fallback_subagent_model=inner_model,
-                        background='opaque',
-                    ),
-                ],
-            )
-            result = await agent.run('Generate an image of a cute baby sea otter')
-
-        assert result.output == 'Here is the generated image.'
-        assert len(sent_bodies) == 1
-        generated_image = next(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)).content
-        assert isinstance(generated_image, BinaryImage)
-        # The format the provider actually returned, pinned here rather than only in the cassette.
-        assert generated_image.media_type == 'image/png'
-        assert sent_bodies[0]['tools'] == snapshot(
-            [
-                {
-                    'type': 'image_generation',
-                    'action': 'auto',
-                    'background': 'opaque',
-                    'moderation': 'auto',
-                    'output_compression': 100,
-                    'output_format': 'png',
-                    'partial_images': 0,
-                    'quality': 'low',
-                    'size': 'auto',
-                }
-            ]
-        )
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "A cute baby sea otter"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=59, output_tokens=9),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='generate_image',
-                            content=IsInstance(BinaryImage),
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='Here is the generated image.')],
-                    usage=RequestUsage(input_tokens=59, output_tokens=15),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-    @pytest.mark.vcr()
-    async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
-        """ImageGeneration fallback with Google image model."""
-        pytest.importorskip('google.genai', reason='google extra not installed')
-        from pydantic_ai.messages import BinaryImage
-        from pydantic_ai.models.google import GoogleModel
-        from pydantic_ai.providers.google import GoogleProvider
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
-            assert info.function_tools, 'Expected generate_image tool to be available'
-            tool = info.function_tools[0]
-            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
-
-        inner_model = GoogleModel('gemini-3-pro-image', provider=GoogleProvider(api_key=gemini_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=inner_model)])
-        result = await agent.run('Generate an image of a cute baby sea otter')
-        assert result.output == 'Here is the generated image.'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "A cute baby sea otter"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=59, output_tokens=9),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='generate_image',
-                            content=IsInstance(BinaryImage),
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='Here is the generated image.')],
-                    usage=RequestUsage(input_tokens=59, output_tokens=15),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
 
 
 has_mcp = find_spec('mcp') is not None
@@ -2046,7 +1516,7 @@ class TestGetModelHook:
         def select(ctx: ModelSelectionContext[bool]) -> Model:
             seen_steps.append(ctx.run_step)
             assert ctx.model is None
-            assert ctx.messages == []
+            assert [message.parts for message in ctx.messages] == [[UserPromptPart('hello', timestamp=IsDatetime())]]
             return frontier if ctx.deps else small
 
         agent = Agent(None, deps_type=bool, capabilities=[SelectModel(select)])
@@ -2170,7 +1640,123 @@ class TestGetModelHook:
         result = await agent.run('hello', deps=42)
         assert result.output == 'done'
         assert selected_steps == [1, 2]
-        assert selection_history_lengths == [0, 2]
+        assert selection_history_lengths == [1, 3]
+
+    @pytest.mark.parametrize('case', ['fresh', 'history', 'resume', 'no_prompt', 'continue'])
+    async def test_selection_context_matches_run_context(self, case: str):
+        """On every step, the selector sees the `messages` and `prompt` the step's `RunContext` holds.
+
+        The only difference allowed is what's added to the step's request once the model is selected: its
+        instructions and, on a fresh run's first step, its system prompt parts, which are dropped from the
+        `RunContext` side only. `resume` is a run with no new prompt whose history ends in a request, which
+        is then the request being sent; `no_prompt` and `continue` send a request without a new prompt, on
+        a fresh run and after a finished one.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if isinstance(messages[-1], ModelRequest) and any(
+                isinstance(p, ToolReturnPart) for p in messages[-1].parts
+            ):
+                return make_text_response('done')
+            return ModelResponse(parts=[ToolCallPart('advance', '{}')])
+
+        model = FunctionModel(respond)
+        selected: list[tuple[int, Any, list[Any]]] = []
+        sent: list[tuple[int, Any, list[Any]]] = []
+
+        def comparable(messages: list[ModelMessage], *, drop_added_by_model: bool = False) -> list[Any]:
+            """Drop what differs between two builds of a request, and optionally what the model adds to the last one."""
+            if drop_added_by_model:
+                *earlier, last = messages
+                assert isinstance(last, ModelRequest)
+                system_prompt_parts = [part for part in last.parts if isinstance(part, SystemPromptPart)]
+                messages = [*earlier, replace(last, parts=last.parts[len(system_prompt_parts) :], instructions=None)]
+            dumped = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+            for message in dumped:
+                for key in ('timestamp', 'run_id', 'conversation_id', 'metadata'):
+                    message.pop(key, None)
+                for part in message['parts']:
+                    part.pop('timestamp', None)
+            return dumped
+
+        @dataclass
+        class Recorder(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                def select(ctx: ModelSelectionContext[None]) -> Model:
+                    selected.append((ctx.run_step, ctx.prompt, comparable(ctx.messages)))
+                    return model
+
+                return select
+
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                sent.append((ctx.run_step, ctx.prompt, comparable(ctx.messages, drop_added_by_model=True)))
+                return request_context
+
+        agent = Agent(
+            None,
+            deps_type=NoneType,
+            instructions='Be terse.',
+            system_prompt='You are terse.',
+            capabilities=[Recorder()],
+        )
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        earlier = (await Agent(_text_model('earlier'), instructions='Earlier.').run('Earlier question.')).all_messages()
+        resumed: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Resumed'), UserPromptPart('question.')], instructions='Earlier.')
+        ]
+        prompt, history = {
+            'fresh': ('New question.', None),
+            'history': ('New question.', earlier),
+            'resume': (None, resumed),
+            'no_prompt': (None, None),
+            'continue': (None, earlier),
+        }[case]
+        result = await agent.run(prompt, message_history=history)
+        assert result.output == 'done'
+
+        run_prompt = ['Resumed', 'question.'] if case == 'resume' else prompt
+        assert [(step, prompt) for step, prompt, _ in selected] == [(1, run_prompt), (2, run_prompt)]
+        assert selected == sent
+
+    @pytest.mark.parametrize('deferred', [False, True])
+    async def test_selection_context_with_tool_calls_to_run(self, deferred: bool):
+        """A run resuming from tool calls still to run is routed on the history ending in their response.
+
+        The step's request holds the calls' results, which only exist once the tools have run with the
+        selected model.
+        """
+        selected: list[tuple[str | Sequence[UserContent] | None, list[ModelMessage]]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            selected.append((ctx.prompt, ctx.messages))
+            return _text_model('done')
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)])
+
+        @agent.tool_plain(requires_approval=deferred)
+        def delete_file() -> str:
+            return 'deleted'
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Clean up.')]),
+            ModelResponse(parts=[ToolCallPart('delete_file', {}, tool_call_id='call')]),
+        ]
+        if deferred:
+            approvals = DeferredToolResults(approvals={'call': True})
+            result = await agent.run('And then?', message_history=history, deferred_tool_results=approvals)
+            assert selected[0] == ('And then?', history)
+        else:
+            result = await agent.run(message_history=history)
+            assert selected[0] == (None, history)
+        assert result.output == 'done'
 
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock
@@ -2620,7 +2206,11 @@ class TestGetModelHook:
         @dataclass
         class AdaptiveModel(AbstractCapability[str]):
             def get_model(self) -> Callable[[ModelSelectionContext[str]], Model]:
-                return lambda ctx: selected
+                def select(ctx: ModelSelectionContext[str]) -> Model:
+                    assert ctx.prompt == 'hello'
+                    return selected
+
+                return select
 
         agent = Agent(None, deps_type=str, capabilities=[AdaptiveModel()])
 
@@ -2630,7 +2220,7 @@ class TestGetModelHook:
             assert ctx.deps == 'tenant'
             return 'system prompt'
 
-        assert await agent.system_prompt_parts(deps='tenant') == snapshot(
+        assert await agent.system_prompt_parts(deps='tenant', prompt='hello') == snapshot(
             [SystemPromptPart(content='system prompt', timestamp=IsDatetime())]
         )
 

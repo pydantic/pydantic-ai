@@ -86,6 +86,8 @@ ALLOWED_HEADERS = {
     # required for test_google_model_file_search_tool
     'x-goog-upload-url',
     'x-goog-upload-status',
+    # recorded as `gen_ai.response.id` on TypeSafe's `decide` spans
+    'x-typesafe-request-id',
 }
 
 

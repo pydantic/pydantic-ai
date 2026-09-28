@@ -9,9 +9,10 @@ import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -55,9 +56,11 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     Capability,
+    ImageGeneration,
     ProcessHistory,
     durable_operation,
 )
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -67,6 +70,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from pydantic_ai.images import ImageGenerator, TestImageGenerationModel
 from pydantic_ai.messages import InstructionDeltaPart, ModelMessagesTypeAdapter
 from pydantic_ai.models import (
     Model,
@@ -74,6 +78,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import ImageGenerationTool
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -83,11 +88,23 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+    WorkspaceUnavailableError,
+)
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
+from ...workspace_fakes import (
+    RecordingWorkspaceBackend,
+)
 
 try:
     from temporalio import activity, workflow
@@ -113,10 +130,15 @@ try:
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._function_toolset import (
+        TemporalFunctionToolset,
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
+    from pydantic_ai.durable_exec.temporal._run_context import (
+        TemporalRunContext,
+        deserialize_run_context,
+    )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
 
 except ImportError:  # pragma: lax no cover
@@ -164,6 +186,7 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr
+    from ...workspace_fakes import FakeWorkspace
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -197,7 +220,6 @@ with workflow.unsafe.imports_passed_through():
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal-agent'),
     pytest.mark.filterwarnings(
@@ -2321,7 +2343,11 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T22:11:03Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2025-08-28T22:11:03Z',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2369,7 +2395,11 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop', 'timestamp': '2025-08-28T22:11:06Z'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'service_tier': 'default',
+                        'timestamp': '2025-08-28T22:11:06Z',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -2452,7 +2482,11 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T23:19:50Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2025-08-28T23:19:50Z',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2495,7 +2529,11 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T23:19:51Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2025-08-28T23:19:51Z',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2532,7 +2570,11 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop', 'timestamp': '2025-08-28T23:19:52Z'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'service_tier': 'default',
+                        'timestamp': '2025-08-28T23:19:52Z',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -2679,6 +2721,124 @@ def test_temporal_run_context_preserves_run_id():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.run_id == 'run-123'
+
+
+def _workspace_context(workspace: Workspace) -> RunContext[None]:
+    return RunContext(deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace)
+
+
+def test_temporal_run_context_omits_ref_until_the_workspace_has_one():
+    workspace = Workspace(FakeWorkspace('not-created-yet'))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert 'workspace_ref' not in serialized
+
+
+def test_temporal_run_context_serializes_the_local_workspace_ref(tmp_path: Path):
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert serialized['workspace_ref'] == WorkspaceRef(provider='local', id=str(tmp_path))
+
+
+async def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
+    workspace = Workspace(RecordingWorkspaceBackend(WorkspaceRef(provider='fake', id='preprovisioned')))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert serialized['workspace_ref'] == WorkspaceRef(provider='fake', id='preprovisioned')
+
+    decoded = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+    assert decoded.workspace is decoded.workspace
+    assert replace(decoded).workspace is decoded.workspace
+    assert decoded.workspace.ref is None
+    # Without a worker agent to rebuild it through, the ref cannot become a workspace.
+    with pytest.raises(WorkspaceUnavailableError, match=r'No workspace is attached to this run'):
+        await decoded.workspace.run(['pwd'])
+
+
+async def test_temporal_application_deserializer_restores_validated_workspace_ref():
+    class ApplicationTemporalRunContext(TemporalRunContext[None]):
+        @classmethod
+        def deserialize_run_context(cls, ctx: dict[str, Any], deps: None) -> TemporalRunContext[None]:
+            ref = TypeAdapter(WorkspaceRef).validate_python(ctx['workspace_ref'])
+            workspace = ReadOnlyWorkspace(Workspace(RecordingWorkspaceBackend(ref)))
+            return cls(**{**ctx, 'workspace': workspace}, deps=deps)
+
+    restored = deserialize_run_context(
+        ApplicationTemporalRunContext,
+        {'workspace_ref': {'provider': 'fake', 'id': 'readonly-ref'}},
+        deps=None,
+        agent=None,
+    )
+    copied = replace(restored, run_id='copy')
+    assert copied.workspace is restored.workspace
+    assert copied.workspace.ref == WorkspaceRef(provider='fake', id='readonly-ref')
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
+        await copied.workspace.run(['touch', 'blocked'])
+
+
+class TemporalAgentWorkspaceCapability(AbstractCapability[None]):
+    def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> FakeWorkspace:
+        return FakeWorkspace(ref.id if ref is not None else 'fresh', ref=ref)
+
+
+temporal_agent_workspace_agent = Agent(
+    TestModel(call_tools=['probe_workspace']),
+    name='temporal_agent_workspace',
+    deps_type=type(None),
+    capabilities=[TemporalAgentWorkspaceCapability()],
+)
+
+
+@temporal_agent_workspace_agent.tool
+async def probe_workspace(ctx: RunContext[None]) -> str:
+    return (await ctx.workspace.run(['pwd'])).stdout
+
+
+temporal_agent_workspace_wrapper = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    temporal_agent_workspace_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class TemporalAgentWorkspaceWorkflow:
+    @workflow.run
+    async def run(self, kind: str) -> str:
+        workspace: Any
+        if kind == 'ref':
+            workspace = WorkspaceRef(provider='fake', id='existing-123')
+        elif kind == 'live':
+            workspace = FakeWorkspace('live')
+        else:
+            workspace = None
+        result = await temporal_agent_workspace_wrapper.run('Use the workspace probe.', workspace=workspace)
+        return result.output  # pragma: no cover
+
+
+@pytest.mark.parametrize('kind', ['ref', 'live', 'capability'])
+async def test_temporal_agent_rejects_a_workspace_inside_a_workflow(client: Client, kind: str) -> None:
+    """The deprecated wrapper has no durability capability, so a workspace's operations could not run as activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentWorkspaceWorkflow],
+        plugins=[AgentPlugin(temporal_agent_workspace_wrapper)],
+    ):
+        with workflow_raises(
+            UserError,
+            'Workspaces are not supported inside a Temporal workflow through the deprecated wrapper agent. Use '
+            '`Agent(..., capabilities=[TemporalDurability()])`, which runs every workspace operation as a durable '
+            'unit, and attach the workspace through a capability such as `LocalWorkspace`.',
+        ):
+            await client.execute_workflow(
+                TemporalAgentWorkspaceWorkflow.run,
+                kind,
+                id=f'{TemporalAgentWorkspaceWorkflow.__name__}-{kind}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_temporal_agent_still_takes_a_workspace_outside_a_workflow() -> None:
+    result = await temporal_agent_workspace_wrapper.run('Use the workspace probe.', workspace=FakeWorkspace('live'))
+    assert result.output == '{"probe_workspace":"connected"}'
 
 
 def test_temporal_run_context_context_window_used_is_none_without_messages():
@@ -3044,6 +3204,34 @@ async def test_loaded_capability_tool_without_a_reveal_marker_answers_inside_an_
         _ = reconstructed.capabilities
 
 
+async def test_image_generation_prepare_function_reads_the_model_inside_an_activity():
+    """`ImageGeneration`'s per-request notice reads `ctx.model`, which is guarded inside an activity.
+
+    A `DynamicCapability` re-resolves the capability's toolset activity-side, so its prepare
+    function runs against a rehydrated context that deliberately left the live model behind. The
+    native-vs-direct routing the notice describes was already decided in the workflow process, so
+    the read has to degrade to "say nothing" rather than raise out of `get_tools`.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+    with pytest.raises(UserError, match="'model' is not available"):
+        _ = reconstructed.model
+
+    capability = ImageGeneration(
+        native=ImageGenerationTool(),
+        local=ImageGenerator(TestImageGenerationModel()),
+        dimensions=(1280, 720),
+    )
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+
+    prepared = toolset.prepare_func(reconstructed, [])
+    assert inspect.isawaitable(prepared)
+    assert await prepared == []
+
+
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
     """A user subclass with its own field set."""
 
@@ -3385,6 +3573,10 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -3420,6 +3612,10 @@ def test_temporal_agent_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -8,7 +8,17 @@ from ..native_tools import WebSearchTool
 from . import ModelProfile
 
 if TYPE_CHECKING:
+    from ..realtime.google import GoogleRealtimeModelProfile
     from ..realtime.profiles import RealtimeModelProfile
+
+GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
+"""Native Gemini `thinking_level` values."""
+
+GOOGLE_THINKING_LEVEL_SCALE: tuple[GoogleThinkingLevel, ...] = ('MINIMAL', 'LOW', 'MEDIUM', 'HIGH')
+"""The full thinking-level scale, cheapest first. The resolver's order map derives from this."""
+
+GOOGLE_THINKING_LEVELS: frozenset[GoogleThinkingLevel] = frozenset(GOOGLE_THINKING_LEVEL_SCALE)
+"""The full thinking-level scale as a set."""
 
 # MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
 # See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
@@ -126,16 +136,25 @@ class GoogleModelProfile(ModelProfile, total=False):
     See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
 
     google_supports_thinking_level: bool
-    """Whether the model uses `thinking_level` (enum: LOW/MEDIUM/HIGH) instead of `thinking_budget` (int). Default: `False`.
+    """Whether the model uses `thinking_level` (enum: LOW/MEDIUM/HIGH) instead of `thinking_budget` (int). Default: `True`.
 
-    Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
+    Gemini 3+ models use `thinking_level`; older models (e.g. Gemini 2.5) use `thinking_budget`.
     """
 
     google_supports_minimal_thinking_level: bool
     """Whether the model accepts `thinking_level='MINIMAL'`. Default: `True`.
 
-    When disabled, unified `thinking='minimal'` and `thinking=False` fall back to
-    `thinking_level='LOW'`.
+    Derived from [`google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
+    when that is set. Sparse profiles without the level set fall back to this flag: when disabled,
+    unified `thinking='minimal'` and `thinking=False` resolve to `thinking_level='LOW'`.
+    See https://ai.google.dev/gemini-api/docs/thinking.
+    """
+
+    google_thinking_levels: frozenset[GoogleThinkingLevel]
+    """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
+
+    Unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
+    scale is assumed. Unified thinking efforts snap to the nearest supported level.
     See https://ai.google.dev/gemini-api/docs/thinking.
     """
 
@@ -154,48 +173,111 @@ class GoogleModelProfile(ModelProfile, total=False):
     """
 
 
-_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL = (
-    'gemini-3.7-flash',
-    'gemini-3.8-flash',
-    'gemini-3-pro-preview',
-    'gemini-3.1-pro-preview',
+_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
+    # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
+    # listed support the full `GOOGLE_THINKING_LEVELS` scale.
+    # https://ai.google.dev/gemini-api/docs/thinking
+    ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
+    ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
+    # The level set is from Google's documented thinking table.
+    ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
 )
-"""Model name prefixes whose documented thinking levels start at `low`."""
+"""Model name prefixes mapped to their documented thinking levels."""
+
+_REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
+    # Verified live 2026-09-16 against the Gemini Developer API: `gemini-3.8-live-extended-thinking`
+    # answers `1007 Thinking level MINIMAL is not supported for this model` and accepts the other
+    # three. Live models not listed here take the full scale.
+    ('gemini-3.8-live-extended-thinking', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+)
+"""Live model name prefixes mapped to the thinking levels they accept."""
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
-    is_3_or_newer = 'gemini-3' in model_name
-    is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
-    # `VALIDATED` function-calling mode is available on Gemini 2.5 and newer (the models targeted by
-    # https://github.com/pydantic/pydantic-ai/issues/5366); image models don't support function tools,
-    # so leave it off there.
-    supports_strict_tool_definition = is_thinking_model and not is_image_model
+
+    # Older models (Gemini 2.5, Gemini 2.0, Gemini 1.x) or non-Gemini models (Gemma)
+    is_gemini_2_5 = 'gemini-2.5' in model_name
+    is_pre_gemini_2_5 = (
+        'gemini-1' in model_name or ('gemini-2.' in model_name and not is_gemini_2_5) or model_name == 'gemini-pro'
+    )
+    is_older_gemini = is_gemini_2_5 or is_pre_gemini_2_5
+    is_gemma = 'gemma' in model_name
+
+    # Thinking support: Gemini 3+ defaults to thinking enabled with thinking_level.
+    # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma do not support thinking.
+    if is_gemma or is_pre_gemini_2_5:
+        supports_thinking = False
+        google_supports_thinking_level = False
+    elif is_gemini_2_5:
+        supports_thinking = True
+        google_supports_thinking_level = False
+    else:
+        # Default Gemini 3+ behaviour
+        supports_thinking = True
+        google_supports_thinking_level = True
+
+    is_modern_gemini = not is_older_gemini and not is_gemma
+
+    # `VALIDATED` function-calling mode is available on thinking-capable Gemini models (2.5 and newer);
+    # image models don't support function tools, so leave it off there.
+    supports_strict_tool_definition = supports_thinking and not is_image_model
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
-    thinking_always_enabled = is_thinking_model and is_pro
-    return GoogleModelProfile(
+    thinking_always_enabled = supports_thinking and is_pro
+    thinking_levels = next(
+        (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
+        None,
+    )
+    profile = GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
-        supports_json_schema_output=is_3_or_newer or not is_image_model,
-        supports_json_object_output=is_3_or_newer or not is_image_model,
+        supports_json_schema_output=is_modern_gemini or not is_image_model,
+        supports_json_object_output=is_modern_gemini or not is_image_model,
         supports_tools=not is_image_model,
         supports_tool_return_schema=not is_image_model,
-        supports_thinking=is_thinking_model,
+        supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
-        google_supports_tool_combination=is_3_or_newer,
-        google_supports_server_side_tool_invocations=is_3_or_newer,
-        google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
-        google_supports_thinking_level=is_3_or_newer,
-        google_supports_minimal_thinking_level=not model_name.startswith(_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL),
+        google_supports_tool_combination=is_modern_gemini,
+        google_supports_server_side_tool_invocations=is_modern_gemini,
+        google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),
+        google_supports_thinking_level=google_supports_thinking_level,
+        google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
     )
+    if thinking_levels is not None:
+        profile['google_thinking_levels'] = thinking_levels
+    return profile
+
+
+_REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
+    'gemini-2.5-flash-native-audio',
+    'gemini-3.1-flash-live',
+    'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
+    'gemini-live-2.5-flash',  # Vertex AI
+)
+"""Live model families whose typed turns don't see an image sent just before them as a video frame."""
 
 
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for a Gemini Live model."""
-    return {
+    # `models/gemini-3.8-live` is as valid an id as the bare spelling — `google-genai` passes a
+    # resource name straight through where it would otherwise add the prefix — so the name is
+    # normalized once here rather than every check below having to allow for both.
+    model_name = model_name.rsplit('/', 1)[-1]
+    is_extended_thinking = model_name.startswith('gemini-3.8-live-extended-thinking')
+    # A prefix match like every other id check here, so a dated or `-preview` snapshot of the model
+    # gets the same flags: an exact match would send such a snapshot a thinking level it rejects.
+    is_3_8_live = model_name.startswith('gemini-3.8-live') and not is_extended_thinking
+    thinking_levels = next(
+        (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
+        None,
+    )
+    profile: GoogleRealtimeModelProfile = {
         'supports_image_input': True,
         # Every general-purpose Live model is audio-only: a session asking for `TEXT` is closed with
         # `1007 The requested combination of response modalities (TEXT) is not supported by the
@@ -233,17 +315,57 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # half-cascade `gemini-live-2.5-flash` is the exception: it closes the session with `1007
         # thinking_level is not supported by this model` (and rejects a `thinking_budget` too), so
         # it reports `False` and the shared `thinking` setting is skipped instead of sent.
-        'supports_thinking': 'native-audio' in model_name or not model_name.startswith('gemini-live-2.5'),
+        # `gemini-3.8-live` is the exception on the other side: it answers `1007 Thinking level is not
+        # supported for this model` to any level (verified live 2026-09-16), so the shared `thinking`
+        # setting is skipped for it too.
+        'supports_thinking': is_extended_thinking
+        or (('native-audio' in model_name or not model_name.startswith('gemini-live-2.5')) and not is_3_8_live),
         # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
         # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
         # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result
         # lands. This gates the opt-in `google_async_tool_calls` setting; it is not enabled by
-        # merely being supported.
-        'supports_async_tool_calls': 'native-audio' in model_name,
+        # merely being supported. Extended thinking has no other mode — see below. `gemini-3.8-live`
+        # honors it too: verified live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with
+        # the call rather than after its result, as it does for `BLOCKING`.
+        'supports_async_tool_calls': 'native-audio' in model_name or is_3_8_live or is_extended_thinking,
         # Gemini Live takes a tool's return schema natively, as the function declaration's
         # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
         'supports_tool_return_schema': True,
     }
+    if thinking_levels is not None:
+        profile['google_thinking_levels'] = thinking_levels
+    # Extended thinking reasons and speaks at once, and its API *requires* a thinking level: connecting
+    # without one is `1007 Thinking level must be specified for this model`, and a `thinking_budget`
+    # (including `0`, the shape `thinking=False` maps to) is rejected the same way.
+    profile['google_thinking_always_enabled'] = is_extended_thinking
+    # Google made `NON_BLOCKING` the default for the 3.8 family, so an unset behavior no longer means
+    # blocking there: verified live 2026-09-16 against `gemini-3.8-live`, where a declaration without one
+    # completes the turn alongside the call just as `NON_BLOCKING` does.
+    # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live#migrating
+    profile['google_async_tool_calls_by_default'] = is_3_8_live or is_extended_thinking
+    # Verified live 2026-09-16: `gemini-3.8-live-extended-thinking` answers `1007 BLOCKING function calls
+    # are not supported for this model` to a `BLOCKING` declaration, so every tool session on it is async.
+    profile['google_requires_async_tool_calls'] = is_extended_thinking
+    # ...and it rejects the scheduling field outright: `1007 Function response scheduling is not supported
+    # for this model`. The native-audio models and `gemini-3.8-live` take `INTERRUPT` (verified live
+    # 2026-09-16 for the latter, as Google documents).
+    profile['google_supports_async_tool_call_scheduling'] = 'native-audio' in model_name or is_3_8_live
+    # Verified live 2026-09-25 with `enable_affective_dialog`: `gemini-3.1-flash-live-preview` refuses the
+    # handshake with `1007 Request contains an invalid argument`, and `gemini-3.8-live` and
+    # `gemini-3.8-live-extended-thinking` accept it and then close the session with that same `1007` on the
+    # first send. `gemini-2.5-flash-native-audio-latest` and the Vertex `gemini-live-2.5-flash` take it.
+    # Only the families verified to reject it are refused, so a newer Live model isn't turned away before
+    # its profile is updated.
+    profile['google_supports_affective_dialog'] = not model_name.startswith(
+        ('gemini-3.1-flash-live', 'gemini-3.8-live')
+    )
+    # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
+    # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
+    # sees images in its own content, so these get the recent image sent again there.
+    profile['google_text_turns_see_video_frames'] = not model_name.startswith(
+        _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS
+    )
+    return profile
 
 
 class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
@@ -280,6 +402,7 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
                     schema['type'] = 'number'
         schema.pop('discriminator', None)
         schema.pop('examples', None)
+        _fold_described_options(schema)
 
         # Remove 'title' due to https://github.com/googleapis/python-genai/issues/1732
         schema.pop('title', None)
@@ -368,3 +491,34 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
                 schema.setdefault('maxItems', len(prefix_items))
 
         return schema
+
+
+def _fold_described_options(schema: JsonSchema) -> None:
+    """Fold an `anyOf` of single-value options back into one `enum`, their descriptions into the parent's.
+
+    An `Enum` whose members carry docstrings renders as `anyOf` of `const`s with descriptions, which the `const`
+    handling above has already turned into one-value `enum`s. Gemini takes that shape, but does not hold the
+    model to it the way it holds it to a plain `enum`: recorded against `gemini-2.5-flash`, a tool declared this
+    way was called with a value outside the options. So the options go back into one `enum`, and what each one
+    means goes into the description, where the model still reads it.
+    """
+    options = cast(list[JsonSchema], schema.get('anyOf', []))
+    if not options or not all(
+        isinstance(option, dict)
+        and len(cast(list[Any], option.get('enum', []))) == 1
+        and option.keys() <= {'enum', 'type', 'description'}
+        for option in options
+    ):
+        return
+    types = {option.get('type') for option in options}
+    if len(types) != 1 or 'enum' in schema or schema.get('type', next(iter(types))) != next(iter(types)):
+        # Options of different types, a parent with its own `enum`, or a parent typed differently from its
+        # options are not one described enum, and folding them would widen what the model may answer.
+        return
+    schema.pop('anyOf')
+    schema['enum'] = [option['enum'][0] for option in options]
+    if (type_ := types.pop()) is not None:
+        schema['type'] = type_
+    described = [f'{option["enum"][0]}: {option["description"]}' for option in options if option.get('description')]
+    if described:
+        schema['description'] = '\n'.join([*filter(None, [schema.get('description')]), *described])

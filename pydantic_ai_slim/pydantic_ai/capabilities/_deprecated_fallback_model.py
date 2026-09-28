@@ -5,8 +5,8 @@ Shared by [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] and
 rather than to a local tool of their own.
 """
 
-# TODO(v3): remove this module, along with the `fallback_model` parameter on `ImageGeneration.__init__`
-# and `XSearch.__init__` and the deprecated property on each of them.
+# TODO(v3): remove this module, along with the `fallback_model` parameter on `ImageGeneration.__init__`,
+# `ImageGeneration.from_spec` and `XSearch.__init__`, and the deprecated property on each capability.
 
 from __future__ import annotations
 
