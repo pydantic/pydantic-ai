@@ -46,6 +46,15 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(template='my
 
 The build snippet is illustrative and not part of the runnable agent examples below.
 
+The default template has Python and git but not your project's dependencies, not even pytest. Install them in a custom template, or with `await workspace.run(['pip', 'install', ...])` before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run).
+
+| Default template | |
+| --- | --- |
+| User | `user` |
+| `HOME` and default working directory | `/home/user` |
+| `rg` | Not installed |
+| `pytest` | Not installed |
+
 ## Continue in the same sandbox
 
 ```python {names="defined"}
