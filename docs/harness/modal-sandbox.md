@@ -42,7 +42,7 @@ A new sandbox lives for up to 24 hours, Modal's maximum; pass `ModalSandbox(sand
 
 The default image has Python, git, and ripgrep (`rg`), but not your project's dependencies, not even pytest. Install them in a custom `image`, or with `await workspace.run(['pip', 'install', ...])` before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run).
 
-| Default image | |
+| Setting | Value |
 | --- | --- |
 | User | `root` |
 | `HOME` and default working directory | `/root` |
