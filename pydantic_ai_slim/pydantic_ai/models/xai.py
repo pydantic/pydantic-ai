@@ -728,6 +728,7 @@ class XaiModel(Model[AsyncClient]):
                 thinking=self._request_thinks(model_settings, model_request_parameters),
                 thinking_remedy="Disable thinking with `thinking=False` or `xai_reasoning_effort='none'`",
             ),
+            disables_thinking=self._forced_tool_choice_disables_thinking(model_settings, model_request_parameters),
         )
 
         tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice

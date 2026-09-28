@@ -101,10 +101,11 @@ agent = Agent(model, model_settings=settings)
 
 ## Forced tool choice
 
-Pydantic AI treats a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] as incompatible with [thinking](../capabilities/thinking.md) on every `anthropic/` model routed through OpenRouter. Pydantic AI is more conservative than [the direct Anthropic API](anthropic.md#forced-tool-choice), where adaptive thinking accepts forcing — the OpenRouter route hasn't been verified, and it fails quietly rather than loudly: where Anthropic rejects an incompatible combination outright, OpenRouter silently drops the `reasoning` field from the request instead, so the response comes back with no thinking at all. See [#7283](https://github.com/pydantic/pydantic-ai/issues/7283). With thinking enabled on an `anthropic/` model:
+Claude answers a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] without thinking, so on `anthropic/` models Pydantic AI follows the [direct Anthropic API's rules](anthropic.md#forced-tool-choice): while the request thinks, a `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back to `'auto'`, and a bare structured `output_type` uses [Native Output](../output.md#native-output). That includes requests without a thinking setting on models that think by default, like `anthropic/claude-opus-5`.
 
-- An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; disable thinking or use `tool_choice='auto'`.
-- A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, so thinking is preserved. If the resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
+When you ask for thinking explicitly on an `anthropic/` model, an explicit `tool_choice='required'` (or a list of tool names) also raises a [`UserError`][pydantic_ai.exceptions.UserError], where the direct API would send it: OpenRouter doesn't reject that combination but silently drops the `reasoning` field from the request, so the response would come back with no thinking at all. Disable thinking or use `tool_choice='auto'` instead.
+
+If a resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
 
 ## Prompt Caching
 
