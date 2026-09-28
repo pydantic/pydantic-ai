@@ -13,8 +13,6 @@ from pydantic_clai2.field_menu import FieldMenu
 from pydantic_clai2.key_menu import KeyAction, KeysSource, build_keys_menu, keys_command, run_keys_flow
 from tests.clai2.menu_script import Script, pick, typed
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

@@ -30,7 +30,7 @@ from pydantic_ai_harness.shell import (
 
 from .._tool_calls import call_tool, call_tools
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands and process groups')]
+pytestmark = [pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands and process groups')]
 
 
 @pytest.fixture
@@ -201,6 +201,19 @@ class TestShellTool:
         assert output.startswith('[... output truncated')
         assert 'PID: ' in output and 'Output: ' in output and 'Status: ' in output
         assert '"exit_code": 0' in output.splitlines()[-1]
+
+    async def test_long_output_is_marked_and_starts_on_a_line(self, tmp_path: Path) -> None:
+        output = await shell(tmp_path, {'command': 'seq 1 10000'})
+        full = ''.join(f'{n}\n' for n in range(1, 10001))
+        marker, _, rest = output.partition('\n')
+        omitted = int(marker.removeprefix('[... output truncated, ').removesuffix(' earlier bytes omitted]'))
+        assert full[omitted - 1] == '\n'
+        assert rest.startswith(full[omitted:])
+        assert len(full) - omitted <= 16_000
+
+    async def test_long_single_line_is_marked(self, tmp_path: Path) -> None:
+        output = await shell(tmp_path, {'command': "head -c 20000 /dev/zero | tr '\\0' x"})
+        assert output.startswith('[... output truncated, 4000 earlier bytes omitted]\n' + 'x' * 16_000 + '\n')
 
     async def test_starts_in_configured_cwd_despite_persist_cwd(self, tmp_path: Path) -> None:
         (tmp_path / 'child').mkdir()

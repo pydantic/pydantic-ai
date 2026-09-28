@@ -83,7 +83,6 @@ def anyio_backend() -> str:
     return 'asyncio'  # Temporal's test server requires an asyncio event loop.
 
 
-@pytest.mark.anyio
 async def test_temporal_default_runner_veto(tmp_path: Path) -> None:
     (tmp_path / 'protected.txt').write_text('original')
     async with await WorkflowEnvironment.start_local() as env:  # pyright: ignore[reportUnknownMemberType]
@@ -114,7 +113,6 @@ async def test_temporal_default_runner_veto(tmp_path: Path) -> None:
         if not (name == 'coder' and tool_name == 'create_directory')
     ],
 )
-@pytest.mark.anyio
 async def test_temporal_vetoes_before_mutation(
     tmp_path: Path, capability: FileSystem | Coder, tool_name: str, args: dict[str, str]
 ) -> None:

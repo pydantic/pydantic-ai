@@ -122,7 +122,6 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
     return agent
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('capability', ['coder', 'shell', 'filesystem'])
 async def test_prefect_workspace_capabilities(tmp_path: Path, prefect_server: None, capability: str) -> None:
     from prefect import flow
@@ -141,7 +140,6 @@ async def test_prefect_workspace_capabilities(tmp_path: Path, prefect_server: No
     _assert_results(tmp_path, capability, outputs, vetoes)
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('capability', ['coder', 'shell', 'filesystem'])
 async def test_dbos_workspace_capabilities(tmp_path: Path, capability: str) -> None:
     (tmp_path / 'dir').mkdir()
@@ -210,7 +208,6 @@ class ShellRestartWorkflow(PydanticAIWorkflow):
 
 
 @skip_temporal_sandbox_on_314
-@pytest.mark.anyio
 async def test_temporal_new_worker_keeps_shell_cwd(tmp_path: Path) -> None:
     global _restart_ready, _restart_continue
     (tmp_path / 'dir').mkdir()

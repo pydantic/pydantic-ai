@@ -32,8 +32,6 @@ from pydantic_ai_harness.modal_sandbox import (
 
 from .fake_modal import FakeModal, FileInfo
 
-pytestmark = pytest.mark.anyio
-
 
 @runtime_checkable
 class _ModalSandboxTools(Protocol):  # pragma: no cover - structural typing only
@@ -790,7 +788,6 @@ class TestCapability:
         assert 'ModalSandboxExecResult' in modal_sandbox.__all__
         assert pydantic_ai_harness.ModalSandbox is ModalSandbox
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self, fake_modal: FakeModal) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
@@ -801,7 +798,6 @@ class TestCapability:
         assert result.output == 'done'
         assert fake_modal.sandboxes[0].terminated is True
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_can_call_run_command(self, fake_modal: FakeModal) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
@@ -828,7 +824,6 @@ class TestCapability:
         assert tool_returns == ['[stdout]\nhello']
         assert fake_modal.sandboxes[0].terminated is True
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_context_does_not_create_an_unused_base_sandbox(self, fake_modal: FakeModal) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
@@ -846,7 +841,6 @@ class TestCapability:
         assert len(fake_modal.sandboxes) == 2
         assert all(sandbox.terminated for sandbox in fake_modal.sandboxes)
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_run_failing_terminally_still_tears_down(self, fake_modal: FakeModal) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
@@ -894,7 +888,6 @@ class TestCodeModeInterop:
     other tool.
     """
 
-    @pytest.mark.anyio(backends=['asyncio'])
     @pytest.mark.parametrize('modal_first', [True, False], ids=['modal-first', 'code-mode-first'])
     async def test_run_command_stays_native(self, fake_modal: FakeModal, modal_first: bool) -> None:
 
@@ -907,7 +900,6 @@ class TestCodeModeInterop:
         assert run_code_description is not None
         assert 'async def run_command' not in run_code_description
 
-    @pytest.mark.anyio(backends=['asyncio'])
     @pytest.mark.parametrize('modal_first', [True, False], ids=['modal-first', 'code-mode-first'])
     async def test_file_tools_are_still_sandboxed(self, fake_modal: FakeModal, modal_first: bool) -> None:
 

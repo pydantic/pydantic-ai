@@ -21,8 +21,6 @@ from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.test_live_prompt import editor
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.mark.parametrize('supplied_handler', [False, True])
 async def test_enter_during_run_teardown_queues_follow_up(supplied_handler: bool) -> None:

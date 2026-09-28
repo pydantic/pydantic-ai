@@ -33,8 +33,6 @@ from pydantic_ai_harness.youdotcom import (
 )
 from pydantic_ai_harness.youdotcom._toolset import default_client
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

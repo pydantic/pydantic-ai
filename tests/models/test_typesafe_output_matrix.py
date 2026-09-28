@@ -43,7 +43,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='typesafe-sdk not installed'),
-    pytest.mark.anyio,
 ]
 
 

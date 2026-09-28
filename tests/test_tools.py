@@ -1617,7 +1617,6 @@ def test_async_function_tool_consistent_with_schema():
     assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
-@pytest.mark.anyio
 async def test_positional_or_keyword_with_var_args():
     """A POSITIONAL_OR_KEYWORD param followed by *args must not be double-bound.
 
@@ -3301,7 +3300,6 @@ def test_retry_tool_until_last_attempt():
     )
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_triggers_retry():
     """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
     import asyncio
@@ -3337,7 +3335,6 @@ async def test_tool_timeout_triggers_retry():
     assert retry_parts[0].tool_name == 'slow_tool'
 
 
-@pytest.mark.anyio
 async def test_sync_tool_timeout_triggers_retry():
     """A blocking `def` tool times out too: its worker thread is abandoned when the deadline expires."""
     call_count = 0
@@ -3369,7 +3366,6 @@ async def test_sync_tool_timeout_triggers_retry():
     assert retry_parts[0].tool_name == 'slow_sync_tool'
 
 
-@pytest.mark.anyio
 async def test_tool_with_timeout_completes_successfully():
     """Test that a tool completes successfully when within its timeout."""
     import asyncio
@@ -3409,7 +3405,6 @@ async def test_tool_with_timeout_completes_successfully():
     assert 'completed successfully' in result.output
 
 
-@pytest.mark.anyio
 async def test_no_timeout_by_default():
     """Test that tools run without timeout by default (backward compatible)."""
     import asyncio
@@ -3427,7 +3422,6 @@ async def test_no_timeout_by_default():
     assert 'completed' in result.output
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
@@ -3450,7 +3444,6 @@ async def test_tool_timeout_retry_counts_as_failed():
     assert call_count == 3
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_message_format():
     """Test the format of the retry prompt message on timeout."""
     import asyncio
@@ -3511,7 +3504,6 @@ def test_tool_timeout_default_none():
     assert tool.tool_def.timeout is None
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_exceeds_retry_limit():
     """Test that UnexpectedModelBehavior is raised when timeout exceeds retry limit."""
     import asyncio
@@ -3535,7 +3527,6 @@ async def test_tool_timeout_exceeds_retry_limit():
         await agent.run('call always_slow_tool')
 
 
-@pytest.mark.anyio
 async def test_agent_level_tool_timeout():
     """Test that agent-level tool_timeout applies to all tools."""
     import asyncio
@@ -3569,7 +3560,6 @@ async def test_agent_level_tool_timeout():
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
 
 
-@pytest.mark.anyio
 async def test_per_tool_timeout_overrides_agent_timeout():
     """Test that per-tool timeout overrides agent-level timeout."""
     import asyncio
@@ -3611,7 +3601,6 @@ def test_agent_tool_timeout_passed_to_toolset():
     assert agent._function_toolset.timeout == 30.0
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('is_stream', [True, False])
 async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
     """Test that tools are cancelled when agent is cancelled."""
@@ -3904,7 +3893,6 @@ def test_args_validator_not_configured():
     agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
 
-@pytest.mark.anyio
 async def test_args_validator_async():
     """Test async validator functions work correctly."""
     validator_called = False

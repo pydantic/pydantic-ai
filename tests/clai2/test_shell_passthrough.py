@@ -15,8 +15,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.shell_passthrough import shell_command
 from tests.clai2.test_app_edges import inputs
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.mark.parametrize(
     ('text', 'command'),

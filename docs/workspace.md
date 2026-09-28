@@ -226,7 +226,8 @@ set `working_dir=` for portable commands: sandbox providers use different defaul
 working directories.
 
 A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Catch it and
-raise `ModelRetry` so the model can try again; uncaught, it ends the run. An environment that is gone,
+raise `ModelRetry` so the model can try again; uncaught, it ends the run, except on Temporal, where it
+follows the activity retry policy (see [Durable execution](#durable-execution)). An environment that is gone,
 such as a sandbox deleted during a command, raises `WorkspaceUnavailableError` and ends the run.
 A command killed by a signal while its environment stays live returns its exit code instead.
 
@@ -369,8 +370,10 @@ activities.
 - On DBOS, a run with a workspace runs its tool calls one at a time: DBOS numbers steps as they
   start, so parallel tools making several workspace calls each could not be replayed reliably.
 - A workspace call may run again if a worker dies mid-call: inside a tool it retries with the tool,
-  and from workflow code it follows the engine's activity or step settings. Workspace and file errors,
-  timeouts, output-limit failures and a lost environment are never retried.
+  and from workflow code it follows the engine's activity or step settings. On Temporal and Prefect,
+  workspace timeouts, output-limit failures, read-only refusals and a lost environment are never
+  retried. Other exceptions, such as `FileNotFoundError`, follow the retry policy, which on Temporal
+  retries without limit by default: catch them and raise `ModelRetry`, or set `maximum_attempts`.
 - On Temporal, a command runs within an activity's `start_to_close_timeout`, 60 seconds by default,
   whatever its own `timeout`. Inside a tool that is the tool's activity; raise it with
   `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. From workflow code it is
@@ -426,8 +429,8 @@ class UserDirectory(AbstractCapability[str]):
         return backend
 ```
 
-`LocalWorkspaceBackend` never creates its directory for relative file operations, so create each user's directory when you create
-the user. This separates where users start; like `LocalWorkspace`, it isolates nothing.
+`LocalWorkspaceBackend` never creates its directory, and every operation, absolute paths included,
+raises `WorkspaceUnavailableError` until it exists, so create each user's directory when you create the user. This separates where users start; like `LocalWorkspace`, it isolates nothing.
 
 - With `ref=None`, return the backend for a new or default environment.
 - With a `ref` you recognize, return a backend that attaches to it. Return `None` for any other.
@@ -476,9 +479,12 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 
 ### Resolving symlinks
 
-`Workspace.realpath(path)` answers "which file would this path really open?". Code that keeps an agent
+`Workspace.realpath` answers "which file does this path really lead to?". Code that keeps an agent
 inside a directory needs that answer, because a symlink can make a path that looks inside lead
-outside. For example, with a check that only allows paths under `/app` and a link
+outside. File methods open [`resolve(path)`][pydantic_ai.workspaces.Workspace.resolve], which collapses
+`..` as text, so to check the file a file method opens, use `realpath(await ws.resolve(path))`, as the
+`RootedWrites` example above does. `realpath(path)` on the raw path follows the kernel, where `..`
+climbs from a symlink's target, so it answers for commands. For example, with a check that only allows paths under `/app` and a link
 `/app/data -> /secrets`, `/app/data/key` looks inside, but opens `/secrets/key`.
 
 Backends answer it in one of three ways:
@@ -583,7 +589,9 @@ class TestMyBackend(WorkspaceBackendSuite):
         return LocalWorkspaceBackend(working_dir=tmp_path_factory.mktemp('ws'))
 ```
 
-The suite needs the anyio pytest plugin. A class-scoped fixture starts one environment for the whole
+The suite needs the anyio pytest plugin, which runs each rule on every installed async backend (asyncio,
+and Trio when installed). For an asyncio-only SDK, override the `anyio_backend` fixture to return
+`'asyncio'`, class-scoped when your `backend` fixture is. A class-scoped fixture starts one environment for the whole
 suite instead of one per rule. Under durable execution every workspace call rebuilds your backend from
 its ref, so provide `attach_backend`, a factory that builds a backend for a ref the way your capability's
 `get_workspace` does: it enables the rule that a backend attached by ref reaches the same files and
@@ -594,10 +602,10 @@ The latter defaults to `fresh_backend` when supplied. The destructive rule never
 Before shipping a backend, use the suite to check:
 
 - Concurrent first use creates one environment (supply `fresh_backend` for this rule), with a stable ref.
-- Command errors use the right types: invalid arguments, missing paths, unavailable environments,
-  and timeouts with partial output; stdin at EOF and non-zero exits remain normal results.
-- Timeout and cancellation stop the foreground process group, and background children holding
-  output pipes do not indefinitely delay a finished command.
+- Command errors use the right types: invalid arguments, missing paths and unavailable environments;
+  timeouts raise `WorkspaceTimeoutError`; stdin at EOF and non-zero exits remain normal results.
+- Cancellation stops the foreground command, and background children holding output pipes do not
+  indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
@@ -650,11 +658,12 @@ works without shell support, but cannot run commands.
 
 ## Limits
 
-- `LocalWorkspace` isolates nothing and runs only on POSIX systems. Create the configured local root before use, including absolute file writes beneath it.
-  Absolute paths outside that root remain allowed.
-  `defer_loading=True` is rejected: the workspace must be selected before deferred capabilities load.
-  (macOS and Linux). Its ref normalizes `.` and `..` without resolving symlinks, so differently
+- `LocalWorkspace` runs only on POSIX systems (macOS and Linux) and isolates nothing. Create its root
+  first: every operation needs it. While it exists, absolute paths outside it are allowed.
+  `defer_loading=True` is rejected because the workspace must be selected before deferred
+  capabilities load. Its ref normalizes `.` and `..` without resolving symlinks, so differently
   spelled symlink roots have distinct refs even if they point to the same directory.
+- `LocalWorkspace` serializes reads and writes of one file from the same process; other processes and commands can still interleave with them.
 - A run has one workspace.
 - Non-durable runs do not create or delete sandboxes solely at run boundaries; durable runs eagerly create or attach an environment at their start, even without tool use. In either case, deletion remains the caller's job.
 - How a timed-out command is stopped depends on the provider.

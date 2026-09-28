@@ -34,7 +34,6 @@ def test_credential_reason_keeps_safe_context_without_echoing_key() -> None:
     assert 'abc-secret-123' not in safe_credential_reason(ValueError('token abc-secret-123 rejected'))
 
 
-@pytest.mark.anyio
 async def test_own_timeout_and_external_cancel_stop_once() -> None:
     stopped: list[str] = []
 
@@ -55,7 +54,6 @@ async def test_own_timeout_and_external_cancel_stop_once() -> None:
     assert stopped == ['stop']
 
 
-@pytest.mark.anyio
 async def test_failed_stop_does_not_replace_original_cancellation() -> None:
     async def stop() -> None:
         raise RuntimeError('stop failed')
@@ -65,7 +63,6 @@ async def test_failed_stop_does_not_replace_original_cancellation() -> None:
             await anyio.sleep_forever()
 
 
-@pytest.mark.anyio
 async def test_stop_shielded_finishes_under_outer_cancellation() -> None:
     stopped: list[str] = []
 
@@ -79,7 +76,6 @@ async def test_stop_shielded_finishes_under_outer_cancellation() -> None:
     assert stopped == ['stop']
 
 
-@pytest.mark.anyio
 async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) -> None:
     if anyio_backend != 'asyncio':  # pragma: no cover
         pytest.skip('Native task.cancel() is asyncio-specific')
@@ -122,7 +118,6 @@ async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) ->
     await exercise(None, 2)
 
 
-@pytest.mark.anyio
 async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
     events: list[str] = []
 

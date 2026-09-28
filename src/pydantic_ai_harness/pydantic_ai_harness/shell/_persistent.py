@@ -48,6 +48,20 @@ async def _count_lines(job: Job) -> int | None:
     return data.count(b'\n') + int(bool(data) and not data.endswith(b'\n'))
 
 
+async def _output_tail(job: Job) -> str:
+    """The last `_OUTPUT_TAIL_BYTES` of the log, from a line start and marked when earlier output is left out."""
+    size = await job.size(job.output_path)
+    start = max(0, size - _OUTPUT_TAIL_BYTES)
+    data = await job.read(job.output_path, start, size - start)
+    if not start:
+        return data.decode('utf-8', errors='replace')
+    # Drop the cut first line, unless it is the only one.
+    if 0 <= (newline := data.find(b'\n')) < len(data) - 1:
+        start += newline + 1
+        data = data[newline + 1 :]
+    return f'[... output truncated, {start} earlier bytes omitted]\n' + data.decode('utf-8', errors='replace')
+
+
 class _CommandOutput(Generic[AgentDepsT]):
     """Emit at most `_OUTPUT_TAIL_BYTES` of the log as events, decoded incrementally."""
 
@@ -134,7 +148,7 @@ async def run_persistent_command(
     # result, and the PID and paths are what the model must not lose.
     result = ''
     if mode == 'foreground':
-        result = (await job.tail(job.output_path, _OUTPUT_TAIL_BYTES)).decode('utf-8', errors='replace')
+        result = await _output_tail(job)
         if result and not result.endswith('\n'):
             result += '\n'
     result += (

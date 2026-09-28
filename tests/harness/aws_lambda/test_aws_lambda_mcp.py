@@ -243,7 +243,6 @@ class TestMultipleServers:
 
 
 class TestFakeServerFidelity:
-    @pytest.mark.anyio
     async def test_the_fake_opens_an_implicit_session_when_not_entered(self) -> None:
         """Without this the `implicit_sessions == 0` assertion above would be vacuous."""
         server = FakeMCPToolset(id='calc')

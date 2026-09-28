@@ -49,7 +49,6 @@ from pydantic_ai_harness.spend import (
 )
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
 ]
 

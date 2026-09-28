@@ -50,8 +50,6 @@ from pydantic_ai_harness.shell._toolset import ShellToolset
 
 from .._tool_calls import call_tool
 
-pytestmark = pytest.mark.anyio
-
 
 def _env_toolset(
     shell_dir: Path,
@@ -90,7 +88,6 @@ def _shell_toolset(
     )
 
 
-@pytest.mark.anyio
 async def test_command_tools_declare_temporal_budget(tmp_path: Path) -> None:
     toolset = _shell_toolset(tmp_path)
     persistent = ShellToolset(
@@ -1477,7 +1474,6 @@ class TestShellCapability:
         assert 'dd' in shell.denied_commands
         assert 'shutdown' in shell.denied_commands
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self, tmp_path: Path) -> None:
         model = TestModel(custom_output_text='done', call_tools=[])
         agent: Agent[None, str] = Agent(model, capabilities=[Shell()])
@@ -1489,6 +1485,15 @@ class TestShellCapability:
             pytest.skip('Agent.run() requires asyncio')
         agent: Agent[None, str] = Agent(TestModel(call_tools=[]), capabilities=[Shell()])
         with pytest.raises(UserError, match='`Shell` needs a workspace'):
+            await agent.run('run echo hello')
+
+    async def test_hand_built_toolset_without_workspace_fails_the_run(self, tmp_path: Path) -> None:
+        if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+            pytest.skip('Agent.run() requires asyncio')
+        agent: Agent[None, str] = Agent(
+            TestModel(call_tools=[]), deps_type=type(None), toolsets=[_shell_toolset(tmp_path)]
+        )
+        with pytest.raises(UserError, match='`ShellToolset` needs a workspace'):
             await agent.run('run echo hello')
 
 
@@ -1516,7 +1521,6 @@ class TestCodeModeInterop:
     stay sandboxed like any other tool.
     """
 
-    @pytest.mark.anyio(backends=['asyncio'])
     @pytest.mark.parametrize('shell_first', [True, False], ids=['shell-first', 'code-mode-first'])
     async def test_command_tools_stay_native(self, tmp_path: Path, shell_first: bool) -> None:
 
@@ -1531,7 +1535,6 @@ class TestCodeModeInterop:
         assert 'async def run_command' not in run_code_description
         assert 'async def start_command' not in run_code_description
 
-    @pytest.mark.anyio(backends=['asyncio'])
     @pytest.mark.parametrize('shell_first', [True, False], ids=['shell-first', 'code-mode-first'])
     async def test_command_id_tools_are_still_sandboxed(self, tmp_path: Path, shell_first: bool) -> None:
 
@@ -2046,7 +2049,6 @@ class TestEnvControlPropagation:
 class TestReadOnlyWorkspace:
     """A read-only workspace refuses `run`, so the shell offers no tools and reports a refusal as a failure."""
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_is_offered_no_shell_tools(self, tmp_path: Path) -> None:
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
             pytest.skip('Agent.run() requires asyncio')
@@ -2101,7 +2103,6 @@ class TestDetachedJobRoundTrip:
         assert not job_dir.exists()
         assert 'unknown command ID' in await ts.check_command(_ctx(tmp_path), command_id)
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_persistent_background_job(self, tmp_path: Path) -> None:
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
             pytest.skip('Agent.run() requires asyncio')

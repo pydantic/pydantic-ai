@@ -25,8 +25,6 @@ from pydantic_ai_harness.media import (
     parse_media_uri,
 )
 
-pytestmark = pytest.mark.anyio
-
 _MISSING_URI = 'media+sha256://' + ('0' * 64)
 
 

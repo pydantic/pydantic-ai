@@ -41,9 +41,9 @@ print(result.output)
 a sandbox. A run without a workspace fails at its start.
 
 With a read-only workspace (`LocalWorkspace(..., read_only=True)`), only the
-read tools are offered. `list_files` and `grep` run `rg` inside the workspace,
-so they are left out when it can't run commands; `search_files` and
-`find_files` always work.
+read tools are offered. `list_files` and `grep` run `rg` inside the workspace;
+where it can't run commands, they walk its files instead, as `find_files` and
+`search_files` do.
 
 ## Tools
 
@@ -74,7 +74,7 @@ Recursive file walks visit each real directory once, so aliases to a directory d
 `DEFAULT_TOOL_NAMES`, is the eight tools that need only the workspace's
 filesystem. `list_files` and `grep` run the `rg` executable inside the
 workspace when it is on its `PATH`, so they are opt-in by name. The
-`coder` extra installs `rg` for a local workspace. Without `rg`, both use an in-workspace POSIX command. The fallback lacks ripgrep `file_type` support and some ignore-file rules; `search_files` and `find_files` remain available for filesystem-only workspaces.
+`coder` extra installs `rg` for a local workspace. Without `rg`, both use an in-workspace POSIX command. The fallback lacks ripgrep `file_type` support and some ignore-file rules. On a read-only or filesystem-only workspace, both walk the files instead, without ignore files or `file_type`.
 
 ```python
 from pydantic_ai_harness import FileSystem
@@ -263,7 +263,7 @@ applies the same rule to absolute symlink targets.
 ### Custom storage
 
 To keep files somewhere else, write a `WorkspaceBackend` that implements
-`SupportsFilesystem` (and `SupportsCommands`, for the ripgrep tools and
+`SupportsFilesystem` (and `SupportsCommands`, for ripgrep searches and
 `file_info` symlink targets) and attach it to the run. Containment, patterns,
 events, and hashes apply unchanged. This replaces the removed
 `FileSystemToolset.open_read` and `open_write` hooks.

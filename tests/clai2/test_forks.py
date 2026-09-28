@@ -33,8 +33,6 @@ from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
 
-pytestmark = pytest.mark.anyio
-
 PromptT = TypeVar('PromptT')
 
 

@@ -51,8 +51,6 @@ from pydantic_ai_harness.memory import (
 )
 from tests.harness._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:
