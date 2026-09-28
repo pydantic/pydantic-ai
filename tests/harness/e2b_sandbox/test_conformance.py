@@ -54,9 +54,8 @@ class TestFakeE2BSandboxBackend(WorkspaceBackendSuite):
 # The live tier runs without coverage; in CI only its gate fixtures run, to skip it.
 @pytest.mark.e2b_live
 class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
-    # Class-scoped so the rules share one sandbox instead of starting one each; the suite runs
-    # its destroy rule last. The teardown uses E2B's blocking API because a class-scoped
-    # fixture outlives each test's event loop.
+    # Class-scoped so the rules share one sandbox instead of starting one each. The teardown
+    # uses E2B's blocking API because a class-scoped fixture outlives each test's event loop.
     @pytest.fixture(scope='class')
     @classmethod
     def backend(cls) -> Iterator[E2BSandboxBackend]:
@@ -65,7 +64,6 @@ class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
         if backend.ref is not None:
             import e2b
 
-            # Returns False when the destroy rule already killed it.
             e2b.Sandbox.kill(backend.ref.id)
 
     async def test_symlink_loop_does_not_break_listing(
@@ -86,6 +84,11 @@ class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
         # envd opens files with its own root privileges; `user=` only sets ownership and `~`
         # (envd internal/api/download.go), so a shell chmod 000 does not stop the file API.
         return False
+
+    @pytest.fixture
+    def destructive_backend(self) -> Callable[[], WorkspaceBackend]:
+        # Destructive rules need their own sandbox, not the shared class-scoped fixture.
+        return lambda: E2BSandboxBackend(sandbox_timeout=600)
 
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
