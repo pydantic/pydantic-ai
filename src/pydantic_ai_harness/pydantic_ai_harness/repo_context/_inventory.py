@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import posixpath
+from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from pydantic_ai.workspaces import FileEntry, Workspace
+
 _ROOT_NOTES = {
     '.codex': 'Codex uses TOML config; assets are derived from the .claude/.agents setup.',
     '.grok': 'Grok setup is derived from the .claude/.agents setup.',
 }
+
+# Directories are deduplicated by their resolved path, so symlink cycles and aliases are walked once;
+# this bound backs that up on backends that cannot resolve links. Real skill trees are two levels deep.
+_MAX_SKILL_DEPTH = 8
 
 
 class AssetRoot(BaseModel):
@@ -30,30 +38,86 @@ class AgentContextInventory(BaseModel):
     roots: list[AssetRoot] = Field(default_factory=list[AssetRoot], description='One entry per scanned root directory.')
 
 
-def _relposix(path: Path, workspace: Path) -> str:
-    try:
-        return path.resolve().relative_to(workspace).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def scan_assets(workspace_dir: Path, asset_roots: Sequence[str]) -> AgentContextInventory:
+async def scan_assets(workspace: Workspace, workspace_dir: Path, asset_roots: Sequence[str]) -> AgentContextInventory:
     """Scan `asset_roots` under `workspace_dir`, locating skills, agents, and hooks.
 
     This locates assets only; it does not open or parse SKILL.md, agent `.md`, or
     `settings.json` contents.
     """
-    workspace = workspace_dir.resolve()
+    root_dir = await workspace.resolve(workspace_dir.as_posix())
     roots: list[AssetRoot] = []
     for name in asset_roots:
-        directory = workspace / name
+        directory = posixpath.normpath(posixpath.join(root_dir, name))
         notes = _ROOT_NOTES.get(name)
-        if not directory.is_dir():
+        try:
+            entry = await workspace.stat(directory)
+        except FileNotFoundError:
             roots.append(AssetRoot(root=name, exists=False, notes=notes))
             continue
-        skills = sorted(_relposix(p, workspace) for p in directory.glob('skills/**/SKILL.md') if p.is_file())
-        agents = sorted(_relposix(p, workspace) for p in directory.glob('agents/*.md') if p.is_file())
-        settings_path = directory / 'settings.json'
-        settings = _relposix(settings_path, workspace) if settings_path.is_file() else None
+        if not entry.is_dir:
+            roots.append(AssetRoot(root=name, exists=False, notes=notes))
+            continue
+
+        skills = await _scan_skills(workspace, posixpath.join(directory, 'skills'), root_dir)
+        agents = await _scan_agents(workspace, posixpath.join(directory, 'agents'), root_dir)
+        settings_path = posixpath.join(directory, 'settings.json')
+        settings_entry = await _stat(workspace, settings_path)
+        settings = (
+            _relative(settings_path, root_dir) if settings_entry is not None and not settings_entry.is_dir else None
+        )
+        skills.sort()
+        agents.sort()
         roots.append(AssetRoot(root=name, exists=True, skills=skills, agents=agents, settings=settings, notes=notes))
     return AgentContextInventory(roots=roots)
+
+
+async def _scan_skills(workspace: Workspace, skills_root: str, root_dir: str) -> list[str]:
+    root = await _stat(workspace, skills_root)
+    if root is None or not root.is_dir:
+        return []
+
+    found: list[str] = []
+    seen: set[str] = set()
+    pending = deque([(skills_root, 0)])
+    while pending:
+        directory, depth = pending.popleft()
+        # Entries follow directory symlinks, so a link to `.` would otherwise multiply the walk at every level.
+        real = await workspace.realpath(directory)
+        if real in seen:
+            continue
+        seen.add(real)
+        # Defensive race: the directory may disappear after `_stat`.
+        try:
+            entries = await workspace.list_dir(directory)
+        except FileNotFoundError:  # pragma: no cover
+            continue
+        for entry in entries:
+            if entry.is_dir:
+                if depth < _MAX_SKILL_DEPTH:
+                    pending.append((entry.path, depth + 1))
+            elif entry.name == 'SKILL.md':
+                found.append(_relative(entry.path, root_dir))
+    return found
+
+
+async def _scan_agents(workspace: Workspace, agents_root: str, root_dir: str) -> list[str]:
+    root = await _stat(workspace, agents_root)
+    if root is None or not root.is_dir:
+        return []
+    # Defensive race: the directory may disappear after `_stat`.
+    try:
+        entries = await workspace.list_dir(agents_root)
+    except FileNotFoundError:  # pragma: no cover
+        return []
+    return [_relative(entry.path, root_dir) for entry in entries if not entry.is_dir and entry.name.endswith('.md')]
+
+
+async def _stat(workspace: Workspace, path: str) -> FileEntry | None:
+    try:
+        return await workspace.stat(path)
+    except FileNotFoundError:
+        return None
+
+
+def _relative(path: str, workspace: str) -> str:
+    return posixpath.relpath(path, workspace)

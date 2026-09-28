@@ -35,8 +35,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel, Field, JsonValue
-from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, StructuredDict
 

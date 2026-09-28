@@ -146,7 +146,7 @@ Need deterministic, fast tests?
 └── Need specific tool call behavior?
     ├── Yes → Use FunctionModel
     └── Testing against real API (integration)?
-        └── Yes → Use pytest-recording with VCR cassettes
+        └── Yes → Use cassetter with recorded cassettes
 ```
 
 ## Comparison Tables

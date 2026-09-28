@@ -78,6 +78,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     global_mode_is_sequential,
 )
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 _entered_toolsets: list[CodeModeToolset[Never]] = []
 
@@ -687,7 +688,7 @@ class TestCodeMode:
             return ModelResponse(parts=[TextPart(returned[0].model_response_str())])
 
         agent: Agent[object, str] = Agent(
-            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object]()]
+            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object](store=LocalFileStore())]
         )
         result = await agent.run('what type is x?')
         assert result.output == "<class 'dict'>"

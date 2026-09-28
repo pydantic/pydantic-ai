@@ -87,8 +87,7 @@ The `code-mode` extra is also supported as an alias.
 
 By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools,
 undiscovered deferred tools, native fallbacks, and other code-execution tools remain native. Shell
-surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command`, and
-`ModalSandbox`'s `run_command`, sit beside `run_code` rather than inside it, so the model never has
+surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has
 to quote a shell command inside a generated Python string. `CapabilityCreation`'s
 `author_capability` stays native for the same reason: its argument is a complete Python module.
 Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like
@@ -595,6 +594,11 @@ controlled filesystem, environment, or clock behavior.
 a dataset you've dropped in a folder and writing a report back, editing a checkout, or processing a
 batch of documents. Sandboxed `pathlib` code reads and writes under the mounted path. (For
 environment variables or the clock, use `os_access` instead.)
+
+Mounts are directories on the machine running the agent, not the run's workspace. With a remote
+sandbox such as `ModalSandbox`, `Shell` and `FileSystem` act in the sandbox while mounted `pathlib`
+code still reads and writes the host. Use the workspace tools for files the model shares with its
+commands.
 
 ```python
 from pydantic_monty import MountDir

@@ -1831,10 +1831,48 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/xml') is True
     assert _is_text_like_media_type('application/yaml') is True
     assert _is_text_like_media_type('application/x-yaml') is True
+    assert _is_text_like_media_type('application/toml') is True
     assert _is_text_like_media_type('application/ld+json') is True
     assert _is_text_like_media_type('application/soap+xml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
+
+
+async def test_toml_document_as_binary_content_input(allow_model_requests: None):
+    """TOML `BinaryContent` is inlined as text, like YAML is.
+
+    Unit test, not VCR: `BinaryContent.from_path` infers `application/toml` (RFC 9519) for `.toml`
+    files, and before it counted as text-like the mapping raised `Unsupported binary content type`
+    before any request was made, so this pins the request shape the mock client receives.
+    """
+    toml_content = BinaryContent(data=b'[project]\nname = "demo"', media_type='application/toml')
+
+    c = completion_message(ChatCompletionMessage(content='A pyproject file.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', toml_content])
+    assert result.output == snapshot('A pyproject file.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="312a73" type="application/toml"-----
+[project]
+name = "demo"
+-----END FILE id="312a73"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
 
 
 async def test_video_url_not_supported(allow_model_requests: None):

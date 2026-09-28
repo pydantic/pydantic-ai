@@ -13,16 +13,24 @@ Pydantic AI agent the same review-and-fix loop from your own code.
 
 ## The solution
 
-`Macroscope` adds a `run_macroscope_review` tool that shells out to the installed
-`macroscope codereview` CLI, parses the streamed findings, and returns them as a
-structured `MacroscopeReview`. The agent then validates each finding and fixes the
-real ones with whatever tools it already has (for example `FileSystem` or `Shell`).
+`Macroscope` adds a `run_macroscope_review` tool that runs the installed
+`macroscope codereview` CLI in the run's workspace, parses the streamed
+findings, and returns them as a structured `MacroscopeReview`. The agent then
+validates each finding and fixes the real ones with whatever tools it already has
+(for example `FileSystem` or `Shell`).
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Macroscope
 
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[Macroscope()])
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[
+        LocalWorkspace('.'),
+        Macroscope(),
+    ],
+)
 
 result = agent.run_sync('Run a Macroscope review and fix any real findings.')
 print(result.output)
@@ -30,8 +38,12 @@ print(result.output)
 
 ## Prerequisites: install and sign in
 
-The capability drives the user-installed `macroscope` binary. It cannot install or
-authenticate on your behalf, so do this once on the host:
+The capability drives the `macroscope` binary installed in the agent's
+[workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/): your machine
+with `LocalWorkspace`, or the sandbox when the run uses one. A run without a workspace fails at its start. The review runs in
+the workspace's working directory, which should be the repository. The
+capability cannot install or authenticate on your behalf, so do this once
+wherever the review runs:
 
 1. Install the CLI:
 
@@ -41,7 +53,7 @@ authenticate on your behalf, so do this once on the host:
 
    The installer puts `macroscope` on your `PATH` (typically `~/.local/bin`).
 
-2. Sign in and pick a workspace by running the CLI once and completing the wizard:
+2. Sign in and pick a Macroscope workspace by running the CLI once and completing the wizard:
 
    ```bash
    macroscope
@@ -72,7 +84,6 @@ Each finding is a `MacroscopeIssue` with `issue_id`, `sequence`, `path`, `line`,
 |---|---|---|
 | `base` | `None` | Git ref to diff against. `None` omits `--base` so the CLI auto-detects the base branch itself (and creates its own review worktree). A per-call `base` argument, then this field, take precedence when set. |
 | `command` | `'macroscope'` | Binary name or path. Override for a non-default install location. |
-| `cwd` | `'.'` | Repository directory the review runs in. |
 | `timeout` | `600.0` | Maximum seconds to wait for a review. |
 | `guidance` | `None` | Custom review guidance for the system prompt. `None` contributes the default validate-then-fix guidance; `''` contributes none. |
 
