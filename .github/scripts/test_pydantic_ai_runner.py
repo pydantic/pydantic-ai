@@ -26,6 +26,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
+from anthropic import AsyncAnthropic
 from pytest import LogCaptureFixture
 
 # `.github/scripts/` isn't on sys.path by default — the shim package lives
@@ -1900,6 +1901,62 @@ def test_build_model_applies_llm_timeout_and_retries(monkeypatch: pytest.MonkeyP
     client = model.provider.client  # type: ignore[attr-defined]
     assert client.timeout == shim._LLM_TIMEOUT  # pyright: ignore[reportPrivateUsage]
     assert client.max_retries == shim._LLM_MAX_RETRIES  # pyright: ignore[reportPrivateUsage]
+
+
+_MESSAGE_RESPONSE = {
+    'id': 'msg_1',
+    'type': 'message',
+    'role': 'assistant',
+    'model': 'MiniMax-M3',
+    'content': [{'type': 'text', 'text': 'ok'}],
+    'stop_reason': 'end_turn',
+    'stop_sequence': None,
+    'usage': {'input_tokens': 1, 'output_tokens': 1},
+}
+_RATE_LIMITED_RESPONSE = {
+    'type': 'error',
+    'error': {'type': 'rate_limit_error', 'message': 'Token Plan rate limit reached (2062)'},
+}
+
+
+def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
+    """A real `AsyncAnthropic` whose first `rate_limited_responses` requests get a MiniMax 429."""
+    import httpx2
+    from tenacity import stop_after_attempt, wait_none
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) <= rate_limited_responses:
+            return httpx2.Response(429, json=_RATE_LIMITED_RESPONSE)
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['wait'] = wait_none()
+    transport.config['stop'] = stop_after_attempt(4)
+    # `max_retries=0` isolates the transport's retries from the SDK's own.
+    return AsyncAnthropic(api_key='x', max_retries=0, http_client=httpx2.AsyncClient(transport=transport))
+
+
+def test_rate_limit_retry_transport_rides_out_a_429_burst():
+    calls: list[int] = []
+    client = _rate_limited_client(rate_limited_responses=3, calls=calls)
+    message = asyncio.run(
+        client.messages.create(model='MiniMax-M3', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+    )
+    assert message.content[0].type == 'text'
+    assert len(calls) == 4
+
+
+def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
+    from anthropic import RateLimitError
+
+    calls: list[int] = []
+    client = _rate_limited_client(rate_limited_responses=99, calls=calls)
+    with pytest.raises(RateLimitError, match='Token Plan rate limit reached'):
+        asyncio.run(
+            client.messages.create(model='MiniMax-M3', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+        )
+    assert len(calls) == 4
 
 
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):

@@ -51,6 +51,7 @@ import logfire
 from anthropic import AsyncAnthropic
 from mcp.shared.exceptions import McpError
 from pydantic import ValidationError
+from tenacity import RetryCallState, retry_if_result, stop_after_delay, wait_random_exponential
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
@@ -77,6 +78,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -225,6 +227,39 @@ def require_safe_output(output: str) -> str:
 # raising.
 _LLM_TIMEOUT = httpx2.Timeout(timeout=120.0, connect=10.0)
 _LLM_MAX_RETRIES = 4
+
+# MiniMax answers bursts with 429 `rate_limit_error` (2062) and no `Retry-After`.
+# In CI Review logs those bursts cleared within 25s of the first 429, while the
+# SDK's own backoff (0.5s doubling, 4 retries) gives up after about 8s — which
+# killed runs mid-review. Below the SDK, a 429 is therefore retried with jittered
+# exponential backoff for up to this long. Parallel sub-agents hit the limit
+# together, so the jitter keeps them from retrying in lockstep.
+RATE_LIMIT_RETRY_SECS = 60
+
+
+async def _close_rate_limited_response(state: RetryCallState) -> None:
+    """Release a 429 response's connection before the next attempt replaces it."""
+    if state.outcome is not None and not state.outcome.failed:
+        await state.outcome.result().aclose()
+
+
+def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None) -> AsyncHTTPX2TenacityTransport:
+    """Transport that retries 429 responses, then hands the last one to the SDK as-is.
+
+    Handing back the response rather than raising keeps the SDK's `RateLimitError`,
+    with MiniMax's error body, as what a run that stays rate-limited fails with.
+    """
+    return AsyncHTTPX2TenacityTransport(
+        RetryConfig(
+            retry=retry_if_result(lambda response: response.status_code == 429),
+            wait=wait_random_exponential(multiplier=1, max=16),
+            stop=stop_after_delay(RATE_LIMIT_RETRY_SECS),
+            before_sleep=_close_rate_limited_response,
+            retry_error_callback=lambda state: state.outcome.result() if state.outcome else None,
+        ),
+        wrapped=wrapped,
+    )
+
 
 # Wall-clock caps (seconds).  These are last-resort guards on top of the
 # per-request timeout so a burst of slow requests can't accumulate forever.
@@ -669,6 +704,7 @@ def build_model(args: Args) -> tuple[Model, str]:
         base_url=anthropic_base,
         timeout=_LLM_TIMEOUT,
         max_retries=_LLM_MAX_RETRIES,
+        http_client=httpx2.AsyncClient(transport=rate_limit_retry_transport(), timeout=_LLM_TIMEOUT),
     )
     return (
         AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
