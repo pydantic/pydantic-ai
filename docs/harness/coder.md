@@ -195,6 +195,7 @@ accessible to commands in a local workspace.
 The default instructions keep engineering guidance brief: autonomous investigation and completion,
 focused changes and verification, and pragmatic DRY, YAGNI, SOLID, and the Zen of Python.
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
+The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
 Use it for additional policy, such as file-size limits or a preferred verification workflow.
 
@@ -238,7 +239,7 @@ When retaining `result.workspace` after a run with a provider backend that expos
 
 Sandbox refs identify existing environments; provider-specific cleanup should use an ID-only delete API for refs your application owns (where that provider offers one). Do not create or attach a backend merely to delete a sandbox. Directory upload and preview URLs depend on the provider SDK.
 
-With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily. Choose a working directory that exists in your image.
+With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily; the instructions then do not name the working directory. Choose a working directory that exists in your image.
 
 ## Benchmarking
 

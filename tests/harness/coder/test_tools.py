@@ -150,6 +150,29 @@ class TestCoder:
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
 
+    @pytest.mark.parametrize(
+        ('unrestricted', 'files'),
+        [(False, 'the file tools only accept paths inside it'), (True, 'relative file paths resolve from it')],
+    )
+    async def test_instructions_name_the_project_once(self, tmp_path: Path, unrestricted: bool, files: str) -> None:
+        model = TestModel(call_tools=[])
+        coder = Coder(unrestricted_filesystem=unrestricted)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        notes = [part.content for part in parts if 'Your project is' in part.content]
+        assert notes == [f'Your project is `{tmp_path.resolve()}`. Shell commands start there, and {files}.']
+
+    async def test_lazy_sandbox_instructions_leave_out_the_project(self, tmp_path: Path) -> None:
+        # Without `RepoContext` nothing touches the workspace at run start, so neither do the instructions.
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Coder(repo_context=False)]).run(
+            'go', workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        assert not any('Your project is' in part.content for part in parts)
+
     @pytest.mark.parametrize('repo_context', [True, False])
     async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:
         (tmp_path / 'AGENTS.md').write_text('Always answer in haiku.\n')
