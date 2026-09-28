@@ -1277,6 +1277,14 @@ agent = Agent(model)
 ...
 ```
 
+### Tsubasa
+
+For text requests to [Tsubasa](https://tsubasa.sh/), configure [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
+with `base_url='https://api.tsubasa.sh/v1'` and pass the value of your
+`TSUBASA_API_KEY` environment variable as `api_key`. Use this provider with
+[`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], selecting
+`tsubasa-fast` or `tsubasa-pro` as the model name.
+
 ### Rapid-MLX (Apple Silicon)
 
 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) is an OpenAI-compatible inference server for Apple Silicon, built on Apple's MLX framework.
