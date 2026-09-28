@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import errno
 import os
+import posixpath
 import stat
 from collections.abc import Sequence
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 import anyio
+import anyio.lowlevel
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, on_event
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -802,6 +807,113 @@ class TestEditFile:
     async def test_edit_returns_new_hash(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.edit_file('hello.txt', 'Hello, world!', 'Goodbye!', workspace=ws)
         assert 'hash:' in result
+
+
+class HeldWriteWorkspace:
+    """In-memory storage whose first write to `held` waits for `release`, after that call has read and checked the file.
+
+    Every operation is a plain checkpoint, with no worker thread, so `wait_all_tasks_blocked` sees
+    exactly where each call has stopped.
+    """
+
+    def __init__(self, files: dict[str, bytes], *, held: str) -> None:
+        self.files = files
+        self.held = held
+        self.writing = anyio.Event()
+        self.release = anyio.Event()
+
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return None
+
+    async def working_dir(self) -> str:
+        return '/work'
+
+    async def read_bytes(self, path: str) -> bytes:
+        await anyio.lowlevel.checkpoint()
+        return self.files[path]
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        if path == self.held and not self.writing.is_set():
+            self.writing.set()
+            await self.release.wait()
+        await anyio.lowlevel.checkpoint()
+        self.files[path] = data
+
+    async def stat(self, path: str) -> FileEntry:
+        await anyio.lowlevel.checkpoint()
+        if path in self.files:
+            return FileEntry(name=posixpath.basename(path), path=path, is_dir=False, size=len(self.files[path]))
+        if path == '/work':
+            return FileEntry(name='work', path=path, is_dir=True, size=None)
+        raise FileNotFoundError(path)
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        raise NotImplementedError  # pragma: no cover
+
+    async def make_dir(self, path: str) -> None:
+        raise NotImplementedError  # pragma: no cover
+
+    async def remove(self, path: str) -> None:
+        raise NotImplementedError  # pragma: no cover
+
+    async def exists(self, path: str) -> bool:
+        raise NotImplementedError  # pragma: no cover
+
+
+class TestConcurrentChanges:
+    """Calls changing one file take turns, so none is computed from content another is about to replace."""
+
+    async def test_parallel_edit_calls_to_one_file_both_land(self) -> None:
+        """Two `edit_file` calls in one model response, as a model batching its edits sends them."""
+        workspace = HeldWriteWorkspace({'/work/a.py': b'import old\nold()\n'}, held='/work/a.py')
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'import old', 'new_text': 'import new'}),
+                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old()', 'new_text': 'new()'}),
+                ]
+            )
+
+        async def release_after_the_other_edit_stops() -> None:
+            await workspace.writing.wait()
+            # The other edit either finishes or waits its turn before the held write goes ahead.
+            await anyio.wait_all_tasks_blocked()
+            workspace.release.set()
+
+        agent = Agent(FunctionModel(respond), capabilities=[FileSystem()])
+        messages: list[ModelMessage] = []
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(release_after_the_other_edit_stops)
+            messages = (await agent.run('Rename old to new', workspace=workspace)).all_messages()
+
+        returns = [part.content for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert len(returns) == 2 and all(str(content).startswith('Edited a.py.') for content in returns)
+        assert workspace.files['/work/a.py'] == b'import new\nnew()\n'
+
+    async def test_write_checked_against_a_hash_waits_for_a_pending_edit(self) -> None:
+        """A write's `expected_hash` is checked after a pending edit lands, so it reports the conflict."""
+        toolset = FileSystem[None]().get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        workspace = HeldWriteWorkspace({'/work/a.py': b'import old\n'}, held='/work/a.py')
+        original_hash = _content_hash('import old\n')
+
+        async def write() -> None:
+            with pytest.raises(ModelRetry, match='Conflict'):
+                await toolset.write_file('a.py', 'rewritten\n', expected_hash=original_hash, workspace=workspace)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(partial(toolset.edit_file, 'a.py', 'old', 'new', workspace=workspace))
+            await workspace.writing.wait()
+            tg.start_soon(write)
+            # The write either finishes or waits its turn before the held edit goes ahead.
+            await anyio.wait_all_tasks_blocked()
+            workspace.release.set()
+
+        assert workspace.files['/work/a.py'] == b'import new\n'
 
 
 class TestContentHashNewlineAgreement:

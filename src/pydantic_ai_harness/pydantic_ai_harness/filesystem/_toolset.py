@@ -11,11 +11,13 @@ import posixpath
 import re
 import shlex
 import weakref
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import Concatenate, ParamSpec
 
+import anyio
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -165,11 +167,21 @@ class _Bounds:
 
 
 @dataclass
+class _PathLock:
+    """The lock one file's writes and edits take turns on, and how many calls hold or await it."""
+
+    lock: anyio.Lock = field(default_factory=anyio.Lock)
+    users: int = 0
+
+
+@dataclass
 class _Scope:
     """The workspace a call acts on, with its `_Bounds`."""
 
     workspace: Workspace
     bounds: _Bounds
+    given: WorkspaceBackend
+    """The workspace as the call was given it, which may be a backend `workspace` wraps."""
 
     @property
     def root(self) -> str:
@@ -500,6 +512,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # The bounds each workspace's first call resolved, reused by later calls against it. Keyed
         # weakly by the workspace, so one toolset serves concurrent runs and holds no finished one.
         self._bounds: weakref.WeakKeyDictionary[Workspace, _Bounds] = weakref.WeakKeyDictionary()
+        # One lock per file a write or edit is in progress on, keyed by the identity of the workspace
+        # the call was given and the resolved path. An entry lives only while a call holds or awaits
+        # it, and that call keeps the workspace alive, so the identity cannot be reused meanwhile.
+        self._path_locks: dict[tuple[int, str], _PathLock] = {}
         self._allowed_patterns = list(allowed_patterns)
         self._denied_patterns = list(denied_patterns)
         self._read_only_patterns = list(read_only_patterns or ())
@@ -555,7 +571,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         facade = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
         if (bounds := self._bounds.get(facade)) is not None:
-            return _Scope(facade, bounds)
+            return _Scope(facade, bounds, workspace)
         cwd = posixpath.normpath(await facade.working_dir())
         if self._root_spelling is None:
             root = cwd = cwd if cwd == '/' else await facade.realpath(cwd)
@@ -572,7 +588,25 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         has_patterns = bool(self._allowed_patterns or self._denied_patterns or self._read_only_patterns)
         bounds = _Bounds(root=root, cwd=cwd, checks_realpath=root != '/' or has_patterns)
         self._bounds[facade] = bounds
-        return _Scope(facade, bounds)
+        return _Scope(facade, bounds, workspace)
+
+    @asynccontextmanager
+    async def _changing(self, scope: _Scope, resolved: str) -> AsyncGenerator[None]:
+        """Let one write or edit at a time read and replace `resolved` in this workspace.
+
+        Workspace I/O suspends between a call's read and its write, so without this two concurrent
+        edits both start from the same content and the later write drops the earlier change.
+        """
+        key = (id(scope.given), resolved)
+        entry = self._path_locks.setdefault(key, _PathLock())
+        entry.users += 1
+        try:
+            async with entry.lock:
+                yield
+        finally:
+            entry.users -= 1
+            if not entry.users:
+                del self._path_locks[key]
 
     def _matches(self, path: str, pattern: str) -> bool:
         """Glob-match a relative path, treating a leading `**/` as 'any directory, including the root'.
@@ -930,40 +964,42 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         expected_hash: str | None = None,
     ) -> str:
         resolved = await self._safe_resolve(scope, path, write=True)
+        async with self._changing(scope, resolved):
+            entry = await self._stat(scope, resolved)
+            if entry is not None and entry.is_dir:
+                raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
 
-        entry = await self._stat(scope, resolved)
-        if entry is not None and entry.is_dir:
-            raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
+            parent = posixpath.dirname(resolved)
+            try:
+                parent_entry = await scope.workspace.stat(parent)
+            except FileNotFoundError as e:
+                parent_rel = posixpath.relpath(parent, scope.root)
+                raise FileNotFoundError(
+                    f"Parent directory '{parent_rel}' does not exist. Create the parent directory first."
+                ) from e
+            except NotADirectoryError as e:
+                raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from e
+            # Checked before the announcement, like `create_directory` does, so a
+            # listener is only asked about a write the filesystem would accept.
+            if not parent_entry.is_dir:
+                raise ModelRetry(f'Path {path!r} has a parent that is not a directory.')
 
-        parent = posixpath.dirname(resolved)
-        try:
-            parent_entry = await scope.workspace.stat(parent)
-        except FileNotFoundError as e:
-            parent_rel = posixpath.relpath(parent, scope.root)
-            raise FileNotFoundError(
-                f"Parent directory '{parent_rel}' does not exist. Create the parent directory first."
-            ) from e
-        except NotADirectoryError as e:
-            raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from e
-        # Checked before the announcement, like `create_directory` does, so a
-        # listener is only asked about a write the filesystem would accept.
-        if not parent_entry.is_dir:
-            raise ModelRetry(f'Path {path!r} has a parent that is not a directory.')
+            # Outside a run nothing is announced: the diff is for listeners, and the
+            # check of `expected_hash` just before the write is the whole contract.
+            guard = expected_hash if entry is not None else None
+            if ctx is not None:
+                old, guard = await self._announced_state(
+                    scope, resolved, path, exists=entry is not None, expected_hash=expected_hash
+                )
+                change = Change.propose(
+                    **self._event_location(scope, resolved), operation='write', old=old, new=content
+                )
+                if (refusal := await self._request(scope, ctx, change, path=path, resolved=resolved)) is not None:
+                    return refusal
 
-        # Outside a run nothing is announced: the diff is for listeners, and the
-        # check of `expected_hash` just before the write is the whole contract.
-        guard = expected_hash if entry is not None else None
-        if ctx is not None:
-            old, guard = await self._announced_state(
-                scope, resolved, path, exists=entry is not None, expected_hash=expected_hash
-            )
-            change = Change.propose(**self._event_location(scope, resolved), operation='write', old=old, new=content)
-            if (refusal := await self._request(scope, ctx, change, path=path, resolved=resolved)) is not None:
-                return refusal
-
-        if guard is not None:
-            await self._check_guard(scope, resolved, path, guard)
-        await scope.workspace.write_bytes(resolved, content.encode('utf-8'))
+            if guard is not None:
+                await self._check_guard(scope, resolved, path, guard)
+            await scope.workspace.write_bytes(resolved, content.encode('utf-8'))
 
         new_hash = _content_hash(content)
         lines = len(content.splitlines())
@@ -1076,34 +1112,37 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         expected_hash: str | None = None,
     ) -> str:
         resolved = await self._safe_resolve(scope, path, write=True)
-        entry = await self._stat(scope, resolved)
-        if entry is None or entry.is_dir:
-            raise FileNotFoundError(f'File not found: {path}')
-        raw = await scope.workspace.read_bytes(resolved)
-        if _is_binary(raw):
-            raise ValueError(f'{path} is a binary file; edit_file only edits text files.')
-        # Strict decoding: an edit writes the whole file back, so undecodable bytes are refused
-        # rather than replaced. No newline translation, so CRLF and the hash are preserved.
-        text = raw.decode('utf-8')
-        current_hash = _bytes_hash(raw)
+        async with self._changing(scope, resolved):
+            entry = await self._stat(scope, resolved)
+            if entry is None or entry.is_dir:
+                raise FileNotFoundError(f'File not found: {path}')
+            raw = await scope.workspace.read_bytes(resolved)
+            if _is_binary(raw):
+                raise ValueError(f'{path} is a binary file; edit_file only edits text files.')
+            # Strict decoding: an edit writes the whole file back, so undecodable bytes are refused
+            # rather than replaced. No newline translation, so CRLF and the hash are preserved.
+            text = raw.decode('utf-8')
+            current_hash = _bytes_hash(raw)
 
-        if expected_hash is not None:
-            _check_expected_hash(path, current_hash, expected_hash)
+            if expected_hash is not None:
+                _check_expected_hash(path, current_hash, expected_hash)
 
-        new_content = _apply_replacements(text, replacements, path)
-        change = Change.propose(**self._event_location(scope, resolved), operation='edit', old=text, new=new_content)
-        if (refusal := await self._request(scope, ctx, change, path=path, resolved=resolved)) is not None:
-            return refusal
-        if ctx is not None:
-            # A listener may take a while (a human approving the diff, say). The
-            # edit was computed from `text`, so the write checks that the file
-            # still holds it, and reports a file deleted in the meantime as missing.
-            try:
-                now = await scope.workspace.read_bytes(resolved)
-            except FileNotFoundError as e:
-                raise FileNotFoundError(f'File not found: {path}') from e
-            _check_expected_hash(path, _bytes_hash(now), current_hash)
-        await scope.workspace.write_bytes(resolved, new_content.encode('utf-8'))
+            new_content = _apply_replacements(text, replacements, path)
+            change = Change.propose(
+                **self._event_location(scope, resolved), operation='edit', old=text, new=new_content
+            )
+            if (refusal := await self._request(scope, ctx, change, path=path, resolved=resolved)) is not None:
+                return refusal
+            if ctx is not None:
+                # A listener may take a while (a human approving the diff, say). The
+                # edit was computed from `text`, so the write checks that the file
+                # still holds it, and reports a file deleted in the meantime as missing.
+                try:
+                    now = await scope.workspace.read_bytes(resolved)
+                except FileNotFoundError as e:
+                    raise FileNotFoundError(f'File not found: {path}') from e
+                _check_expected_hash(path, _bytes_hash(now), current_hash)
+            await scope.workspace.write_bytes(resolved, new_content.encode('utf-8'))
         new_hash = _content_hash(new_content)
         if ctx is not None:
             await ctx.emit(change.edited(content_hash=new_hash))
