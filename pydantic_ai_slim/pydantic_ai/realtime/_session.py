@@ -2873,9 +2873,10 @@ class RealtimeSession:
                 if self._history[index] is anchor:
                     insert_at = index + 1
                     break
-            else:  # pragma: no cover
-                # An invariant fallback, like `_insert_tool_return`'s: nothing withdraws a message a user
-                # turn has already anchored to, but keep history complete rather than losing the turn.
+            else:  # pragma: lax no cover
+                # The message a user turn anchored to can be withdrawn (a refused input taken back): keep
+                # history complete rather than losing the turn. It then lands after its own reply (SIM-14 in
+                # the realtime session simulator's known findings).
                 self._history.append(request)
                 return
         # Step over what already sits in the anchor's slot: an earlier response's tool returns, which must
