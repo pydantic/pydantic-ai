@@ -174,13 +174,12 @@ class LocalFileStore:
     read a spill a previous run produced, so the store is not isolated per instance.
 
     Security comes from three mechanisms: the default root is per user
-    (`pyai_harness_overflow-<euid>` under the system temp dir); before each write, on POSIX,
-    the root must be owned by the current user and is tightened to `0700` if group or
-    other bits are set, and a root owned by anyone else raises `PermissionError` instead
-    of being written to; and `read` resolves the target (following symlinks) and rejects
-    anything that escapes the root via symlink, `..`, or an absolute path. Handle segments
-    are also sanitized by `_safe_segment`. On Windows there is no uid, so the default root
-    is `pyai_harness_overflow` and the ownership check is skipped.
+    (`pyai_harness_overflow-<euid>` under the system temp dir); the root itself cannot be a
+    symlink, and on POSIX it must be owned by the current user and is tightened to `0700` if
+    group or other bits are set; and `read` resolves the target (following symlinks) and
+    rejects anything that escapes the root via symlink, `..`, or an absolute path. Handle
+    segments are also sanitized by `_safe_segment`. On Windows there is no uid, so the
+    default root is `pyai_harness_overflow` and the ownership check is skipped.
 
     Files are kept after the run by default (a later `read_tool_result` may need them).
     Set `cleanup_after` to opt into age-based pruning; see that field.
@@ -219,10 +218,16 @@ class LocalFileStore:
         in which another user could plant an entry in it.
         """
         self._root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._check_root()
+
+    def _check_root(self) -> None:
+        """Refuse a symlinked root, then enforce POSIX ownership and permissions."""
+        st = self._root.lstat()
+        if stat.S_ISLNK(st.st_mode):
+            raise PermissionError(f'Overflow store root {str(self._root)!r} is a symbolic link; refusing to use it.')
         geteuid = getattr(os, 'geteuid', None)
         if geteuid is None:
             return
-        st = self._root.stat()
         if st.st_uid != geteuid():
             raise PermissionError(
                 f'Overflow store root {str(self._root)!r} is not owned by the current user; '
@@ -247,6 +252,7 @@ class LocalFileStore:
         return await anyio.to_thread.run_sync(self._read, handle)
 
     def _read(self, handle: str) -> bytes:
+        self._check_root()
         target = self._path(handle).resolve()
         root = self._root.resolve()
         if not target.is_relative_to(root):

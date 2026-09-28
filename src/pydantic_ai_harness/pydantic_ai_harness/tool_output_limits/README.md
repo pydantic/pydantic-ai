@@ -277,10 +277,11 @@ The local store root is stable so a later agent or run by the same user can read
 security does not come from per-instance isolation:
 
 - Without `base_dir`, the root is `pyai_harness_overflow-<euid>` under the system temp directory.
-- Before each write on POSIX, the root must be owned by the current user. Group and other
-  permission bits are removed (`0700`). A root owned by another user raises `PermissionError`,
-  nothing is written, and the band's `then` fallback runs. Windows has no uid, so it uses the
-  unsuffixed `pyai_harness_overflow` root and skips this check.
+- The root itself cannot be a symlink. Before each read or write on POSIX, it must also be owned
+  by the current user. Group and other permission bits are removed (`0700`). A symlinked or
+  foreign-owned root raises `PermissionError`; for a write, the band's `then` fallback runs.
+  Windows has no uid, so it uses the unsuffixed `pyai_harness_overflow` root and skips the
+  ownership check.
 - `read` resolves the target and rejects any path that escapes the root. Handle segments are
   sanitized so a crafted handle cannot traverse out.
 

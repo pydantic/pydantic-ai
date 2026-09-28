@@ -263,6 +263,20 @@ class TestStore:
             await store.write('run/c.0', b'secret')
         assert list(root.iterdir()) == []
 
+    async def test_symlink_root_is_refused_for_write_and_read(self, tmp_path: Path):
+        target = tmp_path / 'target'
+        target.mkdir()
+        (target / 'secret').write_bytes(b'secret')
+        root = tmp_path / 'store'
+        root.symlink_to(target, target_is_directory=True)
+        store = LocalFileStore(base_dir=root)
+
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            await store.write('run/c.0', b'spilled')
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            await store.read('secret')
+        assert list(target.iterdir()) == [target / 'secret']
+
     async def test_root_check_skipped_without_uid(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delattr(os, 'geteuid', raising=False)
         store = LocalFileStore(base_dir=tmp_path / 'store')
