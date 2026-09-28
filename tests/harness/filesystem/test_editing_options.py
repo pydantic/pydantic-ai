@@ -12,8 +12,6 @@ from pydantic_ai_harness.filesystem import FILE_SYSTEM_TOOL_NAMES, FileSystem, F
 
 from .._tool_calls import call_tool
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

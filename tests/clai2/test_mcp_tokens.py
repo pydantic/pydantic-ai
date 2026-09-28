@@ -14,8 +14,6 @@ from pydantic import AnyUrl, HttpUrl
 from pydantic_clai2.mcp import HTTPServer, MCPCommand, MCPServers, MCPStore, SSEServer, StdioServer, TokenStore, oauth
 from tests.clai2.menu_script import Script, pick, typed
 
-pytestmark = pytest.mark.anyio
-
 URL = 'https://mcp.example.com/mcp'
 Vault = dict[tuple[str, str], str]
 

@@ -20,8 +20,6 @@ from pydantic_clai2 import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
 from tests.clai2.menu_script import make_context
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

@@ -16,8 +16,6 @@ from pydantic_ai_harness.filesystem import RIPGREP_TOOL_NAMES, FilesSearchedEven
 
 from .._tool_calls import call_tool
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

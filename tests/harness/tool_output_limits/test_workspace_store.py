@@ -31,8 +31,6 @@ from pydantic_ai_harness.tool_output_limits import (
     WorkspaceStore,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

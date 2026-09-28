@@ -13,8 +13,6 @@ from pydantic_graph.join import ReduceFirstValue, ReducerContext, reduce_sum
 
 from ..._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class MyState:

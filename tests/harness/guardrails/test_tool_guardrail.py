@@ -41,8 +41,6 @@ from pydantic_ai_harness.guardrails import (
     ToolResultInfo,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

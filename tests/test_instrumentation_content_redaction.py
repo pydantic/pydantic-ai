@@ -46,7 +46,6 @@ with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
 ]
 

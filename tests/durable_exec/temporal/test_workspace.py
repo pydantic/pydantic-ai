@@ -97,7 +97,7 @@ with workflow.unsafe.imports_passed_through():
         _workflow_failure_cause,  # pyright: ignore[reportPrivateUsage]
     )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::pydantic.PydanticDeprecatedSince20')]
+pytestmark = pytest.mark.filterwarnings('ignore::pydantic.PydanticDeprecatedSince20')
 
 
 @pytest.mark.parametrize('durability', [TemporalDurability, PrefectDurability])

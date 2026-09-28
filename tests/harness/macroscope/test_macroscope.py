@@ -30,8 +30,6 @@ from pydantic_ai_harness.macroscope import (
     parse_macroscope_stream,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

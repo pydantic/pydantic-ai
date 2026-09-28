@@ -36,8 +36,6 @@ if TYPE_CHECKING:
 else:
     from dirty_equals import IsDatetime, IsInstance, IsPartialDict, IsStr
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.mark.vcr
 async def test_researcher_completes_task(

@@ -6,8 +6,7 @@ overrides with `executionEnvironments = [{ root = 'tests' }]`, which makes `test
 root -- so a `tests/logfire/` directory would shadow the third-party `logfire` package for
 every test file's `import logfire`. Keeping the directory off that name avoids the collision.
 
-Style follows `tests/code_mode/test_code_mode.py`: module-level
-`pytestmark = pytest.mark.anyio` and an `anyio_backend` fixture. All resolution runs
+Style follows `tests/code_mode/test_code_mode.py`: an `anyio_backend` fixture. All resolution runs
 against the code default (no Logfire provider is configured), which is exactly the
 safety-net behavior `ManagedPrompt` relies on. Each test uses a unique slug because the
 default Logfire instance keeps its variable registry across `configure()` calls.
@@ -36,8 +35,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import ManagedPrompt
 from pydantic_ai_harness.logfire import ManagedPrompt as ManagedPromptFromPackage
-
-pytestmark = pytest.mark.anyio
 
 DEFAULT = 'You are a helpful assistant.'
 

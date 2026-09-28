@@ -33,8 +33,6 @@ from pydantic_ai_harness.memory import (
     SqliteMemoryStore,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

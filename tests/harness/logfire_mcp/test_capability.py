@@ -28,7 +28,6 @@ pytestmark = [
     pytest.mark.filterwarnings(
         "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
     ),
-    pytest.mark.anyio,
 ]
 
 

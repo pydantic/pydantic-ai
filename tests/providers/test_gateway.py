@@ -39,7 +39,7 @@ with try_import() as imports_successful:
 if not imports_successful():
     pytest.skip('Providers not installed', allow_module_level=True)  # pragma: lax no cover
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # Any URL works here — these tests exercise the explicit `PYDANTIC_AI_GATEWAY_BASE_URL` override path.
 GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
