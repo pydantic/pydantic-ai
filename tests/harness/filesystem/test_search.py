@@ -10,6 +10,8 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import CommandResult, LocalWorkspaceBackend, Workspace, WorkspaceCommand
 from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
 
+from .conftest import tools_path
+
 pytestmark = pytest.mark.anyio
 
 
@@ -207,3 +209,41 @@ async def test_no_rg_rejects_unsupported_regex(tmp_path: Path, no_rg_path: str) 
     assert isinstance(tools, FileSystemToolset)
     with pytest.raises((ModelRetry, ValueError), match=r'ripgrep|POSIX|unsupported'):
         await tools.grep(r'\d+', workspace=backend)
+
+
+async def test_posix_find_includes_explicitly_named_hidden_file(tmp_path: Path, no_rg_git_path: str) -> None:
+    (tmp_path / '.secret').write_text('needle\n')
+    (tmp_path / 'visible.txt').write_text('needle\n')
+    backend = CountingBackend(tmp_path, no_rg_git_path)
+    tools = FileSystem[None](root_dir=tmp_path, tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    assert await tools.list_files(glob='.secret', workspace=backend) == '.secret'
+    assert await tools.grep('needle', glob='.secret', workspace=backend) == '.secret:1:needle'
+    assert await tools.grep('needle', workspace=backend) == 'visible.txt:1:needle'
+
+
+async def test_posix_grep_context_drops_group_separator(tmp_path: Path, no_rg_path: str) -> None:
+    (tmp_path / 'file.txt').write_text('needle\nb\nc\nd\ne\nneedle\n')
+    backend = CountingBackend(tmp_path, no_rg_path)
+    tools = FileSystem[None](root_dir=tmp_path, max_search_results=3, tools=['grep']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    assert await tools.grep('needle', context=1, workspace=backend) == (
+        'file.txt:1:needle\nfile.txt-2-b\nfile.txt-5-e\n[... truncated at 3 lines]'
+    )
+
+
+async def test_posix_search_reports_failed_sort(tmp_path: Path) -> None:
+    bin_dir = tmp_path / 'bin'
+    path = tools_path(bin_dir, exclude=frozenset({'rg', 'sort'}))
+    (bin_dir / 'sort').write_text('#!/bin/sh\nexit 1\n')
+    (bin_dir / 'sort').chmod(0o755)
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (workspace / 'file.txt').write_text('needle\n')
+    backend = CountingBackend(workspace, path)
+    tools = FileSystem[None](root_dir=workspace, tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    with pytest.raises(ModelRetry, match='POSIX search failed'):
+        await tools.grep('needle', workspace=backend)
+    with pytest.raises(ModelRetry, match='POSIX search failed'):
+        await tools.list_files(workspace=backend)

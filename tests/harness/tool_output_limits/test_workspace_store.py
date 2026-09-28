@@ -277,6 +277,15 @@ class TestWorkspaceStore:
             await store.write(workspace, 'run/new.0', b'payload')
         assert sorted(path.name for path in outside.rglob('*')) == ['call.0', 'run']
 
+    async def test_dangling_gitignore_symlink_is_not_written_through(self, tmp_path: Path):
+        outside = tmp_path / 'outside.txt'
+        (tmp_path / 'work' / '.pydantic-ai-harness').mkdir(parents=True)
+        (tmp_path / 'work' / '.pydantic-ai-harness' / '.gitignore').symlink_to(outside)
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path / 'work'))
+        with pytest.raises(WorkspaceError, match='is a symlink'):
+            await WorkspaceStore().write(workspace, 'run/new.0', b'payload')
+        assert not outside.exists()
+
     async def test_missing_handle_raises_file_not_found(self, tmp_path: Path):
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
         with pytest.raises(FileNotFoundError):

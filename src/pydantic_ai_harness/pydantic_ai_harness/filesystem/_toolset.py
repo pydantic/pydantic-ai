@@ -409,12 +409,18 @@ def _glob_match(pattern: Sequence[str], path: Sequence[str]) -> bool:
     `*`, `?`, and `[...]` stay within one component; a `**` component matches
     zero or more whole components.
     """
-    if not pattern:
-        return not path
-    head, rest = pattern[0], pattern[1:]
-    if head == '**':
-        return any(_glob_match(rest, path[index:]) for index in range(len(path) + 1))
-    return bool(path) and fnmatch.fnmatchcase(path[0], head) and _glob_match(rest, path[1:])
+
+    # Memoized on (pattern index, path index): each `**` tries every split, so plain
+    # recursion is exponential in the number of `**` components.
+    @functools.cache
+    def match(p: int, q: int) -> bool:
+        if p == len(pattern):
+            return q == len(path)
+        if pattern[p] == '**':
+            return any(match(p + 1, index) for index in range(q, len(path) + 1))
+        return q < len(path) and fnmatch.fnmatchcase(path[q], pattern[p]) and match(p + 1, q + 1)
+
+    return match(0, 0)
 
 
 def _with_walk_notice(lines: list[str], walk_cut: bool, hidden_count: int = 0) -> str:
@@ -702,12 +708,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             return None
 
     async def _walk(
-        self, scope: _Scope, directory: str, *, max_depth: int | None = None
+        self, scope: _Scope, directory: str, *, max_depth: int | None = None, include_hidden: bool = False
     ) -> tuple[list[FileEntry], bool]:
         """Entries below `directory`, walked iteratively with `list_dir`, and whether the walk was cut short.
 
         Hidden directories are not descended into, since everything under them
-        is hidden, nor is a directory whose real path is outside the root, and a
+        is hidden, unless `include_hidden` (the caller named a hidden path), nor is a directory whose real path is outside the root, and a
         subdirectory that cannot be listed (removed mid-walk, unreadable, a symlink
         loop the backend reports) is skipped. `max_depth` bounds how many levels
         below `directory` are listed. The walk stops at `_MAX_WALK_DIRECTORIES`
@@ -735,7 +741,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if max_depth is None or depth < max_depth:
                 # Prefer a directory's own spelling over aliases, and do not revisit a real
                 # directory through a loop or another symlink inside the same walk.
-                directories = [child for child in children if child.is_dir and not child.name.startswith('.')]
+                directories = [
+                    child for child in children if child.is_dir and (include_hidden or not child.name.startswith('.'))
+                ]
                 resolved_dirs = [(child, await scope.workspace.realpath(child.path)) for child in directories]
                 for child, real in sorted(resolved_dirs, key=lambda pair: pair[0].path != pair[1]):
                     if (
@@ -1219,7 +1227,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         elif not entry.is_dir:
             files = [entry]
         else:
-            walked, walk_cut = await self._walk(scope, resolved)
+            walked, walk_cut = await self._walk(
+                scope, resolved, include_hidden=bool(include_glob and _explicit_hidden(include_glob))
+            )
             # Hidden directories are pruned; count their directory entry, not unseen descendants.
             if not (include_glob and _explicit_hidden(include_glob)):
                 hidden_count = sum(_is_hidden(workspace_relpath(child.path, resolved)) for child in walked)
@@ -1405,7 +1415,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         # Without `**`, nothing deeper than the pattern's own components can match.
         max_depth = None if '**' in parts else len(parts)
-        walked, walk_cut = await self._walk(scope, resolved, max_depth=max_depth)
+        walked, walk_cut = await self._walk(
+            scope, resolved, max_depth=max_depth, include_hidden=_explicit_hidden(pattern)
+        )
         # Report only the entries observed: the walk prunes hidden subdirectories.
         hidden_count = (
             0
@@ -1508,6 +1520,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             results, capped = await run_posix_search(
                 scope.workspace,
                 cwd=resolved,
+                include_hidden=bool(glob and _explicit_hidden(glob)),
                 limit=self._max_find_results,
                 accept=accept,
                 prepare=prepare,
@@ -1670,6 +1683,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 literal=literal,
                 ignore_case=ignore_case,
                 context=context,
+                include_hidden=bool(glob and _explicit_hidden(glob)),
                 limit=self._max_search_results,
                 accept=accept,
                 prepare=prepare,

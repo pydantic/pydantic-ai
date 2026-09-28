@@ -304,7 +304,7 @@ Each run gets a fresh toolset instance, so the tracked directory is isolated
 between concurrent runs and always starts back at the workspace's working
 directory.
 
-`stop_command` signals the entire process group, including children left after the wrapper exits, then removes the job's output files.
+`stop_command` signals the entire process group, including children left after the wrapper exits, then removes the job's output files. In a workspace without `setsid` where the job cannot get a process group of its own, only the wrapper process is signalled, which does not stop the command or its children.
 
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 
