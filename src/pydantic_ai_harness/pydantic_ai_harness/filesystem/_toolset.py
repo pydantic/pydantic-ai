@@ -44,7 +44,7 @@ from pydantic_ai_harness.filesystem._events import (
     FileWrittenEvent,
     SearchKind,
 )
-from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, run_ripgrep
+from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, Unreadable, run_ripgrep
 
 _P = ParamSpec('_P')
 
@@ -68,6 +68,9 @@ FILE_SYSTEM_TOOL_NAMES: tuple[str, ...] = (*DEFAULT_TOOL_NAMES, *RIPGREP_TOOL_NA
 
 _MAX_SEARCH_FILE_BYTES = 10 << 20
 """Avoid remote full-file downloads for large files during Python-side content searches."""
+
+_MAX_UNREADABLE_NAMED = 5
+"""Unreadable files a search result names before it only counts the rest."""
 
 _FILE_TYPE_NEEDS_RIPGREP = '`file_type` needs ripgrep, which this workspace cannot run; use `glob` instead.'
 
@@ -1377,7 +1380,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
-            results, capped = await run_ripgrep(
+            results, capped, unreadable = await run_ripgrep(
                 scope.workspace,
                 [
                     '--line-number',
@@ -1402,7 +1405,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         except RipgrepMissing:
             scope.lacks_ripgrep = True
-            results, capped = await run_posix_search(
+            results, capped, unreadable = await run_posix_search(
                 scope.workspace,
                 cwd=cwd,
                 target=target,
@@ -1419,7 +1422,23 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         if capped:
             results.append(f'[... truncated at {self._max_search_results} lines or search output byte limit]')
-        return '\n'.join(results) if results else 'No matches found.'
+        return self._with_unreadable(scope, cwd, results or ['No matches found.'], unreadable)
+
+    def _with_unreadable(self, scope: _Scope, cwd: str, lines: list[str], unreadable: list[Unreadable]) -> str:
+        """A search result, ending with a note naming the paths it could not read, grouped by reason.
+
+        Paths the patterns hide stay unnamed but are still counted, so the note never reveals them.
+        """
+        by_reason: dict[str, list[str | None]] = {}
+        for entry in unreadable:
+            path = posixpath.normpath(posixpath.join(cwd, entry.path))
+            by_reason.setdefault(entry.reason, []).append(self._walk_entry(scope, path, cwd, include_hidden=True))
+        for reason, paths in by_reason.items():
+            named = [path for path in paths if path is not None]
+            shown = ', '.join(named[:_MAX_UNREADABLE_NAMED]) + (', ...' if len(named) > _MAX_UNREADABLE_NAMED else '')
+            noun = 'path' if len(paths) == 1 else 'paths'
+            lines.append(f'[{len(paths)} {noun} could not be read ({reason}){": " + shown if shown else ""}]')
+        return '\n'.join(lines)
 
     def _searched(
         self, scope: _Scope, resolved: str, pattern: str, *, search: SearchKind, match_count: int, truncated: bool
@@ -1552,7 +1571,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
-            results, capped = await run_ripgrep(
+            results, capped, unreadable = await run_ripgrep(
                 scope.workspace,
                 arguments,
                 cwd=resolved,
@@ -1575,7 +1594,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     scope, resolved, record, include_hidden=include_hidden, permitted=permitted
                 )
 
-            results, capped = await run_posix_search(
+            results, capped, unreadable = await run_posix_search(
                 scope.workspace,
                 cwd=resolved,
                 include_hidden=include_hidden,
@@ -1589,7 +1608,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         if capped:
             results.append(f'[... truncated at {self._max_find_results} files]')
-        return '\n'.join(results) if results else 'No files found.'
+        return self._with_unreadable(scope, resolved, results or ['No files found.'], unreadable)
 
     async def grep(
         self,
@@ -1717,7 +1736,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
-            results, capped = await run_ripgrep(
+            results, capped, unreadable = await run_ripgrep(
                 scope.workspace,
                 arguments,
                 cwd=cwd,
@@ -1739,7 +1758,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     scope, cwd, record, include_hidden=include_hidden, permitted=permitted
                 )
 
-            results, capped = await run_posix_search(
+            results, capped, unreadable = await run_posix_search(
                 scope.workspace,
                 cwd=cwd,
                 target=target,
@@ -1759,7 +1778,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         if capped:
             results.append(f'[... truncated at {self._max_search_results} lines]')
-        return '\n'.join(results) if results else 'No matches found.'
+        return self._with_unreadable(scope, cwd, results or ['No matches found.'], unreadable)
 
     def _batch_authorizer(
         self, scope: _Scope, cwd: str

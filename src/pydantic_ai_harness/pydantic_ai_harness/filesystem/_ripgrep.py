@@ -10,6 +10,7 @@ have been collected; only kept records count towards the cap.
 
 from __future__ import annotations
 
+import re
 import shlex
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -35,11 +36,26 @@ _STATUS_PREFIX = '__harness_rg_status='
 
 _MISSING = 127
 
+_ERROR_STATUS = '2'
+
+_UNREADABLE = re.compile(r'rg: (?P<path>.+?): (?:IO error for operation on .+?: )?(?P<reason>[^:]+?) \(os error \d+\)')
+"""An error `rg` reports for one path it could not open, after which it carries on with the rest."""
+
 _T = TypeVar('_T')
 
 
 class RipgrepMissing(Exception):
     """`rg` is not on the workspace's PATH; the caller serves the request without it."""
+
+
+@dataclass(frozen=True)
+class Unreadable:
+    """A path the search could not read, and why; the rest of the search went on without it."""
+
+    path: str
+    """The path as the search printed it, relative to the directory it was run in."""
+    reason: str
+    """The operating system's reason, such as `Permission denied`."""
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -63,14 +79,14 @@ async def run_ripgrep(
     listing: bool = False,
     accept: Callable[[Record], _T | None],
     prepare: Callable[[list[Record]], Awaitable[None]] | None = None,
-) -> tuple[list[_T], bool]:
-    """Run `rg --null` in `cwd` inside the workspace; return up to `limit` accepted records and whether more were cut.
+) -> tuple[list[_T], bool, list[Unreadable]]:
+    """Run `rg --null` in `cwd` inside the workspace.
 
-    `accept` maps a record to what the caller keeps, or `None` to drop it; only
-    kept records count towards `limit`. `listing` reads `--files` output, where
-    each record is a bare path. Raises `RipgrepMissing` when `rg` is not on the
-    workspace's PATH, and `ModelRetry` when it reports an error (an invalid
-    pattern, say), so the model can correct the call.
+    Returns up to `limit` accepted records, whether more were cut, and the paths `rg` could not
+    read. `accept` maps a record to what the caller keeps, or `None` to drop it; only kept records
+    count towards `limit`. `listing` reads `--files` output, where each record is a bare path.
+    Raises `RipgrepMissing` when `rg` is not on the workspace's PATH, and `ModelRetry` when it
+    reports any other error (an invalid pattern, say), so the model can correct the call.
     """
     command = shlex.join(['rg', '--null', '--color=never', *arguments])
     script = (
@@ -116,10 +132,15 @@ async def run_ripgrep(
                 truncated = True
                 break
             results.append(kept)
+    # `rg` exits 2 when a path could not be read but still searches the rest, so that is a
+    # partial result; any other error line (an invalid pattern, say) fails the call.
+    errors = [line for line in detail.split('\n') if line]
+    unreadable = [Unreadable(m['path'], m['reason']) for line in errors if (m := _UNREADABLE.fullmatch(line))]
+    partial = status == _ERROR_STATUS and len(unreadable) == len(errors) > 0
     # `rg` exits 1 for "no match"; a cut output makes `rg` see a closed pipe, which is not its error.
-    if not truncated and not output_cut and status not in ('0', '1'):
+    if not truncated and not output_cut and status not in ('0', '1') and not partial:
         raise ModelRetry(f'ripgrep failed: {detail or f"exit code {status}"}')
-    return results, truncated
+    return results, truncated, unreadable
 
 
 def _record(line: str, *, listing: bool) -> Record:
