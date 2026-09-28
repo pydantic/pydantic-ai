@@ -31,8 +31,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.menu_script import Script, make_context, pick, typed
 from tests.clai2.test_app_edges import inputs
 
-pytestmark = pytest.mark.anyio
-
 CREDENTIALS = GitHubCopilotCredentials(access_token='fake-access', token_type='bearer', scope='')
 
 

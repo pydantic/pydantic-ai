@@ -199,7 +199,6 @@ with try_import() as anthropic_imports_successful:
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal-model'),
     pytest.mark.filterwarnings(

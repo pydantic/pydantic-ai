@@ -12,8 +12,6 @@ from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.set_menu import SettingsSource, open_settings_menu
 from tests.clai2.menu_script import Script, make_context, pick, typed
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

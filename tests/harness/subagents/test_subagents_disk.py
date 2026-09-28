@@ -29,8 +29,6 @@ from pydantic_ai_harness.subagents._disk import (
     resolve_folders,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

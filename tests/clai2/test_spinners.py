@@ -41,8 +41,6 @@ from pydantic_clai2.spinners import (
 )
 from tests.clai2.menu_script import Script, make_context, pick
 
-pytestmark = pytest.mark.anyio
-
 PromptT = TypeVar('PromptT')
 CODE_PUPPY_BUILTINS = (
     'puppy',

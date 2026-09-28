@@ -42,8 +42,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-pytestmark = pytest.mark.anyio
-
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 # The exact framework-protocol keys the `FallbackModel` side stamps and this module honors. Spelled out

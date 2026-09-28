@@ -43,8 +43,6 @@ from pydantic_ai_harness.media._s3 import (
     sign_request,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 class TestMediaUriHelpers:
     def test_media_uri_for_returns_canonical_scheme(self) -> None:

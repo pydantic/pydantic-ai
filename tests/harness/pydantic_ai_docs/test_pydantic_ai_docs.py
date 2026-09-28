@@ -13,8 +13,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs, PydanticAIDocsToolset, PydanticAIDocsTopic
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

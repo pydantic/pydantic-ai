@@ -38,8 +38,6 @@ from pydantic_ai_harness.dynamic_workflow import (
     WorkflowResourceLimits,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

@@ -39,8 +39,6 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

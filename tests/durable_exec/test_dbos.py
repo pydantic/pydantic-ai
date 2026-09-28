@@ -137,7 +137,6 @@ from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 warnings.filterwarnings('ignore', message='`DBOSAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='dbos'),
     pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'),

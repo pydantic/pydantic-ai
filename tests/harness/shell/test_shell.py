@@ -29,8 +29,6 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
 
-pytestmark = pytest.mark.anyio
-
 
 def _env_toolset(
     shell_dir: Path,
@@ -1306,7 +1304,6 @@ class TestShellCapability:
         assert 'dd' in shell.denied_commands
         assert 'shutdown' in shell.denied_commands
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self, tmp_path: Path) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
@@ -1341,7 +1338,6 @@ class TestCodeModeInterop:
     stay sandboxed like any other tool.
     """
 
-    @pytest.mark.anyio(backends=['asyncio'])
     @pytest.mark.parametrize('shell_first', [True, False], ids=['shell-first', 'code-mode-first'])
     async def test_command_tools_stay_native(self, tmp_path: Path, shell_first: bool) -> None:
 
@@ -1356,7 +1352,6 @@ class TestCodeModeInterop:
         assert 'async def run_command' not in run_code_description
         assert 'async def start_command' not in run_code_description
 
-    @pytest.mark.anyio(backends=['asyncio'])
     @pytest.mark.parametrize('shell_first', [True, False], ids=['shell-first', 'code-mode-first'])
     async def test_command_id_tools_are_still_sandboxed(self, tmp_path: Path, shell_first: bool) -> None:
 

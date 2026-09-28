@@ -37,8 +37,6 @@ from pydantic_ai_harness.code_mode._streaming import decode_partial_args
 
 from .test_speculation import observe, prepared_toolset
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

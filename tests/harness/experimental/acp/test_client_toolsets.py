@@ -28,8 +28,6 @@ from pydantic_ai_harness.experimental.acp import (
 )
 from tests.harness.experimental.acp._acp_clients import RecordingClient
 
-pytestmark = pytest.mark.anyio
-
 
 def _ctx() -> RunContext[None]:
     return RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=1)
