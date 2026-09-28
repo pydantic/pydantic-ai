@@ -415,6 +415,8 @@ class UserDirectory(AbstractCapability[str]):
     base_dir: Path
 
     def get_workspace(self, ctx: RunContext[str], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if not ctx.deps.isalnum():  # keeps an ID like '../other-user' from leaving base_dir
+            raise ValueError(f'Invalid user ID: {ctx.deps!r}')
         backend = LocalWorkspaceBackend(self.base_dir / ctx.deps)
         if ref is not None and ref != backend.ref:
             return None  # not this user's directory

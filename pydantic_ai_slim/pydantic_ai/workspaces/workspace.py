@@ -181,12 +181,13 @@ class _ShellFilesystem(SupportsFilesystem):
                 await self._raise_for_error(result, path)
 
             quoted_destination = shlex.quote(destination)
-            # Copy first to preserve mode bits; commit only after decoding succeeds.
+            # Copy first to preserve mode bits, and stop if that fails (an unreadable file, say) rather
+            # than replace the file with a default mode; commit only after decoding succeeds.
             result = await self._backend.run(
                 f'if test -d {quoted_destination}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
                 f'elif test -e {quoted_destination} && ! test -w {quoted_destination}; '
                 f'then status={_SHELL_EXIT_PERMISSION}; else '
-                f'{{ test -f {quoted_destination} && cp {quoted_destination} {quoted_decoded}; }}; '
+                f'if test -f {quoted_destination}; then cp {quoted_destination} {quoted_decoded}; fi && '
                 f'base64 -d < {quoted_temporary} > {quoted_decoded} '
                 f'&& mv -f {quoted_decoded} {quoted_destination}; '
                 f'status=$?; fi; rm -f {quoted_temporary} {quoted_decoded}; exit $status',
@@ -321,7 +322,8 @@ class _ShellFilesystem(SupportsFilesystem):
             shell=True,
         )
         await self._raise_for_error(result, path)
-        return _decode_sized(result.stdout, path).decode()
+        # Keep undecodable POSIX name bytes, as `list_dir` does, so its paths resolve too.
+        return _decode_sized(result.stdout, path).decode(errors='surrogateescape')
 
     async def _raise_for_error(self, result: CommandResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:
