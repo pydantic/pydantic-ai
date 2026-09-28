@@ -478,7 +478,7 @@ class FakeSandbox:
         text: bool = True,
     ) -> _FakeProcess:
         # Runs the command on the host, rooted at the sandbox's working directory, so the
-        # conformance suite sees real exit codes, output, `cwd`, `env`, and deadlines.
+        # conformance suite sees real exit codes, output, working directory, `env`, and deadlines.
         argv = list(args)
         # macOS lacks util-linux setsid. Start the wrapper in its own group so the
         # backend's stop exec can signal the same group it would signal on Modal.

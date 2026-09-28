@@ -90,44 +90,26 @@ class TestRun:
         await backend.run('echo hi | wc -c', shell=True)
         assert fake_modal.sandboxes[0].exec_calls[-1].argv == ['/bin/sh', '-c', 'echo hi | wc -c']
 
-    async def test_cwd_and_env_reach_the_command(self, fake_modal: FakeModal) -> None:
+    async def test_env_reaches_the_command(self, fake_modal: FakeModal) -> None:
         backend = await started()
-        fake_modal.sandboxes[0].directories.add('/srv')
-        await backend.run(['env'], cwd='/srv', env={'FOO': 'bar'})
-        call = fake_modal.sandboxes[0].exec_calls[-1]
-        assert call.workdir == '/srv'
-        assert call.env == {'FOO': 'bar'}
+        await backend.run(['env'], env={'FOO': 'bar'})
+        assert fake_modal.sandboxes[0].exec_calls[-1].env == {'FOO': 'bar'}
 
     async def test_working_dir_and_env_apply_to_every_command_of_an_attached_sandbox(
         self, fake_modal: FakeModal
     ) -> None:
         # Given per command rather than only at creation, so a sandbox attached by reference
-        # honors them too; a command's own `cwd` and `env` take precedence.
+        # honors them too; a command's own `env` takes precedence.
         backend = await started(
             ref=WorkspaceRef(provider='modal', id='sb-keep'), working_dir='/work', env={'A': '1', 'B': '1'}
         )
-        fake_modal.sandboxes[0].directories.add('/srv')
         await backend.run(['env'])
-        await backend.run(['env'], cwd='/srv', env={'B': '2'})
+        await backend.run(['env'], env={'B': '2'})
         calls = [call for call in fake_modal.sandboxes[0].exec_calls if 'command -v setsid' not in ' '.join(call.argv)]
         assert [(call.workdir, call.env) for call in calls] == [
             ('/work', {'A': '1', 'B': '1'}),
-            ('/srv', {'A': '1', 'B': '2'}),
+            ('/work', {'A': '1', 'B': '2'}),
         ]
-
-    async def test_rejects_relative_cwd(self, fake_modal: FakeModal) -> None:
-        backend = await started()
-
-        with pytest.raises(ValueError, match='cwd must be an absolute workspace path'):
-            await backend.run(['pwd'], cwd='repo')
-
-    async def test_preserves_parent_segments_in_cwd(self, fake_modal: FakeModal) -> None:
-        backend = await started()
-        fake_modal.sandboxes[0].directories.add('/linked/../target')
-
-        await backend.run(['pwd'], cwd='/linked/../target')
-
-        assert fake_modal.sandboxes[0].exec_calls[-1].workdir == '/linked/../target'
 
     async def test_fractional_timeout_rounds_up_to_a_modal_deadline(self, fake_modal: FakeModal) -> None:
         # Modal takes whole seconds and reads 0 as "no timeout", so a sub-second deadline

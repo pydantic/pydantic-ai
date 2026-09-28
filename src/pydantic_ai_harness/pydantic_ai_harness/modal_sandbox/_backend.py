@@ -525,7 +525,6 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
@@ -541,14 +540,12 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # Through `sh`, so a program that can't start exits 127 or 126 as it does in `sh`.
             argv = ['/bin/sh', '-c', 'exec "$@"', 'sh', *argv]
         # Given per command, not only at creation, so an attached sandbox honors it too.
-        workdir = absolute_path('cwd', cwd) or self._working_dir
+        workdir = self._working_dir
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
         variables: dict[str, str | None] | None = {**self._env, **(env or {})} or None
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
         sandbox = await self.get_sandbox()
-        if cwd is not None:
-            await self.stat(cwd)
         started_at = time.monotonic()
         # Modal takes whole seconds and reads 0 as no deadline, so round up. The client
         # deadline below includes exec-start, collection, and stream drain.
@@ -606,7 +603,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     cancel_file,
                     pid_file,
                     timeout=2,
-                    # The user's cwd may have been deleted by the command itself.
+                    # The working directory may have been deleted by the command itself.
                     workdir='/',
                     text=False,
                 )
