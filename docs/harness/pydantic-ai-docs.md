@@ -41,7 +41,7 @@ result = agent.run_sync('Read the toolsets docs, then explain how to build a Fun
 print(result.output)
 ```
 
-A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. To keep the checkout outside the agent's workspace, such as on the host while the agent works in a sandbox, pass `workspace=LocalWorkspaceBackend('/opt/pydantic-ai')`. With no local path configured, every call goes to the remote source and no workspace is needed.
+A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. With no local path configured, every call goes to the remote source and no workspace is needed.
 
 The capability also adds a short static instruction telling the model that the `read_pyai_docs` tool exists and to read the relevant topic before authoring or modifying a Pydantic AI capability, hook, tool, or toolset, rather than relying on memory. The instruction is cache-stable, so it does not invalidate the prompt-cache prefix between turns.
 
@@ -63,7 +63,6 @@ The capability never runs git. Keep the local checkout current yourself; the rem
 | --- | --- | --- |
 | `local_docs_path` | `None` | Pyai docs checkout inside the run workspace. Relative paths use the workspace working directory. Falls back to the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable, then to the remote source. |
 | `cache` | `True` | Memoize each returned doc for one agent run, so repeated reads within that run do not repeat workspace or network I/O. |
-| `workspace` | `None` | A workspace backend to read the checkout from instead of the run's, such as `LocalWorkspaceBackend('/opt/pydantic-ai')`. |
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set `cache=False` to re-read or re-fetch on every call within a run.
 

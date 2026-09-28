@@ -18,11 +18,10 @@ from typing import Any
 import anyio
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Workspace,
@@ -32,7 +31,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces.unavailable import UnavailableWorkspace
 
 from ...workspace_fakes import InMemoryProvider
 from ..workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
@@ -56,7 +54,7 @@ try:
         TemporalDurability,
         _workflow_runner,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
+    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import with_non_retryable_errors
     from pydantic_ai.durable_exec.temporal._transports import _WorkspaceCallWire
 
@@ -142,23 +140,6 @@ def test_workspace_failures_do_not_retry_temporal_activities() -> None:
         WorkspaceReadOnlyError.__name__,
         WorkspaceUnavailableError.__name__,
     } <= set(policy.non_retryable_error_types or [])
-
-
-def test_unattached_workspace_does_not_serialize_an_unavailable_reason() -> None:
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    assert 'workspace_unavailable_reason' not in TemporalRunContext.serialize_run_context(ctx)
-
-
-async def test_unavailable_workspace_reason_survives_activity_context() -> None:
-    agent = Agent(TestModel(), name='unavailable')
-    ctx = RunContext(
-        deps=None, model=TestModel(), usage=RunUsage(), workspace=Workspace(UnavailableWorkspace('disabled by policy'))
-    )
-    restored = deserialize_run_context(
-        TemporalRunContext, TemporalRunContext.serialize_run_context(ctx), deps=None, agent=agent
-    )
-    with pytest.raises(WorkspaceUnavailableError, match='disabled by policy'):
-        await restored.workspace.working_dir()
 
 
 # --- The shared scenarios, in a workflow ---------------------------------------------------------

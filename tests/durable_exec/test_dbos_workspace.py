@@ -16,9 +16,6 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
-
 from ..workspace_fakes import InMemoryProvider
 from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
 
@@ -62,11 +59,7 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
 
 # Function tools run inline in the workflow, so only a step may reach the environment.
 provider = InMemoryProvider(in_unit=lambda: DBOS.step_id is not None)
-# Sequential, as a run with a workspace always is on DBOS; saying so keeps it from warning.
-agents = scenario_agents(
-    lambda: DBOSDurability(parallel_execution_mode='sequential'), prefix='dbos_', provider=provider
-)
-parallel_agent = Agent(TestModel(), name='dbos_parallel', capabilities=[provider.capability(), DBOSDurability()])
+agents = scenario_agents(DBOSDurability, prefix='dbos_', provider=provider)
 
 
 @DBOS.workflow()
@@ -74,11 +67,6 @@ async def scenario_workflow(name: str, arg: str | None) -> Any:
     workflow_id = DBOS.workflow_id
     assert workflow_id is not None
     return await SCENARIOS[name](agents, arg, workflow_id)
-
-
-@DBOS.workflow()
-async def parallel_workflow() -> str:
-    return (await parallel_agent.run('Nothing to do.')).output
 
 
 async def run_scenario(name: str, arg: str | None) -> Any:
@@ -123,9 +111,3 @@ async def test_dbos_workspace_calls_are_steps_and_a_fork_replays_them(dbos: DBOS
     assert await handle.get_result() == output
     assert provider.log == ['create:env-1', 'attach:env-1']
     assert list(provider.environments) == ['env-1']
-
-
-async def test_dbos_warns_that_a_run_with_a_workspace_is_sequential(dbos: DBOS) -> None:
-    provider.reset()
-    with pytest.warns(UserWarning, match='runs tool calls one at a time when a workspace is attached'):
-        await parallel_workflow()

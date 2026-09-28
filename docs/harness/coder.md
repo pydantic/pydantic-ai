@@ -56,7 +56,22 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 
 ### The command environment
 
-Commands in a `LocalWorkspace` get your `PATH` and `HOME`, so they find your tools and their configuration, and nothing else from your environment. Add what they need with `LocalWorkspace('.', env={...})`. Don't pass `os.environ`: that hands the model's commands every secret in the process, LLM API keys included.
+Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, so they find your tools and their configuration and use your locale, and nothing else from your environment. Pass only what they need with `env=`:
+
+```python {names="defined"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness.coder import Coder
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    capabilities=[LocalWorkspace('.', env={'GH_TOKEN': os.environ['GH_TOKEN']}), Coder()],
+)
+```
+
+Don't pass `os.environ`: that hands the model's commands every secret in the process, LLM API keys included.
 
 ## Sharing a workspace
 
@@ -198,35 +213,31 @@ capabilities emit.
 
 ## Durable execution
 
-`Coder` works under DBOS, Temporal and Prefect durable execution. Under Temporal,
-`FileChangeRequestEvent` listeners can refuse file changes before the durable workspace mutation.
-Read/search events from tools running in activities are not forwarded live to workflow
-listeners; file-change requests and write notifications run in the workflow.
-On replay, the workflow invokes file-change approval listeners again; make external listener effects idempotent
-([pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971)).
-
-Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
+`Coder` works under Temporal, DBOS, and Prefect. [Durable execution](durable-execution.md) shows an example for each engine and what works on each.
 
 ## Upgrading
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 
 - **Attach a workspace.** `Coder`, `FileSystem`, `Shell`, `RepoContext`, and `Macroscope` fail at run start without one, as do `Skills`, `PydanticAIDocs` (with a local checkout), and `ToolOutputLimits` (when it can spill) unless given their own `workspace=` or store. Add `LocalWorkspace('.')` to the agent's capabilities, as in [Usage](#usage).
+- **Set the directory on the workspace.** `Coder('dir')`, `Shell(cwd=)`, `FileSystem(cwd=)`, `Macroscope(cwd=)`, and `RepoContext(workspace_dir=)` are ignored; use `LocalWorkspace('./dir')`.
+- **Pass the command environment.** Commands used to inherit your whole environment (`Coder` removed LLM API keys from it). Now they get only your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, plus the workspace's `env` and `Shell(env=)`. Pass what they need, such as an SSH agent socket, a `gh` token or proxy settings, with `LocalWorkspace('.', env={...})` (see [The command environment](#the-command-environment)).
+- **`denied_env_patterns` does not filter `LocalWorkspace(env=)`.** It only drops names from `Shell(env=)`, so don't pass all of `os.environ` to the workspace.
+- **`FileSystem(root_dir=)`** defaults to the working directory and resolves relative values from it. It must contain the working directory, symlinks that lead outside it are refused, and `root_dir='/'` turns the checks off.
+- **Harness files moved into the working directory.** Tool-output spills and Shell background-job files are under `.pydantic-ai-harness/` (git-ignored) instead of `$TMPDIR`. Spills in `.pydantic-ai-harness/tool-output/` are never pruned; delete the directory when you no longer need them. `ToolOutputLimits(store=LocalFileStore())` keeps spills in a temp directory on this machine, without a workspace.
+- **Background commands outlive the run.** `start_command` jobs are no longer killed when the run ends, so a later run in the conversation can check them; stop them with `stop_command` or your own cleanup.
+- **Local file and shell tools need a POSIX host.** `LocalWorkspace` does not run on Windows; use a sandbox capability there, or WSL.
+- **Skills** are read from the workspace at run start and loaded as deferred capabilities. [`Skills(workspace=LocalWorkspaceBackend('/app'))`](skills.md) reads them from somewhere else.
+- **[`Researcher`](researcher.md)** spills oversized tool results to the workspace instead of `$TMPDIR`, so it needs one too. A web-only agent can keep the old behaviour with `Researcher(store=LocalFileStore())`.
+- **Sub-agent definitions** are read from the workspace at run start, and `~/.agents/agents/` is no longer read. [`SubAgents(workspace=LocalWorkspaceBackend('/app'))`](subagents.md) reads them from somewhere else.
+- **[Memory's `FileStore`](memory.md)** keeps its files in the workspace, and receipts in `.memory-operations.json` replace its SQLite journal. `FileStore('.', workspace=LocalWorkspaceBackend('/path'))` keeps them on this machine.
+- **Capability Creation** runs only when the workspace is a writable `LocalWorkspace`.
+
 When retaining `result.workspace` after a run with a provider backend that exposes `aclose()`, finish using it and call `await result.workspace.backend.aclose()` to release its client session. This closes the client, not necessarily the sandbox; follow that provider's deletion API for owned sandboxes.
 
 Sandbox refs identify existing environments; provider-specific cleanup should use an ID-only delete API for refs your application owns (where that provider offers one). Do not create or attach a backend merely to delete a sandbox. Directory upload and preview URLs depend on the provider SDK.
 
 With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily. Choose a working directory that exists in your image.
-
-- **Set the directory on the workspace.** `Coder('dir')`, `Shell(cwd=)`, `FileSystem(cwd=)`, `Macroscope(cwd=)`, and `RepoContext(workspace_dir=)` are ignored; use `LocalWorkspace('./dir')`.
-- **Pass the command environment.** A local workspace used to give commands the host's `PATH`, `HOME`, `LANG`, and `TMPDIR`; now they get its `PATH` and `HOME`, plus the workspace's `env` and `Shell(env=)`. Pass anything else they need, such as `LANG`, with `LocalWorkspace('.', env={...})` (see [The command environment](#the-command-environment)).
-- **`FileSystem(root_dir=)`** defaults to the working directory and resolves relative values from it. It must contain the working directory, symlinks that lead outside it are refused, and `root_dir='/'` turns the checks off.
-- **Harness files moved into the working directory.** Tool-output spills and Shell background-job files are under `.pydantic-ai-harness/` (git-ignored) instead of `$TMPDIR`. `ToolOutputLimits(store=LocalFileStore())` keeps spills on this machine.
-- **Skills** are read from the workspace at run start and loaded as deferred capabilities. [`Skills(workspace=LocalWorkspaceBackend('/app'))`](skills.md) reads them from somewhere else.
-- **[`Researcher`](researcher.md)** spills oversized tool results to the workspace instead of `$TMPDIR`, so it needs one too.
-- **Sub-agent definitions** are read from the workspace at run start, and `~/.agents/agents/` is no longer read. [`SubAgents(workspace=LocalWorkspaceBackend('/app'))`](subagents.md) reads them from somewhere else.
-- **[Memory's `FileStore`](memory.md)** keeps its files in the workspace, and receipts in `.memory-operations.json` replace its SQLite journal. `FileStore('.', workspace=LocalWorkspaceBackend('/path'))` keeps them on this machine.
-- **Capability Creation** runs only when the workspace is a writable `LocalWorkspace`.
 
 ## Benchmarking
 

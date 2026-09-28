@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import re
-import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +11,7 @@ import pytest
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._docs_examples import documented_cleanup, python_blocks, run_block
+from .conftest import skip_temporal_sandbox_on_314
 
 _PAGE = """
 ```python
@@ -133,12 +133,7 @@ if __name__ == '__main__':
 """
 
 
-# Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14.
-@pytest.mark.skipif(
-    sys.version_info >= (3, 14),
-    reason='temporalio sandbox is incompatible with Python 3.14 '
-    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
-)
+@skip_temporal_sandbox_on_314
 def test_temporal_block_runs_its_workflow_against_a_local_dev_server(tmp_path: Path) -> None:
     pytest.importorskip('temporalio')
     page = tmp_path / 'page.md'

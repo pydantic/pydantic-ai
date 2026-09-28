@@ -15,7 +15,7 @@ Then it answers in text. Each run the model finishes is returned as a `ScriptedR
 Sandboxes a block creates keep running after it, so `run_block` passes every workspace ref
 the model saw to the provider's `cleanup`, even when the block fails. `documented_cleanup` takes
 that cleanup from the page itself. A block that connects to Temporal at `localhost:7233` runs as
-a script file against a local dev server started for it.
+a script file against a local dev server started for it, and a DBOS block runs as a script file.
 """
 
 from __future__ import annotations
@@ -115,6 +115,9 @@ def run_block(
         ):
             if _TEMPORAL_ADDRESS in example.source:
                 namespace = _run_temporal_script(example)
+            elif 'from dbos import' in example.source:
+                # DBOS reads a workflow function's source when registering it, which `exec` has none of.
+                namespace = _run_script(example)
             else:
                 exec(code, namespace)
     finally:
@@ -137,17 +140,23 @@ def _run_temporal_script(example: CodeExample) -> dict[str, object]:
     async def start() -> WorkflowEnvironment:
         return await WorkflowEnvironment.start_local(port=7233)  # pyright: ignore[reportUnknownMemberType]
 
-    with start_blocking_portal() as portal, tempfile.TemporaryDirectory() as directory:
+    with start_blocking_portal() as portal:
         env = portal.call(start)
         try:
             # Temporal validates a workflow by re-importing its module, so `__main__` must be a
             # real file, as with `python example.py`; `exec` would leave pytest as `__main__`.
-            script = Path(directory) / 'example.py'
-            # Padding keeps traceback line numbers equal to the docs page's.
-            script.write_text('\n' * (example.start_line - 1) + example.source)
-            return runpy.run_path(str(script), run_name='__main__')
+            return _run_script(example)
         finally:
             portal.call(env.shutdown)
+
+
+def _run_script(example: CodeExample) -> dict[str, object]:
+    """Run `example` from a script file, as `python example.py` would."""
+    with tempfile.TemporaryDirectory() as directory:
+        script = Path(directory) / 'example.py'
+        # Padding keeps traceback line numbers equal to the docs page's.
+        script.write_text('\n' * (example.start_line - 1) + example.source)
+        return runpy.run_path(str(script), run_name='__main__')
 
 
 def documented_cleanup(examples: list[CodeExample], name: str) -> Callable[[WorkspaceRef], Awaitable[None]]:

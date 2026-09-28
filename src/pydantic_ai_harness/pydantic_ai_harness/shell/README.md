@@ -129,16 +129,16 @@ tool-call result carries the failure and limit context.
 ## Environment control
 
 A command gets the workspace's environment plus `Shell(env=...)`.
-`LocalWorkspace` passes on your `PATH` and `HOME` and nothing else; a sandbox
-has whatever its provider configures. Two fields shape what `Shell` adds:
+`LocalWorkspace` passes on your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`
+and nothing else; a sandbox has whatever its provider configures. Two fields shape what `Shell` adds:
 
 | Field | Effect |
 |---|---|
 | `env` | Variables added to every command's environment, on top of the workspace's own. |
 | `denied_env_patterns` | Glob patterns (`fnmatch`) for variable names dropped from `env`. Mirrors `denied_commands`. |
 
-`denied_env_patterns` filters `env` only, so you can build `env` from a larger
-mapping, such as the host environment, and drop sensitive names on the way in.
+`denied_env_patterns` filters `Shell(env=)` only, not `LocalWorkspace(env=)`, so
+you can build `env` from a larger mapping and drop sensitive names on the way in.
 Leaving both unset adds nothing.
 
 ```python
@@ -295,22 +295,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under DBOS, Temporal and Prefect durable execution, with these limits:
-
-- Under Temporal, `CommandStartedEvent`, `CommandOutputEvent`, and `CommandFinishedEvent` from
-  the `shell` tool are not delivered live to workflow listeners because the tool runs in an activity ([pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971)).
-- With `persist_cwd=True`, the cwd is kept per run in the workspace under
-  `.pydantic-ai-harness/shell/run-state/`, so it can be restored by another worker.
-  Without an explicit `run_id`, each durable run gets its own ID that survives worker recovery.
-  The file is removed when the agent run completes; interrupted runs retain it for recovery.
-  Commands in the same run should execute in order; simultaneous commands that change cwd
-  can overwrite each other's state.
-- `start_command` uses the run and tool-call IDs to reattach to a job after an activity retry.
-  If the launcher claims the job directory but fails before publishing its handle, a retry
-  reports a pending launch rather than starting a second process. Remove stale job files manually
-  after confirming the process has stopped.
-
-Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`. [Durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/) shows an example for each engine, which command events Temporal delivers live, and how long a command can run in a Temporal activity.
 
 ## Further reading
 
