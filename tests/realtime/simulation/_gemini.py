@@ -530,11 +530,12 @@ class GeminiServer:
             response = self._active_response(session)
         calls: list[gt.FunctionCall] = []
         ids: list[str] = []
+        at = self.truth.tick()
         for _ in range(count):
             call_id = self.truth.new_call_id()
             ids.append(call_id)
             self.truth.tool_calls[call_id] = ToolCallTruth(
-                call_id=call_id, response=response.key, name='lookup', seq=self.truth.tick()
+                call_id=call_id, response=response.key, name='lookup', seq=at
             )
             response.tool_calls.append(call_id)
             session.known_calls.add(call_id)

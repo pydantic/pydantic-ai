@@ -49,42 +49,6 @@ def _inserted_user_speech(sim: Simulation, violation: InvariantViolation) -> boo
 ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
 
-MERGED_REQUESTS_LEAK = Finding(
-    id='OR3',
-    title=(
-        'requests for a response the connection defers behind an active one are merged (or dropped for a barge-in), '
-        'but each keeps its reservation, so `wait_for_reply()` hangs'
-    ),
-    tracked_by='#8765',
-    codes=frozenset({'wait.hang'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: sim.truth.merged_requests > 0 or getattr(sim, 'deferred_requests', 0) > 0,
-)
-
-
-def _tool_failed(sim: Simulation, violation: InvariantViolation) -> bool:
-    from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
-
-    from ._invariants import SimulatedToolError
-
-    # A tool that raised or ran out of retries, or a tool result whose reservation ran into `request_limit`.
-    return 'error' in sim.tools.settled.values() or isinstance(
-        sim.consumer_error, (SimulatedToolError, UsageLimitExceeded, UnexpectedModelBehavior)
-    )
-
-
-RAISING_TOOL_HANG = Finding(
-    id='OR8',
-    title=(
-        'a tool that raises or runs out of retries (or whose result runs into `request_limit`) parks the error but '
-        'leaves the exchange open, so `wait_for_reply()` hangs while the session keeps running'
-    ),
-    tracked_by='#8765',
-    codes=frozenset({'wait.hang'}),
-    providers=ALL,
-    matches=_tool_failed,
-)
-
 
 def _tool_results_request_refused(sim: Simulation, violation: InvariantViolation) -> bool:
     return any(input_.kind == 'tool_output' and input_.refused_read is not None for input_ in sim.truth.inputs)
@@ -96,7 +60,7 @@ REFUSED_TOOL_RESULTS_REQUEST = Finding(
         'a response request for tool results that the provider refuses keeps its reply reservation (a refused request '
         'for a user turn releases it), so `wait_for_reply()` hangs'
     ),
-    tracked_by='reply reservations resolved by the response that answers them (#8765); found by this simulator',
+    tracked_by='reply reservations released with a refused request (#8765 did not cover it); found by this simulator',
     codes=frozenset({'wait.hang'}),
     providers=OPENAI_PROTOCOL,
     matches=_tool_results_request_refused,
@@ -148,6 +112,7 @@ REPEATED_TERMINAL = Finding(
             'usage.attribution',
             'usage.requests',
             'wait.early',
+            'wait.hang',
         }
     ),
     providers=OPENAI_PROTOCOL,
@@ -339,7 +304,6 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
 KNOWN_FINDINGS: list[Finding] = [
     WAIT_BEFORE_REPLY_CONTENT,
     RESERVATION_TAKEN_BY_OTHER_RESPONSE,
-    RAISING_TOOL_HANG,
     REFUSED_TOOL_RESULTS_REQUEST,
     ANCHORED_USER_TURNS,
     REPEATED_TERMINAL,
@@ -363,30 +327,11 @@ def _gemini_behavior(sim: Simulation, name: str) -> bool:
 
 GEMINI = frozenset({'gemini'})
 
-GEMINI_SPLIT_PARALLEL_CALLS = Finding(
-    id='G2b',
-    title='the calls of one Gemini `tool_call` frame are each recorded as a `ModelResponse` of their own',
-    tracked_by='#8765',
-    codes=frozenset({'response.duplicated'}),
-    providers=GEMINI,
-    matches=_parallel_calls,
-)
-
-GEMINI_BATCH_RESERVATIONS = Finding(
-    id='G2a',
-    title=(
-        'Gemini answers a batch of tool results once, but the session reserves a reply per result, '
-        'so `wait_for_reply()` hangs and `request_limit` trips early'
-    ),
-    tracked_by='#8765',
-    codes=frozenset({'wait.hang'}),
-    providers=GEMINI,
-    matches=_parallel_calls,
-)
-
 
 def _cut_off_by_the_input(sim: Simulation, violation: InvariantViolation) -> bool:
     """The input the wait was owed a reply for cut off a model turn (or one the model hadn't started on yet)."""
+    if any(call.cancelled_by_server for call in sim.truth.tool_calls.values()):
+        return True  # It cut off a turn waiting on tool results: Gemini cancelled the calls.
     input_ = sim.truth.input(violation.context.get('input', ''))
     return input_ is not None and any(
         response.status == 'cancelled' and response.seq_end is not None and response.seq_end > input_.seq
@@ -423,24 +368,31 @@ GEMINI_EARLY_TURN_COMPLETE = Finding(
 )
 
 
-def _spoke_after_calling(sim: Simulation, violation: InvariantViolation) -> bool:
-    """The model kept talking after an asynchronous tool call it made (before or after the result came back)."""
+def _continued_after_calling(sim: Simulation) -> bool:
+    """A response went on after its first tool call: it said more, or called another tool in a later message."""
     truth = sim.truth
-    return _gemini_behavior(sim, 'talks_through_tool_calls') and any(
-        response.tool_calls
-        and any(truth.word_seq[word] > truth.tool_calls[response.tool_calls[0]].seq for word in response.words)
+    return any(
+        any(truth.word_seq[word] > first for word in response.words)
+        or any(truth.tool_calls[call_id].seq > first for call_id in response.tool_calls)
         for response in truth.responses.values()
+        if response.tool_calls
+        for first in [truth.tool_calls[response.tool_calls[0]].seq]
     )
+
+
+def _spoke_after_calling(sim: Simulation, violation: InvariantViolation) -> bool:
+    """The model kept going after an asynchronous tool call it made (before or after the result came back)."""
+    return _gemini_behavior(sim, 'talks_through_tool_calls') and _continued_after_calling(sim)
 
 
 GEMINI_ASYNC_TOOL_ROUND = Finding(
     id='8760',
     title=(
-        'with asynchronous (`NON_BLOCKING`) Gemini tool calls, what the model says after the call, in the same turn, '
-        "is recorded as a response of its own after the tool's result, as if it had spoken with the result in hand"
+        'with asynchronous (`NON_BLOCKING`) Gemini tool calls, what the model says (or calls) after the call, in the '
+        "same turn, is recorded as a response of its own after the tool's result, as if it had the result in hand"
     ),
     tracked_by='#8760 (parked: per-response-id state, so a response the session already recorded can be continued)',
-    codes=frozenset({'response.duplicated', 'history.tool_round_order'}),
+    codes=frozenset({'response.duplicated', 'history.tool_round_order', 'wait.hang'}),
     providers=GEMINI,
     matches=_spoke_after_calling,
 )
@@ -465,7 +417,7 @@ LIVE_BATCH_RESERVATIONS = Finding(
         'a GPT-Live delegation answers its parallel tool calls once, but the session reserves a reply per result, '
         'so `wait_for_reply()` hangs'
     ),
-    tracked_by='reply obligations resolved by the reply that answers them (#8765 does not cover GPT-Live, which it predates); found by this simulator',
+    tracked_by='reply obligations resolved by the reply that answers them (#8765 fixed this for the other providers, but not GPT-Live); found by this simulator',
     codes=frozenset({'wait.hang'}),
     providers=frozenset({'gpt-live'}),
     matches=_parallel_calls,
@@ -543,21 +495,116 @@ SEND_DURING_RECONNECT = Finding(
     matches=lambda sim, violation: True,
 )
 
+
+def _refused_while_speaking(sim: Simulation, violation: InvariantViolation) -> bool:
+    input_ = sim.truth.input(violation.context.get('input', ''))
+    return (
+        input_ is not None
+        and input_.kind == 'speech'
+        and any(other.rejected and other.refused_read is not None for other in sim.truth.inputs)
+    )
+
+
+REFUSED_CONTEXT_MISFILES_SPEECH = Finding(
+    id='SIM-14',
+    title=(
+        'context sent while the user is speaking (before the session read `speech_started`) and refused by the '
+        'provider takes the spoken turn with it: the turn is filed after its own reply'
+    ),
+    tracked_by='history ordered by what the provider saw, not by the send a turn was anchored to; found by this simulator',
+    codes=frozenset({'history.order'}),
+    providers=OPENAI_PROTOCOL,
+    matches=_refused_while_speaking,
+)
+
+
+def _parked_error(sim: Simulation, violation: InvariantViolation) -> bool:
+    from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+
+    from ._invariants import SimulatedToolError
+
+    parked = (SimulatedToolError, UsageLimitExceeded, UnexpectedModelBehavior)
+    errors = [sim.consumer_error, *(operation.error for operation in sim.operations)]
+    return 'error' in sim.tools.settled.values() or any(isinstance(error, parked) for error in errors)
+
+
+PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
+    id='SIM-15',
+    title=(
+        'the session ends on a parked error (a tool that raised, or a tool result over `request_limit`) while '
+        'another request is still owed (deferred behind the tool round), so `wait_for_reply()` hangs: the part '
+        'of OR8 that #8765 left'
+    ),
+    tracked_by='every reply reservation settled when the session parks an error; found by this simulator',
+    codes=frozenset({'wait.hang'}),
+    providers=ALL,
+    matches=_parked_error,
+)
+
+
+def _speech_cleared_after_barge_in(sim: Simulation, violation: InvariantViolation) -> bool:
+    started = sim.truth.speech_started
+    return any(key not in {input_.key for input_ in sim.truth.inputs} for key in started) and any(
+        operation.name == 'clear_audio' for operation in sim.operations
+    )
+
+
+CLEARED_BARGE_IN = Finding(
+    id='SIM-16',
+    title=(
+        'a request deferred behind a response that server VAD then cut off is dropped for the barge-in, but if '
+        'the app clears the buffered speech (`clear_audio`) no spoken turn follows, and the dropped request keeps '
+        'its reservation, so `wait_for_reply()` hangs'
+    ),
+    tracked_by='reply reservations released with the request the barge-in dropped; found by this simulator after #8765',
+    codes=frozenset({'wait.hang'}),
+    providers=OPENAI_PROTOCOL,
+    matches=_speech_cleared_after_barge_in,
+)
+
+LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
+    id='SIM-18',
+    title=(
+        'on GPT-Live, a spoken reply that goes on across a delegated tool round is recorded in two pieces around '
+        "the tool's return (the GPT-Live counterpart of #8760)"
+    ),
+    tracked_by='per-response-id state, so a response the session already recorded can be continued; found by this simulator',
+    codes=frozenset({'response.duplicated'}),
+    providers=frozenset({'gpt-live'}),
+    matches=lambda sim, violation: _continued_after_calling(sim),
+)
+
+EXTENDED_THINKING_PARALLEL_CALLS = Finding(
+    id='SIM-17',
+    title=(
+        'on `gemini-3.8-live-extended-thinking` (which runs every call asynchronously), a batch of parallel calls '
+        'leaves a reservation after the model answered it, so `wait_for_reply()` hangs (simulated: the batch shape '
+        'is modeled on the 2.5 recordings, not recorded on this model)'
+    ),
+    tracked_by='#8765 follow-up (one reply per batch, also for async calls); found by this simulator',
+    codes=frozenset({'wait.hang'}),
+    providers=GEMINI,
+    matches=lambda sim, violation: _gemini_behavior(sim, 'stalls_in_progress') and _parallel_calls(sim, violation),
+)
+
+
 KNOWN_FINDINGS.extend(
     [
+        REFUSED_CONTEXT_MISFILES_SPEECH,
+        PARKED_ERROR_LEAVES_REQUEST_OWED,
+        CLEARED_BARGE_IN,
+        EXTENDED_THINKING_PARALLEL_CALLS,
+        LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
         SEND_DURING_RECONNECT,
         LIVE_BATCH_RESERVATIONS,
         LIVE_QUEUED_TEXT_RESERVATIONS,
         LIVE_RAW_CLOSE_ERROR,
         LIVE_ABANDONED_CALL_RESERVATIONS,
         GEMINI_ASYNC_TOOL_ROUND,
-        GEMINI_SPLIT_PARALLEL_CALLS,
-        GEMINI_BATCH_RESERVATIONS,
         GEMINI_EARLY_TURN_COMPLETE,
         CUT_OFF_TURN_COMPLETE,
         GEMINI_RESUMED_SESSION_FORGETS_CALLS,
         # The general reservation leaks last: a more specific finding explains a hang better.
-        MERGED_REQUESTS_LEAK,
         LOST_RESPONSE_RESERVATION,
     ]
 )

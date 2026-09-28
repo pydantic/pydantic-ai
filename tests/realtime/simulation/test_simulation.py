@@ -84,29 +84,27 @@ def reproduce(finding_id: str, sim: Simulation, scenario: Callable[[Any], object
         scenario(s)
 
 
-@known('OR3')
-def test_known_merged_requests_leak_reservations() -> None:
-    """Two turns typed while the first is answered: the connection merges their requests into one."""
+def test_merged_requests_release_their_reservations() -> None:
+    """Two turns typed while the first is answered: the connection merges their requests into one (OR3, #8765)."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
         sim.send_text()
         sim.send_text()
-        sim.settle()
 
-    reproduce('OR3', OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(), scenario)
 
 
-@known('OR8')
-def test_known_raising_tool_leaves_wait_hanging() -> None:
+def test_raising_tool_ends_the_exchange() -> None:
+    """A tool that raises ends the session, and nothing is left waiting (OR8, #8765)."""
+
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
         sim.call_tool()
         sim.finish()
         sim.finish_tool(outcome='error')
-        sim.settle()
 
-    reproduce('OR8', OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(), scenario)
 
 
 @known('SIM-10')
@@ -226,6 +224,107 @@ def test_known_turn_heard_before_a_cancelled_reply_ended_filed_before_it() -> No
     reproduce('SIM-11', OpenAISimulation(), scenario)
 
 
+@known('SIM-1')
+def test_known_gemini_tool_batch_answer_lost_to_a_drop() -> None:
+    """Every result of the batch went out, then the connection dropped before the answer: it stays owed.
+
+    On OpenAI the reconnect asks for that answer again; Gemini doesn't resume a generation after a re-dial.
+    """
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools(count=2)
+        sim.finish_tool()
+        sim.finish_tool()
+        sim.drop()
+        sim.settle()
+
+    reproduce('SIM-1', GeminiSimulation(), scenario)
+
+
+@known('SIM-14')
+def test_known_refused_context_misfiles_the_spoken_turn() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.reject_next('content')
+        sim.speech_start(deliver=False)
+        sim.send_image()
+        sim.settle()
+
+    reproduce('SIM-14', OpenAISimulation(), scenario)
+
+
+@known('SIM-15')
+def test_known_raising_tool_leaves_a_deferred_request_owed() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.create_response()
+        sim.call_tool()
+        sim.finish_tool(outcome='error')
+        sim.settle()
+
+    reproduce('SIM-15', OpenAISimulation(), scenario)
+
+
+@known('SIM-15')
+def test_known_tool_result_over_request_limit_leaves_wait_hanging() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_image(respond=True)
+        sim.call_tool(deliver=False)
+        sim.send_image(respond=True)
+        sim.settle()
+
+    reproduce('SIM-15', OpenAISimulation(options=SessionOptions(request_limit=2)), scenario)
+
+
+@known('SIM-16')
+def test_known_cleared_barge_in_keeps_the_dropped_request() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.create_response()
+        sim.create_response()
+        sim.speech_start(deliver=False)
+        sim.clear_audio()
+        sim.settle()
+
+    reproduce('SIM-16', OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
+@known('SIM-17')
+def test_known_extended_thinking_parallel_calls_leave_a_reservation() -> None:
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_audio()
+        sim.user_speaks()
+        sim.call_tools(count=2)
+        sim.settle()
+
+    reproduce('SIM-17', GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
+
+
+@known('8760')
+def test_known_gemini_async_second_call_in_the_same_turn() -> None:
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools(deliver=False)
+        sim.call_tools()
+
+    reproduce('8760', async_gemini(), scenario)
+
+
+@known('SIM-18')
+def test_known_live_reply_split_by_a_delegated_round() -> None:
+    def scenario(sim: LiveSimulation) -> None:
+        sim.speak(deliver=False)
+        sim.delegate(deliver=False)
+        sim.backend_call(deliver=False)
+        sim.backend_finish(deliver=False)
+        sim.advance_time(0.1)
+        sim.finish_tool()
+        sim.backend_call(deliver=False)
+        sim.settle()
+
+    reproduce('SIM-18', LiveSimulation(), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -328,23 +427,14 @@ def test_known_failed_deferred_create_drops_the_terminal_frame() -> None:
     reproduce('SIM-4', OpenAISimulation(), scenario)
 
 
-@known('G2b')
-def test_known_gemini_parallel_calls_split_into_responses() -> None:
+def test_gemini_parallel_calls_are_one_response_answered_once() -> None:
+    """The calls of one `tool_call` message are one response, and their batch one reply (G2a/G2b, #8765)."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.call_tools(count=2)
 
-    reproduce('G2b', GeminiSimulation(), scenario)
-
-
-@known('G2a')
-def test_known_gemini_batch_answer_leaks_reservations() -> None:
-    def scenario(sim: GeminiSimulation) -> None:
-        sim.send_text()
-        sim.call_tools(count=2)
-        sim.settle()
-
-    reproduce('G2a', GeminiSimulation(), scenario)
+    run_clean(GeminiSimulation(), scenario)
 
 
 @known('8766')

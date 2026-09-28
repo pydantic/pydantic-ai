@@ -291,7 +291,7 @@ class LiveServer:
             call_id = self.truth.new_call_id()
             ids.append(call_id)
             self.truth.tool_calls[call_id] = ToolCallTruth(
-                call_id=call_id, response=delegation.spoken.key, name='lookup'
+                call_id=call_id, response=delegation.spoken.key, name='lookup', seq=self.truth.tick()
             )
             delegation.spoken.tool_calls.append(call_id)
             delegation.pending_calls.add(call_id)
