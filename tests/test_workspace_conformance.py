@@ -69,6 +69,12 @@ class TestSSHWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.mark.skip(reason='the same shell paging as `TestRunOnlyWorkspaceBackend`, at a connection per 64 KiB')
     async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None: ...
 
+    @pytest.fixture
+    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
+        # A real `sshd` keeps the session open until every copy of the command's output is closed;
+        # the fake `ssh` runs locally, so it would pass where a real host hangs.
+        return False
+
     @staticmethod
     def attach(ref: WorkspaceRef) -> WorkspaceBackend:
         destination, _, working_dir = ref.id.partition(':')

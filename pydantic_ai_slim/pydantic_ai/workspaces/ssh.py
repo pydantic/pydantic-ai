@@ -5,8 +5,11 @@ from __future__ import annotations as _annotations
 import os
 import posixpath
 import re
+import secrets
 import shlex
 from collections.abc import Mapping, Sequence
+
+import anyio
 
 from .local import LocalWorkspaceBackend
 from .protocol import (
@@ -14,6 +17,7 @@ from .protocol import (
     SupportsCommands,
     WorkspaceBackend,
     WorkspaceCommand,
+    WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
@@ -28,6 +32,24 @@ __all__ = ('SSHWorkspaceBackend',)
 _READY = '__pydantic_ai_ssh_ready__\n'
 _DONE = '\n__pydantic_ai_ssh_done__\n'
 _GONE = '\n__pydantic_ai_ssh_gone__\n'
+
+_JOB_TAG = '__pydantic_ai_ssh_job_'
+"""Starts every remote script, followed by a random suffix, so a later connection can find the command's processes."""
+
+_STOP = r"""me=$(ps -o pgid= -p $$ | tr -d ' ')
+groups=$(ps -A -o pgid=,args= | grep -F -e "$1" | awk -v me="$me" '$1 != me { print $1 }' | sort -u)
+[ -n "$groups" ] || exit 0
+for group in $groups; do kill -TERM -- "-$group" 2> /dev/null; done
+sleep 1
+for group in $groups; do kill -KILL -- "-$group" 2> /dev/null; done
+exit 0"""
+"""Stop the process groups whose command line holds the tag `$1`, leaving out this script's own group.
+
+`sshd` starts each command in a session of its own, so its group is the command's; a detached command
+that started a session of its own (the harness `Shell`'s jobs) is in another group and keeps running.
+"""
+
+_STOP_TIMEOUT = 15.0
 
 _ENV_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 _CLIENT_ENV = ('SSH_AUTH_SOCK',)
@@ -47,7 +69,9 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     which needs a POSIX `sh` there.
     The remote directory is the environment: the first operation raises
     [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing or
-    the host can't be reached.
+    the host can't be reached. On a timeout or cancellation, a second connection stops the command's
+    process group on the host. A background process that keeps the command's output open holds the
+    call until it exits, as `sshd` waits for the output to close.
 
     Args:
         destination: The host, as you'd pass it to `ssh`: `'user@host'`, a `Host` alias from your SSH
@@ -132,7 +156,9 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         self, directory: str, line: str, *, env: Mapping[str, str], timeout: float | None
     ) -> CommandResult:
         exports = ''.join(f'export {name}={shlex.quote(value)}\n' for name, value in env.items())
+        tag = f'{_JOB_TAG}{secrets.token_hex(8)}'
         script = (
+            f': {tag}\n'
             f'cd {shlex.quote(directory)} || exit 1\n'
             '__pydantic_ai_dir=$PWD\n'
             f"printf '%s' {shlex.quote(_READY)} >&2\n"
@@ -146,9 +172,14 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         argv = [*self._ssh, f'sh -c {shlex.quote(script)}']
         try:
             result = await self._client.run(argv, timeout=timeout)
+        except anyio.get_cancelled_exc_class():
+            await self._stop(tag)
+            raise
         except WorkspaceTimeoutError as error:
+            await self._stop(tag)
             raise WorkspaceTimeoutError(str(error), stdout=error.stdout, stderr=_after_ready(error.stderr)) from error
         except WorkspaceOutputLimitError as error:
+            await self._stop(tag)
             raise WorkspaceOutputLimitError(
                 "SSH workspace output exceeded its 10 MiB safety limit; redirect the command's output to a file "
                 'and read part of it instead',
@@ -165,3 +196,12 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         if not stderr.endswith(_DONE):
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the connection was lost during the command')
         return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=stderr.removesuffix(_DONE))
+
+    async def _stop(self, tag: str) -> None:
+        # Killing the local `ssh` leaves the remote command running, so a second connection stops it.
+        # Best effort: a host that can't be reached now has nothing to report.
+        with anyio.CancelScope(shield=True):
+            try:
+                await self._client.run([*self._ssh, f'sh -c {shlex.quote(_STOP)} sh {tag}'], timeout=_STOP_TIMEOUT)
+            except WorkspaceError:  # pragma: no cover - the host went away between the command and the stop
+                pass

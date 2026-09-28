@@ -41,7 +41,8 @@ from construction, and the capability claims only that ref. An unreachable host,
 dropped connection raises `WorkspaceUnavailableError`. `BubblewrapSandbox(wrapped_capability, *,
 network=False, bwrap_args=())` wraps another workspace capability's workspace in `BubblewrapWorkspace`,
 a `WrapperWorkspace` that prefixes every command with `bwrap` (read-only host, private `/tmp`, no
-network, writable working dir) and runs it through the wrapped workspace, so
+network, writable working dir, shared host PID namespace so detached `Shell` jobs survive the call)
+and runs it through the wrapped workspace, so
 `BubblewrapSandbox(SSHWorkspace(...))` sandboxes commands on the remote host. File methods are not
 sandboxed; they go to the wrapped workspace.
 Without an attached workspace, operations raise `WorkspaceUnavailableError`; a capability that needs one checks

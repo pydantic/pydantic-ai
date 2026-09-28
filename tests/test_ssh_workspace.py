@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
-from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -102,6 +103,26 @@ async def test_timeouts_and_output_limits_keep_only_the_commands_stderr(tools: F
     assert limit.value.stderr == 'big'
 
 
+async def test_stopping_a_command_kills_its_process_group_on_the_host(tools: FakeRemoteTools) -> None:
+    """Killing the local `ssh` leaves the remote command running, so a second connection stops it."""
+    tag = '__pydantic_ai_ssh_job_0123456789abcdef'
+    # Stands in for the remote command: its own session, with the tag on its command line and a child without it.
+    remote = subprocess.Popen(['sh', '-c', f': {tag}; sleep 60; :'], start_new_session=True)
+    bystander = subprocess.Popen(['sh', '-c', ': __pydantic_ai_ssh_job_other; sleep 60; :'], start_new_session=True)
+    try:
+        await SSHWorkspaceBackend('box')._stop(tag)  # pyright: ignore[reportPrivateUsage]
+
+        with anyio.fail_after(10):
+            while remote.poll() is None:
+                await anyio.sleep(0.05)
+        assert bystander.poll() is None
+    finally:
+        remote.kill()
+        bystander.kill()
+        remote.wait()
+        bystander.wait()
+
+
 async def test_invalid_configuration_fails_at_construction(tools: FakeRemoteTools) -> None:
     with pytest.raises(ValueError, match='destination must be a host'):
         SSHWorkspaceBackend('-oProxyCommand=evil')
@@ -117,7 +138,7 @@ async def test_capability_gives_tools_the_remote_workspace(tools: FakeRemoteTool
     agent = Agent(TestModel(call_tools=['probe']), capabilities=[SSHWorkspace('box', working_dir=str(tmp_path))])
 
     @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
+    async def probe(ctx: RunContext[object]) -> str:
         await ctx.workspace.write_text('probe.txt', 'remote')
         return (await ctx.workspace.run(['cat', 'probe.txt'])).stdout
 

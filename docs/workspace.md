@@ -220,8 +220,12 @@ Every operation opens an SSH connection, and file operations run as shell comman
 the host needs a POSIX `sh` and the usual file utilities. Turn on connection sharing in your SSH
 configuration (`ControlMaster auto` with a `ControlPersist` time) to make them fast. A host that
 can't be reached, a missing working directory, or a connection lost mid-command raises
-`WorkspaceUnavailableError`. On a timeout or cancellation the local `ssh` is stopped, but the remote
-command may keep running.
+`WorkspaceUnavailableError`. On a timeout or cancellation, a second connection stops the command's
+processes on the host; a command that detached into a session of its own, like a harness
+[Shell](https://pydantic.dev/docs/ai/harness/shell/) background job, keeps running. A command that
+leaves a background process holding its output open, such as `server &` without redirecting the
+server's output, doesn't return until that process exits, because `sshd` waits for the output to
+close: redirect it, as in `server > server.log 2>&1 &`.
 
 The ref is `WorkspaceRef(provider='ssh', id='dev@build-box:/srv/app')`, and `SSHWorkspace` only
 accepts a reference to its own host and directory.
@@ -248,6 +252,11 @@ can write only to the working directory. Pass `network=True` to allow the networ
 arguments with `bwrap_args=`: they come after the defaults, so `['--bind', path, path]` makes
 another directory writable and `['--tmpfs', path]` hides one. The host must run Linux with `bwrap`
 installed and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`.
+
+Commands share the host's process list rather than getting their own, so a command started in the
+background, such as a [Shell](https://pydantic.dev/docs/ai/harness/shell/) background job or a dev
+server, keeps running after the call that started it, and later calls can check on it or stop it.
+The cost is that sandboxed commands can see the host's processes and signal the host user's own.
 
 Only commands are sandboxed. File methods such as `write_text` go to the wrapped workspace, so they
 see the host's `/tmp` rather than the sandbox's, and reach outside the working directory. To limit
