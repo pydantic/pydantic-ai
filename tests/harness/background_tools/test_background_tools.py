@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
@@ -360,17 +361,25 @@ class TestBackgroundTools:
         )
         assert barrier_return.content == 'barrier result'
 
-    async def test_unexpected_error_reports_type_without_exposing_details_to_model(self) -> None:
+    async def test_unexpected_error_reports_type_without_exposing_details_to_model(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
         async def broken() -> str:
             raise RuntimeError('private backend detail')
 
-        result = await agent.run('go')
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.background_tools'):
+            result = await agent.run('go')
 
         assert _follow_up_seen(result.all_messages(), 'failed: RuntimeError')
         assert not _follow_up_seen(result.all_messages(), 'private backend detail')
+        # The model only learns the type, but the operator gets the details.
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert re.fullmatch(r"Background tool 'broken' \(task \S+\) failed", record.getMessage())
+        assert record.exc_info is not None and str(record.exc_info[1]) == 'private backend detail'
 
     async def test_run_stream_waits_for_live_task_then_drops_its_result(self) -> None:
         started = asyncio.Event()

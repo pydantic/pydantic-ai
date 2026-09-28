@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
@@ -31,6 +32,8 @@ from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
     from pydantic_ai.models import ModelRequestContext
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -247,7 +250,10 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 try:
                     transcript = _build_compact_transcript(ctx.messages, dynamic.max_context_messages)
                     result, error_type = await self._generate_reminder(ctx, index, transcript)
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        'LLMReminder generation operation failed; using GoalReanchor text instead', exc_info=exc
+                    )
                     result, error_type = None, 'DurabilityError'
                 if error_type is not None:
                     result = GoalReanchor[AgentDepsT]()(ctx)
@@ -266,11 +272,14 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         reminder = self._dynamic_snapshot[index]
         if not _is_llm_reminder(reminder):  # pragma: no cover - operation inputs originate above
             raise RuntimeError(f'Dynamic reminder {index} is no longer an LLMReminder.')
+        if _request_reserved_for_parent(ctx):
+            return None, 'RequestLimitReserved'
         try:
             return await reminder._generate_from_transcript(ctx, transcript), None  # pyright: ignore[reportPrivateUsage]
         except Exception as exc:
             # Reminders are best-effort. Journal the fallback decision rather than inheriting an
             # engine's potentially unbounded retry policy and stalling the agent run.
+            _log_generation_failure(exc)
             return None, type(exc).__name__
 
     @classmethod
@@ -336,9 +345,12 @@ class LLMReminder(Generic[AgentDepsT]):
             raise ValueError(f'max_context_messages must be >= 1, got {self.max_context_messages}')
 
     async def __call__(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        if _request_reserved_for_parent(ctx):
+            return GoalReanchor[AgentDepsT]()(ctx)
         try:
             return await self._generate(ctx)
-        except Exception:
+        except Exception as exc:
+            _log_generation_failure(exc)
             return GoalReanchor[AgentDepsT]()(ctx)
 
     async def _generate(self, ctx: RunContext[AgentDepsT]) -> str | None:
@@ -359,6 +371,21 @@ class LLMReminder(Generic[AgentDepsT]):
         )
         text = result.output.strip()
         return text or None
+
+
+def _log_generation_failure(exc: Exception) -> None:
+    """Tell the operator an `LLMReminder` fell back to `GoalReanchor` text.
+
+    A misconfigured model (wrong name, missing API key) fails on every turn, and the fallback
+    text alone would hide that.
+    """
+    logger.warning('LLMReminder generation failed; using GoalReanchor text instead', exc_info=exc)
+
+
+def _request_reserved_for_parent(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether a nested request would spend the request already approved for the parent."""
+    limits = reserved_usage_limits(ctx.usage_limits)
+    return limits is not None and limits.request_limit is not None and ctx.usage.requests >= limits.request_limit
 
 
 def _is_llm_reminder(value: object) -> TypeGuard[LLMReminder[AgentDepsT]]:
