@@ -22,7 +22,7 @@ from pydantic_ai.tools import Tool
 
 try:
     from bs4 import BeautifulSoup, Tag
-    from bs4.element import NavigableString
+    from bs4.element import NavigableString, PageElement
     from markdownify import MarkdownConverter
 except ImportError as _import_error:
     raise ImportError(
@@ -43,6 +43,7 @@ _upstream_process_text: Callable[[MarkdownConverter, NavigableString, set[str] |
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+_MAX_HTML_CONVERSION_COST = 250_000_000
 
 
 class WebFetchResult(TypedDict):
@@ -187,6 +188,24 @@ def _decode_text(response: httpx2.Response) -> str:
 def _convert_html(html: str) -> tuple[str, str]:
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
     soup = BeautifulSoup(html, 'html.parser')
+    # `markdownify` repeatedly scans each descendant's converted text as it walks back up the
+    # tree. Blockquotes, definition items, and list items also indent every line at each level.
+    # Estimate those scans before conversion so a small, deeply nested page cannot produce a
+    # huge intermediate string or hold the GIL for seconds at a time.
+    cost = 0
+    pending: list[tuple[PageElement, int, int]] = [(soup, 0, 0)]
+    while pending:
+        node, depth, indent_depth = pending.pop()
+        if isinstance(node, Tag):
+            depth += 1
+            if node.name in ('blockquote', 'dd', 'li'):
+                indent_depth += 1
+            cost += 8 * depth * indent_depth
+            pending.extend((child, depth, indent_depth) for child in reversed(node.contents))
+        elif isinstance(node, NavigableString):
+            cost += depth * (len(node) + 4 * indent_depth * node.count('\n'))
+        if cost > _MAX_HTML_CONVERSION_COST:
+            raise ModelRetry('Failed to convert HTML: the document is too complex')
     return _extract_title(html), _MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)
 
 
