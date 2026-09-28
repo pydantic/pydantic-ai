@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from pydantic_ai import RunContext
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError
@@ -128,6 +128,11 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
     in its working directory, so the review sees the repository where the agent works, local or in a sandbox. It
     collects the streamed findings and returns them as a `MacroscopeReview`; validating and
     fixing the findings is left to the agent's other tools.
+
+    Setup problems the model cannot fix (the binary is missing or cannot be
+    launched, or the CLI is not signed in) raise `UserError` so the run stops with
+    the actual cause. Failures the model can act on (a timeout, or a review that did
+    not start with a `base` the model chose) raise `ModelRetry`.
     """
 
     def __init__(self, *, command: str, base: str | None, timeout: float, cwd: Path | None = None) -> None:
@@ -171,14 +176,22 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
         if review.review_id is not None:
             return review
         if exit_code == _NOT_FOUND_EXIT and not output.strip():
-            raise ModelRetry(_INSTALL_HINT)
+            raise UserError(_INSTALL_HINT)
+        tail = output.strip()[-_ERROR_TAIL_CHARS:]
+        if base is not None:
+            # The model's own `base` may be what failed (e.g. a ref that does not exist), so let
+            # it drop or change the argument; a retry without it then surfaces a setup error.
+            raise ModelRetry(
+                f'The Macroscope review did not start with base={base!r}. Check that the ref '
+                f'exists, or call again without `base`.\n\nCLI output:\n{tail}'
+            )
         # Covers a CLI that is not signed in and one that could not run at all (lost +x, bad
         # interpreter); the output tail says which.
-        raise ModelRetry(
+        raise UserError(
             f'The Macroscope review did not start (no review_id in the CLI output, exit code {exit_code}). '
-            'If the output shows the CLI could not run, reinstall it; otherwise confirm you are signed in '
-            'by running `macroscope` once to complete the setup wizard.'
-            f'\n\nCLI output:\n{output.strip()[-_ERROR_TAIL_CHARS:]}'
+            'If the output shows the CLI could not run, reinstall it; otherwise run `macroscope` once in '
+            'the workspace to sign in and complete the setup wizard.'
+            f'\n\nCLI output:\n{tail}'
         )
 
     async def _run_cli(self, ctx: RunContext[AgentDepsT], args: list[str]) -> tuple[int, str]:
