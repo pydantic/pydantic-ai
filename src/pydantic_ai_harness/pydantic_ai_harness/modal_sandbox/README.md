@@ -41,6 +41,15 @@ A new sandbox lives for up to 24 hours, Modal's maximum; pass `ModalSandbox(sand
 
 `/root` is the home directory, which holds dotfiles and caches. Pass a project directory, such as `ModalSandbox(working_dir='/root/project')`, so the project is not the home directory; it is created for you on a new sandbox.
 
+The default image has Python, git, and ripgrep (`rg`), but not your project's dependencies, not even pytest. Install them in a custom `image`, or with `await workspace.run(['pip', 'install', ...])` before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run).
+
+| Default image | |
+| --- | --- |
+| User | `root` |
+| `HOME` and default working directory | `/root` |
+| `rg` | Installed |
+| `pytest` | Not installed |
+
 ## Continue in the same sandbox
 
 ```python {names="defined"}
