@@ -34,6 +34,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -750,6 +751,17 @@ class TestSpritesSandbox:
             await backend.run('printf ready; exec sleep 5', shell=True, timeout=0.3)
         assert caught.value.stdout == 'ready'
         assert transport.execs[0].process.wait(timeout=1) == -signal.SIGKILL
+
+    async def test_output_past_the_cap_stops_the_command(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        # `yes` never ends by itself: only the cap stops it. The bound is a hang guard.
+        with anyio.fail_after(60), pytest.raises(WorkspaceOutputLimitError) as caught:
+            await backend.run(['yes'])
+        assert caught.value.limit == 10 * 1024 * 1024
+        assert caught.value.stdout == 'y\n' * (32 * 1024)
+        assert transport.execs[0].process.wait(timeout=1) == -signal.SIGKILL
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
     async def test_timeout_keeps_partial_stderr_and_removes_capture(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()

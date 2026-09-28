@@ -75,6 +75,7 @@ from pydantic_ai.workspaces import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -83,7 +84,7 @@ from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore
 from pydantic_ai_harness._workspace_provider import absolute_path, command_argv, safe_credential_reason, stop_shielded
 
 try:
-    from sprites import AsyncSprite, AsyncSpritesClient
+    from sprites import AsyncCmd, AsyncSprite, AsyncSpritesClient
     from sprites.exceptions import (
         APIError,
         AuthenticationError,
@@ -107,6 +108,9 @@ _CLOSE_TIMEOUT = 6.0
 _ACQUIRE_TIMEOUT = 150.0
 # Bounds the internal `pwd` probe behind `working_dir()`, which may first wake a sleeping Sprite.
 _INTERNAL_EXEC_TIMEOUT = 30
+# Combined output ceiling and error preview size, as in Pydantic AI's local backend.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_PREVIEW_BYTES = 64 * 1024
 _AUTH_MESSAGE = (
     'Sprites rejected the credentials. Set SPRITE_TOKEN, or pass a configured `AsyncSpritesClient` as `client=`.'
 )
@@ -164,7 +168,15 @@ async def _run_to_completion(call: Callable[[], Awaitable[_T]]) -> _T:
 
 
 class _ExecCommand(WSCommand):
-    """The SDK's exec WebSocket command, asking the Sprite to end the command soon after a disconnect."""
+    """The SDK's exec WebSocket command, asking the Sprite to end the command soon after a disconnect.
+
+    It also stops reading once the output passes `_MAX_OUTPUT_BYTES`; `marker` is `_ending_with`'s.
+    """
+
+    def __init__(self, cmd: AsyncCmd, marker: str) -> None:
+        super().__init__(cmd)
+        self._marker = marker
+        self._overflowed = False
 
     def _build_websocket_url(self) -> str:
         # Stdin stays on: `_ending_with` waits for its EOF before starting the command. The stream is
@@ -172,6 +184,32 @@ class _ExecCommand(WSCommand):
         # unless told otherwise, and `0` means no limit. One second makes closing the socket on a
         # timeout or cancellation stop the command.
         return f'{super()._build_websocket_url()}&tty=false&max_run_after_disconnect=1s'
+
+    async def _handle_message(self, message: str | bytes) -> None:
+        await super()._handle_message(message)
+        # Counted as frames arrive, so a runaway command cannot grow the buffers past one frame over the cap.
+        if len(self._stdout_buffer) + len(self._stderr_buffer) > _MAX_OUTPUT_BYTES:
+            # Ends the read loop without an exit status, so `wait()` fails.
+            self._overflowed = True
+            self.done = True
+
+    async def wait(self) -> int:
+        try:
+            return await super().wait()
+        except NetworkError:
+            if not self._overflowed:
+                raise
+        # Raised inside `_run`'s `try`, whose handler closes the socket, which stops the command.
+        stdout, stderr = _split_output(
+            self.get_stdout()[:_PREVIEW_BYTES], self.get_stderr()[:_PREVIEW_BYTES], self._marker
+        )
+        raise WorkspaceOutputLimitError(
+            "Sprites command output exceeded 10 MiB safety limit; redirect the command's "
+            'output to a file and read part of it instead',
+            limit=_MAX_OUTPUT_BYTES,
+            stdout=stdout,
+            stderr=stderr,
+        )
 
 
 async def _close_command(command: WSCommand) -> None:
@@ -460,7 +498,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             check = await self.run(['test', '-d', directory], timeout=timeout, _check_working_dir=False)
             if check.exit_code != 0:
                 raise FileNotFoundError(directory)
-        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory))
+        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
         code = -1
         interrupted = False
         try:
@@ -479,7 +517,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                         if attempt == 2:
                             raise NetworkError(f'Sprites exec handshake failed: {error}') from error
                         await anyio.sleep(0.1)
-                        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory))
+                        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
                 try:
                     code = await exec_command.wait()
                 except NetworkError as error:
