@@ -786,6 +786,20 @@ async def _check_stop(process: modal.container_process.ContainerProcess[bytes], 
         logger.warning('Modal command stop exited nonzero in sandbox %s', sandbox_id)
 
 
+async def terminate_sandbox(sandbox_id: str) -> None:
+    """Terminate a sandbox by ID without attaching; one that no longer exists returns quietly."""
+    import modal
+
+    try:
+        # A dead sandbox cannot be opened for work, but its ID still identifies the resource to terminate.
+        sandbox = await modal.Sandbox.from_id.aio(sandbox_id)
+        await sandbox.terminate.aio()
+    except modal.exception.NotFoundError:
+        return
+    except (modal.exception.AuthError, modal.exception.PermissionDeniedError) as error:
+        raise WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}') from error
+
+
 def _unavailable_message(sandbox_id: str) -> str:
     return (
         f'The Modal sandbox {sandbox_id!r} is no longer running: it was terminated, or it reached its '

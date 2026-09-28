@@ -19,6 +19,7 @@ from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
     DEFAULT_SANDBOX_TIMEOUT,
     ModalSandboxBackend,
+    terminate_sandbox,
 )
 
 if TYPE_CHECKING:
@@ -254,15 +255,13 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
-        """Terminate a sandbox by ID without running commands or restoring its workspace."""
+        """Terminate a sandbox by ID without running commands or restoring its workspace.
+
+        A sandbox that no longer exists is already gone, so destroying it returns quietly.
+        """
         if ref.provider != 'modal':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'modal'")
-        import modal
-
-        # A dead sandbox cannot be opened for work, but its ID still identifies the
-        # resource to terminate. Do not go through backend.get_client() here.
-        sandbox = await modal.Sandbox.from_id.aio(ref.id)
-        await sandbox.terminate.aio()
+        await terminate_sandbox(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build a backend without performing Modal I/O."""

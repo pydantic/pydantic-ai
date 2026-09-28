@@ -118,7 +118,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
     await ModalSandbox().destroy(ref)
 ```
 
-`ModalSandbox().backend(ref)` constructs a backend for an existing ref without I/O. `destroy(ref)` uses the sandbox ID directly; it does not resume an expired sandbox or run its tools. Only destroy sandboxes you own.
+`ModalSandbox().backend(ref)` constructs a backend for an existing ref without I/O. `destroy(ref)` uses the sandbox ID directly; it does not resume an expired sandbox or run its tools, and a sandbox that no longer exists returns quietly. Only destroy sandboxes you own.
 
 ### What a timeout stops
 

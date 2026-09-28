@@ -60,6 +60,31 @@ async def test_destroy_rejects_foreign_ref_without_sdk_call(fake_modal: FakeModa
     assert fake_modal.attach_ids == []
 
 
+async def test_destroy_is_idempotent_for_a_sandbox_that_no_longer_exists(fake_modal: FakeModal) -> None:
+    fake_modal.attach_error = fake_modal.exception('NotFoundError')('sandbox not found')
+    await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-gone'))
+    assert fake_modal.attach_ids == ['sb-gone']
+
+
+async def test_destroy_twice_returns_quietly(fake_modal: FakeModal) -> None:
+    ref = (await started()).ref
+    assert ref is not None
+    provider = ModalSandbox()
+    await provider.destroy(ref)
+    fake_modal.attach_error = fake_modal.exception('NotFoundError')('sandbox not found')
+    await provider.destroy(ref)
+
+
+@pytest.mark.parametrize(('name', 'expected'), [('AuthError', WorkspaceUnavailableError), ('ConnectionError', None)])
+async def test_destroy_maps_rejected_credentials_and_keeps_other_failures(
+    fake_modal: FakeModal, name: str, expected: type[Exception] | None
+) -> None:
+    fake_modal.attach_error = fake_modal.exception(name)('failed')
+    with pytest.raises(expected or fake_modal.exception(name)) as exc_info:
+        await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-owned'))
+    assert fake_modal.attach_error in (exc_info.value, exc_info.value.__cause__)
+
+
 class TestRun:
     async def test_argv_is_execed_by_sh(self, fake_modal: FakeModal) -> None:
         """`sh` execs the program, so one that can't start exits 127 or 126 as it does in `sh`."""
