@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
+import ast
 import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,6 +11,10 @@ import pytest
 from _pytest.mark import ParameterSet
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
+
+import pydantic_ai.capabilities
+import pydantic_ai.durable_exec
+from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
@@ -62,6 +68,119 @@ def test_migration_skill_examples_are_executable():
         prefix = example.prefix_settings()
         assert not prefix.get('lint', '').startswith('skip')
         assert not prefix.get('test', '').startswith('skip')
+
+
+def _squash(text: str) -> str:
+    return re.sub(r'[\s_-]', '', text).lower()
+
+
+def _section_lines(markdown: str) -> list[str]:
+    """Headings and detail-table rows, skipping code blocks and `| ... | Use |` selection tables."""
+    lines: list[str] = []
+    in_code = False
+    table_header: str | None = None
+    for line in markdown.splitlines():
+        if line.startswith('```'):
+            in_code = not in_code
+        elif in_code:
+            continue
+        elif line.startswith('|'):
+            table_header = table_header or line
+            if not table_header.rstrip(' |').endswith('| Use'):
+                lines.append(line)
+        else:
+            table_header = None
+            if line.startswith('#'):
+                lines.append(line)
+    return lines
+
+
+def _capability_exports(package_dir: Path) -> dict[str, list[str]]:
+    """Capability classes each submodule exports, found from source so optional dependencies need not be installed.
+
+    A class counts when its bases lead, within the package, to a core capability class.
+    """
+    bases: dict[str, list[str]] = {}
+    for path in package_dir.rglob('*.py'):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ClassDef):
+                bases.setdefault(node.name, []).extend(_base_name(base) for base in node.bases)
+
+    def is_capability(name: str, seen: frozenset[str] = frozenset()) -> bool:
+        if name in bases and name not in seen:
+            return any(is_capability(base, seen | {name}) for base in bases[name])
+        core = getattr(pydantic_ai.capabilities, name, None) or getattr(pydantic_ai.durable_exec, name, None)
+        return isinstance(core, type) and issubclass(core, AbstractCapability)
+
+    exports: dict[str, list[str]] = {}
+    for init in [*package_dir.glob('*/__init__.py'), *package_dir.glob('experimental/*/__init__.py')]:
+        module = '.'.join(init.parent.relative_to(package_dir).parts)
+        names = [
+            element.value
+            for node in ast.parse(init.read_text()).body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == '__all__' for t in node.targets)
+            and isinstance(node.value, ast.List | ast.Tuple)
+            for element in node.value.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        ]
+        exports[module] = [name for name in names if is_capability(name)]
+    return exports
+
+
+def _base_name(node: ast.expr) -> str:
+    if isinstance(node, ast.Subscript):
+        node = node.value
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return node.id if isinstance(node, ast.Name) else ''
+
+
+def test_harness_skill_covers_every_capability_module():
+    # Every public capability submodule, and every capability class it exports, needs an entry in the
+    # `Task-Family References` table of the `pydantic-ai-harness` skill, and each class needs its own section in
+    # the linked reference. Deprecated rename shims are skipped. Rows look like
+    # `| [Title](./references/FILE.md) | `Class` (`.module`, `[extra]`); ... |`.
+    package_dir = Path(__file__).parents[2] / 'src/pydantic_ai_harness/pydantic_ai_harness'
+    skill_dir = package_dir / '.agents/skills/pydantic-ai-harness'
+    table = (skill_dir / 'SKILL.md').read_text().split('## Task-Family References', 1)[1]
+    rows = [line for line in table.splitlines() if line.startswith('| [')]
+
+    modules: list[str] = []
+    for init in [*package_dir.glob('[!_.]*/__init__.py'), *package_dir.glob('experimental/*/__init__.py')]:
+        module = '.'.join(init.parent.relative_to(package_dir).parts)
+        docstring = ast.get_docstring(ast.parse(init.read_text())) or ''
+        if module != 'experimental' and not docstring.startswith('Deprecated import location'):
+            modules.append(module)
+    assert 'coder' in modules
+
+    capability_exports = _capability_exports(package_dir)
+    problems: list[str] = []
+    for module in sorted(modules):
+        entries = [(row, entry) for row in rows for entry in row.split('|')[2].split(';') if f'(`.{module}`' in entry]
+        if not entries:
+            problems.append(f'{module}: no entry in the Task-Family References table')
+            continue
+        row, entry = entries[0]
+        link = re.search(r'\]\(\./(references/[A-Z-]+\.md)\)', row)
+        reference = skill_dir / link.group(1) if link else None
+        if reference is None or not reference.exists():
+            problems.append(f'{module}: its row links no existing ./references/<FILE>.md')
+            continue
+
+        listed = re.findall(r'`([A-Z]\w+)`', entry)
+        for name in capability_exports.get(module, ()):
+            if name not in listed:
+                problems.append(f'{module}: capability `{name}` is not listed in its table entry')
+
+        # Each class (or, for entries without one, the module) needs a heading or detail-table row in the
+        # reference, not just a mention in passing prose. Compare loosely so `CodeMode` matches `# Code Mode`.
+        lines = [_squash(line) for line in _section_lines(reference.read_text())]
+        for name in listed or [module.rsplit('.', 1)[-1]]:
+            if not any(_squash(name) in line for line in lines):
+                problems.append(f'{module}: no heading or table row in {reference.name} names `{name}`')
+
+    assert problems == []
 
 
 @pytest.mark.parametrize('example', list(find_skill_examples()))
