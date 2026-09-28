@@ -164,6 +164,20 @@ def _is_lifetime_refusal(error: e2b.SandboxException) -> bool:
     return status is not None and 400 <= status < 500 and 'timeout cannot be greater than' in str(error).lower()
 
 
+# Statuses whose create refusal no retry can fix: rejected credentials and an unknown template.
+_REFUSED_CREATE_STATUSES = frozenset({401, 403, 404})
+
+
+def _is_create_refusal(error: e2b.SandboxException) -> bool:
+    """Whether E2B refused the create request itself, so retrying it cannot succeed.
+
+    An allowlist rather than every 4xx: E2B has answered `400: reading failed: read tcp ...
+    i/o timeout` for a transient upstream failure, and ending the run on a status we do not
+    recognise costs more than retrying it.
+    """
+    return error.status_code in _REFUSED_CREATE_STATUSES or _is_lifetime_refusal(error)
+
+
 def _refused_message(context: str, error: e2b.SandboxException) -> str:
     message = f'{context}: {error}'
     if _is_lifetime_refusal(error):
@@ -447,9 +461,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
         E2B may create the sandbox before its response arrives. The asyncio acquisition task
         survives caller cancellation, and the Trio path shields this call; `_CREATE_TIMEOUT`
-        bounds the SDK request, though a response lost after remote creation cannot be recovered. A request E2B refuses (an
-        unknown template, a lifetime over the plan's limit) is `WorkspaceUnavailableError`:
-        retrying it cannot succeed.
+        bounds the SDK request, though a response lost after remote creation cannot be recovered. A request E2B refuses
+        (rejected credentials, an unknown template, a lifetime over the plan's limit) is
+        `WorkspaceUnavailableError`: retrying it cannot succeed. Any other 4xx keeps the upstream error.
         """
         with anyio.move_on_after(_CREATE_TIMEOUT, shield=True):
             async with self._sdk_errors(None, 'Could not start E2B sandbox'):
@@ -463,8 +477,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                         lifecycle={'on_timeout': 'pause'},
                     )
                 except e2b.SandboxException as error:
-                    refused = error.status_code is not None and 400 <= error.status_code < 500
-                    if not refused or isinstance(error, e2b.RateLimitException):
+                    if not _is_create_refusal(error):
                         raise
                     raise WorkspaceUnavailableError(_refused_message('Could not start E2B sandbox', error)) from error
         # A transient failure like any unreachable service: it propagates for durable engines to

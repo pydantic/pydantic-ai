@@ -132,7 +132,16 @@ class TestCreate:
                 SandboxException('400: Timeout cannot be greater than 1 hours', status_code=400),
                 'Hobby plans allow at most 3600 seconds; pass `E2BSandbox(sandbox_timeout=3600)`.',
             ),
+            (
+                SandboxException('403: forbidden', status_code=403),
+                'Could not start E2B sandbox: 403: forbidden',
+            ),
+            (
+                SandboxException('401: unauthorized', status_code=401),
+                'Could not start E2B sandbox: 401: unauthorized',
+            ),
         ],
+        ids=['unknown-template', 'lifetime-over-plan', 'forbidden', 'unauthorized'],
     )
     async def test_a_refused_create_is_unavailable(self, fake_e2b: FakeE2B, error: Exception, message: str) -> None:
         # A refused request fails the same way on every retry, so it ends the run.
@@ -160,18 +169,26 @@ class TestCreate:
             f'Could not start E2B sandbox: {message}'
             + (' Hobby plans allow at most 3600 seconds; pass `E2BSandbox(sandbox_timeout=3600)`.' if advice else '')
         )
+        # Only the lifetime refusal ends the run; a 400 wrapping an i/o timeout stays retryable.
+        assert type(exc.value) is (WorkspaceUnavailableError if advice else WorkspaceError)
         assert exc.value.__cause__ is error
 
     @pytest.mark.parametrize(
         'error',
-        [SandboxException('500: internal', status_code=500), SandboxException('no status')],
-        ids=['server-error', 'no-status'],
+        [
+            SandboxException('500: internal', status_code=500),
+            SandboxException('no status'),
+            # A 4xx that is not a known refusal keeps the upstream error rather than ending the run.
+            SandboxException('409: conflict', status_code=409),
+        ],
+        ids=['server-error', 'no-status', 'unrecognised-4xx'],
     )
     async def test_an_unrefused_create_failure_is_an_operation_error(self, fake_e2b: FakeE2B, error: Exception) -> None:
         fake_e2b.create_error = error
         with pytest.raises(WorkspaceError, match='Could not start E2B sandbox') as exc:
             await started()
-        assert not isinstance(exc.value, WorkspaceUnavailableError)
+        assert type(exc.value) is WorkspaceError
+        assert f'{error}' in str(exc.value)
 
     async def test_hanging_create_does_not_hang_the_caller(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch
