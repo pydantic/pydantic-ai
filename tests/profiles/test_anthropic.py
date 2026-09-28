@@ -356,6 +356,37 @@ def test_model_profile_fable_5():
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'thinks_by_default', 'always_thinks'),
+    [
+        ('claude-sonnet-4-6', False, False),
+        ('claude-opus-4-8', False, False),
+        ('claude-opus-5', True, False),
+        ('claude-sonnet-5', True, False),
+        ('claude-opus-5-5', True, True),
+        ('claude-sonnet-5-5', True, True),
+        ('claude-fable-5', True, True),
+        ('claude-fable-5-1', True, True),
+        ('claude-mythos-5-1', True, True),
+        ('claude-mythos-preview', True, True),
+    ],
+)
+def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: bool, always_thinks: bool):
+    """Which models think without a `thinking` setting, and which reject `{'type': 'disabled'}`.
+
+    Verified live for every model but the Mythos ones, which match Anthropic's docs: with no `thinking` parameter,
+    Claude Opus 5, Sonnet 5, Opus 5.5, Fable 5 and Fable 5.1 return thinking tokens where Sonnet 4.6 and Opus 4.8
+    return none, and Opus 5.5, Fable 5 and Fable 5.1 answer `thinking={'type': 'disabled'}` with a 400.
+    """
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_enabled_by_default') is thinks_by_default
+    assert profile.get('thinking_always_enabled') is always_thinks
+    assert profile.get('forced_tool_choice_disables_thinking') is True
+    if thinks_by_default:
+        assert profile.get('anthropic_supports_adaptive_thinking') is True
+
+
+@pytest.mark.parametrize(
     ('model_name', 'supports_forcing'),
     [
         ('claude-fable-5-1', False),
@@ -429,6 +460,9 @@ def test_model_profile_fable_5_1():
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': False,
             'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
@@ -503,6 +537,9 @@ def test_model_profile_opus_5():
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': True,
             'supports_thinking': True,
+            'thinking_always_enabled': False,
+            'thinking_enabled_by_default': True,
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
@@ -541,7 +578,8 @@ def test_model_profile_opus_5_5():
     Where Opus 5.5 diverges from Opus 5, it matches Fable 5.1: it returns a 400 for a forced
     `tool_choice` and for a thinking block replayed after the `system` prompt changes (with an explicit
     `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` at every
-    effort level, so the `xhigh`/`max`-specific guard Opus 5 carries doesn't apply.
+    effort level, so thinking can't be turned off and the `xhigh`/`max`-specific guard Opus 5 carries
+    doesn't apply.
     """
     profile = anthropic_model_profile('claude-opus-5-5')
     opus_5 = anthropic_model_profile('claude-opus-5')
@@ -549,6 +587,7 @@ def test_model_profile_opus_5_5():
     assert opus_5 is not None
     assert profile == {
         **opus_5,
+        'thinking_always_enabled': True,
         'anthropic_disallows_top_effort_when_thinking_disabled': False,
         'supports_forced_tool_choice': False,
         'anthropic_binds_thinking_blocks': True,
@@ -565,7 +604,8 @@ def test_model_profile_sonnet_5_5():
     Where Sonnet 5.5 diverges, it matches Opus 5.5: it returns a 400 for a forced `tool_choice` and for a
     thinking block replayed after the `system` prompt changes (with an explicit
     `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` in favor of
-    `{'type': 'between_tools'}`, which passes through `anthropic_thinking` unchanged.
+    `{'type': 'between_tools'}`, which passes through `anthropic_thinking` unchanged, so thinking can't be
+    turned off.
     """
     profile = anthropic_model_profile('claude-sonnet-5-5')
     sonnet_5 = anthropic_model_profile('claude-sonnet-5')
@@ -575,6 +615,7 @@ def test_model_profile_sonnet_5_5():
         **sonnet_5,
         'supports_forced_tool_choice': False,
         'anthropic_binds_thinking_blocks': True,
+        'thinking_always_enabled': True,
     }
 
 

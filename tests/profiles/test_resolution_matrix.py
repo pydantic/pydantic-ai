@@ -200,6 +200,7 @@ def test_anthropic_claude_sonnet_4_6():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -225,6 +226,7 @@ def test_anthropic_claude_opus_4_7():
             'supports_thinking': True,
             'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -253,6 +255,7 @@ def test_anthropic_claude_haiku_4_5():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
@@ -272,6 +275,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
@@ -751,6 +755,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_send_back_thinking_parts': True,
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
@@ -818,6 +823,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_tool_caching': True,
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'bedrock_thinking_variant': 'anthropic',
@@ -847,6 +853,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'bedrock_thinking_variant': 'anthropic',
@@ -1044,6 +1051,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
@@ -1238,6 +1246,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'supports_json_schema_output': True,
             'supports_thinking': True,
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
@@ -1963,6 +1972,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
@@ -2076,6 +2086,7 @@ def test_vercel_anthropic_claude_sonnet():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
@@ -2193,6 +2204,7 @@ def test_heroku_returns_openai_transformer():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'supports_json_schema_output': True,
             'supports_thinking': True,
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,

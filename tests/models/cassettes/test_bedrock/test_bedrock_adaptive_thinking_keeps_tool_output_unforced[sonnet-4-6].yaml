@@ -3,50 +3,57 @@ interactions:
     body: '{"messages": [{"role": "user", "content": [{"text": "Return the number 42."}]}], "system": [], "inferenceConfig":
       {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"response":
       {"type": "integer"}}, "required": ["response"], "type": "object"}}, "description": "The final response which ends this
-      conversation"}}], "toolChoice": {"any": {}}}, "additionalModelRequestFields": {"thinking": {"type": "adaptive"}}}'
+      conversation"}}], "toolChoice": {"auto": {}}}, "additionalModelRequestFields": {"thinking": {"type": "adaptive"}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YTFlODM5ZjktZDNjZC00NjlkLWE4NGMtMDhlMDM4ZGRhZmRj
+        NGQ3NThmMmMtMWUyNy00ZWEzLTk4OGQtNmE1OTU0YTRiODI5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '465'
+      - '466'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-opus-5/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-6/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '402'
+      - '947'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1590
+        latencyMs: 1549
       output:
         message:
           content:
+          - reasoningContent:
+              reasoningText:
+                signature: EoECCnUIEhABGAIqQMS7M2ruY9kzJ1Gp5BmGqMLa0BQNhPiuLuPi3gDzO1n8a1yIsaQ5vMw3YCB5QFO25IbDlVQB8Sk+snfOdvMUrvsyEWNsYXVkZS1zb25uZXQtNC02OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDJ1qWsgvrY4jS9KhxBoMEhPytJK7wcZA+9mqIjD2SJCM6a+9CVZePiltBUk4nj+r66E9wgsDZeHk/RovVlYXQ3X8i0AS40TFfis6fdUqOq9qK/ZEzi5NprbNmaAbR+A0lSxNeEqH0oulAYJbWYVCeqGgeCJR03D9FroTDgFHsy8Seqawjr5KxJ0YAQ==
+                text: The user wants me to return the number 42.
+          - text: Sure!
           - toolUse:
               input:
                 response: 42
               name: final_result
-              toolUseId: tooluse_9sTmXbosZYgTiJZNP2sXKb
+              toolUseId: tooluse_C4s1jEk1WyTlN93k0fpQcW
               type: tool_use
           role: assistant
       stopReason: tool_use
       usage:
         cacheReadInputTokenCount: 0
         cacheReadInputTokens: 0
-        inputTokens: 491
-        outputTokens: 37
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 565
+        outputTokens: 82
         serverToolUsage: {}
-        totalTokens: 528
+        totalTokens: 647
     status:
       code: 200
       message: OK

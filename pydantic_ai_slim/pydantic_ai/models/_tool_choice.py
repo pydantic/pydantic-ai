@@ -208,19 +208,24 @@ def support_tool_forcing(
     model_name: str,
     model_settings: ModelSettings | None,
     unavailable_reason: str | None,
+    *,
+    disables_thinking: bool = False,
 ) -> bool:
     """Whether to send a forced tool choice, given why it can't be sent (if it can't).
 
     A forced choice Pydantic AI resolved itself (such as an output tool's) falls back to an unforced one;
-    an explicit forcing `tool_choice` raises a `UserError` with the reason instead.
+    an explicit forcing `tool_choice` raises a `UserError` with the reason instead. Where forcing would stop
+    the request from thinking (`disables_thinking`), a resolved forced choice falls back too, while an explicit
+    one is still sent.
     """
-    if unavailable_reason is None:
-        return True
     explicit_choice = (model_settings or {}).get('tool_choice')
     # `ToolOrOutput` and `[]` only resolve to a forced choice when the output type rules out direct output, so like
     # an output tool's forcing, they fall back rather than raising.
-    if explicit_choice == 'required' or (isinstance(explicit_choice, list) and explicit_choice):
-        raise UserError(
-            f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {unavailable_reason}'
-        )
-    return False
+    explicit_forcing = explicit_choice == 'required' or (isinstance(explicit_choice, list) and bool(explicit_choice))
+    if unavailable_reason is not None:
+        if explicit_forcing:
+            raise UserError(
+                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {unavailable_reason}'
+            )
+        return False
+    return explicit_forcing or not disables_thinking
