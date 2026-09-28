@@ -26,8 +26,6 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 from .._tool_calls import call_tools
 from .fake_e2b import FakeE2B
 
-pytestmark = pytest.mark.anyio
-
 
 def test_env_is_not_shown_in_repr() -> None:
     secret = 'sensitive-credential-value'
