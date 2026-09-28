@@ -111,6 +111,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          # Review events would otherwise check out the PR's merge ref, which
+          # doesn't exist while the PR has conflicts.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -164,9 +167,11 @@ jobs:
         run: sudo apt-get install -y bubblewrap
 
       # The action fetches the live `refs/pull/<n>/head`, which can move after
-      # the check above ran on HEAD_SHA. This hook rejects any local branch
-      # update to a different commit, so the action fails instead of running
-      # on code the check never saw.
+      # the check above ran on HEAD_SHA. This hook only lets local branches and
+      # a detached HEAD point at HEAD_SHA, so the action fails instead of
+      # running on code the check never saw. HEAD is checked too because the
+      # fork's branch name picks the ref the action fetches into, and a name
+      # like `tags/x` lands outside `refs/heads/`.
       - name: Pin PR checkout to the checked commit
         run: |
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected PR head SHA: $HEAD_SHA"; exit 1; }
@@ -175,12 +180,11 @@ jobs:
           #!/bin/sh
           [ "\$1" = prepared ] || exit 0
           while read -r old new ref; do
-            case "\$ref" in
-              refs/heads/*)
-                if [ "\$new" != "$HEAD_SHA" ]; then
-                  echo "::error::PR head changed after the @claude comment; comment again to run on the new code." >&2
-                  exit 1
-                fi
+            case "\$ref:\$new" in
+              refs/heads/*:$HEAD_SHA | HEAD:$HEAD_SHA | HEAD:ref:refs/heads/*) ;;
+              refs/heads/* | HEAD:*)
+                echo "::error::PR head changed after the @claude comment; comment again to run on the new code." >&2
+                exit 1
                 ;;
             esac
           done
