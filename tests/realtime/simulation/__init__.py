@@ -24,8 +24,8 @@ provider, against a simulated server over a fake socket:
   recorded WebSocket cassette (`test_conformance.py`, via `_cassette_replay.py`).
 - `_machine.py` and the `*Machine` classes: Hypothesis state machines that pick the steps, shrink a
   failure to a minimal trace, and report it as code you can paste into a test.
-- `_findings.py`: the violations current main is known to have, each tied to the PR or redesign phase
-  that fixes it.
+- `_findings.py`: the violations current main is known to have, each tied to the PR, or the structural
+  change, that fixes it.
 
 Running it
 ----------

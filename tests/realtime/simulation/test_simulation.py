@@ -175,6 +175,57 @@ def test_known_gemini_cut_off_tool_turn_ends_the_wait_early() -> None:
     reproduce('SIM-13', GeminiSimulation(), scenario)
 
 
+def async_gemini() -> GeminiSimulation:
+    """Gemini 2.5 native audio with asynchronous tool calls: the model keeps talking after a call."""
+    return GeminiSimulation(behavior=GeminiBehavior(async_tool_calls=True))
+
+
+@known('8760')
+def test_known_gemini_async_filler_recorded_after_the_result() -> None:
+    """S0: the model narrates after the call and finishes; the result then cuts in, and the model answers.
+
+    Expected: `[call, filler] {return} [answer]`. Recorded: `[call] {return} [filler] [answer]`.
+    """
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+
+    reproduce('8760', async_gemini(), scenario)
+
+
+@known('8760')
+def test_known_gemini_async_result_cuts_into_speech() -> None:
+    """S2: the result arrives while the model is still narrating; what it said before belongs to the call."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools()
+        sim.speak()
+        sim.finish_tool()
+        sim.settle()
+
+    reproduce('8760', async_gemini(), scenario)
+
+
+@known('SIM-11')
+def test_known_turn_heard_before_a_cancelled_reply_ended_filed_before_it() -> None:
+    """Server VAD hears the user start while a reply the app cancelled (after it called a tool) is still ending."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.interrupt(mode='cancel')
+        sim.call_tool()
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.settle()
+
+    reproduce('SIM-11', OpenAISimulation(), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -749,3 +800,86 @@ def test_scenario_live_drop_mid_reply() -> None:
         sim.drop()
 
     run_tolerant(LiveSimulation(), scenario)
+
+
+def test_baseline_gemini_async_user_turn_during_the_held_round() -> None:
+    """The user asks something else while an async tool runs, and the model answers it before the result.
+
+    #8760's N1a: the answer to the user must not join the calling response, and the user's turn goes after the
+    tool's return, not before the call.
+    """
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.call_tools()
+        sim.finish()
+        sim.send_audio()
+        sim.user_speaks(finished=True)
+        sim.speak()
+        sim.finish()
+
+    run_clean(async_gemini(), scenario)
+
+
+def test_baseline_gemini_async_user_turn_outlasts_the_hold() -> None:
+    """#8760's N1b: the tool outlasts the 5 s the session holds a user turn for; the turn still goes after the call."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.call_tools()
+        sim.finish()
+        sim.send_audio()
+        sim.user_speaks(finished=True)
+        sim.advance_time(6)
+
+    run_clean(async_gemini(), scenario)
+
+
+def test_baseline_gemini_async_typed_turn_during_the_held_round() -> None:
+    """#8760's N2: a typed turn while an async tool runs is recorded at once, and its wait returns with its reply."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.call_tools()
+        sim.finish()
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.speak()
+        sim.finish()
+
+    run_clean(async_gemini(), scenario)
+
+
+def test_scenario_gemini_async_parallel_calls() -> None:
+    """Two async calls in one message, with speech before, between, and after their results.
+
+    Accepted on #8760: speech between the two results goes after the second (each result must directly follow
+    its call), but what was said before the first result belongs to the calling response.
+    """
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools(count=2)
+        sim.speak()
+        sim.finish_tool()
+        sim.speak()
+
+    run_tolerant(async_gemini(), scenario)
+
+
+def test_scenario_openai_tool_retries_exhausted() -> None:
+    """A tool that asks for a retry twice in a row ends the session, as it ends a standard run."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool(outcome='retry')
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool(outcome='retry')
+
+    run_tolerant(OpenAISimulation(), scenario)

@@ -85,6 +85,8 @@ class ToolCallTruth:
     call_id: str
     response: str
     name: str
+    seq: int = 0
+    """When the server made the call."""
     output_received: bool = False
     cancelled_by_server: bool = False
     read: bool = False
@@ -118,6 +120,10 @@ class GroundTruth:
     """How many usage-bearing frames the client read, duplicates included."""
     repeated_terminals_read: int = 0
     """How many terminals the client read for a response it had already read the terminal of."""
+    speech_started: dict[str, int] = field(default_factory=dict[str, int])
+    """When server VAD heard each spoken user turn start, on the shared clock."""
+    word_seq: dict[str, int] = field(default_factory=dict[str, int])
+    """When the server generated each word a response said, on the shared clock."""
     merged_requests: int = 0
     """How many requests for a response the client folded into another one's single request."""
 

@@ -210,6 +210,7 @@ class LiveServer:
             )
         word = f'r{response.number}w{len(response.words) + 1}'
         response.words.append(word)
+        self.truth.word_seq[word] = self.truth.tick()
         start, end = self._timeline()
         self._emit(
             {

@@ -35,6 +35,9 @@ Checked at rest (`settle()`):
   return not directly after its call's response;
 - `history.order`: a user input and a response recorded in the opposite order to the one the server
   saw them in, or two responses out of order;
+- `history.tool_round_order`: something the model said in a response before the first of its tool
+  calls' results reached the server is recorded after those results (asynchronous tool calls, where
+  the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
 - `response.missing` / `response.truncated`: a response the server completed is missing from history,
   or recorded without all of what it said;
@@ -58,7 +61,7 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from pydantic_ai.exceptions import UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -94,6 +97,13 @@ _EXPECTED_CLIENT_ERRORS = (RealtimeError, UserError, UsageLimitExceeded, Simulat
 call, or iteration) the tool failure that ended the session."""
 
 _SEND_FAILED = 'Realtime connection failed while sending'
+
+
+def _expected_error(error: BaseException) -> bool:
+    # A tool that keeps asking for retries ends the session as it ends a standard run.
+    return isinstance(error, _EXPECTED_CLIENT_ERRORS) or (
+        isinstance(error, UnexpectedModelBehavior) and 'exceeded max retries' in str(error)
+    )
 
 
 def strict_from_environment() -> bool:
@@ -221,11 +231,11 @@ class Checker:
         unexpected = [
             (f'{operation.name} raised {operation.error!r}', {'operation': operation.name})
             for operation in judged
-            if operation.error is not None and not isinstance(operation.error, _EXPECTED_CLIENT_ERRORS)
+            if operation.error is not None and not _expected_error(operation.error)
         ]
         if (error := sim.consumer_error) is not None and not self._consumer_error_judged:
             self._consumer_error_judged = True
-            if not isinstance(error, _EXPECTED_CLIENT_ERRORS):
+            if not _expected_error(error):
                 unexpected.append((f'iterating the session raised {error!r}', {'operation': 'iterate'}))
         self.report('api.unexpected_error', unexpected)
 
@@ -412,6 +422,7 @@ class Checker:
         assert session is not None
         messages = session.all_messages()
         self._check_tool_pairing(messages)
+        self._check_tool_round_order(messages)
         self._check_order(messages)
         self._check_completeness(messages)
         self._check_usage(messages)
@@ -426,6 +437,35 @@ class Checker:
             # Also once the event stream has ended: `wait_for_reply()` must never outlive the session's ability to reply.
             self._check_sends_survived()
             self._check_wait_liveness()
+
+    def _check_tool_round_order(self, messages: list[ModelMessage]) -> None:
+        truth = self.sim.truth
+        first_return: dict[str, int] = {}
+        first_arrival: dict[str, int] = {}
+        for position, message in enumerate(messages):
+            if not isinstance(message, ModelRequest):
+                continue
+            for part in message.parts:
+                call = truth.tool_calls.get(part.tool_call_id) if isinstance(part, ToolReturnPart) else None
+                output = truth.input(call.call_id) if call is not None else None
+                if call is None or output is None or output.kind != 'tool_output':
+                    continue
+                first_return.setdefault(call.response, position)
+                first_arrival[call.response] = min(first_arrival.get(call.response, output.seq), output.seq)
+        violations: list[Violation] = [
+            (
+                f"{word!r} was said before the first result for {key}'s tool calls reached the server, "
+                f'but is recorded after it ({position} > {first_return[key]})',
+                {'response': key},
+            )
+            for position, message in enumerate(messages)
+            if isinstance(message, ModelResponse)
+            for key in first_return
+            if position > first_return[key]
+            for word in response_text(message).split()
+            if word in truth.responses[key].words and truth.word_seq[word] < first_arrival[key]
+        ]
+        self.report('history.tool_round_order', violations)
 
     def _check_tool_pairing(self, messages: list[ModelMessage]) -> None:
         calls = {

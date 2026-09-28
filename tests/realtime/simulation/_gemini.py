@@ -19,6 +19,11 @@ quite unlike the OpenAI protocol:
   `interaction_status=IN_PROGRESS` before calling the tool it was stalling for;
 - the user's speech interrupts the model (`interrupted`, then `turn_complete`) and cancels its pending
   tool calls (`tool_call_cancellation`);
+- with asynchronous (`NON_BLOCKING`) tool calls, the model keeps talking in the calling turn after the
+  `tool_call`, holds the turn open after `generation_complete`, and the batch's last result cuts in
+  (`INTERRUPT` scheduling: `interrupted`, then `turn_complete` with the turn's usage) before the model
+  answers it in a turn of its own (recorded: `test_async_tool_speech_stays_before_its_result`); the
+  user's speech then cuts off the model's speech without cancelling the calls;
 - the user's words stream as input transcript fragments, usually without an explicit end;
 - resumption handles arrive on the server's schedule (at turn start on 3.x, after a turn on 2.5); a
   resumed session knows only what it knew when that handle was issued, so a tool call made after it is
@@ -169,6 +174,16 @@ class GeminiBehavior:
     stalls_in_progress: bool = False
     """End a filler turn `IN_PROGRESS` before calling a tool (`gemini-3.8-live-extended-thinking`)."""
     input_transcription: bool = True
+    async_tool_calls: bool = False
+    """Run tool calls asynchronously (`google_async_tool_calls`): the model keeps talking after the call.
+
+    The extended-thinking model (`stalls_in_progress`) always runs them asynchronously, in the shape the
+    stall models: its filler ends before the call, and the answer follows the result.
+    """
+
+    @property
+    def talks_through_tool_calls(self) -> bool:
+        return self.async_tool_calls and not self.stalls_in_progress
 
     @property
     def model(self) -> str:
@@ -190,6 +205,17 @@ class _Turn:
     outputs: list[str] = field(default_factory=list[str])
     stalled: TruthResponse | None = None
     """A filler response the model ended `IN_PROGRESS`: held open for the tool call it was stalling for."""
+    generation_done: bool = False
+    """The model finished speaking (`generation_complete`) but holds the turn open for an async call's result."""
+
+
+@dataclass
+class _AsyncBatch:
+    """The calls of one asynchronous `tool_call` message, which the model answers once all their results are in."""
+
+    response: TruthResponse
+    awaiting: set[str]
+    outputs: list[str] = field(default_factory=list[str])
 
 
 @dataclass
@@ -201,6 +227,7 @@ class _ServerSession:
     """Inputs the model will answer on its own next (a typed turn, the user's speech, a batch of results)."""
     audio_ms: int = 0
     user_turn: str | None = None
+    async_batches: list[_AsyncBatch] = field(default_factory=list[_AsyncBatch])
 
 
 class GeminiServer:
@@ -292,6 +319,9 @@ class GeminiServer:
                 self.truth.add_input(call_id, 'tool_output').answer_lost = True
                 continue
             self.truth.add_input(call_id, 'tool_output')
+            if batch := next((b for b in session.async_batches if call_id in b.awaiting), None):
+                self._async_result(session, batch, call_id)
+                continue
             turn = session.turn
             if turn is None or call_id not in turn.awaiting:  # pragma: lax no cover (the user barged in first)
                 continue
@@ -303,6 +333,25 @@ class GeminiServer:
                     self._turn_complete(session, turn.responses[-1] if turn.responses else None)
                     session.turn = None
                 session.triggers.extend(turn.outputs)
+
+    def _async_result(self, session: _ServerSession, batch: _AsyncBatch, call_id: str) -> None:
+        batch.awaiting.discard(call_id)
+        batch.outputs.append(call_id)
+        if batch.awaiting:
+            return
+        session.async_batches.remove(batch)
+        if (turn := session.turn) is not None and turn.response is not None:
+            # The last result cuts into whatever the model is saying (or the calling turn it holds open).
+            response = turn.response
+            self._end(response, 'completed' if turn.generation_done else 'cancelled')
+            self._emit(
+                session,
+                gt.LiveServerMessage(server_content=gt.LiveServerContent(interrupted=True)),
+                response=response.key,
+            )
+            self._turn_complete(session, response)
+            session.turn = None
+        session.triggers.extend(batch.outputs)
 
     def on_client_read(self, socket: FakeGeminiSession, message: gt.LiveServerMessage) -> None:
         now = self.truth.tick()
@@ -343,7 +392,7 @@ class GeminiServer:
 
     def _active_response(self, session: _ServerSession) -> TruthResponse:
         turn = session.turn
-        if turn is not None and turn.response is not None and not turn.awaiting:
+        if turn is not None and turn.response is not None and not turn.awaiting and not turn.generation_done:
             return turn.response
         self._settle_stall(session)
         triggers, session.triggers = session.triggers, []
@@ -418,7 +467,7 @@ class GeminiServer:
             )
         response = turn.response
         if response is not None and response.status == 'in_progress':
-            self._end(response, 'cancelled')
+            self._end(response, 'completed' if turn.generation_done else 'cancelled')
         self._emit(
             session,
             gt.LiveServerMessage(server_content=gt.LiveServerContent(interrupted=True)),
@@ -433,7 +482,7 @@ class GeminiServer:
         session = self.session
         assert session is not None
         turn = session.turn
-        return turn is not None and turn.response is not None and not turn.awaiting
+        return turn is not None and turn.response is not None and not turn.awaiting and not turn.generation_done
 
     def speak(self, chunks: int = 1) -> None:
         session = self.session
@@ -456,6 +505,7 @@ class GeminiServer:
             response.audio_bytes += len(AUDIO_CHUNK)
         word = f'r{response.number}w{len(response.words) + 1}'
         response.words.append(word)
+        self.truth.word_seq[word] = self.truth.tick()
         self._emit(
             session,
             gt.LiveServerMessage(
@@ -483,10 +533,23 @@ class GeminiServer:
         for _ in range(count):
             call_id = self.truth.new_call_id()
             ids.append(call_id)
-            self.truth.tool_calls[call_id] = ToolCallTruth(call_id=call_id, response=response.key, name='lookup')
+            self.truth.tool_calls[call_id] = ToolCallTruth(
+                call_id=call_id, response=response.key, name='lookup', seq=self.truth.tick()
+            )
             response.tool_calls.append(call_id)
             session.known_calls.add(call_id)
             calls.append(gt.FunctionCall(id=call_id, name='lookup', args={}))
+        if self.behavior.talks_through_tool_calls:
+            # The model keeps talking in the same turn; the batch's last result cuts in when it arrives.
+            session.async_batches.append(_AsyncBatch(response=response, awaiting=set(ids)))
+            self._emit(
+                session,
+                gt.LiveServerMessage(tool_call=gt.LiveServerToolCall(function_calls=calls)),
+                response=response.key,
+                content=True,
+                calls=ids,
+            )
+            return ids
         # A tool call ends the response it was in: the answer is a response of its own, after the results.
         self._end(response, 'completed')
         assert session.turn is not None
@@ -519,6 +582,10 @@ class GeminiServer:
             # The exchange isn't over: the model is still working, and will call a tool next.
             self._turn_complete(session, response, in_progress=True)
             turn.stalled, turn.response = response, None
+            return
+        if any(batch.response is response for batch in session.async_batches):
+            # The turn stays open until the call's result arrives and cuts in.
+            turn.generation_done = True
             return
         self._end(response, 'completed')
         self._turn_complete(session, response)
@@ -595,7 +662,10 @@ class GeminiSimulation(Simulation):
         return GoogleRealtimeModel(self.behavior.model, provider=self._provider)
 
     def model_settings(self) -> RealtimeModelSettings:
-        settings: GoogleRealtimeModelSettings = {'google_input_transcription': self.behavior.input_transcription}
+        settings: GoogleRealtimeModelSettings = {
+            'google_input_transcription': self.behavior.input_transcription,
+            'google_async_tool_calls': self.behavior.async_tool_calls,
+        }
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
         return settings
 
@@ -691,6 +761,7 @@ class GeminiMachine(SessionMachine):  # pragma: lax no cover (driven only by ran
         handles_at_turn_start=st.booleans(),
         stalls_in_progress=st.booleans(),
         input_transcription=st.booleans(),
+        async_tool_calls=st.booleans(),
     )
 
     @staticmethod
@@ -711,6 +782,8 @@ class GeminiMachine(SessionMachine):  # pragma: lax no cover (driven only by ran
         session = self.gemini.server.session
         assert session is not None
         turn = session.turn
+        if turn is not None and turn.generation_done:
+            return False
         return (turn is not None and turn.response is not None and not turn.awaiting) or bool(session.triggers)
 
     def can_call_tools(self) -> bool:
@@ -726,6 +799,24 @@ class GeminiMachine(SessionMachine):  # pragma: lax no cover (driven only by ran
     @rule(count=st.integers(min_value=1, max_value=3), deliver=st.booleans(), ticks=TICKS)
     def call_tools(self, count: int, deliver: bool, ticks: int | None) -> None:
         self.run(lambda: self.gemini.call_tools(count=count, deliver=deliver, ticks=ticks))
+
+    @precondition(lambda self: self.alive() and self.can_call_tools())
+    @rule(
+        count=st.integers(min_value=1, max_value=2),
+        filler=st.integers(min_value=0, max_value=2),
+        deliver=st.booleans(),
+        ticks=TICKS,
+    )
+    def tool_round(self, count: int, filler: int, deliver: bool, ticks: int | None) -> None:
+        """Call tools and keep talking, as a model does (with asynchronous calls) while it waits on them."""
+
+        def round_() -> None:
+            self.gemini.call_tools(count=count, deliver=deliver, ticks=ticks)
+            for _ in range(filler):
+                if self.alive() and self.can_speak():
+                    self.gemini.speak(deliver=deliver, ticks=ticks)
+
+        self.run(round_)
 
     @precondition(lambda self: self.alive() and self.gemini.server.can_finish())
     @rule(in_progress=st.booleans(), deliver=st.booleans(), ticks=TICKS)

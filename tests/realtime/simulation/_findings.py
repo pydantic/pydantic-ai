@@ -1,4 +1,4 @@
-"""Known invariant violations on current main, each tied to the finding and the PR (or redesign phase) that tracks it.
+"""Known invariant violations on current main, each tied to the PR, or the structural change, that fixes it.
 
 A violation is matched against this registry by invariant code, provider, and a predicate over the
 simulation that recognizes the finding's trigger. A match is tolerated in the default exploration mode
@@ -31,7 +31,7 @@ class Finding:
     """The finding's reference in the stress reports and reviews."""
     title: str
     tracked_by: str
-    """The open PR, or the redesign phase, that fixes it."""
+    """The open PR that fixes it, or the structural change that would."""
     codes: frozenset[str]
     providers: frozenset[str]
     matches: Predicate
@@ -63,21 +63,21 @@ MERGED_REQUESTS_LEAK = Finding(
 
 
 def _tool_failed(sim: Simulation, violation: InvariantViolation) -> bool:
-    from pydantic_ai.exceptions import UsageLimitExceeded
+    from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
     from ._invariants import SimulatedToolError
 
-    # A tool that raised, or a tool result whose reservation ran into `request_limit`.
+    # A tool that raised or ran out of retries, or a tool result whose reservation ran into `request_limit`.
     return 'error' in sim.tools.settled.values() or isinstance(
-        sim.consumer_error, (SimulatedToolError, UsageLimitExceeded)
+        sim.consumer_error, (SimulatedToolError, UsageLimitExceeded, UnexpectedModelBehavior)
     )
 
 
 RAISING_TOOL_HANG = Finding(
     id='OR8',
     title=(
-        'a tool that raises (or whose result runs into `request_limit`) parks the error but leaves the exchange '
-        'open, so `wait_for_reply()` hangs while the session keeps running'
+        'a tool that raises or runs out of retries (or whose result runs into `request_limit`) parks the error but '
+        'leaves the exchange open, so `wait_for_reply()` hangs while the session keeps running'
     ),
     tracked_by='#8765',
     codes=frozenset({'wait.hang'}),
@@ -96,7 +96,7 @@ REFUSED_TOOL_RESULTS_REQUEST = Finding(
         'a response request for tool results that the provider refuses keeps its reply reservation (a refused request '
         'for a user turn releases it), so `wait_for_reply()` hangs'
     ),
-    tracked_by='the reply reservations (#8765, redesign P3); new, found by this simulator',
+    tracked_by='reply reservations resolved by the response that answers them (#8765); found by this simulator',
     codes=frozenset({'wait.hang'}),
     providers=OPENAI_PROTOCOL,
     matches=_tool_results_request_refused,
@@ -113,7 +113,7 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
         'a cancel that reaches the server after the response already finished still has the connection drop that '
         "response's content as stragglers: history records it empty, though the model said it and the provider kept it"
     ),
-    tracked_by='redesign P2 (a cancel targets a response id, and is a no-op once that response is done); new, found by this simulator',
+    tracked_by='per-response-id state: a cancel targets a response id, and is a no-op once that response is done; found by this simulator',
     codes=frozenset({'response.truncated', 'response.missing'}),
     providers=OPENAI_PROTOCOL,
     matches=_late_cancel,
@@ -122,7 +122,7 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
 ANCHORED_USER_TURNS = Finding(
     id='E',
     title='a user turn is inserted into already-recorded history where it started (snapshots are not prefixes of later ones)',
-    tracked_by='redesign P5 (history projected from an append-only log)',
+    tracked_by='history projected from an append-only event log, so snapshots are prefixes of later ones',
     codes=frozenset({'history.inserted'}),
     providers=ALL,
     matches=_inserted_user_speech,
@@ -134,12 +134,13 @@ REPEATED_TERMINAL = Finding(
         'a repeated or late `response.done` (and its usage) lands on whichever response the session is assembling: '
         'counted again, recorded as an empty response, or stamped onto the next response (8801 #1, #4, #7)'
     ),
-    tracked_by='#8801 (session state per response id); redesign P2 (the adapter reports one terminal per response)',
+    tracked_by='#8801 (per-response-id session state; adapters report one terminal per response)',
     codes=frozenset(
         {
             'codec.content_after_terminal',
             'codec.duplicate_terminal',
             'history.order',
+            'history.tool_round_order',
             'response.duplicated',
             'response.mixed',
             'response.truncated',
@@ -161,7 +162,7 @@ LOST_RESPONSE_RESERVATION = Finding(
         'a reply lost with a dropped connection keeps its reservation: the reconnect does not ask for it again (it '
         'had started, or the provider resumes without it) and the session does not settle it, so `wait_for_reply()` hangs'
     ),
-    tracked_by='redesign P3 (a reconnect resolves the obligations it lost, `InputLost`); new, found by this simulator',
+    tracked_by='a reconnect resolves the reply obligations its connection lost; found by this simulator',
     codes=frozenset({'wait.hang'}),
     providers=ALL,
     matches=lambda sim, violation: bool(sim.truth.connection_losses),
@@ -173,7 +174,7 @@ LOST_UNSTARTED_REQUEST = Finding(
         'a reconnect re-asks for the requests deferred behind a lost, not-yet-started response, but not for that '
         'response itself, so its reservation leaks and `wait_for_reply()` hangs'
     ),
-    tracked_by='redesign P4 (the outbox replays every unanswered request); new, found by this simulator',
+    tracked_by='an outbox that replays every unanswered request after a reconnect; found by this simulator',
     codes=frozenset({'wait.hang'}),
     providers=OPENAI_PROTOCOL,
     matches=lambda sim, violation: (
@@ -196,7 +197,7 @@ RECEIVE_LOOP_SEND_FAILURE = Finding(
         'a deferred `response.create` that the connection sends while handling a `response.done` fails on a dying '
         "socket, and the whole frame is dropped: that response's usage and terminal never reach the session"
     ),
-    tracked_by='redesign P4 (an ordered outbox: the receive loop never sends on the socket itself); new, found by this simulator',
+    tracked_by='an ordered outbox, so the receive loop never sends on the socket itself; found by this simulator',
     codes=frozenset({'usage.total', 'usage.attribution', 'response.missing', 'response.truncated', 'usage.requests'}),
     providers=OPENAI_PROTOCOL,
     matches=_receive_loop_send_failed,
@@ -223,7 +224,7 @@ SENT_BEFORE_REPLY_STARTED = Finding(
         'ahead of that reply, though the reply never saw it: the session learns a response exists only from its content'
     ),
     tracked_by=(
-        'redesign P2/P5 (an explicit `ResponseStarted`, and history ordered by causality); new, found by this simulator'
+        'an explicit response-started event from the adapters, and history ordered by causality; found by this simulator'
     ),
     codes=frozenset({'history.order'}),
     providers=ALL,
@@ -232,12 +233,20 @@ SENT_BEFORE_REPLY_STARTED = Finding(
 
 
 def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A spoken turn committed after a response ended, whose voiced audio started streaming before its content arrived."""
+    """A spoken turn committed after a response ended, which the user started before that response was over.
+
+    Either server VAD heard them start before it ended, or their voiced audio started streaming before any of its
+    content arrived.
+    """
     input_ = sim.truth.input(violation.context.get('input', ''))
     response = sim.truth.responses.get(violation.context.get('response', ''))
     if input_ is None or response is None or input_.kind != 'speech' or response.seq_end is None:
         return False
-    return input_.seq > response.seq_end and any(
+    if input_.seq <= response.seq_end:
+        return False
+    if (started := sim.truth.speech_started.get(input_.key)) is not None and started <= response.seq_end:
+        return True  # Server VAD heard the user start before the response ended.
+    return any(
         operation.name == 'send_audio' and (response.content_read is None or operation.issued < response.content_read)
         for operation in sim.operations
     )
@@ -246,13 +255,13 @@ def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool
 SPEAKING_ORDER = Finding(
     id='SIM-11',
     title=(
-        'a spoken turn whose voiced audio began streaming before a response said anything, but which the provider '
-        'committed after that response ended, is recorded before it (speaking order, since #8764), while the '
-        "provider's conversation has it after"
+        'a spoken turn the user started before a response was over (VAD heard them start, or their audio began '
+        'before the response said anything), but which the provider committed after that response ended, is '
+        "recorded before it (speaking order, since #8764), while the provider's conversation has it after"
     ),
     tracked_by=(
         'a design question, not necessarily a bug: which order history follows when the two differ '
-        '(redesign P5, history projected from an append-only log); new, found by this simulator'
+        '(history projected from an append-only event log would settle it); found by this simulator'
     ),
     codes=frozenset({'history.order'}),
     providers=ALL,
@@ -297,7 +306,7 @@ WAIT_BEFORE_REPLY_CONTENT = Finding(
         '`wait_for_reply()` returns at once while a response the provider started on its own (server VAD, a GPT-Live '
         'delegation) has produced no content yet: the session learns a response exists only from its content'
     ),
-    tracked_by='redesign P2/P3 (an explicit `ResponseStarted` opens the exchange); new, found by this simulator',
+    tracked_by='an explicit response-started event from the adapters opens the exchange; found by this simulator',
     codes=frozenset({'wait.early'}),
     providers=ALL,
     matches=_waited_before_reply_content,
@@ -321,7 +330,7 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
         "a response already under way when a turn was sent (server VAD, a GPT-Live delegation) takes that turn's "
         "reservation, so `wait_for_reply()` returns when it ends, before the turn's own reply"
     ),
-    tracked_by='redesign P3 (obligations resolved only by the response that `answers` them)',
+    tracked_by='reply obligations resolved only by the response that answers them',
     codes=frozenset({'wait.early'}),
     providers=ALL,
     matches=_reply_taken_by_earlier_response,
@@ -375,19 +384,30 @@ GEMINI_BATCH_RESERVATIONS = Finding(
     matches=_parallel_calls,
 )
 
-CUT_OFF_TOOL_TURN_COMPLETE = Finding(
+
+def _cut_off_by_the_input(sim: Simulation, violation: InvariantViolation) -> bool:
+    """The input the wait was owed a reply for cut off a model turn (or one the model hadn't started on yet)."""
+    input_ = sim.truth.input(violation.context.get('input', ''))
+    return input_ is not None and any(
+        response.status == 'cancelled' and response.seq_end is not None and response.seq_end > input_.seq
+        for response in sim.truth.responses.values()
+    )
+
+
+CUT_OFF_TURN_COMPLETE = Finding(
     id='SIM-13',
     title=(
-        'a typed turn that cuts off a model turn waiting on tool results (Gemini cancels the calls) gets its '
-        "`wait_for_reply()` ended by the cut-off turn's `turn_complete`, before its own reply"
+        'a typed turn that cuts off a model turn (one waiting on tool results, whose calls Gemini cancels, or one '
+        "the model hadn't started on yet) gets its `wait_for_reply()` ended by the cut-off turn's `turn_complete`, "
+        'before its own reply'
     ),
     tracked_by=(
-        'redesign P2/P3 (turn boundaries mapped to the exchange they close; obligations resolved only by their answer); '
-        'related to #8766; new, found by this simulator'
+        'turn boundaries mapped to the exchange they close, and obligations resolved only by their answer; '
+        'related to #8766; found by this simulator'
     ),
     codes=frozenset({'wait.early'}),
     providers=GEMINI,
-    matches=lambda sim, violation: any(call.cancelled_by_server for call in sim.truth.tool_calls.values()),
+    matches=_cut_off_by_the_input,
 )
 
 GEMINI_EARLY_TURN_COMPLETE = Finding(
@@ -400,6 +420,29 @@ GEMINI_EARLY_TURN_COMPLETE = Finding(
     codes=frozenset({'wait.early', 'wait.hang'}),
     providers=GEMINI,
     matches=lambda sim, violation: _gemini_behavior(sim, 'closes_tool_turn_separately'),
+)
+
+
+def _spoke_after_calling(sim: Simulation, violation: InvariantViolation) -> bool:
+    """The model kept talking after an asynchronous tool call it made (before or after the result came back)."""
+    truth = sim.truth
+    return _gemini_behavior(sim, 'talks_through_tool_calls') and any(
+        response.tool_calls
+        and any(truth.word_seq[word] > truth.tool_calls[response.tool_calls[0]].seq for word in response.words)
+        for response in truth.responses.values()
+    )
+
+
+GEMINI_ASYNC_TOOL_ROUND = Finding(
+    id='8760',
+    title=(
+        'with asynchronous (`NON_BLOCKING`) Gemini tool calls, what the model says after the call, in the same turn, '
+        "is recorded as a response of its own after the tool's result, as if it had spoken with the result in hand"
+    ),
+    tracked_by='#8760 (parked: per-response-id state, so a response the session already recorded can be continued)',
+    codes=frozenset({'response.duplicated', 'history.tool_round_order'}),
+    providers=GEMINI,
+    matches=_spoke_after_calling,
 )
 
 GEMINI_RESUMED_SESSION_FORGETS_CALLS = Finding(
@@ -422,7 +465,7 @@ LIVE_BATCH_RESERVATIONS = Finding(
         'a GPT-Live delegation answers its parallel tool calls once, but the session reserves a reply per result, '
         'so `wait_for_reply()` hangs'
     ),
-    tracked_by='#8765 does not cover GPT-Live (it predates #8390); redesign P3 (a reply resolves the obligations it answers); new, found by this simulator',
+    tracked_by='reply obligations resolved by the reply that answers them (#8765 does not cover GPT-Live, which it predates); found by this simulator',
     codes=frozenset({'wait.hang'}),
     providers=frozenset({'gpt-live'}),
     matches=_parallel_calls,
@@ -450,7 +493,7 @@ LIVE_QUEUED_TEXT_RESERVATIONS = Finding(
         'GPT-Live answers text turns sent before it speaks with one reply (text is context on its timeline), but each '
         'keeps a reservation, so `wait_for_reply()` hangs (simulated behavior; not yet confirmed live)'
     ),
-    tracked_by='redesign P3 (a reply resolves the obligations it answers); new, found by this simulator',
+    tracked_by='reply obligations resolved by the reply that answers them; found by this simulator',
     codes=frozenset({'wait.hang'}),
     providers=frozenset({'gpt-live'}),
     matches=_answered_together,
@@ -462,7 +505,7 @@ LIVE_ABANDONED_CALL_RESERVATIONS = Finding(
         "when a GPT-Live delegation's backend gives up, the results of the calls it had asked for are dropped by the "
         'connection, but the session still reserved a reply for each, so `wait_for_reply()` hangs'
     ),
-    tracked_by='redesign P2/P3 (the adapter reports the obligations it voids); new, found by this simulator',
+    tracked_by='adapters report the reply obligations a provider voids; found by this simulator',
     codes=frozenset({'wait.hang'}),
     providers=frozenset({'gpt-live'}),
     matches=lambda sim, violation: getattr(getattr(sim, 'server', None), 'backends_failed', 0) > 0,
@@ -482,7 +525,7 @@ LIVE_RAW_CLOSE_ERROR = Finding(
         'an abnormal close of a GPT-Live connection escapes as a raw `websockets.ConnectionClosedError` (from iterating '
         'the session and from the next send) instead of `RealtimeError`: the connection only handles a clean close'
     ),
-    tracked_by='an adapter-local fix in `OpenAILiveConnection.__aiter__`; new, found by this simulator',
+    tracked_by='an adapter-local fix in `OpenAILiveConnection.__aiter__`; found by this simulator',
     codes=frozenset({'api.unexpected_error'}),
     providers=frozenset({'gpt-live'}),
     matches=_raw_transport_error,
@@ -507,10 +550,11 @@ KNOWN_FINDINGS.extend(
         LIVE_QUEUED_TEXT_RESERVATIONS,
         LIVE_RAW_CLOSE_ERROR,
         LIVE_ABANDONED_CALL_RESERVATIONS,
+        GEMINI_ASYNC_TOOL_ROUND,
         GEMINI_SPLIT_PARALLEL_CALLS,
         GEMINI_BATCH_RESERVATIONS,
         GEMINI_EARLY_TURN_COMPLETE,
-        CUT_OFF_TOOL_TURN_COMPLETE,
+        CUT_OFF_TURN_COMPLETE,
         GEMINI_RESUMED_SESSION_FORGETS_CALLS,
         # The general reservation leaks last: a more specific finding explains a hang better.
         MERGED_REQUESTS_LEAK,

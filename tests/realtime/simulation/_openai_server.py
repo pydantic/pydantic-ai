@@ -573,6 +573,7 @@ class OpenAIServer:
             session.item_audio_ms[active.message_item] = active.audio_ms
         word = f'r{truth.number}w{len(truth.words) + 1}'
         truth.words.append(word)
+        self.truth.word_seq[word] = self.truth.tick()
         active.message_words.append(word)
         item['content'][0]['transcript'] = ' '.join(active.message_words)
         self._emit(
@@ -652,6 +653,7 @@ class OpenAIServer:
         assert session is not None and session.server_vad and session.speaking is None
         key = self.truth.new_user_turn()
         session.speaking = key
+        self.truth.speech_started[key] = self.truth.tick()
         self._emit(
             session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
         )
