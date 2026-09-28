@@ -832,6 +832,15 @@ async def terminate_sandbox(sandbox_id: str) -> None:
         return
     except (modal.exception.AuthError, modal.exception.PermissionDeniedError) as error:
         raise _auth_error(error) from error
+    except modal.exception.InvalidError as error:
+        # Modal answers a malformed ID with a plain `InvalidError`, not `NotFoundError`; its
+        # subclasses (such as `ConflictError`) mean something else and propagate unchanged.
+        if type(error) is not modal.exception.InvalidError:
+            raise
+        raise WorkspaceUnavailableError(
+            f'Modal does not recognize {sandbox_id!r} as a sandbox ID, so there is no sandbox to terminate. '
+            'Pass the ref of a sandbox this provider created or attached to.'
+        ) from error
 
 
 def _unavailable_message(sandbox_id: str) -> str:

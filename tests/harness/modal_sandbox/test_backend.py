@@ -90,6 +90,26 @@ async def test_destroy_twice_returns_quietly(fake_modal: FakeModal) -> None:
     await provider.destroy(ref)
 
 
+async def test_destroy_names_a_malformed_id(fake_modal: FakeModal) -> None:
+    """Modal answers a malformed ID with `InvalidError`; the error names the ID instead of leaking the SDK's."""
+    error = fake_modal.exception('InvalidError')('"sb-bad" is not a valid sandbox ID')
+    fake_modal.attach_error = error
+    with pytest.raises(WorkspaceUnavailableError) as exc_info:
+        await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-bad'))
+    assert str(exc_info.value) == (
+        "Modal does not recognize 'sb-bad' as a sandbox ID, so there is no sandbox to terminate. "
+        'Pass the ref of a sandbox this provider created or attached to.'
+    )
+    assert exc_info.value.__cause__ is error
+
+
+async def test_destroy_keeps_a_conflict_unchanged(fake_modal: FakeModal) -> None:
+    """`ConflictError` subclasses `InvalidError` but is not a malformed ID, so it propagates as is."""
+    fake_modal.attach_error = fake_modal.exception('ConflictError')('busy')
+    with pytest.raises(fake_modal.exception('ConflictError')):
+        await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-owned'))
+
+
 @pytest.mark.parametrize(('name', 'expected'), [('AuthError', WorkspaceUnavailableError), ('ConnectionError', None)])
 async def test_destroy_maps_rejected_credentials_and_keeps_other_failures(
     fake_modal: FakeModal, name: str, expected: type[Exception] | None
