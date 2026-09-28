@@ -79,11 +79,6 @@ def _unique(prefix: str) -> str:
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def session() -> AsyncIterator[ModalSandboxSession]:
     """One live owned sandbox shared by exec and filesystem tests.
 

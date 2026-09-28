@@ -22,11 +22,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.status import Status, StatusLine
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_screen_is_free_between_prompts_and_bound_during_one() -> None:
     log: list[str] = []
     screen = Screen()

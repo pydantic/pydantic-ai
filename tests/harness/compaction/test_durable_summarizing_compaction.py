@@ -24,11 +24,6 @@ pytestmark = [pytest.mark.xdist_group(name='harness-dbos')]
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_summarizing_compaction',

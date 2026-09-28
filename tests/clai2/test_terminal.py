@@ -31,11 +31,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_existing_handler_and_structured_output() -> None:
     existing: list[AgentStreamEvent] = []
     observed: list[AgentStreamEvent] = []

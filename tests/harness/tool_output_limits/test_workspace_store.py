@@ -32,11 +32,6 @@ from pydantic_ai_harness.tool_output_limits import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def _returns(messages: Sequence[ModelMessage], tool_name: str) -> list[ToolReturnPart]:
     return [
         part

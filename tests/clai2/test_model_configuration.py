@@ -23,11 +23,6 @@ from pydantic_clai2.model_settings import ModelSettingsForm, model_defaults, mod
 from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize(
     ('model', 'expected', 'absent'),
     [

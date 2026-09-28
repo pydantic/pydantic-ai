@@ -13,11 +13,6 @@ from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, 
 from pydantic_clai2 import StreamRenderer
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_shell_header_includes_argument_once() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)

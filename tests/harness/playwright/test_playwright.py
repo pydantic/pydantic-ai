@@ -56,11 +56,6 @@ _STORAGE_STATE: StorageState = {'cookies': [{'name': 'session', 'value': 'abc', 
 _HISTORY_RESPONSE = object()
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 # --- Doubles for the Playwright API surface ---------------------------------
 
 

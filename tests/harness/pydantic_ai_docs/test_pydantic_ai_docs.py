@@ -39,12 +39,6 @@ async def _call_docs_tool(
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
-@pytest.fixture
 def workspace(tmp_path: Path) -> Workspace:
     return Workspace(LocalWorkspaceBackend(working_dir=tmp_path))
 
