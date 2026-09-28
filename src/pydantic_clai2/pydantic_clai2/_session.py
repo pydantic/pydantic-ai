@@ -14,7 +14,13 @@ from anyio import get_cancelled_exc_class, move_on_after
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace, WrapperCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentCapability,
+    DynamicCapability,
+    LocalWorkspace,
+    WrapperCapability,
+)
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
@@ -39,7 +45,8 @@ def _supports_local_workspace() -> bool:
 def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]]) -> bool:
     """Whether a plugin, such as a sandbox, supplies the run's workspace, so clai adds no `LocalWorkspace`.
 
-    A plugin counts when it has a leaf that overrides `get_workspace` and is loaded up front.
+    A plugin counts when it has a leaf, loaded up front, that overrides `get_workspace` or is a
+    capability function, whose capability is known only once the run starts.
     """
     leaves: list[AbstractCapability[DepsT]] = []
     for plugin in plugins:
@@ -59,7 +66,8 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT]) -> bool:
             # A wrapped tree's leaves are visited on their own; only a lone wrapped capability hides behind its wrapper.
             return False
         leaf = leaf.wrapped
-    return type(leaf).get_workspace is not AbstractCapability.get_workspace
+    # A capability function's capability, and so its workspace, is known only once the run starts.
+    return isinstance(leaf, DynamicCapability) or type(leaf).get_workspace is not AbstractCapability.get_workspace
 
 
 def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
