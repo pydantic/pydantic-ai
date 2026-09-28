@@ -176,6 +176,12 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 
 ## Durable execution
 
+Install the `temporal` extra too:
+
+```bash
+pip/uv-add "pydantic-ai-harness[e2b,anthropic,temporal]"
+```
+
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.
 
 ```python

@@ -97,6 +97,7 @@ def test_e2b_durable_example_is_module_level_and_runnable() -> None:
         assert 'Coder()' in source
         assert 'PydanticAIPlugin()' in source
         assert 'workflows=[' in source
+        assert 'pydantic-ai-harness[e2b,anthropic,temporal]' in section.split('```python', 1)[0]
 
 
 _TEMPORAL_PAGE = """
