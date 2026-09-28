@@ -521,8 +521,9 @@ class TestDeviceAuth:
         handle = logfire.handle
 
         def log_out_first(request: httpx.Request) -> httpx.Response:
-            if b'grant_type=refresh_token' in request.content:
-                assert forget()
+            # The expired token is refreshed before anything else is sent.
+            assert b'grant_type=refresh_token' in request.content
+            assert forget()
             return handle(request)
 
         logfire.handle = log_out_first

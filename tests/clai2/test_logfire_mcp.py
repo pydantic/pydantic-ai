@@ -96,7 +96,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Record sign-in links instead of opening a browser."""
     links: list[str] = []
 
-    def open_link(url: str) -> bool:
+    def open_link(url: str) -> bool:  # pragma: no cover - a safety net; tests here stub the sign-in before a link opens
         links.append(url)
         return True
 
