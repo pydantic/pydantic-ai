@@ -25,6 +25,9 @@ _SEPARATOR = '--\n'
 _MAX_RECORD_BYTES = 1 << 20
 """Longest record kept while waiting for its terminator; `rg`'s own `--max-columns` keeps lines far shorter."""
 
+_PREPARE_BATCH = 500
+"""Records handed to `prepare` at once."""
+
 _MAX_OUTPUT_BYTES = 8 << 20
 """Bytes of `rg` output brought back from the workspace; a search that prints more is reported as truncated."""
 
@@ -123,15 +126,14 @@ async def run_ripgrep(
         # Anything left is a record without its terminator: cut off by the output cap, or one
         # too long to keep, which a well-formed `rg` listing never prints.
         truncated = output_cut or len(output) - start > _MAX_RECORD_BYTES
-    if prepare is not None:
-        await prepare(records)
-    for record in records:
-        kept = accept(record)
-        if kept is not None:
-            if len(results) >= limit:
-                truncated = True
-                break
-            results.append(kept)
+    # Prepared a batch at a time, so a capped search stops preparing once it has enough.
+    for offset in range(0, len(records), _PREPARE_BATCH):
+        batch = records[offset : offset + _PREPARE_BATCH]
+        if prepare is not None:
+            await prepare(batch)
+        if not _collect(batch, accept, results, limit):
+            truncated = True
+            break
     # `rg` exits 2 when a path could not be read but still searches the rest, so that is a
     # partial result; any other error line (an invalid pattern, say) fails the call.
     errors = [line for line in detail.split('\n') if line]
@@ -141,6 +143,17 @@ async def run_ripgrep(
     if not truncated and not output_cut and status not in ('0', '1') and not partial:
         raise ModelRetry(f'ripgrep failed: {detail or f"exit code {status}"}')
     return results, truncated, unreadable
+
+
+def _collect(batch: list[Record], accept: Callable[[Record], _T | None], results: list[_T], limit: int) -> bool:
+    """Append what `accept` keeps from `batch` to `results`; `False` once one more than `limit` was kept."""
+    for record in batch:
+        kept = accept(record)
+        if kept is not None:
+            if len(results) >= limit:
+                return False
+            results.append(kept)
+    return True
 
 
 def _record(line: str, *, listing: bool) -> Record:
