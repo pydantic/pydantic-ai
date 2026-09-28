@@ -126,7 +126,11 @@ def test_undecodable_body_keeps_its_content_encoding():
 
 def test_smart_characters_are_normalized():
     response = before_record_response(
-        _response(body='{"text": "“quoted” — it’s…"}'.encode(), **{'content-type': 'application/json'})
+        # Escaped so the `fix-smartquotes` pre-commit hook leaves the fixture alone.
+        _response(
+            body='{"text": "\u201cquoted\u201d \u2014 it\u2019s\u2026"}'.encode(),
+            **{'content-type': 'application/json'},
+        )
     )
     assert response.body == snapshot(b'{"text": "\\"quoted\\" -- it\'s..."}')
 
