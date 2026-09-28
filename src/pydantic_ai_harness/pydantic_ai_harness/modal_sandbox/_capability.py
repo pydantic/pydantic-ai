@@ -88,7 +88,6 @@ _WORKSPACE_TOOL_NAMES = frozenset(
 )
 
 
-# The previous `ModalSandbox` terminated the sandbox it created when the run ended; this one does not.
 class ModalSandboxNoToolsWarning(UserWarning):
     """Warned once per `ModalSandbox` when a run has no `Shell` or `FileSystem` tool to use the sandbox.
 
@@ -144,9 +143,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     The capability registers no tools. Pair it with `Coder`, or with `Shell` and `FileSystem`,
     which run their tools in the workspace, or write tools of your own that use it. Shell
-    commands run under `sh -c` in the sandbox's shell environment. Constructor
-    arguments of the previous `ModalSandbox`, which bundled its own tools, are deprecated and
-    ignored with a warning that says how to express each one now; `sandbox_id` still attaches.
+    commands run under `sh -c` in the sandbox's shell environment.
     """
 
     image: str | modal.Image | None = None
