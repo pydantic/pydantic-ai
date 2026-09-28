@@ -68,7 +68,7 @@ All changes need to:
 - update/add all relevant documentation, following the existing voice and patterns
 - update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), while repository workflow skills live under [.claude/skills/](.claude/skills/)
 
-When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged. The "AI generated code" checkbox should always be checked manually by the user in the UI, not by the agent.
+When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged.
 
 PR titles feed directly into the release changelog. Write one as an imperative sentence naming the change — no `fix:` / `docs:` / `chore:` prefix, which belongs on the commit subject and not on the title — and wrap every code identifier (class names, keyword arguments, module paths, CLI flags, env vars, file paths) in backticks. Check the convention against merged PRs rather than commit subjects, which follow a different one: `gh pr list --state merged --limit 20`.
 
