@@ -348,14 +348,23 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # Limit simultaneous SDK requests without making large link-heavy listings serial.
             limit = anyio.Semaphore(8)
             results: list[FileEntry | None] = [None] * len(entries)
+            errors: list[Exception] = []
 
             async def resolve(index: int, entry: modal.types.FileInfo) -> None:
                 async with limit:
-                    results[index] = await _file_entry(self, entry, posixpath.join(path, entry.name))
+                    try:
+                        results[index] = await _file_entry(self, entry, posixpath.join(path, entry.name))
+                    except Exception as error:
+                        # Raised below, outside the task group, so error mapping sees the SDK
+                        # error rather than an ExceptionGroup.
+                        errors.append(error)
+                        group.cancel_scope.cancel()
 
             async with anyio.create_task_group() as group:
                 for index, entry in enumerate(entries):
                     group.start_soon(resolve, index, entry)
+            if errors:
+                raise errors[0]
             return [result for result in results if result is not None]
 
     async def make_dir(self, path: str) -> None:

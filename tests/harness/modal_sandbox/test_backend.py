@@ -801,6 +801,21 @@ class TestFilesystem:
             'relative': (False, 5),
         }
 
+    async def test_list_dir_raises_a_link_target_failure_unwrapped(self, fake_modal: FakeModal, tmp_path: Path) -> None:
+        # Link targets resolve concurrently; a failure must reach error mapping, not an ExceptionGroup.
+        fake_modal.host_root = tmp_path
+        (tmp_path / 'data.txt').write_bytes(b'data')
+        (tmp_path / 'link').symlink_to('data.txt')
+        backend = await started()
+        sandbox = fake_modal.sandboxes[0]
+
+        async def denied_stat(path: str) -> FileInfo:
+            raise fake_modal.exception('SandboxFilesystemPermissionError')(f'Permission denied: {path}')
+
+        sandbox.filesystem.stat.aio = denied_stat
+        with pytest.raises(PermissionError):
+            await backend.list_dir(str(tmp_path))
+
     async def test_parent_and_relative_leaf_symlink_write(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'a' / 'sub').mkdir(parents=True)
