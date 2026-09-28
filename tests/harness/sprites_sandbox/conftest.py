@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import anyio.to_thread
 import pytest
 
 _HAS_SPRITES = importlib.util.find_spec('sprites') is not None
@@ -81,10 +82,11 @@ if _HAS_SPRITES:  # pragma: no branch - the fixture requires the SDK-backed fake
         monkeypatch.setattr(AsyncSpritesClient, 'destroy_sprite', destroy)
 
         async def fs_stat(path: AsyncSpritePath) -> FileStat:
-            return await transport.fs_stat(path)
+            # Host I/O stands in for the network.
+            return await anyio.to_thread.run_sync(transport.fs_stat, path)
 
         async def fs_write(path: AsyncSpritePath, data: bytes, mode: int = 0o644, mkdir_parents: bool = True) -> None:
-            await transport.fs_write(path, data, mode)
+            await anyio.to_thread.run_sync(transport.fs_write, path, data, mode)
 
         monkeypatch.setattr(AsyncSpritePath, 'stat', fs_stat)
         monkeypatch.setattr(AsyncSpritePath, 'write_bytes', fs_write)

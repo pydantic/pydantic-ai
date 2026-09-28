@@ -30,11 +30,9 @@ import os
 import signal
 import subprocess
 import threading
-from collections.abc import Callable, Coroutine
 from datetime import datetime
-from functools import wraps
 from pathlib import Path
-from typing import IO, ParamSpec, TypeVar
+from typing import IO
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import anyio
@@ -48,16 +46,6 @@ from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
 _STDOUT, _EXIT, _STDIN_EOF = 1, 3, 4
-_P = ParamSpec('_P')
-_T = TypeVar('_T')
-
-
-def _host_io(fn: Callable[_P, Coroutine[object, object, _T]]) -> Callable[_P, Coroutine[object, object, _T]]:
-    @wraps(fn)
-    async def call(*args: _P.args, **kwargs: _P.kwargs) -> _T:
-        return await anyio.to_thread.run_sync(lambda: anyio.run(lambda: fn(*args, **kwargs)))
-
-    return call
 
 
 class FakeSocketTransport:
@@ -266,8 +254,7 @@ class SpriteTransport:
             raise FileNotFoundError_('fs', str(path))
         return Path(str(path))
 
-    @_host_io
-    async def fs_stat(self, path: AsyncSpritePath) -> FileStat:
+    def fs_stat(self, path: AsyncSpritePath) -> FileStat:
         target = self._fs_path(path)
         # The API lists a directory's entries and the SDK reports the first; the fake keeps that.
         entries = sorted(target.iterdir()) if target.is_dir() else [target] if target.exists() else []
@@ -284,8 +271,7 @@ class SpriteTransport:
             is_dir=entry.is_dir(),
         )
 
-    @_host_io
-    async def fs_write(self, path: AsyncSpritePath, data: bytes, mode: int) -> None:
+    def fs_write(self, path: AsyncSpritePath, data: bytes, mode: int) -> None:
         target = self._fs_path(path)
         if target.is_dir():
             raise IsADirectoryError_('write', str(path))

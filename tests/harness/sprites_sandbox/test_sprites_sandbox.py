@@ -758,7 +758,7 @@ class TestSpritesSandbox:
     async def test_filesystem_api_errors_are_mapped_or_propagate(
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, failure: Exception, expected: type[Exception]
     ) -> None:
-        async def fail(*args: object) -> None:
+        def fail(*args: object) -> None:
             raise failure
 
         monkeypatch.setattr(transport, 'fs_write', fail)
