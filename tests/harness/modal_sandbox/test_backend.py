@@ -723,6 +723,28 @@ class TestCreate:
         with pytest.raises(TimeoutError, match='image build or pull may still be running'):
             await ModalSandboxBackend().get_sandbox()
 
+    @pytest.mark.parametrize('branch', ['deadline', 'error'])
+    async def test_a_stalled_recovery_lookup_still_ends_creation(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch, branch: str
+    ) -> None:
+        class _StalledLookup:
+            async def aio(self, *args: Any, **kwargs: Any) -> Any:
+                await anyio.sleep_forever()
+
+        monkeypatch.setattr(fake_modal.module.Sandbox, 'from_name', _StalledLookup())
+        monkeypatch.setattr('pydantic_ai_harness.modal_sandbox._backend._RECOVER_CREATE_TIMEOUT', 0.01)
+        if branch == 'deadline':
+            fake_modal.create_gate = anyio.Event()
+            fake_modal.create_before_gate = True
+            monkeypatch.setattr('pydantic_ai_harness.modal_sandbox._backend._CREATE_TIMEOUT', 0.01)
+            expected = pytest.raises(TimeoutError, match='did not complete within')
+        else:
+            fake_modal.create_reply_error = fake_modal.exception('ConnectionError')('reply lost')
+            expected = pytest.raises(fake_modal.exception('ConnectionError'), match='reply lost')
+        # Hang guard only: without a recovery bound the lookup never returns.
+        with anyio.fail_after(5), expected:
+            await ModalSandboxBackend().get_sandbox()
+
     async def test_image_build_error_is_unavailable(self, fake_modal: FakeModal) -> None:
         fake_modal.create_error = fake_modal.exception('ImageBuildError')('bad image')
         with pytest.raises(WorkspaceUnavailableError, match='Could not start Modal sandbox: bad image'):

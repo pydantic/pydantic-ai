@@ -77,6 +77,9 @@ _CREDENTIAL_HINT = 'Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token 
 
 # Bound the workspace-create RPCs so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 600
+# Bound the name lookup that recovers a create whose reply was lost, so a stalled control
+# plane still ends acquisition with the original create failure.
+_RECOVER_CREATE_TIMEOUT = 30
 
 
 _INTERNAL_EXEC_TIMEOUT = 10
@@ -487,8 +490,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         import modal
 
         try:
-            sandbox = await modal.Sandbox.from_name.aio(self._app_name, name)
-            return sandbox if await sandbox.poll.aio() is None else None
+            with anyio.move_on_after(_RECOVER_CREATE_TIMEOUT):
+                sandbox = await modal.Sandbox.from_name.aio(self._app_name, name)
+                return sandbox if await sandbox.poll.aio() is None else None
+            return None
         except modal.exception.NotFoundError:
             return None
         except Exception:
