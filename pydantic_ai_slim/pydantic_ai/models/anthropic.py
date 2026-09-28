@@ -646,18 +646,26 @@ def _effective_thinking(
     return OMIT if isinstance(thinking, Omit) else dict(thinking)
 
 
-_DEFAULT_MAX_TOKENS = 4096
+_DEFAULT_MAX_TOKENS = 16384
+"""The `max_tokens` sent when the request doesn't set one.
+
+Anthropic requires `max_tokens`. This stays under the SDK's limit for non-streaming requests (about 21,000 tokens),
+and fits the maximum output of every Claude model since Opus 4.1 (32,000).
+"""
+
+_MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
+"""The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
 
 
 def _default_max_tokens(thinking: dict[str, object] | Omit) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
     Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose
-    `max_tokens` isn't greater than the budget, so the budget is added on top of the default.
+    `max_tokens` isn't greater than the budget, so a large budget raises the default to leave room for the answer.
     """
     wire_thinking: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
     budget = wire_thinking.get('budget_tokens') if wire_thinking.get('type') == 'enabled' else None
-    return _DEFAULT_MAX_TOKENS + (budget if isinstance(budget, int) else 0)
+    return max(_DEFAULT_MAX_TOKENS, (budget if isinstance(budget, int) else 0) + _MIN_TOKENS_AFTER_THINKING_BUDGET)
 
 
 def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:

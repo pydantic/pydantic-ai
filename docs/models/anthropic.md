@@ -110,6 +110,12 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+### Maximum output tokens
+
+Anthropic requires [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] on every request. When you don't set it, Pydantic AI sends 16384, raised to leave 4096 tokens beyond an [extended thinking](../capabilities/thinking.md#anthropic) budget. Thinking counts toward `max_tokens`, including the adaptive thinking that Claude Opus 5 and later, Claude Sonnet 5, and the Claude Fable models do by default. A response cut off at the limit has a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'length'`; set `max_tokens` to allow longer responses, up to the model's maximum output.
+
+With the default timeout, a `max_tokens` above about 21,000 tokens makes the Anthropic SDK require streaming, so Pydantic AI streams such a request behind the scenes even when you call [`run()`][pydantic_ai.agent.AbstractAgent.run].
+
 ### Service tier
 
 Anthropic supports controlling the [service tier](https://platform.claude.com/docs/en/api/service-tiers) to manage latency and throughput.

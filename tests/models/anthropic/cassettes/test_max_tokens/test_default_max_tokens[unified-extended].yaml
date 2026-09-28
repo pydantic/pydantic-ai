@@ -42,7 +42,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-15ce42c0158074602e15d890f2ed1685-e8b9c8402f62eb79-01
+      - 00-2158b1c3c37baca2acbd289c543794f0-d7d5fd7cefcb20ed-01
       transfer-encoding:
       - chunked
       vary:
@@ -51,20 +51,20 @@ interactions:
       type: json
       content:
         model: claude-sonnet-4-5-20250929
-        id: msg_011CfWdh1Dgmcp21XU6SPkZW
+        id: msg_011CfWffwtUHwhmZdc9D6NaK
         type: message
         role: assistant
         content:
         - type: thinking
           thinking: |-
             17 * 23 = ?
-
+            
             Let me calculate this step by step:
             17 * 23 = 17 * 20 + 17 * 3
             = 340 + 51
             = 391
           signature: >-
-            EtoCCpsBCBIYAipAKyOmBAWUzNn85CboHQZRLnL7lFQtlFc2FBHxfTj4gpu53ddTCtRtaYPr7UExkR8hScrfgZAbwPE6oPL8+DFMADIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBzdbr1QYSDPmLsDgAhAmWH0K6axoMLWbYBsQI3Qwq15paIjAVV49bS3MWRk+C6khFN9xqDjY9sd7LgUMc/yveQR9i3NCXHsTm8lUF8/4pCR0D1EIqbEB227zddF8FDhv8ZtqCJW2Dr6qvj3geIe5us3FFXte64PlV865Ydzwe3pf0wGA6JUsrP16upId2eihKjd96s4U/EoNMK++V2C4oG3ZXUq16q/PuwmrVtG47VMmvL3cuUhJzVgE2ZgngH/ynBRgB
+            EtoCCpsBCBIYAipAKyOmBAWUzNn85CboHQZRLnL7lFQtlFc2FBHxfTj4gpu53ddTCtRtaYPr7UExkR8hScrfgZAbwPE6oPL8+DFMADIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB4+Lr1QYSDFd4oGfPVbTdkAH4bhoMkvbnPviu1pq2Y3+6IjDd+4bApk3ezoJSVZYkcFO4SQBDh3noq3Q2BHoDV62cc4vu37yr/9x9vba4+b6vrSAqbI89bqcWZMEKzoOpWh1JNlwqeSWFq/afIZWVYh6MHBCc057dSxW+CpLgxEOCsLNVe+7zf85SOht1c19ZpqDJYWzc4VCsUphAKNSjDld1gNl2H+Htht0hC4RTTPAMo5iwBU0c22DoHkdcJ8NfZhgB
         - type: text
           text: "391"
         container: null
@@ -84,4 +84,4 @@ interactions:
           service_tier: standard
           inference_geo: not_available
         diagnostics: null
-  recorded_at: 2026-09-28T22:33:49.153011+00:00
+  recorded_at: 2026-09-28T22:59:47.933451+00:00

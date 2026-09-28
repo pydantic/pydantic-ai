@@ -120,7 +120,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI sends the budget plus its usual default of 4096 for the answer.
+The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI [raises its default](../models/anthropic.md#maximum-output-tokens) to leave 4096 tokens beyond the budget.
 
 Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
 
