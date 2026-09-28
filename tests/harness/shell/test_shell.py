@@ -1993,7 +1993,7 @@ class TestEnvControlExecution:
     async def test_host_environment_does_not_reach_commands(
         self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # A local workspace passes on only the host's `PATH` and `HOME`.
+        # A local workspace passes on only the host's `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`.
         monkeypatch.setenv('ANTHROPIC_API_KEY', 'leak-me')
         monkeypatch.setenv('HARNESS_INHERITED', 'yes')
         ts = _env_toolset(shell_dir)
