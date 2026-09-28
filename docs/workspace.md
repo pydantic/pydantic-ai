@@ -6,7 +6,7 @@ which, because they all use it through [`ctx.workspace`][pydantic_ai.tools.RunCo
 
 ## Give an agent an environment
 
-```python {title="workspace_agent.py"}
+```python {title="workspace_agent.py" dunder_name="not_main"}
 import asyncio
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -30,7 +30,9 @@ async def execute(ctx: RunContext, command: list[str]) -> str:
 
 
 async def main() -> None:
-    await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
+    result = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
+    print(result.output)
+    #> fizzbuzz.py is written and runs clean.
 
 
 if __name__ == '__main__':
@@ -193,7 +195,8 @@ agent = Agent(
 - [`read_text`][pydantic_ai.workspaces.Workspace.read_text] and
   [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write text files;
   [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] and
-  [`write_bytes`][pydantic_ai.workspaces.Workspace.write_bytes] do the same with exact bytes.
+  [`write_bytes`][pydantic_ai.workspaces.Workspace.write_bytes] do the same with exact bytes. Writing creates
+  any missing parent directories.
 - [`list_dir`][pydantic_ai.workspaces.Workspace.list_dir], [`stat`][pydantic_ai.workspaces.Workspace.stat],
   [`exists`][pydantic_ai.workspaces.Workspace.exists], [`make_dir`][pydantic_ai.workspaces.Workspace.make_dir]
   and [`remove`][pydantic_ai.workspaces.Workspace.remove] work with directories and entries.
