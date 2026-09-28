@@ -519,12 +519,17 @@ class TestRun:
             tg.cancel_scope.cancel()
         assert len(fake_e2b.sandboxes[0].commands.group_stops) == 1
 
-    async def test_a_failed_kill_does_not_replace_the_timeout(self, fake_e2b: FakeE2B) -> None:
+    async def test_a_failed_kill_does_not_replace_the_timeout(
+        self, fake_e2b: FakeE2B, caplog: pytest.LogCaptureFixture
+    ) -> None:
         fake_e2b.command_hangs = True
         fake_e2b.kill_command_error = SandboxException('kill refused')
         backend = await started()
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run(['sleep', '99'], timeout=0.05)
+        assert [record.getMessage() for record in caplog.records if record.levelname == 'WARNING'] == [
+            'Could not stop E2B command in sandbox sbx-1'
+        ]
 
     async def test_a_failed_operation_names_what_failed(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.run_error = SandboxException('no such user')

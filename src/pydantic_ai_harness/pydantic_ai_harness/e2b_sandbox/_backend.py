@@ -22,6 +22,7 @@ or Go's errno text, which `_path_error` reads.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import posixpath
 import shlex
@@ -59,6 +60,8 @@ try:
     import e2b
 except ImportError as error:  # pragma: no cover - exercised by the isolated missing-extra test
     raise ImportError('Install `pydantic-ai-harness[e2b]` to use E2BSandbox.') from error
+
+logger = logging.getLogger(__name__)
 
 _AUTH_MESSAGE = 'E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
 
@@ -541,7 +544,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 )
                 await stopper.wait()
             except Exception:
-                pass  # A failed control-plane stop must not mask the original failure.
+                # A failed control-plane stop must not mask the original failure; the command may
+                # still be running, and the sandbox ref stays available for explicit cleanup.
+                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id)
 
         # Counted as the SDK receives it, so `yes` or a large `cat` stops at the cap instead of
         # growing this process; the SDK calls these from its own event-pump task.
