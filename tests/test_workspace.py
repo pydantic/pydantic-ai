@@ -1080,12 +1080,18 @@ def test_has_get_workspace_mirrors_the_capability_tree() -> None:
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
             return None  # pragma: no cover
 
+    class Bundle(CombinedCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            return None  # pragma: no cover
+
     assert supplier._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert not AbstractCapability[Any]()._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert CombinedCapability([AbstractCapability[Any](), supplier])._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert WrapperCapability(supplier)._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert not WrapperCapability(AbstractCapability[Any]())._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert Policy(AbstractCapability[Any]())._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert not CombinedCapability([AbstractCapability[Any]()])._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert Bundle([AbstractCapability[Any]()])._has_get_workspace  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_new_workspace_ignores_the_ref_in_history() -> None:
