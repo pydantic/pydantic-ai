@@ -2667,13 +2667,13 @@ def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
     ('model_settings', 'session_settings', 'expected_behavior'),
     [
         (
-            GoogleRealtimeModelSettings(async_tool_calls=True),
-            GoogleRealtimeModelSettings(google_async_tool_calls=False),
+            {'async_tool_calls': True},
+            {'google_async_tool_calls': False},
             'BLOCKING',
         ),
         (
-            GoogleRealtimeModelSettings(google_async_tool_calls=False),
-            GoogleRealtimeModelSettings(async_tool_calls=True),
+            {'google_async_tool_calls': False},
+            {'async_tool_calls': True},
             'NON_BLOCKING',
         ),
     ],
