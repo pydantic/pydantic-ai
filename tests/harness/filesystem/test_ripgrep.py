@@ -138,6 +138,33 @@ class TestListFiles:
         )
         assert listed == 'src/app.py'
 
+    async def test_cap_resolves_only_the_candidates_it_needs(self, workspace: Path) -> None:
+        many = workspace / 'many'
+        many.mkdir()
+        for index in range(1200):
+            (many / f'{index:04}.txt').write_text('')
+
+        class Counting(LocalWorkspaceBackend):
+            resolves = 0
+
+            async def run(
+                self,
+                command: WorkspaceCommand,
+                *,
+                shell: bool = False,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+            ) -> CommandResult:
+                if isinstance(command, str) and 'realpath --' in command:
+                    self.resolves += 1
+                return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+        backend = Counting(workspace)
+        listed = await toolset(workspace, max_find_results=1).list_files('many', workspace=backend)
+        assert listed.splitlines() == ['many/0000.txt', '[... truncated at 1 files]']
+        # Candidates are resolved a batch at a time, stopping once the cap is reached.
+        assert backend.resolves == 1
+
     async def test_oversized_record_stops_the_search(self, workspace: Path) -> None:
         fake = fake_rg(workspace, f'#!{sys.executable}\nimport sys\nsys.stdout.write("x" * 2_000_000)\n')
         assert await toolset(workspace).list_files(workspace=fake) == '[... truncated at 1000 files]'

@@ -122,8 +122,10 @@ async def run_persistent_command(
     """
     if not 0 < timeout <= MAX_FOREGROUND_WAIT:
         raise ModelRetry(f'timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds.')
+    # Before launching: a toolset used outside its capability fails here, and must not leave a job running.
+    events = event_ctx(ctx, 'Shell')
     job = await Job.launch(ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True)
-    output = _CommandOutput(job, event_ctx(ctx, 'Shell'))
+    output = _CommandOutput(job, events)
 
     try:
         if output.ctx is not None:

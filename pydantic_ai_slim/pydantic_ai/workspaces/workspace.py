@@ -100,6 +100,10 @@ def _decode_sized(output: str, path: str) -> bytes:
     return _decode(encoded, _size(size, path), path)
 
 
+_SHELL_TOOLS = ('base64', 'cp', 'dd', 'find', 'mkdir', 'mv', 'readlink', 'rm', 'wc')
+"""The utilities `_ShellFilesystem` runs, beyond `sh` builtins."""
+
+
 class _ShellFilesystem(SupportsFilesystem):
     """Derive filesystem operations from a backend's command-execution primitive.
 
@@ -132,7 +136,22 @@ class _ShellFilesystem(SupportsFilesystem):
                 return await self._read_chunks(shlex.quote(path), size, path, 'read')
             except _DamagedOutputError:
                 pass
-        raise _damaged(path)
+        raise await self._damaged_or_missing_tools(path)
+
+    async def _damaged_or_missing_tools(self, path: str) -> WorkspaceError:
+        # A missing `dd` or `base64` looks like damaged output: a pipe reports only its last command's status.
+        tools = ' '.join(_SHELL_TOOLS)
+        probe = await self._backend.run(
+            f'for tool in {tools}; do command -v "$tool" >/dev/null 2>&1 || printf "%s " "$tool"; done', shell=True
+        )
+        missing = probe.stdout.split()
+        if not missing:
+            return _damaged(path)
+        names = ', '.join(f'`{tool}`' for tool in missing)
+        return WorkspaceError(
+            f'The workspace has no {names}, which its file operations need: it has no native filesystem, so they '
+            f'run as shell commands. Install them in the image (coreutils and findutils provide them).'
+        )
 
     async def _read_chunks(self, source: str, size: int, path: str, what: str) -> bytes:
         data = bytearray()
@@ -183,6 +202,9 @@ class _ShellFilesystem(SupportsFilesystem):
             # than replace the file with a default mode; commit only after decoding succeeds.
             result = await self._backend.run(
                 f'if test -d {quoted_destination}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
+                # `mv` would replace a FIFO or device with a regular file; refuse as the local backend does.
+                f'elif test -e {quoted_destination} && ! test -f {quoted_destination}; '
+                f'then status={_SHELL_EXIT_NOT_REGULAR}; '
                 f'elif test -e {quoted_destination} && ! test -w {quoted_destination}; '
                 f'then status={_SHELL_EXIT_PERMISSION}; else '
                 f'if test -f {quoted_destination}; then cp {quoted_destination} {quoted_decoded}; fi && '
