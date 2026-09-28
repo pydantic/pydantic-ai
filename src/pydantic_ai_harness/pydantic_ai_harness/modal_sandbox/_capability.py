@@ -220,8 +220,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             working_dir = workdir
         if defer_loading:
             raise UserError(
-                '`defer_loading` is not supported on `ModalSandbox`: a deferred capability is skipped '
-                "when the run's workspace is chosen, so it could never supply the sandbox."
+                '`ModalSandbox` does not support `defer_loading=True`: '
+                'the workspace is selected before deferred capabilities load.'
             )
         # Checked here rather than when the backend first creates a sandbox, so a bad value fails
         # where it is written instead of at the first workspace operation of some later run.

@@ -175,7 +175,11 @@ def test_modal_capability_repr_does_not_expose_env_secrets() -> None:
 
 
 def test_defer_loading_is_refused() -> None:
-    with pytest.raises(UserError, match="skipped when the run's workspace is chosen"):
+    with pytest.raises(
+        UserError,
+        match=r'^`ModalSandbox` does not support `defer_loading=True`: '
+        r'the workspace is selected before deferred capabilities load\.$',
+    ):
         ModalSandbox(id='modal', defer_loading=True)
 
 
