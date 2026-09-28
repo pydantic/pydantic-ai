@@ -154,33 +154,45 @@ def test_harness_skill_covers_every_capability_module():
             modules.append(module)
     assert 'coder' in modules
 
+    entries = {
+        module: (row, entry)
+        for module in modules
+        for row in rows
+        for entry in row.split('|')[2].split(';')
+        if f'(`.{module}`' in entry
+    }
+    missing_entries = sorted(set(modules) - set(entries))
+
+    links = {module: re.search(r'\]\(\./(references/[A-Z-]+\.md)\)', row) for module, (row, _) in entries.items()}
+    references = {
+        module: skill_dir / (link.group(1) if link else 'references/MISSING.md') for module, link in links.items()
+    }
+    missing_references = sorted(module for module, reference in references.items() if not reference.exists())
+
+    listed = {module: re.findall(r'`([A-Z]\w+)`', entry) for module, (_, entry) in entries.items()}
     capability_exports = _capability_exports(package_dir)
-    problems: list[str] = []
-    for module in sorted(modules):
-        entries = [(row, entry) for row in rows for entry in row.split('|')[2].split(';') if f'(`.{module}`' in entry]
-        if not entries:
-            problems.append(f'{module}: no entry in the Task-Family References table')
-            continue
-        row, entry = entries[0]
-        link = re.search(r'\]\(\./(references/[A-Z-]+\.md)\)', row)
-        reference = skill_dir / link.group(1) if link else None
-        if reference is None or not reference.exists():
-            problems.append(f'{module}: its row links no existing ./references/<FILE>.md')
-            continue
+    unlisted = sorted(
+        f'{module}.{name}'
+        for module in entries
+        for name in capability_exports.get(module, ())
+        if name not in listed[module]
+    )
 
-        listed = re.findall(r'`([A-Z]\w+)`', entry)
-        for name in capability_exports.get(module, ()):
-            if name not in listed:
-                problems.append(f'{module}: capability `{name}` is not listed in its table entry')
+    # Each class (or, for entries without one, the module) needs a heading or detail-table row in the reference, not
+    # just a mention in passing prose. Compare loosely so `CodeMode` matches a `# Code Mode` heading.
+    sections = {
+        module: [_squash(line) for line in _section_lines(reference.read_text())]
+        for module, reference in references.items()
+        if reference.exists()
+    }
+    without_section = sorted(
+        f'{module}.{name}'
+        for module, lines in sections.items()
+        for name in listed[module] or [module.rsplit('.', 1)[-1]]
+        if not any(_squash(name) in line for line in lines)
+    )
 
-        # Each class (or, for entries without one, the module) needs a heading or detail-table row in the
-        # reference, not just a mention in passing prose. Compare loosely so `CodeMode` matches `# Code Mode`.
-        lines = [_squash(line) for line in _section_lines(reference.read_text())]
-        for name in listed or [module.rsplit('.', 1)[-1]]:
-            if not any(_squash(name) in line for line in lines):
-                problems.append(f'{module}: no heading or table row in {reference.name} names `{name}`')
-
-    assert problems == []
+    assert (missing_entries, missing_references, unlisted, without_section) == ([], [], [], [])
 
 
 @pytest.mark.parametrize('example', list(find_skill_examples()))
