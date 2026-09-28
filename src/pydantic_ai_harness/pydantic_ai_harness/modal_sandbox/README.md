@@ -193,7 +193,7 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 | `max_read_bytes` | Deprecated and ignored. Use `FileSystem(max_read_lines=..., max_read_chars=...)`. |
 | `instructions` | Deprecated and ignored. Use the agent's `instructions`. |
 | `run_command` tool | Removed. Use `Shell()`. |
-| `read_file`, `write_file`, `list_directory` tools | Removed. Use `FileSystem()`. |
+| `read_file`, `write_file`, `list_directory` tools | Removed. Use `FileSystem()`. It only reaches the working directory and below; `FileSystem(root_dir='/')` reaches the whole sandbox, as the old tools did. |
 | `ModalSandboxExecResult` | Removed. Use `pydantic_ai.workspaces.CommandResult`. |
 | `ModalSandboxError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceError`. |
 | `ModalSandboxTerminalError`, `ModalSandboxUnavailableError`, `ModalSandboxAuthError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceUnavailableError`. |

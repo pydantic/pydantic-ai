@@ -95,7 +95,8 @@ def _no_workspace_tools_message(agent_name: str | None) -> str:
         "`ModalSandbox` supplies the Modal sandbox as the run's `ctx.workspace` and registers no tools of its own, "
         f'and {run} has no `Shell` or `FileSystem` tool. Add `Coder()`, or `Shell()` and/or `FileSystem()`, '
         'alongside it. If your own code or tools use `ctx.workspace`, pass `ModalSandbox(warn_if_no_tools=False)` '
-        f'to silence this warning. See {UPGRADE_DOCS_URL}'
+        'to silence this warning. The sandbox also keeps running after the run ends, until you terminate it with '
+        f'`ModalSandbox().destroy(result.workspace.ref)` or its `sandbox_timeout` ends it. See {UPGRADE_DOCS_URL}'
     )
 
 
