@@ -1973,7 +1973,6 @@ class TestFileSystemCapability:
         tools = await filesystem.get_toolset().get_tools(context)
 
         assert set(tools) == READ_ONLY_TOOL_NAMES - set(RIPGREP_TOOL_NAMES)
-        assert 'write_file' not in tools
 
         everything = FileSystem[None](root_dir=tmp_path, read_only=True, tools=FILE_SYSTEM_TOOL_NAMES)
         assert set(await everything.get_toolset().get_tools(context)) == READ_ONLY_TOOL_NAMES
@@ -1987,14 +1986,14 @@ class TestFileSystemCapability:
         ]
         await Agent(model, deps_type=type(None), capabilities=capabilities).run('Inspect tools')
         assert model.last_model_request_parameters is not None
-        # The ripgrep tools need `workspace.run`, which a read-only workspace refuses.
-        assert {tool.name for tool in model.last_model_request_parameters.function_tools} == (
-            READ_ONLY_TOOL_NAMES - set(RIPGREP_TOOL_NAMES)
-        )
+        assert {tool.name for tool in model.last_model_request_parameters.function_tools} == READ_ONLY_TOOL_NAMES
 
     @pytest.mark.parametrize('read_only', [True, False], ids=['read-only', 'filesystem-only'])
     @pytest.mark.parametrize('anyio_backend', ['asyncio'])  # Agent.run needs asyncio
-    async def test_ripgrep_tools_need_commands(self, tmp_path: Path, anyio_backend: object, read_only: bool) -> None:
+    async def test_ripgrep_tools_walk_files_without_commands(
+        self, tmp_path: Path, anyio_backend: object, read_only: bool
+    ) -> None:
+        """Where `rg` cannot run, `grep` and `list_files` read the files, not the read-only refusal."""
         (tmp_path / 'notes.txt').write_text('needle\n')
         workspace: WorkspaceBackend = (
             ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
@@ -2006,12 +2005,14 @@ class TestFileSystemCapability:
         await Agent(model, deps_type=type(None), capabilities=[capability]).run('Inspect', workspace=workspace)
         assert model.last_model_request_parameters is not None
         names = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert names.isdisjoint(RIPGREP_TOOL_NAMES)
-        assert {'search_files', 'find_files'} <= names
-        assert await call_tool([capability], 'search_files', {'pattern': 'needle'}, workspace=workspace) == (
-            'notes.txt:1:needle'
+        assert {'search_files', 'find_files', *RIPGREP_TOOL_NAMES} <= names
+        assert await call_tool(
+            [capability], 'grep', {'pattern': 'NEEDLE', 'ignore_case': True}, workspace=workspace
+        ) == ('notes.txt:1:needle')
+        assert await call_tool([capability], 'list_files', {'glob': '*.txt'}, workspace=workspace) == 'notes.txt'
+        assert '`file_type` needs ripgrep' in await call_tool(
+            [capability], 'grep', {'pattern': 'needle', 'file_type': 'py'}, workspace=workspace
         )
-        assert await call_tool([capability], 'find_files', {'pattern': '*.txt'}, workspace=workspace) == 'notes.txt'
 
     @pytest.mark.parametrize('anyio_backend', ['asyncio'])  # Agent.run needs asyncio
     async def test_read_only_refusal_is_a_failed_tool_result(self, tmp_path: Path, anyio_backend: object) -> None:

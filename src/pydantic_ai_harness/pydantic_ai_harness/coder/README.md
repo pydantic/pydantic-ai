@@ -103,7 +103,7 @@ result = coder.run_sync('Add a --verbose flag to the CLI.')
 review = reviewer.run_sync('Review the new --verbose flag.', workspace=ReadOnlyWorkspace(result.workspace))
 ```
 
-The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#hand-the-workspace-to-another-agent) lets it read the files but refuses commands and file changes, so it gets no shell or editing tools; pass `result.workspace` itself to let it change them. With a sandbox, this is how several agents share one isolated machine. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) needs nothing extra: each delegate runs in the parent's workspace.
+The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#hand-the-workspace-to-another-agent) refuses commands and file changes, so the reviewer gets `read_file`, `list_files`, and `grep` but no shell or editing tools; pass `result.workspace` itself to let it run commands and edit files. With a sandbox, this is how several agents share one isolated machine. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) needs nothing extra: each delegate runs in the parent's workspace.
 
 ## Composition
 

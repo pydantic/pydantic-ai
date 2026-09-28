@@ -13,10 +13,11 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
+from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 from .._recording_durability import RecordingDurability
 from .._tool_calls import call_tool
 
@@ -190,6 +191,26 @@ class TestCoder:
         assert await call(tmp_path, 'list_files', {'glob': '*.py'}) == 'test.py'
         output = await call(tmp_path, 'grep', {'pattern': 'one', 'ignore_case': True, 'file_type': 'py'})
         assert output == 'test.py:1:One'
+
+    @pytest.mark.parametrize('read_only', [True, False], ids=['read-only', 'filesystem-only'])
+    async def test_search_without_commands(self, tmp_path: Path, read_only: bool) -> None:
+        """A reviewer on a read-only or filesystem-only workspace can still list and search files."""
+        (tmp_path / 'notes.txt').write_text('needle\n')
+        workspace: WorkspaceBackend = (
+            ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+            if read_only
+            else FilesystemOnlyWorkspaceBackend(FakeWorkspace('files', {'/workspace/notes.txt': b'needle\n'}))
+        )
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Coder()]).run('Inspect', workspace=workspace)
+        assert model.last_model_request_parameters is not None
+        names = {tool.name for tool in model.last_model_request_parameters.function_tools}
+        assert {'list_files', 'grep'} <= names
+        assert 'shell' not in names
+        assert await call_tool([Coder[None]()], 'grep', {'pattern': 'needle'}, workspace=workspace) == (
+            'notes.txt:1:needle'
+        )
+        assert await call_tool([Coder[None]()], 'list_files', {}, workspace=workspace) == 'notes.txt'
 
     async def test_shell_is_unrestricted_and_persistent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv('OPENAI_API_KEY', 'do-not-expose')

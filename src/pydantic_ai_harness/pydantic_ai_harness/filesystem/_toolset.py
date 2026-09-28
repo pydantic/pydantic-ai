@@ -67,6 +67,8 @@ FILE_SYSTEM_TOOL_NAMES: tuple[str, ...] = (*DEFAULT_TOOL_NAMES, *RIPGREP_TOOL_NA
 _MAX_SEARCH_FILE_BYTES = 10 << 20
 """Avoid remote full-file downloads for large files during Python-side content searches."""
 
+_FILE_TYPE_NEEDS_RIPGREP = '`file_type` needs ripgrep, which this workspace cannot run; use `glob` instead.'
+
 _MAX_MATCH_COLUMNS = 4096
 """Bytes of a matching or context line `grep` shows before ripgrep cuts it with an omission marker."""
 
@@ -534,15 +536,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer only the tools the run's workspace can serve.
 
-        A read-only workspace keeps only `READ_ONLY_TOOL_NAMES`. The ripgrep tools also need
-        `workspace.run`, which a read-only or filesystem-only workspace cannot serve, so they
-        are dropped there; `search_files` and `find_files` cover the same ground without it.
+        A read-only workspace keeps only `READ_ONLY_TOOL_NAMES`. Where the workspace cannot run
+        `rg`, the ripgrep tools walk its files instead.
         """
         tools = await super().get_tools(ctx)
         if ctx.workspace.read_only:
             tools = {name: tool for name, tool in tools.items() if name in READ_ONLY_TOOL_NAMES}
-        if not supports_commands(ctx.workspace):
-            tools = {name: tool for name, tool in tools.items() if name not in RIPGREP_TOOL_NAMES}
         return tools
 
     async def _scope(self, workspace: WorkspaceBackend) -> _Scope:
@@ -1476,6 +1475,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def _list_files(
         self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str = '.', *, glob: str | None
     ) -> str:
+        if not supports_commands(scope.workspace):
+            # Read-only and filesystem-only workspaces refuse `rg`; walk the files instead.
+            pattern = '**' if glob is None else glob if '/' in glob else f'**/{glob}'
+            return await self._find_files(scope, ctx, pattern, path=path, files_only=True)
         resolved = await self._safe_resolve(scope, path, check_allowed=False)
         entry = await self._stat(scope, resolved)
         if entry is None or not entry.is_dir:
@@ -1501,10 +1504,6 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         except RipgrepMissing:
             scope.lacks_ripgrep = True
-            # File-only workspaces retain the bounded walk; command workspaces scan in situ.
-            if not supports_commands(scope.workspace):
-                pattern = '**' if glob is None else glob if '/' in glob else f'**/{glob}'
-                return await self._find_files(scope, ctx, pattern, path=path, files_only=True)
 
             async def accept(record: Record) -> str | None:
                 if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
@@ -1609,6 +1608,14 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str:
         if not 0 <= context <= 20:
             raise ValueError('context must be between 0 and 20.')
+        if not supports_commands(scope.workspace):
+            # Read-only and filesystem-only workspaces refuse `rg`; read the files instead.
+            if file_type is not None:
+                raise ValueError(_FILE_TYPE_NEEDS_RIPGREP)
+            regex = re.escape(pattern) if literal else pattern
+            return await self._search_files(
+                scope, ctx, f'(?i){regex}' if ignore_case else regex, path=path, include_glob=glob
+            )
         resolved = await self._safe_resolve(scope, path, check_allowed=False)
         entry = await self._stat(scope, resolved)
         if entry is None:
@@ -1655,12 +1662,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         except RipgrepMissing:
             scope.lacks_ripgrep = True
             if file_type is not None:
-                raise ValueError('`file_type` needs ripgrep, which the workspace lacks; use `glob` instead.')
-            if not supports_commands(scope.workspace):
-                regex = re.escape(pattern) if literal else pattern
-                return await self._search_files(
-                    scope, ctx, f'(?i){regex}' if ignore_case else regex, path=path, include_glob=glob
-                )
+                raise ValueError(_FILE_TYPE_NEEDS_RIPGREP)
 
             async def accept(record: Record) -> str | None:
                 if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
