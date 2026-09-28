@@ -113,6 +113,10 @@ def _save_keys(*, keys: dict[str, SecretStr]) -> None:
     )
 
 
+_KEY_CONSUMERS = {'vllm': '/add_model', 'openrouter': '/add_model', 'google-workspace': '/google_workspace'}
+"""Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
+
+
 class _Credential(BaseModel):
     token: SecretStr | KeyReference = Field(default_factory=lambda: SecretStr(''))
 
@@ -120,13 +124,13 @@ class _Credential(BaseModel):
 def key_users(*, name: str) -> list[str]:
     """Find saved provider references without exposing their inline credentials."""
     users: list[str] = []
-    for account in ('vllm', 'openrouter'):
+    for account, command in _KEY_CONSUMERS.items():
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
                 credential = _Credential.model_validate_json(raw)
             except ValidationError:
-                raise UserError(f'Reconfigure the invalid {account} connection through /add_model first.') from None
+                raise UserError(f'Reconfigure the invalid {account} connection through {command} first.') from None
             if isinstance(credential.token, KeyReference) and credential.token.name == name:
                 users.append(account)
     return users
