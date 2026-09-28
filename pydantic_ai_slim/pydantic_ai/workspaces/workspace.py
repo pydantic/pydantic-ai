@@ -496,10 +496,6 @@ class WrapperWorkspace(Workspace):
     def wrapped(self) -> Workspace:
         return self._backend
 
-    @property
-    def read_only(self) -> bool:
-        return self.wrapped.read_only
-
 
 def workspace_layers(workspace: Workspace) -> list[type[object]]:
     """The policy wrappers around a workspace and its backend type, outermost first; plain `Workspace` layers are skipped."""
