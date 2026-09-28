@@ -1,3 +1,7 @@
+---
+description: "Give Pydantic AI realtime voice agents tools that run on your backend, with argument validation, retries, concurrent execution and recorded tool-call messages."
+---
+
 # Tools
 
 [Tools](../tools.md) registered on an agent are offered to the realtime model and execute on your
@@ -12,7 +16,15 @@ When a model calls a tool, the session emits
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
 failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
 [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
-exceptions end the session and propagate from iteration.
+exceptions are raised from `async for` while the event stream is being iterated. Otherwise they end
+the audio and transcript views and are raised when the session closes. If the receive side has
+already ended, an outbound session method raises the failure instead; it is delivered only once.
+The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
+[`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
+The general
+[`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
+capability hook also applies in realtime and can turn an exception into a replacement result or
+`ModelRetry` so the model can recover.
 
 Tool return values reach the model exactly as in a
 [standard run](../tools-advanced.md#advanced-tool-returns): the model receives the string rendering
@@ -29,17 +41,71 @@ If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
 
+### Restricting the available tools
+
+The [`tool_choice`](../tools-advanced.md#tool-choice) setting in
+[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] is resolved as it is for a
+standard run, but applied once, when the session is created, and it then holds for every response.
+`'auto'` and `'none'` work as usual, and
+[`ToolOrOutput(function_tools=[...])`][pydantic_ai.settings.ToolOrOutput] limits the model to the
+named tools while leaving it free to answer:
+
+```python
+from pydantic_ai.realtime import RealtimeModelSettings
+from pydantic_ai.settings import ToolOrOutput
+
+settings = RealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_weather']))
+```
+
+A choice that forces a tool call — `'required'` or a list of tool names — raises a
+[`UserError`][pydantic_ai.exceptions.UserError] before connecting on OpenAI, Azure OpenAI, and xAI.
+Applied to every response, including the one after a tool result, it would never let the model
+answer: it would keep calling tools until a [usage limit](../agent.md#usage-limits) ended the session.
+Gemini Live has no tool-choice configuration, so it ignores `'required'` and treats a list of tool
+names as a restriction, like `ToolOrOutput`. To choose the tools from the run context, filter them
+with a [filtered toolset](../toolsets.md#filtering-tools) or
+[`prepare_tools`](../tools-advanced.md#prepare-tools) instead.
+
 ### Concurrent tool execution
 
 Every tool runs in the background, so a slow tool does not block session events, other tools, or
 turn tracking. [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps each
 result adjacent to its call even when calls finish out of order.
 
-Whether the model continues speaking while it waits is provider-specific. Inspect the
-[`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]
-profile flag. OpenAI and Azure models generally fill the gap; Gemini pauses unless the
-[`google_async_tool_calls`](gemini.md#asynchronous-tool-calls) setting — which declares the tools
-`NON_BLOCKING` to the Live API — is enabled on a supported model.
+When one response calls several tools, each result goes back to the model as its tool finishes, but the
+model is asked to answer only once all of them are in, so it answers them together, once, rather than
+answering the first result while its siblings are still running.
+
+Whether the *model* keeps the conversation going while a tool runs — speaking (typically saying
+what it's doing) and answering the user before the result is back — depends on the model. Its
+profile's [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode]
+says which:
+
+| Mode | Models | Tool calls |
+| --- | --- | --- |
+| `'always'` | OpenAI, Azure OpenAI, OpenAI GPT-Live, xAI, `gemini-3.8-live-extended-thinking` | The model keeps talking; there's no mode that waits |
+| `'optional'` | Gemini native-audio models, `gemini-3.8-live` | The model waits for the result, unless the session asks otherwise |
+| `'never'` | Other Gemini Live models | The model waits for the result |
+
+On an `'optional'` model, set the shared
+[`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to
+have it keep talking. The setting doesn't change what an `'always'` or `'never'` model does, so a
+cross-provider app can set it once for every model: it takes effect wherever the model offers the
+choice, and is ignored elsewhere.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeModelSettings
+
+agent = Agent(instructions='Look up orders with the tool, and keep the caller company while it runs.')
+realtime = agent.realtime(
+    'google:gemini-3.8-live', model_settings=RealtimeModelSettings(async_tool_calls=True)
+)
+```
+
+Async tool calls pay off for tools that take a noticeable moment. With a fast tool, the result can
+arrive just as the model starts speaking, cutting that reply short. See
+[Asynchronous tool calls](gemini.md#asynchronous-tool-calls) for how Gemini runs them.
 
 ## Native tools
 
@@ -54,6 +120,7 @@ is the source of truth.
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.messages import NativeToolReturnPart, PartEndEvent
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent(instructions='Answer questions, searching the web when useful.')
 
@@ -67,6 +134,8 @@ async def main():
         async for event in session:
             if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
                 print(event.part.content)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break  # keep listening in a real call; we stop after one reply
 ```
 
 An unsupported native tool with a configured local fallback is replaced before connection. Without
@@ -102,7 +171,7 @@ def issue_refund(order_id: str, amount: float) -> str:
 
 
 async def refund_policy(
-    ctx: RunContext[None], requests: DeferredToolRequests
+    ctx: RunContext, requests: DeferredToolRequests
 ) -> DeferredToolResults:
     results = DeferredToolResults()
     for call in requests.approvals:
@@ -153,18 +222,89 @@ installed and the call is refused.
 Tools registered with `defer_loading=True` are rejected in a realtime session for a related reason;
 see [Deferred capability loading](capabilities.md#deferred-capability-loading).
 
-## Enqueuing prompts from tools
+## Enqueuing prompts
 
 [`RunContext.enqueue()`][pydantic_ai.tools.RunContext.enqueue] — the same mechanism as
 [injecting follow-up messages from a tool](../tools.md#injecting-follow-up-messages-from-a-tool) in
-a standard run — accepts one plain-text prompt per call from a realtime tool. The default
-`priority='asap'` sends it when no response is active; `priority='when_idle'` waits until the
-provider reports its current response complete. Neither priority interrupts assistant speech.
-Delivered prompts become ordinary user turns in history, as in
+a standard run — lets a realtime tool queue text or a
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]. Code driving the session can use
+[`RealtimeSession.enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] directly, for example to
+deliver an out-of-band watchdog instruction:
+
+Delivery is reported as an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] on
+the session's event stream, matching [standard runs](../message-history.md#injecting-messages-mid-run).
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import SystemPromptPart
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
+
+agent = Agent()
+
+
+async def main():
+    async with agent.realtime('openai:gpt-realtime').session() as session:
+        session.enqueue(
+            SystemPromptPart(content='A watchdog detected elevated latency. Mention this briefly.'),
+            priority='when_idle',
+        )
+        async for event in session:
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+The default `priority='asap'` delivers after any active response finishes;
+`priority='when_idle'` waits until the model is idle, after all `'asap'` items. Neither priority
+interrupts assistant speech. Text parts and system parts are joined into one user turn, with system
+parts wrapped in `<system>…</system>` to distinguish them from the person speaking. A system part
+marks where the text came from, not that it should be handled silently: the model still gets a turn
+and may reply, call a tool, or move on. To add context without prompting a turn, use
+[`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns become ordinary
+[`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s in history, as in
 [injecting messages mid-run](../message-history.md#injecting-messages-mid-run).
 
-Multimodal content and prebuilt message/part sequences are rejected because the realtime live-input
-channel cannot preserve their standard-run semantics.
+`enqueue()` does not replace `send()`: it waits for the response in flight to finish, while
+[`send()`][pydantic_ai.realtime.RealtimeSession.send] delivers immediately, even while a tool call or
+response is in progress. Reach for `enqueue()` for a follow-up that should wait its turn, and for
+`send()` to interject into a gap.
+
+Multimodal content and model responses are rejected because the realtime live-input channel cannot
+preserve their standard-run semantics.
+
+## Ending the session from a tool
+
+To hang up from a tool, call [`close()`][pydantic_ai.realtime.RealtimeSession.close] through
+[`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session]:
+
+```python
+from pydantic_ai import Agent, RunContext
+
+agent = Agent(instructions='When the caller says goodbye, call `hang_up`.')
+
+
+@agent.tool
+async def hang_up(ctx: RunContext) -> None:
+    assert ctx.realtime_session is not None
+    await ctx.realtime_session.close()
+```
+
+The session closes cleanly, and `session.result` and its history are settled before the context
+exits. The tool does not resume after `close()`: there is no provider left to receive its result, so
+the call is recorded locally with an interrupted result. The code that owns the `session()` context
+does not receive an exception. A concurrent `send_audio()` call consuming a microphone or other
+async iterable returns cleanly at the next chunk after the tool closes the session, without sending
+that chunk. If the source can stall indefinitely, cancel the task in application code. Sending a
+single chunk after close still raises [`UserError`][pydantic_ai.exceptions.UserError].
+
+To abort the run instead, [`ctx.cancel()`](../tools-advanced.md#cancelling-the-run-from-a-tool)
+works as in a standard run: the call is likewise recorded as interrupted, and the `session()`
+context raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] carrying the completed history.
 
 ## Delegating work during a call
 
@@ -210,6 +350,11 @@ while analysis runs. To continue the entire conversation after the voice session
 
 ## Edge cases
 
+- A response can speak and then call a tool. Its speech is finalized (and, with output
+  transcription on, reaches
+  [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]) before the tool
+  body runs, so a "has the agent spoken?" check inside the tool already includes that response's
+  speech.
 - A tool finishing does not necessarily finish the turn; see the
   [turn boundary](events.md#the-turn-boundary).
 - Short tools can make asynchronous Gemini tool calling counterproductive: the result may interrupt

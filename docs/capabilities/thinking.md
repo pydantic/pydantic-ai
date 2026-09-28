@@ -1,3 +1,7 @@
+---
+description: "Enable thinking and reasoning effort in Pydantic AI with the Thinking capability, or use native settings for OpenAI, Anthropic, Google, Bedrock and more."
+---
+
 # Thinking
 
 Thinking (or reasoning) is the process by which a model works through a problem step-by-step before
@@ -40,10 +44,10 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 
 | Provider | `Thinking()` / `Thinking(effort=True)` | `Thinking(effort='high')` | Notes |
 |---|---|---|---|
-| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, and Sonnet 5 also support `effort='xhigh'` |
+| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, 5.5, and Sonnet 5 and 5.5 also support `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | GPT-5.6 maps unified `'minimal'` to `'low'` |
-| Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | Some models map unified `'minimal'` to `thinking_level='LOW'` |
+| Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | Unified efforts snap to the nearest documented level — e.g. `gemini-3.1-flash-lite-image` (levels: `minimal`, `high`) maps `'low'` to `'MINIMAL'` and `'medium'`/`'xhigh'` to `'HIGH'` — and models without `minimal` map unified `'minimal'` to `'LOW'` |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` (gpt-oss also `reasoning_effort='medium'`) | `reasoning_format='parsed'` (gpt-oss also `reasoning_effort='high'`) | gpt-oss: unified effort → `reasoning_effort` (`low`/`medium`/`high`, via `extra_body`; always-on, so `thinking=False` is silently ignored); qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
 | Mistral | `reasoning_effort='high'` | `reasoning_effort='high'` | Only on adjustable-reasoning models (e.g. `mistral-small-latest`, `mistral-medium-3-5`); `magistral` reasons always-on and gets no `reasoning_effort`. Mistral exposes only `'high'`/`'none'`, so every enabled level (incl. `'minimal'`) → `'high'` and only `thinking=False` → `'none'` |
@@ -51,12 +55,14 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Cerebras | `reasoning_effort` omitted (reasons by default) | `reasoning_effort` omitted | `thinking=False` → `reasoning_effort='none'`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
 | Snowflake Cortex | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Claude models only (via `extra_body`); sets `temperature=1` automatically; other families ignore `thinking` |
 | Crusoe | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel`; follows the vendor-prefixed model profile (`zai/`, `deepseek-ai/`, …). `thinking=False` → `'none'` only where that profile accepts it |
+| GitHub Copilot | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel` with no client-side gate: every value is forwarded and Copilot enforces its own per-id list, so a level an id doesn't offer comes back as `400 invalid_reasoning_effort`. `thinking=False` → `'none'`, which the `claude-` and `gemini-` ids reject. Those two families return reasoning in `reasoning_text`, mapped to a `ThinkingPart`; `gpt-5.4` and `kimi-k3` reason but return no reasoning text |
 | Ollama | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel`, so it follows the resolved model profile: `deepseek-r1` reasons, `gpt-oss` on Ollama sends nothing. `thinking=False` → `'none'` only on profiles that accept it |
 | Z.AI | `thinking={'type': 'enabled'}` | `thinking={'type': 'enabled'}`, plus `reasoning_effort='high'` on GLM-5.2 and GLM-5.3 | Via `extra_body`; `thinking=False` → `type='disabled'`. GLM-5.3 always reasons and ignores `thinking=False` (dropped rather than sent as `type='disabled'`) and accepts only `low`/`high`/`max` (per Z.AI's docs and the error message returned when disabling thinking on it), mapping the other unified levels to the nearest one |
 | xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False`; Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it reasons always-on (`thinking=True` → `'medium'`) and silently ignores `thinking=False` |
-| Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
+| Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` passes through on the models whose profile supports it (the same ones as the direct Anthropic API, e.g. Opus 4.7+ and Sonnet 5) and maps to `max` on the others (Opus 4.6 and Sonnet 4.6 reject `xhigh`) |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
-| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
+| Bedrock (OpenAI GPT-OSS) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
+| Bedrock (OpenAI GPT-5.6 and GPT-6) | Not mapped | Not mapped | No verified unified-thinking mapping on Converse |
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 
@@ -100,7 +106,7 @@ agent = Agent(model, model_settings=settings)
 To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](../agent.md#model-run-settings).
 
 !!! note
-    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, and `claude-sonnet-5`. For those models, use [adaptive thinking](#adaptive-thinking-effort) instead.
+    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5`, and `claude-sonnet-5-5`. For those models, use [adaptive thinking](#adaptive-thinking-effort) instead.
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
@@ -113,6 +119,8 @@ settings = AnthropicModelSettings(
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI sends the budget plus its usual default of 4096 for the answer.
 
 Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
 
@@ -135,10 +143,20 @@ agent = Agent(model, model_settings=settings)
 
 ### Adaptive Thinking & Effort {#adaptive-thinking-effort}
 
-Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7, 4.8, 5, and Sonnet 5. Claude Opus 4.7, 4.8, 5, and Sonnet 5 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
+Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7, 4.8, 5, 5.5, and Sonnet 5 and 5.5. Claude Opus 4.7, 4.8, 5, 5.5, and Sonnet 5 and 5.5 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
+
+Claude Opus 5 and later, Claude Sonnet 5, and the Claude Fable and Mythos models think adaptively without any thinking setting. On Claude Opus 5 and Sonnet 5, the unified `thinking=False` setting turns that off by sending `anthropic_thinking={'type': 'disabled'}`; the others can't turn thinking off, so `thinking=False` is ignored there. Because a forced tool choice stops Claude from thinking, a structured `output_type` on these models uses Native Output rather than Tool Output unless thinking is off; see [Forced tool choice](../models/anthropic.md#forced-tool-choice).
 
 !!! note "Claude Opus 5 caps effort when thinking is disabled"
-    Claude Opus 5 rejects `xhigh` and `max` effort while thinking is explicitly disabled with `anthropic_thinking={'type': 'disabled'}`; use an effort of `high` or below, or leave thinking enabled. Claude Opus 4.8 accepts that combination, so audit requests that disable thinking when migrating. Pydantic AI raises a `UserError` before sending the request rather than surfacing Anthropic's 400.
+    Claude Opus 5 rejects `xhigh` and `max` effort while thinking is disabled with `thinking=False` or `anthropic_thinking={'type': 'disabled'}`; use an effort of `high` or below, or leave thinking enabled. Claude Opus 4.8 accepts that combination, so audit requests that disable thinking when migrating. Pydantic AI raises a `UserError` before sending the request rather than surfacing Anthropic's 400.
+
+!!! note "Claude Opus 5.5 always thinks"
+    Claude Opus 5.5 can't disable thinking: Anthropic rejects `anthropic_thinking={'type': 'disabled'}` at every effort level. The unified `thinking=False` setting is ignored, so the model thinks adaptively at its default `medium` effort. Where you previously disabled thinking, lower `anthropic_effort` instead (for example `anthropic_effort='low'`).
+
+!!! note "Claude Sonnet 5.5 turns off up-front thinking with `between_tools`"
+    Claude Sonnet 5.5 rejects `anthropic_thinking={'type': 'disabled'}`. Its lowest setting is `anthropic_thinking={'type': 'between_tools'}`, which skips up-front thinking and keeps only the short progress notes the model writes between tool calls. Anthropic accepts it at `low`, `medium`, and `high` effort only. The unified `thinking=False` setting sends no `thinking` field, so the model thinks adaptively at its default `high` effort; use `between_tools` where you previously disabled thinking.
+
+    Under adaptive thinking, Claude Sonnet 5.5 returns the notes it writes between tool calls as thinking blocks rather than text, and they arrive empty at Anthropic's default `display: 'omitted'`. To show them, set `anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}`; `between_tools` returns them without it.
 
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
@@ -165,11 +183,13 @@ Thinking tokens count against Anthropic's loop-wide [task budgets](../models/ant
 For advanced usage, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](../agent.md#model-run-settings).
 
 ```python {title="google_thinking_part.py"}
+from google.genai.types import ThinkingLevel
+
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 model = GoogleModel('gemini-3.5-flash')
-settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
+settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': ThinkingLevel.MEDIUM})
 agent = Agent(model, model_settings=settings)
 ...
 ```
@@ -312,6 +332,12 @@ settings = ZaiModelSettings(thinking=True, zai_clear_thinking=False)
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## GitHub Copilot
+
+Copilot takes the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting as `reasoning_effort`, inherited from [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Whether a given id accepts it, and which levels, is a per-model fact Copilot reports in its own catalog and enforces itself; [`GitHubCopilotModel`][pydantic_ai.models.github_copilot.GitHubCopilotModel] adds no gate of its own.
+
+Copilot's Anthropic and Google ids return their reasoning in a non-standard `reasoning_text` field, which Pydantic AI maps to a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] and sends back in the same field on later turns. Its OpenAI and MoonshotAI ids accept the setting and reason on it, but Copilot returns no reasoning text for them, so they yield no `ThinkingPart`. The Anthropic ids reason adaptively besides, so the effort is a ceiling rather than an instruction and an easy question may come back with no reasoning at all. Their `reasoning_effort` list also has no `none`, so `thinking=False` goes out as `reasoning_effort='none'` and Copilot answers `400 invalid_reasoning_effort`. See [GitHub Copilot](../models/github-copilot.md#thinking).
 
 ## Snowflake Cortex
 

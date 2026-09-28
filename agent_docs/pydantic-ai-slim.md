@@ -4,7 +4,7 @@ Use this guide for non-trivial changes to `pydantic-ai-slim`: public APIs, provi
 
 ## Ownership
 
-- `Agent` owns user-facing construction and run APIs. Prefer not to add constructor kwargs for behavior that can be modeled as a capability, toolset, model setting, or profile fact.
+- `Agent` owns user-facing construction and run APIs. `Agent.iter()` is the graph-run facade: `_prepare_run()` resolves per-run inputs into a private `_PreparedAgentRun`, whose `open()` method owns resource entry, capability lifecycle, recovery, and cleanup. Prefer not to add constructor kwargs for behavior that can be modeled as a capability, toolset, model setting, or profile fact.
 - `_agent_graph.py` owns loop orchestration: prompt assembly, model requests, tool/output processing, retries, usage checks, and finalization.
 - `tool_manager.py`, `tools.py`, and `toolsets/` own tool discovery, validation, execution, retries, approval/deferral, wrapper composition, and stable tool identity.
 - `output.py` is the public output API; `_output.py` owns internal output schemas, processors, output tools, and output validation/processing.
@@ -49,7 +49,7 @@ Feature code emits typed `AgentStreamEvent`s into the buffer once the public eve
 
 ## Cancellation Internals
 
-`_cancel.RunCancellation` is the run-scoped first-party cancellation controller, held on `GraphAgentDeps.cancellation` and shared by reference into every `RunContext` as the private `_cancellation` field (same never-`replace` invariant as `_event_stream_buffer` — see the comment in `build_run_context`). First-party cancellation works by cancelling the asyncio task driving the run, so it reuses the entire external-cancellation teardown; the `CancelledError` is classified exactly once, at the outer edge of `Agent.iter()`'s exit stack (`_translate_cancellation`), after all history-producing teardown has committed.
+`_cancel.RunCancellation` is the run-scoped first-party cancellation controller, held on `GraphAgentDeps.cancellation` and shared by reference into every `RunContext` as the private `_cancellation` field (same never-`replace` invariant as `_event_stream_buffer` — see the comment in `build_run_context`). First-party cancellation works by cancelling the asyncio task driving the run, so it reuses the entire external-cancellation teardown; the `CancelledError` is classified exactly once, at the outer edge of `_PreparedAgentRun.open()`'s exit stack (`_translate_cancellation`), after all history-producing teardown has committed.
 
 Three pieces of bookkeeping are load-bearing and easy to break from `_agent_graph.py` / `run.py`:
 

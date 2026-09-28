@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -38,8 +39,6 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 FILE_SYSTEM_EVENTS = 'test_file_system'
 
 
@@ -75,7 +74,7 @@ def test_missing_namespace_rejected():
     with pytest.raises(UserError, match='requires a namespace'):
 
         @dataclass(kw_only=True)
-        class MissingEvent(CapabilityEvent):  # pyright: ignore[reportUnusedClass]
+        class MissingEvent(CapabilityEvent):
             pass
 
 
@@ -84,7 +83,7 @@ def test_invalid_namespace_rejected(namespace: str):
     with pytest.raises(UserError, match='invalid namespace'):
 
         @dataclass(kw_only=True)
-        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):  # pyright: ignore[reportUnusedClass]
+        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):
             pass
 
 
@@ -99,9 +98,7 @@ def test_duplicate_kind_rejected():
     with pytest.raises(UserError, match=r"Duplicate capability event kind 'test_file_system\.file_read'"):
 
         @dataclass(kw_only=True)
-        class DuplicateEvent(  # pyright: ignore[reportUnusedClass]
-            CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'
-        ):
+        class DuplicateEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'):
             pass
 
 
@@ -163,7 +160,7 @@ def test_envelope_field_shadowing_rejected():
     with pytest.raises(UserError, match='reserved for the event envelope: capability_id, data'):
 
         @dataclass(kw_only=True)
-        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):  # pyright: ignore[reportUnusedClass]
+        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):
             data: dict[str, int]
             capability_id: str | None = None
 
@@ -232,7 +229,7 @@ def test_undecorated_capability_event_base_with_fields_rejected():
     with pytest.raises(UserError, match='declares fields but is not a dataclass'):
 
         @dataclass(kw_only=True)
-        class BareFieldsChildEvent(BareFieldsBase):  # pyright: ignore[reportUnusedClass]
+        class BareFieldsChildEvent(BareFieldsBase):
             pass
 
 
@@ -366,64 +363,73 @@ class EmitCapability(AbstractCapability[Any]):
         return request_context
 
 
-@pytest.mark.parametrize(
-    ('capability', 'expected_id'), [(EmitCapability(id='my_id'), 'my_id'), (EmitCapability(), 'emit_capability')]
-)
-async def test_hook_emission_stamps_run_id(capability: EmitCapability, expected_id: str):
-    events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[capability]))
-    assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == [expected_id]
+async def test_hook_emission_stamps_an_explicit_id() -> None:
+    """A capability the user named is attributed by that name."""
+    events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[EmitCapability(id='my_id')]))
+    assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == ['my_id']
 
 
-@pytest.mark.parametrize(
-    ('capability_id', 'expected_id'),
-    [('files', 'files'), (None, 'capability')],
-    ids=['explicit-id', 'implicit-id'],
-)
-async def test_capability_tool_emission_stamps_attribution(capability_id: str | None, expected_id: str):
-    """Tools contributed by a capability stamp its run id, whether explicitly set or derived."""
-    capability = Capability[Any](id=capability_id)
+async def test_hook_emission_stamps_a_synthetic_id_when_unnamed() -> None:
+    """An unnamed capability is attributed by the run-local handle, which reads as one.
 
-    @capability.tool
-    async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit(FileReadEvent(path='tool.txt'))
-        return 'ok'
+    `capability_id` is the *run* id of the emitter, so a subscriber that wants to match on it
+    across runs needs the capability to carry an explicit `id`. Making the handle look synthetic
+    is what stops that being a discovery made later.
+    """
+    events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[EmitCapability()]))
+    ids = [event.capability_id for event in events if isinstance(event, FileReadEvent)]
+    assert len(ids) == 1
+    assert ids[0] is not None and re.fullmatch(r'<emit_capability:[0-9a-f]{6}>', ids[0]), ids[0]
 
-    events = await _collect(Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[capability]))
-    assert [event for event in events if isinstance(event, FileReadEvent)] == [
-        FileReadEvent(path='tool.txt', capability_id=expected_id, tool_call_id='call_1', tool_name='read_file')
+
+async def test_capability_tool_emission_stamps_attribution() -> None:
+    """A tool contributed by a capability stamps its run id, explicit or synthetic."""
+
+    def build(capability_id: str | None) -> Capability[Any]:
+        capability = Capability[Any](id=capability_id)
+
+        @capability.tool
+        async def read_file(ctx: RunContext[Any]) -> str:
+            await ctx.emit(FileReadEvent(path='tool.txt'))
+            return 'ok'
+
+        return capability
+
+    named = await _collect(Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[build('files')]))
+    assert [event for event in named if isinstance(event, FileReadEvent)] == [
+        FileReadEvent(path='tool.txt', capability_id='files', tool_call_id='call_1', tool_name='read_file')
     ]
 
+    unnamed = await _collect(Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[build(None)]))
+    stamped = [event.capability_id for event in unnamed if isinstance(event, FileReadEvent)]
+    assert len(stamped) == 1
+    assert stamped[0] is not None and re.fullmatch(r'<capability:[0-9a-f]{6}>', stamped[0]), stamped[0]
 
-@pytest.mark.parametrize(
-    ('capabilities', 'expected_ids'),
-    [
-        pytest.param(
-            [EmitCapability(), EmitCapability()],
-            ['emit_capability', 'emit_capability_2'],
-            id='implicit-implicit',
-        ),
-        pytest.param(
-            [EmitCapability(id='emit_capability'), EmitCapability()],
-            ['emit_capability', 'emit_capability_2'],
-            id='explicit-then-implicit',
-        ),
-        pytest.param(
-            [EmitCapability(), EmitCapability(id='emit_capability')],
-            ['emit_capability_2', 'emit_capability'],
-            id='implicit-then-explicit',
-        ),
-    ],
-)
-async def test_multiple_instances_get_distinct_run_ids(
-    capabilities: list[EmitCapability], expected_ids: list[str]
-) -> None:
-    """Multiple instances of one capability class emit under distinct run ids.
 
-    Implicit ids derive from the class name and dedupe with a numeric suffix; an explicit id
-    claims its name even when a preceding implicit instance would otherwise have derived it.
+async def test_multiple_instances_get_distinct_run_ids() -> None:
+    """Two instances of one class are attributed apart, and an explicit id claims its own name.
+
+    The handles used to be `emit_capability` and `emit_capability_2`, numbered from the order the
+    two were listed in — so the same pair listed the other way round swapped which was which. The
+    synthetic handle carries no ordinal at all, and an explicitly named instance is unaffected by
+    what its unnamed sibling is called.
     """
-    events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=capabilities))
-    assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == expected_ids
+    both_unnamed = await _collect(
+        Agent(FunctionModel(stream_function=_only_text), capabilities=[EmitCapability(), EmitCapability()])
+    )
+    ids = [event.capability_id for event in both_unnamed if isinstance(event, FileReadEvent)]
+    assert len(ids) == 2
+    assert len(set(ids)) == 2, 'each instance is attributed apart from the other'
+    assert all(i is not None and re.fullmatch(r'<emit_capability:[0-9a-f]{6}>', i) for i in ids), ids
+
+    for capabilities in (
+        [EmitCapability(id='named'), EmitCapability()],
+        [EmitCapability(), EmitCapability(id='named')],
+    ):
+        events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=capabilities))
+        stamped = [event.capability_id for event in events if isinstance(event, FileReadEvent)]
+        assert 'named' in stamped, stamped
+        assert len(set(stamped)) == 2, stamped
 
 
 async def _sandbox_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:

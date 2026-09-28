@@ -1,0 +1,178 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1369"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: Think about it, then say what 17*23 is.
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDOpc3XyMz4uP5+baLxoMlzKs6X63SDvuIMwYIjBMy/2mmHNoO/x7cLdSzm0HEqHRzhUjuurq/1xMQVbpTOc+2h8X/8eyZldJSg9D5/4q4AObno6f/ykj8fy5QPulSeUsxCO7MawpG6nVRFm2e/imzwXyyfEnF6w2ADC2I65TYg0Hsid/z4+iTm0YKVTFjoZCU5dFkzDbHX9z0S+/vhJeIuqNXqqY9PLoKKxRw735QaNnYp6Y8j+3knLT21YESr/ISGanMfTrK8emqdRv+Qwc8uSGfO6BQV6hXbDgIj0ohXXo9Q3zUzhKgb4WzJZypqD7BfnPq659UrSlLNP5Xw9X0lurCQ7G2whwklgYUXdw2AOCPsaCKFkwYhy4aNurYgCdIWIZRgzU94Qy4a/Ogod2VeFzC9t1ctqKyVtGjr4im8CxJpaY5lx35OA/dUkS4OIkTCJrZ3Oqm73SxMjRwWo3g7ZnbD3evuLP70L/KBPoLESUe4eq6hsYUZNziqVUfSOrcOJ+GovJhiS2ycLMt56uqWA72zRM08h1v072bXakUYny+zzz364w5n5U7KUv8e1VozJKg7MJEHRgrfjJ9Te+fMuMotL5wOmOobCyqBU+TxaJHDYTJBeJiKXKb8LzC+6AWoEHPotYwdHoRbl7KgpSgz6A77D2fZeoEkahNxCyAk/jHnle3nV3WZz25/nP5gMTgHY8czSkTRtaSQAF/awflPXYcPe/ng8WRPxFVsfHdowYAQ==
+            type: thinking
+          - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**
+            type: text
+        - role: user
+          content:
+          - text: And times two?
+            type: text
+        model: claude-sonnet-5-5
+        stream: false
+        system:
+        - type: text
+          text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
+        thinking:
+          type: adaptive
+          block_binding:
+            prefix_mismatch_behavior: drop_block
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a010f992cbd4fac171dcacdf599dabeb-404f012a5c53a0d9-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-5-5
+        id: msg_011CfWMeWwfQXBp6Cf23SZrX
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: 391 × 2 = **782**
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 94
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 12
+          output_tokens_details:
+            thinking_tokens: 0
+          service_tier: standard
+          inference_geo: global
+        input_transformations:
+        - type: thinking_dropped
+          path: messages.1.content.0
+          reason: prefix_binding_mismatch
+        diagnostics: null
+  recorded_at: 2026-09-28T19:03:25.142250+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "284"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: Think about it, then say what 17*23 is.
+            type: text
+        model: claude-sonnet-5-5
+        output_config:
+          effort: xhigh
+        stream: false
+        system:
+        - type: text
+          text: You are a helpful assistant. Answer briefly.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-18e0cfd11385e6fa69fa59b87d7d590c-73f944abf18a1684-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-5-5
+        id: msg_011CfWMeSVmc5SWYUBZSHzEK
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDOpc3XyMz4uP5+baLxoMlzKs6X63SDvuIMwYIjBMy/2mmHNoO/x7cLdSzm0HEqHRzhUjuurq/1xMQVbpTOc+2h8X/8eyZldJSg9D5/4q4AObno6f/ykj8fy5QPulSeUsxCO7MawpG6nVRFm2e/imzwXyyfEnF6w2ADC2I65TYg0Hsid/z4+iTm0YKVTFjoZCU5dFkzDbHX9z0S+/vhJeIuqNXqqY9PLoKKxRw735QaNnYp6Y8j+3knLT21YESr/ISGanMfTrK8emqdRv+Qwc8uSGfO6BQV6hXbDgIj0ohXXo9Q3zUzhKgb4WzJZypqD7BfnPq659UrSlLNP5Xw9X0lurCQ7G2whwklgYUXdw2AOCPsaCKFkwYhy4aNurYgCdIWIZRgzU94Qy4a/Ogod2VeFzC9t1ctqKyVtGjr4im8CxJpaY5lx35OA/dUkS4OIkTCJrZ3Oqm73SxMjRwWo3g7ZnbD3evuLP70L/KBPoLESUe4eq6hsYUZNziqVUfSOrcOJ+GovJhiS2ycLMt56uqWA72zRM08h1v072bXakUYny+zzz364w5n5U7KUv8e1VozJKg7MJEHRgrfjJ9Te+fMuMotL5wOmOobCyqBU+TxaJHDYTJBeJiKXKb8LzC+6AWoEHPotYwdHoRbl7KgpSgz6A77D2fZeoEkahNxCyAk/jHnle3nV3WZz25/nP5gMTgHY8czSkTRtaSQAF/awflPXYcPe/ng8WRPxFVsfHdowYAQ==
+        - type: text
+          text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 41
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 66
+          output_tokens_details:
+            thinking_tokens: 30
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-28T19:03:24.303903+00:00

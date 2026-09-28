@@ -17,7 +17,15 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import DEFAULT_PROFILE, AbstractModel, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models import (
+    DEFAULT_PROFILE,
+    AbstractModel,
+    Model,
+    ModelRequestParameters,
+    infer_model,
+    infer_model_profile,
+    parse_model_id,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 
@@ -27,6 +35,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.mistral import MistralModel
@@ -205,6 +214,14 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
+        {'GITHUB_COPILOT_API_KEY': 'github-copilot-api-key'},
+        'github-copilot:claude-haiku-4.5',
+        'claude-haiku-4.5',
+        'github-copilot',
+        'github_copilot',
+        GitHubCopilotModel,
+    ),
+    pytest.param(
         {'MOONSHOTAI_API_KEY': 'moonshotai-api-key'},
         'moonshotai:kimi-k2-0711-preview',
         'kimi-k2-0711-preview',
@@ -227,6 +244,14 @@ TEST_CASES = [
         'openrouter',
         'openrouter',
         OpenRouterModel,
+    ),
+    pytest.param(
+        {'VLLM_BASE_URL': 'http://localhost:8000/v1/'},
+        'vllm:Qwen/Qwen3-32B',
+        'Qwen/Qwen3-32B',
+        'vllm',
+        'openai',
+        OpenAIChatModel,
     ),
 ]
 
@@ -450,6 +475,16 @@ def test_infer_model_profile_fills_default_profile_with_context_window():
     assert profile == {**DEFAULT_PROFILE, 'context_window': 123}
 
 
+def test_prepare_request_rejects_unsupported_text_output():
+    params = ModelRequestParameters()
+
+    with pytest.raises(UserError, match='Text output is not supported by this model'):
+        TestModel(profile={'supports_text_output': False}).prepare_request(None, params)
+
+    _, prepared = TestModel().prepare_request(None, params)
+    assert prepared.allow_text_output is True
+
+
 def test_custom_provider_instance_method_model_profile():
     """Verify that a custom provider using the old instance-method model_profile pattern still works for non-Temporal usage.
 
@@ -596,7 +631,6 @@ def test_prepare_messages_system_prompt_wrapping(
     assert _request_parts(model.prepare_messages(messages)) == expected
 
 
-@pytest.mark.anyio
 async def test_model_default_async_context_returns_model() -> None:
     model = TestModel()
     assert await AbstractModel.__aenter__(model) is model

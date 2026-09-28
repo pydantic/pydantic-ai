@@ -27,6 +27,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
@@ -39,6 +40,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
     from pydantic_ai.providers.zai import ZaiProvider
 
 
@@ -99,6 +101,11 @@ CASES = [
         'fireworks',
         lambda: FireworksProvider(api_key='test'),
         lambda http_client: FireworksProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
+        'github-copilot',
+        lambda: GitHubCopilotProvider(api_key='test'),
+        lambda http_client: GitHubCopilotProvider(api_key='test', http_client=http_client),
     ),
     Case(
         'heroku',
@@ -163,6 +170,11 @@ CASES = [
         lambda http_client: VercelProvider(api_key='test', http_client=http_client),
     ),
     Case(
+        'vllm',
+        lambda: VLLMProvider(base_url='http://localhost:8000/v1', api_key='test'),
+        lambda http_client: VLLMProvider(base_url='http://localhost:8000/v1', api_key='test', http_client=http_client),
+    ),
+    Case(
         'zai',
         lambda: ZaiProvider(api_key='test'),
         lambda http_client: ZaiProvider(api_key='test', http_client=http_client),
@@ -177,6 +189,7 @@ IMPORT_GUARD_CASES = [
     ('crusoe', 'use the Crusoe provider'),
     ('deepseek', 'use the DeepSeek provider'),
     ('fireworks', 'use the Fireworks AI provider'),
+    ('github_copilot', 'use the GitHub Copilot provider'),
     ('heroku', 'use the Heroku provider'),
     ('litellm', 'use the LiteLLM provider'),
     ('moonshotai', 'use the MoonshotAI provider'),
@@ -189,6 +202,7 @@ IMPORT_GUARD_CASES = [
     ('snowflake', 'use the Snowflake provider'),
     ('together', 'use the Together AI provider'),
     ('vercel', 'use the Vercel provider'),
+    ('vllm', 'use the vLLM provider'),
     ('zai', 'use the Z.AI provider'),
 ]
 
@@ -239,7 +253,6 @@ def test_openai_compatible_provider_import_guard(
     assert error_hint in error
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_http_client_lifecycle(case: Case) -> None:
     provider = case.create()
@@ -258,7 +271,6 @@ async def test_openai_compatible_provider_http_client_lifecycle(case: Case) -> N
     assert second_client.is_closed
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_preserves_caller_owned_httpx2_client(case: Case) -> None:
     async with httpx2.AsyncClient() as http_client:
@@ -270,7 +282,6 @@ async def test_openai_compatible_provider_preserves_caller_owned_httpx2_client(c
         assert not http_client.is_closed
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_deprecates_caller_owned_httpx_client(case: Case) -> None:
     async with httpx.AsyncClient() as http_client:
@@ -286,7 +297,6 @@ async def test_openai_compatible_provider_deprecates_caller_owned_httpx_client(c
         assert not http_client.is_closed
 
 
-@pytest.mark.anyio
 async def test_openai_compatible_provider_preserves_caller_owned_sdk_client() -> None:
     async with httpx2.AsyncClient() as http_client:
         openai_client = AsyncOpenAI(api_key='test', http_client=http_client)

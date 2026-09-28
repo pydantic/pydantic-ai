@@ -153,6 +153,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openai import OpenAIProvider
 
         return OpenAIProvider
+    elif provider == 'openai-codex':
+        from .openai_codex import OpenAICodexProvider
+
+        return OpenAICodexProvider
     elif provider == 'deepseek':
         from .deepseek import DeepSeekProvider
 
@@ -241,10 +245,18 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
         return GitHubProvider  # pyright: ignore[reportDeprecated]
+    elif provider == 'github-copilot':
+        from .github_copilot import GitHubCopilotProvider
+
+        return GitHubCopilotProvider
     elif provider == 'litellm':
         from .litellm import LiteLLMProvider
 
         return LiteLLMProvider
+    elif provider == 'vllm':
+        from .vllm import VLLMProvider
+
+        return VLLMProvider
     elif provider == 'nebius':
         from .nebius import NebiusProvider
 
@@ -269,6 +281,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .snowflake import SnowflakeProvider
 
         return SnowflakeProvider
+    elif provider == 'typesafe':
+        from .typesafe import TypeSafeProvider
+
+        return TypeSafeProvider
     elif provider == 'voyageai':
         from .voyageai import VoyageAIProvider
 

@@ -1,3 +1,7 @@
+---
+description: "Keep long Pydantic AI conversations within the context window using OpenAI or Anthropic native compaction, or trim and summarize message history on any model."
+---
+
 # Compaction
 
 As a conversation grows, its message history can approach the model's context window. *Compaction* keeps it in check by shrinking older messages (trimming, clearing, or summarizing them) while preserving recent context and tool-call integrity. Pydantic AI supports this at several levels: [provider-native compaction APIs](#provider-native-compaction), [model-agnostic history editing](#model-agnostic-compaction) you write yourself, and [Pydantic AI Harness](#pydantic-ai-harness)'s menu of ready-made model-agnostic strategies.
@@ -38,7 +42,7 @@ To compact on any model, edit the message history yourself with a [history proce
 
 ## Compaction events
 
-Compaction is a memory wipe: whatever it drops, the model can never get back. So that other capabilities and application code can react — or object — the compaction capabilities that run client-side announce their work through one shared [capability event](overview.md#capability-events) family (a [history processor](#model-agnostic-compaction) you write yourself doesn't emit these automatically, but it can emit the same family):
+Compaction removes history from the model's active context. Unless the application persists and later retrieves that history, the model cannot use it again. So that other capabilities and application code can react — or object — the compaction capabilities that run client-side announce their work through one shared [capability event](overview.md#capability-events) family (a [history processor](#model-agnostic-compaction) you write yourself doesn't emit these automatically, but it can emit the same family):
 
 - [`CompactionStartEvent`][pydantic_ai.capabilities.CompactionStartEvent] is emitted before compaction runs. It is [dispatched immediately](overview.md#reacting-to-events), and any listener may call [`cancel()`][pydantic_ai.capabilities.CompactionStartEvent.cancel] to skip this attempt — for example, a capability that is mid-activity and needs the full history intact for one more turn. Cancelling is per-attempt: the compacting capability re-attempts the next time its trigger condition is met.
 - [`CompactionEndEvent`][pydantic_ai.capabilities.CompactionEndEvent] is emitted after history was actually compacted, with before/after message counts (and token sizes, when the emitter knows them).

@@ -1,3 +1,7 @@
+---
+description: "Compute experiment-wide metrics with Pydantic Evals report evaluators: confusion matrices, precision-recall and ROC curves with AUC, accuracy and custom tables."
+---
+
 # Report Evaluators
 
 Report evaluators analyze entire experiment results rather than individual cases. Use them to compute

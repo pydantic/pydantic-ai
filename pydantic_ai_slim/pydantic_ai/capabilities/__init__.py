@@ -45,6 +45,7 @@ from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
+from .local_workspace import LocalWorkspace
 from .mcp import MCP
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
@@ -80,6 +81,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
+        LocalWorkspace,
         MCP,
         PrefixTools,
         PrepareTools,
@@ -136,6 +138,7 @@ __all__ = [
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',
+    'LocalWorkspace',
     'MCP',
     'PrefixTools',
     'PrepareOutputTools',

@@ -19,6 +19,15 @@ _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetch
 `AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
 per-model in the profile below."""
 
+ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
+"""The unified sampling settings gated by `anthropic_disallows_sampling_settings`.
+
+Models whose profile sets that flag reject these settings outright with a 400, so every provider
+serving them has to drop and warn rather than forward. It lives here rather than beside either
+model because `models/bedrock.py` cannot import from `models/anthropic.py` without pulling the
+`anthropic` SDK into the `bedrock` extra.
+"""
+
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
 
@@ -45,7 +54,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_fast_speed: bool
     """Whether the model supports fast inference speed (`anthropic_speed='fast'`). Default: `False`.
 
-    Currently Claude Opus 4.6, 4.7, 4.8, and 5 support fast mode. See the Anthropic docs for the latest list.
+    Currently Claude Opus 4.6, 4.7, 4.8, 5, and 5.5 support fast mode. See the Anthropic docs for the latest list.
     """
 
     anthropic_supports_adaptive_thinking: bool
@@ -54,9 +63,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     When True, unified `thinking` translates to `{'type': 'adaptive'}`.
     When False, it translates to `{'type': 'enabled', 'budget_tokens': N}`.
 
-    Because adaptive thinking — unlike extended thinking — is compatible with a forced `tool_choice`,
-    this also decides whether unified `thinking` blocks tool forcing and switches Tool Output to
-    Native or Prompted Output.
+    Adaptive thinking, unlike extended thinking, accepts a forced `tool_choice`, so this also decides whether
+    an explicit forcing `tool_choice` raises alongside unified `thinking`.
     """
 
     anthropic_supports_effort: bool
@@ -89,14 +97,15 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_disallows_sampling_settings: bool
     """Whether the model rejects sampling settings like `temperature` and `top_p`. Default: `False`.
 
-    Claude Opus 4.7, 4.8, and 5 require these settings to be omitted from request payloads.
+    Claude Opus 4.7, 4.8, 5, and 5.5 require these settings to be omitted from request payloads.
     """
 
     anthropic_disallows_top_effort_when_thinking_disabled: bool
     """Whether the model rejects `xhigh`/`max` effort while thinking is explicitly disabled. Default: `False`.
 
     Claude Opus 5 caps effort at `high` when `anthropic_thinking={'type': 'disabled'}` and returns a
-    400 for `xhigh` or `max`; Claude Opus 4.8 accepts the same combination.
+    400 for `xhigh` or `max`; Claude Opus 4.8 accepts the same combination. Claude Opus 5.5 rejects
+    disabled thinking at every effort level, so the flag doesn't apply to it.
     """
 
     anthropic_default_code_execution_tool_version: AnthropicCodeExecutionToolVersion
@@ -108,16 +117,24 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_task_budgets: bool
     """Whether the model supports `output_config.task_budget`. Default: `False`.
 
-    Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 beta feature.
+    Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 beta feature.
     """
 
     anthropic_supports_forced_tool_choice: bool
-    """Whether the model accepts a forced `tool_choice` (`{'type': 'any'}` or `{'type': 'tool'}`).
+    """Deprecated: use [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] instead.
 
-    Most Anthropic models only reject forcing alongside extended thinking; Claude Fable 5 and Claude
-    Mythos Preview reject it unconditionally with a 400. When False, a resolved `required` tool choice
-    falls back to `auto` (filtering tools to the requested set), and an explicit `tool_choice='required'`
-    (or an explicit list of tools) raises a `UserError`.
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
+
+    anthropic_binds_thinking_blocks: bool
+    """Whether the model binds each thinking block to the conversation prefix that produced it. Default: `False`.
+
+    Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5 reject a replayed thinking block once the `system` prompt text changes or a
+    non-deferred tool joins the `tools` array — both of which Pydantic AI causes by design, through
+    dynamic `@agent.instructions` and conditional toolsets. When True, Pydantic AI preserves the
+    account's default behavior on the first request; if Anthropic rejects a stale block, it retries
+    once with `thinking.block_binding.prefix_mismatch_behavior='drop_block'` and warns after the
+    retry succeeds.
     """
 
 
@@ -195,6 +212,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         (
             'claude-fable-5',
             'claude-mythos-5',
+            'claude-mythos-preview',
             'claude-sonnet-4-6',
             'claude-sonnet-5',
             'claude-opus-4-6',
@@ -228,7 +246,10 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
     # Opus 5 caps effort at `high` while thinking is disabled; Opus 4.8 and earlier accept every level.
-    disallows_top_effort_when_thinking_disabled = model_name.startswith('claude-opus-5')
+    # Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
+    disallows_top_effort_when_thinking_disabled = model_name.startswith('claude-opus-5') and not model_name.startswith(
+        'claude-opus-5-5'
+    )
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
@@ -236,13 +257,34 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
 
-    # Claude Fable 5, Claude Mythos 5, and Claude Mythos Preview reject a forced `tool_choice`
-    # (`any`/`tool`) outright, unlike other Anthropic models which only reject forcing with extended
-    # thinking. The forcing-tool-use docs name Mythos Preview explicitly; Mythos 5 is its successor
-    # and the safety-classifier-free twin of Fable 5, both of which reject forcing.
-    supports_forced_tool_choice = not model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview')
+    # Anthropic documents these models as thinking when the request omits `thinking`; Fable 5, Fable 5.1, Opus 5,
+    # Opus 5.5 and Sonnet 5 return thinking tokens live with no thinking parameter, where Opus 4.8 and Sonnet 4.6
+    # return none.
+    thinking_enabled_by_default = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5', 'claude-sonnet-5')
     )
+    # Of those, all but Opus 5 and Sonnet 5 reject `thinking={'type': 'disabled'}` with a 400, so thinking
+    # can't be turned off.
+    thinking_always_enabled = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5-5', 'claude-sonnet-5-5')
+    )
+
+    # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
+    # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
+    # forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and `claude-fable-5` accepts
+    # both forcing shapes live (200 on `any` and `tool`, GA and beta endpoints), so Fable 5, Mythos 5,
+    # and Mythos Preview no longer belong here. `claude-opus-5-5` returns a 400 for both shapes where
+    # `claude-opus-5` returns 200, and likewise `claude-sonnet-5-5` where `claude-sonnet-5` returns 200.
+    supports_forced_tool_choice = not model_name.startswith(
+        ('claude-fable-5-1', 'claude-mythos-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5')
+    )
+
+    # Claude Fable 5.1, Opus 5.5, and Sonnet 5.5 bind thinking blocks to the conversation prefix:
+    # Claude Fable 5, Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit
+    # `prefix_mismatch_behavior` of `'error'` where Opus 5.5 and Sonnet 5.5 return a 400 once the
+    # `system` prompt changes, and Anthropic documents that Claude Mythos 5.1 "doesn't run this
+    # check" — the one capability on which it is not Fable 5.1's mirror.
+    binds_thinking_blocks = model_name.startswith(('claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5'))
 
     supports_dynamic_filtering = model_name.startswith(
         (
@@ -301,6 +343,12 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=supports_json_schema_output,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,
+        thinking_always_enabled=thinking_always_enabled,
+        thinking_enabled_by_default=thinking_enabled_by_default,
+        # A forced `tool_choice` prefills the tool call, so the model answers it without thinking: Opus 5, Sonnet
+        # 4.6 and Sonnet 5 return a thinking block for `auto` but none for `any` or `tool`, with adaptive thinking
+        # on. Extended thinking rejects forcing outright, which `AnthropicModel` handles itself.
+        forced_tool_choice_disables_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
         anthropic_supports_effort=supports_effort,
         anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
@@ -311,7 +359,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
-        anthropic_supports_forced_tool_choice=supports_forced_tool_choice,
+        supports_forced_tool_choice=supports_forced_tool_choice,
+        anthropic_binds_thinking_blocks=binds_thinking_blocks,
         supported_native_tools=supported_native_tools,
     )
     if supports_tool_search:

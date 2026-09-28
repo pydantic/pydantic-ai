@@ -37,7 +37,7 @@ with try_import() as groq_imports:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.providers.groq import GroqProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 ProviderCase = Literal['openai-responses', 'openai-chat', 'anthropic', 'google', 'bedrock', 'groq']

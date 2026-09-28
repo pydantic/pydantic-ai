@@ -1,3 +1,7 @@
+---
+description: "Connect a Pydantic AI agent to xAI Grok Voice with XaiRealtimeModel: setup, grok-voice model names, voices, turn detection, reasoning and session resumption."
+---
+
 # xAI Grok Voice
 
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] brings Grok Voice into the typed,
@@ -71,11 +75,12 @@ Other Grok Voice models ignore the setting.
 | --- | --- | --- |
 | Audio format | Full feature support | Mono PCM16, 24 kHz input and output |
 | Text output | Unsupported | Grok Voice always produces audio |
-| Image input | Unsupported | Audio/text input only |
+| Image input | Unsupported | xAI does not document image input; currently accepted frames are silently ignored rather than rejected |
 | Manual turns | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk) |
 | Interruption | Limited parameter support | [`interrupt()`](turns.md#barge-in) works; output truncation with `played_ms` does not |
 | Input transcription | Full feature support | [Dedicated provider path](audio.md#input-transcription); `'auto'` by default |
 | Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
 | State-restoring reconnect | Full feature support | Native [resumption](#session-resumption) is automatic with a reconnect policy |
 
@@ -98,7 +103,8 @@ memory and cannot resume in another process.
 
 - Grok Voice always speaks: its profile reports `supports_text_output=False`, so `output_modality='text'`
   raises a `UserError` before connecting. Read the answer from the transcript on the `SpeechPart`.
-- xAI supports cancellation but not output truncation. Flush local playback and call `interrupt()`
-  without `played_ms`.
+- Pydantic AI reports output truncation as unsupported because xAI does not document it. The API
+  currently accepts `conversation.item.truncate` silently, but does not confirm or document its
+  effect, so flush local playback and call `interrupt()` without `played_ms`.
 - The protocol resembles OpenAI Realtime, but feature support comes from the xAI model profile;
   avoid assuming every OpenAI behavior is available.

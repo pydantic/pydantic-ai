@@ -16,7 +16,7 @@ from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from types import FrameType, TracebackType
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream
@@ -56,6 +56,7 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
+from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
@@ -493,6 +494,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -519,6 +521,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -544,6 +547,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -570,7 +574,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -591,6 +595,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -619,6 +624,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             retries=retries,
             toolsets=toolsets,
             capabilities=capabilities,
+            workspace=workspace,
             spec=spec,
         ) as agent_run:
             # Drive via next() so capability hooks fire for each node. `next()` already streams a
@@ -689,6 +695,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -715,6 +722,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -740,6 +748,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -770,7 +779,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -791,6 +800,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -822,6 +832,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
+                workspace=workspace,
                 spec=spec,
             )
         )
@@ -849,6 +860,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -875,6 +887,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -901,6 +914,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
@@ -934,7 +948,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -957,6 +971,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -989,6 +1004,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name=False,
             toolsets=toolsets,
             capabilities=capabilities,
+            workspace=workspace,
             spec=spec,
         ) as agent_run:
             # Handle wrap_run short-circuit: result is already available
@@ -1156,6 +1172,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
 
@@ -1181,6 +1198,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
 
@@ -1205,6 +1223,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
@@ -1251,7 +1270,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request, or a callable
@@ -1273,6 +1292,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1303,6 +1323,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
+                workspace=workspace,
                 spec=spec,
             )
         )
@@ -1329,6 +1350,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
@@ -1354,6 +1376,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
@@ -1378,6 +1401,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -1430,7 +1454,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1450,6 +1474,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1480,6 +1505,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
+                workspace=workspace,
                 spec=spec,
             )
 
@@ -1507,6 +1533,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1532,6 +1559,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1558,6 +1586,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1621,6 +1650,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 End(data=FinalResult(output='The capital of France is Paris.')),
             ]
             '''
+            assert agent_run.result is not None
             print(agent_run.result.output)
             #> The capital of France is Paris.
         ```
@@ -1632,7 +1662,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1652,6 +1682,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1676,6 +1707,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
+        workspace: WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | _utils.Unset = _utils.UNSET,
     ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -1699,6 +1731,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 dict to override just one (e.g. `retries={'tools': 3}`).
                 When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec providing defaults for override.
+            workspace: Workspace for every run in this context, in place of a per-run `workspace=` argument.
         """
         raise NotImplementedError
         yield
@@ -1730,11 +1763,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         do not apply; structured output should be delegated to a normal [`Agent`][pydantic_ai.Agent] (see the
         realtime docs). Capabilities run `for_run` once when the session connects; their instructions,
         toolsets, and native tools are applied. Tool hooks (`prepare_tools` and `before`/`after`/`wrap`/
-        `on_error` for `tool_validate` and `tool_execute`) run for each tool call. Run-, graph-,
-        model-request-, event-stream-, and output-stage hooks do not run.
+        `on_error` for `tool_validate` and `tool_execute`) run for each tool call. Run hooks
+        (`before_run`, `after_run`, `wrap_run`, `on_run_error`) run once around the session and
+        event-stream hooks wrap the session iterator; graph, model-request, and output-stage hooks
+        do not run.
 
         ```python
         from pydantic_ai import Agent
+        from pydantic_ai.realtime import RealtimeTurnCompleteEvent
         from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
         agent = Agent(instructions='You are a helpful voice assistant.')
@@ -1747,8 +1783,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model = OpenAIRealtimeModel('gpt-realtime')
             async with agent.realtime(model).session() as session:
                 await session.send_audio(b'...')
-                async for _event in session:
-                    pass
+                async for event in session:
+                    if isinstance(event, RealtimeTurnCompleteEvent):
+                        break  # keep listening in a real call; we stop after one reply
         ```
 
         Args:
@@ -1760,8 +1797,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (there is no per-request rebuild in a realtime session).
             toolsets: Optional additional toolsets for the session, on top of the agent's.
             capabilities: Optional additional capabilities for the session. Their `for_run`, setup
-                contributions, and tool-lifecycle hooks apply; run, model-request, graph, event-stream,
-                and output hooks are not invoked.
+                contributions, and tool-lifecycle hooks apply; run hooks fire once around the session
+                and event-stream hooks wrap the iterator; model-request, graph, and output hooks are not
+                invoked.
             usage: Optional [`RunUsage`][pydantic_ai.usage.RunUsage] to accumulate token usage into;
                 exposed as `session.usage`. A fresh one is used when omitted.
             usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Request, token, and
@@ -1851,6 +1889,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         provider_session: RealtimeProviderSession | None = None,
@@ -2247,6 +2286,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         self,
         *,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         provider_session: RealtimeProviderSession | None = None,
@@ -2262,6 +2302,17 @@ class AgentRealtime(Generic[AgentDepsT]):
             audio_retention: How much spoken audio the session retains in its history, on top of
                 transcripts. Defaults to `'transcript_only'` (drop audio bytes); see
                 [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
+            handle_barge_in: Let the session handle the local half of barge-in itself. When the user
+                starts speaking over the model, the session discards the buffered audio the user
+                will never hear, truncates the provider's transcript to what was actually played,
+                and cancels the response — normalizing what each provider signals and supports, and
+                doing nothing when the previous reply was heard in full. Requires playback to drain
+                the session's single [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+                iterator chunk by chunk at device pace (the setup behind
+                [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]);
+                any other playback topology should leave this off and call
+                [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] itself. Defaults to
+                `False`.
             retain_images_every_n: Keep one of every `N` images sent during the session in message
                 history. Defaults to `1` (keep every image); increase for high-rate camera/screen streams.
             retain_images_max: Bound on how many images stay in message history; once exceeded, the
@@ -2289,6 +2340,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             run_id=self._run_id,
             message_history=self._message_history,
             audio_retention=audio_retention,
+            handle_barge_in=handle_barge_in,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
             provider_session=provider_session,

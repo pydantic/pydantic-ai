@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
@@ -785,6 +785,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
     """
 
     _registry: dict[str, list[_HookEntry[Any]]]
+    _ordering: CapabilityOrdering | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def _emits_app_events(self) -> bool:
