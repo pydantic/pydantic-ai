@@ -7,6 +7,7 @@ import math
 import os
 import shlex
 import signal
+import threading
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,8 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspaceBackend tests drive POSIX shell commands'),
 ]
+
+READINESS_WAIT_TIMEOUT = 10
 
 
 async def _process_running(pid: int) -> bool:
@@ -602,3 +605,54 @@ async def test_missing_alias_can_attach_after_directory_is_created(tmp_path: Pat
     target.mkdir()
     alias.symlink_to(target, target_is_directory=True)
     assert await backend.working_dir() == str(target.resolve())
+
+
+@pytest.mark.parametrize('second', ['write', 'read'])
+async def test_parallel_access_to_one_file_waits_for_an_in_progress_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, second: str
+):
+    """Parallel tool calls on one file must not tear it: a write truncates in place from a worker thread."""
+    (tmp_path / 'real.txt').write_bytes(b'old')
+    (tmp_path / 'alias.txt').symlink_to(tmp_path / 'real.txt')
+    backend = LocalWorkspaceBackend(tmp_path)
+    entered: list[bytes] = []
+    first_entered = threading.Event()
+    release = threading.Event()
+    real_write_bytes = Path.write_bytes
+
+    def blocking_write_bytes(self: Path, data: bytes) -> int:
+        entered.append(data)
+        if len(entered) == 1:
+            first_entered.set()
+            release.wait(READINESS_WAIT_TIMEOUT)
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, 'write_bytes', blocking_write_bytes)
+    read: list[bytes] = []
+
+    async def second_access() -> None:
+        # Through a symlink: the lock is keyed by the real path, not the spelling.
+        if second == 'write':
+            await backend.write_bytes(str(tmp_path / 'alias.txt'), b'second')
+        else:
+            read.append(await backend.read_bytes(str(tmp_path / 'alias.txt')))
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(backend.write_bytes, str(tmp_path / 'real.txt'), b'first')
+            await anyio.to_thread.run_sync(first_entered.wait)
+            tg.start_soon(second_access)
+            [lock] = backend._file_locks.values()  # pyright: ignore[reportPrivateUsage]
+            while lock.users < 2:
+                await anyio.sleep(0.001)
+            # The second call is queued on the lock and has not touched the file.
+            assert entered == [b'first']
+            assert read == []
+            release.set()
+
+    if second == 'write':
+        assert entered == [b'first', b'second']
+        assert (tmp_path / 'real.txt').read_bytes() == b'second'
+    else:
+        assert read == [b'first']
+    assert backend._file_locks == {}  # pyright: ignore[reportPrivateUsage]

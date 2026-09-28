@@ -11,8 +11,9 @@ import os
 import shutil
 import signal
 import stat as stat_module
-from collections.abc import Awaitable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass, field
 from importlib.metadata import version
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
@@ -90,6 +91,12 @@ async def _shielded(awaitable: Awaitable[None], deadline: float) -> None:
         raise TimeoutError('local workspace subprocess operation exceeded its grace period')
 
 
+@dataclass
+class _FileLock:
+    lock: anyio.Lock = field(default_factory=anyio.Lock)
+    users: int = 0
+
+
 class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
     """Run commands as subprocesses on this machine and use its filesystem (POSIX only).
 
@@ -126,6 +133,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # path: a symlink followed by `..` has different kernel and lexical meanings.
         self._ref = WorkspaceRef(provider='local', id=os.path.normpath(absolute))
         self._env = {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ} | dict(env or {})
+        self._file_locks: dict[str, _FileLock] = {}
 
     @property
     def ref(self) -> WorkspaceRef:
@@ -152,6 +160,25 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise ValueError(f'path must be absolute, got {path!r}')
         return target
 
+    @asynccontextmanager
+    async def _file_lock(self, path: str) -> AsyncGenerator[None]:
+        """Serialize this backend's reads and writes of one file.
+
+        A write truncates in place from a worker thread, so parallel tool calls on the same file
+        would otherwise interleave into mixed content or read a partial file. Keyed by the real
+        path so aliases share a lock; an entry lives only while someone holds or waits on it.
+        """
+        key = await run_in_executor(os.path.realpath, path)
+        entry = self._file_locks.setdefault(key, _FileLock())
+        entry.users += 1
+        try:
+            async with entry.lock:
+                yield
+        finally:
+            entry.users -= 1
+            if not entry.users:
+                del self._file_locks[key]
+
     # File operations run in a thread: filesystem calls block, and must not stall the event loop.
 
     async def read_bytes(self, path: str) -> bytes:
@@ -171,9 +198,16 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             finally:
                 os.close(fd)
 
-        return await run_in_executor(read)
+        async with self._file_lock(path):
+            return await run_in_executor(read)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
+        """Write bytes to a file, creating missing parents and writing through an existing symlink.
+
+        The file is rewritten in place. Reads and writes of one file through this backend are
+        serialized; other processes and commands can still interleave with them.
+        """
+
         def write() -> None:
             target = self._path(path)
             self._ensure_alive()
@@ -189,7 +223,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     raise OSError(f'not a regular file: {path!r}')
             target.write_bytes(data)
 
-        await run_in_executor(write)
+        async with self._file_lock(path):
+            await run_in_executor(write)
 
     async def stat(self, path: str) -> FileEntry:
         def stat() -> FileEntry:

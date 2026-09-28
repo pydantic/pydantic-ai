@@ -655,6 +655,7 @@ works without shell support, but cannot run commands.
   `defer_loading=True` is rejected: the workspace must be selected before deferred capabilities load.
   (macOS and Linux). Its ref normalizes `.` and `..` without resolving symlinks, so differently
   spelled symlink roots have distinct refs even if they point to the same directory.
+- `LocalWorkspace` serializes reads and writes of one file from the same process; other processes and commands can still interleave with them.
 - A run has one workspace.
 - Non-durable runs do not create or delete sandboxes solely at run boundaries; durable runs eagerly create or attach an environment at their start, even without tool use. In either case, deletion remains the caller's job.
 - How a timed-out command is stopped depends on the provider.
