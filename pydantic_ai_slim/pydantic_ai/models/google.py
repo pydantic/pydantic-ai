@@ -2061,6 +2061,11 @@ def _metadata_as_usage(
     metadata = response.usage_metadata
     if metadata is None:
         return existing_usage or usage.RequestUsage()
+    web_search_requests = sum(
+        len(candidate.grounding_metadata.web_search_queries or [])
+        for candidate in response.candidates or []
+        if candidate.grounding_metadata is not None
+    )
     return _usage_metadata_as_usage(
         prompt_token_count=metadata.prompt_token_count,
         output_token_count=metadata.candidates_token_count,
@@ -2072,6 +2077,7 @@ def _metadata_as_usage(
         output_tokens_details=metadata.candidates_tokens_details,
         tool_use_prompt_tokens_details=metadata.tool_use_prompt_tokens_details,
         output_details_prefix='candidates',
+        web_search_requests=web_search_requests,
         extract_data=response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
         provider=provider,
         provider_url=provider_url,
@@ -2091,6 +2097,7 @@ def _usage_metadata_as_usage(
     output_tokens_details: Sequence[ModalityTokenCount] | None,
     tool_use_prompt_tokens_details: Sequence[ModalityTokenCount] | None,
     output_details_prefix: Literal['candidates', 'response'],
+    web_search_requests: int | None = None,
     extract_data: dict[str, Any],
     provider: str,
     provider_url: str,
@@ -2103,6 +2110,10 @@ def _usage_metadata_as_usage(
     detail keys with `output_details_prefix`. `extract_data` is the raw response payload
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
+
+    `web_search_requests` is the number of Google Search grounding queries on the response, if any. genai-prices
+    can't yet extract it from the raw payload, so the caller counts it from the candidates and passes it in; it is
+    surfaced as first-class `web_searches` and an informational `web_search_requests` detail.
     """
     details: dict[str, int] = {}
     if cached_content_token_count:
@@ -2127,6 +2138,9 @@ def _usage_metadata_as_usage(
                 continue
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
 
+    if web_search_requests:
+        details['web_search_requests'] = web_search_requests
+
     # Gemini streams usage as cumulative snapshots, but a field reported on an earlier chunk can be
     # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see https://github.com/pydantic/pydantic-ai/issues/5205).
     # Merge with the usage accumulated so far so those values survive instead of being overwritten with 0.
@@ -2140,6 +2154,13 @@ def _usage_metadata_as_usage(
         provider_fallback='google',
         details=details,
     )
+
+    # genai-prices can't map Google grounding searches from the raw payload, so the count computed from the
+    # response candidates is set first-class here. An earlier streamed chunk can report queries that a later
+    # cumulative chunk's candidates no longer carry, so carry the value forward like the token fields below.
+    web_searches = web_search_requests or getattr(existing_usage, 'web_searches', None)
+    if web_searches:
+        new_usage.web_searches = web_searches  # pyright: ignore[reportAttributeAccessIssue]
 
     # `extract` derives the typed token fields from the raw `usage_metadata`, not from the merged
     # `details`, so a field a later cumulative chunk dropped stays zeroed; backfill it from the usage

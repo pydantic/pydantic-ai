@@ -4882,6 +4882,83 @@ async def test_google_stream_usage_retains_dropped_field_mid_stream(
     assert usage_seen == snapshot([(5, 16365), (10, 16365), (15, 16365)])
 
 
+async def test_google_web_search_grounding_usage(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Google Search grounding queries surface as first-class `web_searches` and a `web_search_requests` detail."""
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-grounding-1',
+            'model_version': 'gemini-2.5-flash',
+            'candidates': [
+                {
+                    'content': {'role': 'model', 'parts': [{'text': 'Grounded answer.'}]},
+                    'grounding_metadata': {'web_search_queries': ['pydantic ai', 'web search']},
+                }
+            ],
+            'usage_metadata': {
+                'prompt_token_count': 100,
+                'candidates_token_count': 50,
+                'total_token_count': 150,
+            },
+        }
+    )
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+    result = await agent.run('What is Pydantic AI?')
+
+    response_message = result.new_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    usage = response_message.usage
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 50
+    assert usage.web_searches == 2  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert usage.details['web_search_requests'] == 2
+
+
+async def test_google_web_search_grounding_usage_stream(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Streaming grounding queries reach the final usage through the shared `_metadata_as_usage` path."""
+    chunks = [
+        _usage_chunk(candidates=5, text='Grounded '),
+        GenerateContentResponse.model_validate(
+            {
+                'response_id': 'resp-grounding-2',
+                'model_version': 'gemini-2.5-flash',
+                'candidates': [
+                    {
+                        'content': {'role': 'model', 'parts': [{'text': 'answer.'}]},
+                        'grounding_metadata': {'web_search_queries': ['pydantic ai', 'web search']},
+                    }
+                ],
+                'usage_metadata': {
+                    'prompt_token_count': 100,
+                    'candidates_token_count': 15,
+                    'total_token_count': 115,
+                },
+            }
+        ),
+    ]
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=_aiter_chunks(chunks))
+
+    agent = Agent(model=model)
+    async with agent.run_stream('What is Pydantic AI?') as result:
+        async for _ in result.stream_text(debounce_by=None):
+            pass
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    usage = response_message.usage
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 15
+    assert usage.web_searches == 2  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert usage.details['web_search_requests'] == 2
+
+
 async def test_google_stream_usage_limit_stops_stream_early(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
