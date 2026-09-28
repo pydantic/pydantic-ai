@@ -540,7 +540,6 @@ include = [
 ]
 omit = [
     "tests/example_modules/*.py",
-    "tests/harness/modal_sandbox/test_modal_live.py",  # runs only with real Modal credentials
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
