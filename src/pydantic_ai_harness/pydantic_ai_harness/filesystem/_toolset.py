@@ -1508,6 +1508,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             results, capped = await run_posix_search(
                 scope.workspace,
                 cwd=resolved,
+                include_hidden=bool(glob and _explicit_hidden(glob)),
                 limit=self._max_find_results,
                 accept=accept,
                 prepare=prepare,
@@ -1670,6 +1671,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 literal=literal,
                 ignore_case=ignore_case,
                 context=context,
+                include_hidden=bool(glob and _explicit_hidden(glob)),
                 limit=self._max_search_results,
                 accept=accept,
                 prepare=prepare,
