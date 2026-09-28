@@ -201,7 +201,7 @@ def _format_messages(
                     skip_previous_summary and part.content.startswith(_SUMMARY_PREFIX)
                 ):
                     lines.append(f'System: {part.content}')
-                elif isinstance(part, ToolReturnPart):
+                elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                     content_str = str(part.content)
                     if tool_return_max_chars is not None:
                         content_str = _truncate_with_marker(content_str, tool_return_max_chars)

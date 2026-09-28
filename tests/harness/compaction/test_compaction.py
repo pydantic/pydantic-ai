@@ -2511,10 +2511,9 @@ class TestHelperBranchCoverage:
             ModelResponse(parts=[ThinkingPart(content='t' * 400)]),
         ]
         assert estimate_token_count(msgs) == 200
-        # `_format_messages` renders history for a summarizer prompt, which is a different question
-        # from what the request costs. A retry that answers a call is that call's return, so it is
-        # rendered as one; a thinking block stays out.
-        assert _format_messages(msgs) == f'Tool [t]: {"r" * 400}'
+        # `_format_messages` renders history for a summarizer prompt, which is a different
+        # question from what the request costs; a retry and a thinking block stay out of it.
+        assert _format_messages(msgs) == ''
 
     def test_retry_feedback_costs_what_its_feedback_text_costs(self):
         """It reaches the model as a system prompt or a fenced user prompt, so it occupies the window.

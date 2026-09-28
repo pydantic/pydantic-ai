@@ -7,6 +7,7 @@ from typing import Any
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     ToolCallPart,
     ToolReturnPart,
 )
@@ -29,7 +30,9 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     A retry that answers a call is that call's `ToolReturnPart` carrying
     `outcome='retried'`, so it settles the pairing like any other return. A
     `RetryFeedbackPart` answers no call at all -- providers render it as
-    conversation, not as a tool result -- so it needs no open call.
+    conversation, not as a tool result -- so it needs no open call. A
+    tool-bound legacy `RetryPromptPart` in a caller-passed history pairs the
+    same way a retried return does.
 
     Since pydantic-ai 2.10 repairs broken pairing before every model request,
     a failing history is still sendable via `Agent.run(message_history=...)`;
@@ -45,6 +48,11 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
         else:
             for part in msg.parts:
                 if isinstance(part, ToolReturnPart):
+                    if part.tool_call_id not in open_calls:
+                        return False
+                    open_calls.discard(part.tool_call_id)
+                # TODO(v3): remove `RetryPromptPart`
+                elif isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
                     if part.tool_call_id not in open_calls:
                         return False
                     open_calls.discard(part.tool_call_id)

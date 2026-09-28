@@ -48,6 +48,8 @@ async def test_render_edge_events(show_tool_output: bool) -> None:
             FunctionToolCallEvent(part=ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g'))
         )
         await renderer.on_stream_event(FunctionToolResultEvent(part=content))
+    # A retried call carries the error, not matches, so it is not rendered as search results.
+    assert output.getvalue().count('tool did not return text results') == (2 if show_tool_output else 0)
     for operation in ('write', 'create_directory'):
         await renderer.on_stream_event(
             FileChangeRequestEvent(

@@ -54,6 +54,7 @@ from pydantic_ai_harness.step_persistence import (
 )
 from pydantic_ai_harness.step_persistence._context import current_run_id
 from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
+from tests.conftest import legacy_retry_prompt_part
 
 
 def build_run_context(
@@ -185,6 +186,21 @@ class TestIsProviderValid:
             ),
         ]
         assert is_provider_valid(messages) is False
+
+    @pytest.mark.parametrize(
+        ('call_id', 'tool_name', 'expected'),
+        [('c1', 'add', True), ('ghost', 'add', False), ('c1', None, False)],
+    )
+    def test_legacy_retry_prompt_part_pairs_like_a_retried_return(
+        self, call_id: str, tool_name: str | None, expected: bool
+    ) -> None:
+        """A caller-passed history can still hold the deprecated part: a tool-bound one settles its
+        call, and a tool-less one answers no call."""
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[legacy_retry_prompt_part('try again', tool_name=tool_name, tool_call_id=call_id)]),
+        ]
+        assert is_provider_valid(messages) is expected
 
 
 # ---------------------------------------------------------------------------
