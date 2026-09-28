@@ -324,3 +324,11 @@ async def test_coder_works_in_the_sandbox(fake_e2b: FakeE2B, tmp_path: Path) -> 
     assert 'made-in-sandbox' in read_output
     assert (tmp_path / 'note.txt').read_text() == 'made-in-sandbox\n'
     assert len(fake_e2b.sandboxes) == 1
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_commands_need_asyncio(fake_e2b: FakeE2B, anyio_backend: str) -> None:
+    # The E2B SDK starts each command's output reader on an asyncio task, so Trio gets a clear error, not a crash.
+    with pytest.raises(UserError, match='need the asyncio event loop'):
+        await E2BSandboxBackend().run(['true'])
+    assert not fake_e2b.sandboxes

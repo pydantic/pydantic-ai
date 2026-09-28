@@ -179,6 +179,8 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. The default E2B image runs commands as `user` in `/home/user`; prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Commands default to `LC_ALL=C.UTF-8` (override it with `env`); images without that locale fall back to the C locale. Nothing from your machine's environment reaches the sandbox. |
 
+Commands run on the asyncio event loop only: the E2B SDK reads their output with asyncio tasks, so under Trio `run` raises `UserError`.
+
 ## Durable execution
 
 Install the `temporal` extra too:

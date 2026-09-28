@@ -34,6 +34,7 @@ import anyio
 import anyio.lowlevel
 import sniffio
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -500,6 +501,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         line = shlex.join(command_argv(command, shell))
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
+        if sniffio.current_async_library() != 'asyncio':
+            # E2B's command handle starts its output reader with `asyncio.create_task`.
+            raise UserError('E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks.')
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
         sandbox = await self.get_sandbox()
         handle: e2b.AsyncCommandHandle | None = None
