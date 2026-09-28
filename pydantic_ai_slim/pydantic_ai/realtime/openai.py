@@ -538,7 +538,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         elif isinstance(content, ClearAudio):
             await self._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
         elif isinstance(content, CreateResponse):
-            await self._request_response((input_index,))
+            await self._solicit_response((input_index,))
         elif isinstance(content, CancelResponse):
             # Only cancel when a response is actually active: with server VAD the provider may have
             # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
@@ -623,7 +623,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
         if (response_id := self._tool_call_responses.pop(content.tool_call_id, None)) is None:
             # A call this connection didn't see made: its result asks for a response of its own.
-            await self._request_response((input_index,))
+            await self._solicit_response((input_index,))
             return
         batch = self._tool_call_batches[response_id]
         batch.unanswered.discard(content.tool_call_id)
@@ -653,7 +653,25 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             }
         )
         if respond:
-            await self._request_response((input_index,))
+            await self._solicit_response((input_index,))
+
+    async def _solicit_response(self, input_indexes: Sequence[int]) -> None:
+        """Request a response for a caller's `send()`, which is told when the request didn't go out.
+
+        A `response.create` that fails on a dead socket never reached the server, so no response is
+        active. Left marked active, a reconnect would re-ask for a response the caller was told had
+        failed. Only the caller's own request is taken back: one the receive loop sends for a deferred
+        request has no caller to tell, so the reconnect re-asks for it as before.
+        """
+        ws = self._ws
+        try:
+            await self._request_response(input_indexes)
+        except self.transport_errors:
+            # Only a request that went straight out can fail here; a deferred one sends nothing yet. If
+            # the link was replaced meanwhile, the active response is the new socket's, not this one.
+            if self._ws is ws:
+                self._response_active = False
+            raise
 
     async def _request_response(self, input_indexes: Sequence[int]) -> None:
         """Ask the model to respond now, or defer until the active response completes."""
