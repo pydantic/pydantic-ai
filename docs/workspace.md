@@ -454,8 +454,8 @@ Realtime sessions do not currently select workspaces, even when the agent has a 
 Workspace tools in a realtime session report this limit instead of suggesting a second capability.
 
 For tests, `with agent.override(workspace=LocalWorkspaceBackend(path)):` temporarily uses a local
-workspace instead of the agent's capability or the ref in history. An explicit per-run `workspace=`
-still wins over the override.
+workspace instead of the agent's capability, the ref in history, or a per-run `workspace=`, as
+`override(model=)` does for the model.
 
 ## Writing a backend
 

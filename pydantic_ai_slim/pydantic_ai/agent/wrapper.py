@@ -443,7 +443,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-        workspace: WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | None | _utils.Unset = _utils.UNSET,
+        workspace: WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | _utils.Unset = _utils.UNSET,
     ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -466,7 +466,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
                 dict to override just one (e.g. `retries={'tools': 3}`). When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec to apply as overrides.
-            workspace: Workspace for runs without an explicit workspace argument.
+            workspace: Workspace for every run in this context, in place of a per-run `workspace=` argument.
         """
         forward_kwargs: dict[str, Any] = {}
         if _utils.is_set(retries):
