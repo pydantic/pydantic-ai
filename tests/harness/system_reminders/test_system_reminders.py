@@ -722,6 +722,7 @@ class TestLLMReminder:
         assert operation in {name for name, _ in durability.calls}
         [record] = caplog.records
         assert record.levelno == logging.WARNING
+        assert record.name == 'pydantic_ai_harness.system_reminders._capability'
         assert record.getMessage() == 'LLMReminder generation operation failed; using GoalReanchor text instead'
         assert record.exc_info is not None
 

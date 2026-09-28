@@ -378,6 +378,7 @@ class TestBackgroundTools:
         # The model only learns the type, but the operator gets the details.
         [record] = caplog.records
         assert record.levelno == logging.WARNING
+        assert record.name == 'pydantic_ai_harness.background_tools._capability'
         assert re.fullmatch(r"Background tool 'broken' \(task \S+\) failed", record.getMessage())
         assert record.exc_info is not None and str(record.exc_info[1]) == 'private backend detail'
 
