@@ -450,8 +450,10 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
+    # The harness isn't installed in every CI lane (the `pydantic-evals` one, say).
+    harness = ['pydantic_ai_harness'] if importlib.util.find_spec('pydantic_ai_harness') is not None else []
     bb = BlockBuster(
-        ['pydantic_ai', 'pydantic_ai_harness', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        ['pydantic_ai', *harness, 'pydantic_graph', 'pydantic_evals', 'clai'],
         excluded_modules=excluded_modules or None,
     )
     for func, filename, functions in exemptions:
