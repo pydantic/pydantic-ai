@@ -589,7 +589,9 @@ class TestMyBackend(WorkspaceBackendSuite):
         return LocalWorkspaceBackend(working_dir=tmp_path_factory.mktemp('ws'))
 ```
 
-The suite needs the anyio pytest plugin. A class-scoped fixture starts one environment for the whole
+The suite needs the anyio pytest plugin, which runs each rule on every installed async backend (asyncio,
+and Trio when installed). For an asyncio-only SDK, override the `anyio_backend` fixture to return
+`'asyncio'`, class-scoped when your `backend` fixture is. A class-scoped fixture starts one environment for the whole
 suite instead of one per rule. Under durable execution every workspace call rebuilds your backend from
 its ref, so provide `attach_backend`, a factory that builds a backend for a ref the way your capability's
 `get_workspace` does: it enables the rule that a backend attached by ref reaches the same files and
