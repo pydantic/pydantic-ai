@@ -7,9 +7,15 @@ A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBacken
 
 - run commands and file operations against one filesystem, when it supports both;
 - report the real exit code: a non-zero exit is a result, never an exception;
-- create an environment on its first operation when built without a ref, and report its ref from
-  then on; when built with a ref, attach to it, raising
-  [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is gone;
+- do no I/O when built; create an environment on its first operation when built without a ref, or
+  attach to the one the ref names, raising
+  [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is gone
+  rather than creating a replacement;
+- record the ref as soon as a create returns, before any setup that can fail, and never change it;
+- create at most one environment when first operations run concurrently: the backend owns this
+  lock, since `Workspace` holds none;
+- keep the ref of an environment it created even when the caller is cancelled mid-create;
+- never destroy the environment when a run ends: whoever holds the ref decides when to delete it;
 - raise `WorkspaceUnavailableError` for a dead environment, including when it is destroyed
   during a command; a command killed by a signal in a live environment instead returns its exit code,
   [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] for a timeout, the builtin
@@ -217,7 +223,8 @@ class WorkspaceBackend(Protocol):
     """The environment an agent run works in; any object with these members conforms.
 
     Built without I/O from configuration and an optional [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef];
-    the first operation creates the environment, or attaches to the one the ref names. Nothing tears it down.
+    the first operation creates the environment, or attaches to the one the ref names. The backend never
+    tears it down; whoever holds the ref does. See the module docstring for the full contract.
     """
 
     @property
