@@ -140,23 +140,25 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 
 async def main() -> None:
     backend = ModalSandboxBackend(working_dir='/root/project')
-    workspace = Workspace(backend)
-    await workspace.write_text('calc.py', 'def add(a, b):\n    return a - b\n')
-    await workspace.run(['pip', 'install', 'pytest'], timeout=300)
-    ref = backend.ref  # set once the sandbox exists
-    assert ref is not None
     try:
+        workspace = Workspace(backend)
+        await workspace.write_text('calc.py', 'def add(a, b):\n    return a - b\n')
+        installed = await workspace.run(['pip', 'install', 'pytest'], timeout=300)
+        if installed.exit_code != 0:
+            raise RuntimeError(f'pip install failed: {installed.stderr}')
         result = await agent.run('Fix the bug in calc.py.', workspace=backend)
         print(result.output)
     finally:
-        await ModalSandbox().destroy(ref)
+        ref = backend.ref  # set once the sandbox exists
+        if ref is not None:
+            await ModalSandbox().destroy(ref)
 
 
 if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-Read `backend.ref` before the run: a failed run returns no result to take it from.
+The `finally` terminates the sandbox even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
 ## Clean up
 
