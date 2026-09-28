@@ -190,14 +190,14 @@ def test_defer_loading_is_refused() -> None:
         ({'instructions': ''}, "belongs in the agent's `instructions`"),
     ],
 )
-def test_previous_constructor_arguments_are_refused_with_guidance(legacy: dict[str, Any], guidance: str) -> None:
-    # The previous `ModalSandbox` bundled its own tools; each of its arguments now points at
-    # where that setting lives, rather than failing as an unknown keyword.
-    with pytest.raises(UserError) as exc_info:
+def test_previous_constructor_arguments_warn_with_guidance(legacy: dict[str, Any], guidance: str) -> None:
+    # The previous `ModalSandbox` bundled its own tools; each of its arguments still constructs, and
+    # the warning points at where that setting lives now.
+    with pytest.warns(HarnessDeprecationWarning) as record:
         ModalSandbox(**legacy)
-    message = str(exc_info.value)
+    message = str(record[0].message)
     (name,) = legacy
-    assert message.startswith(f'`ModalSandbox` no longer accepts `{name}`.')
+    assert message.startswith(f'`ModalSandbox({name}=...)` is deprecated')
     assert 'add `Shell()` and/or `FileSystem()`' in message
     assert f'- `{name}`: ' in message
     assert guidance in message
@@ -205,9 +205,24 @@ def test_previous_constructor_arguments_are_refused_with_guidance(legacy: dict[s
 
 
 def test_several_previous_arguments_are_reported_together() -> None:
-    with pytest.raises(UserError, match=r'no longer accepts `sandbox_id`, `instructions`') as exc_info:
+    with pytest.warns(
+        HarnessDeprecationWarning, match=r'ModalSandbox\(sandbox_id=..., instructions=...\)` is deprecated and ignored'
+    ) as record:
         ModalSandbox(sandbox_id='sb-1', instructions='')  # pyright: ignore[reportArgumentType]
-    assert str(exc_info.value).count('\n- `') == 2
+    assert str(record[0].message).count('\n- `') == 2
+
+
+def test_previous_sandbox_id_still_attaches_when_the_run_has_no_ref() -> None:
+    with pytest.warns(HarnessDeprecationWarning, match=r'`ModalSandbox\(sandbox_id=...\)` is deprecated\. '):
+        capability = ModalSandbox(sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    backend = capability.get_workspace(ctx, ref=None)
+    assert isinstance(backend, ModalSandboxBackend)
+    assert backend.ref == WorkspaceRef(provider='modal', id='sb-1')
+    # A ref the run already has, from its history or its `workspace=`, wins.
+    backend = capability.get_workspace(ctx, ref=WorkspaceRef(provider='modal', id='sb-2'))
+    assert isinstance(backend, ModalSandboxBackend)
+    assert backend.ref == WorkspaceRef(provider='modal', id='sb-2')
 
 
 def test_an_unknown_argument_is_still_a_type_error() -> None:

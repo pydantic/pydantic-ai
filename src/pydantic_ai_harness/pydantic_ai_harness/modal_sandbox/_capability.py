@@ -14,7 +14,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._warn import warn_argument_renamed
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
 from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
@@ -29,10 +29,12 @@ UPGRADE_DOCS_URL = 'https://pydantic.dev/docs/ai/harness/modal-sandbox/#upgradin
 
 # Constructor arguments of the previous `ModalSandbox`, which registered its own `run_command`,
 # `read_file`, `write_file`, and `list_directory` tools, that have no counterpart now that the
-# capability only supplies `ctx.workspace`. Each maps to the guidance for moving off it.
+# capability only supplies `ctx.workspace`. Each maps to the guidance for moving off it. They are
+# accepted and ignored with a deprecation warning, except `sandbox_id`, which still attaches:
+# ignoring it would run the agent in a new sandbox instead of the one the user named.
 _LEGACY_ARGUMENTS: Mapping[str, str] = {
     'sandbox_id': (
-        'attach to an existing sandbox per run instead: '
+        'still attaches to that sandbox for now, but will be removed. Attach per run instead: '
         "`agent.run(..., workspace=WorkspaceRef(provider='modal', id=sandbox_id))`. "
         'Later runs that continue the message history reattach to it without being told.'
     ),
@@ -99,9 +101,10 @@ def _no_workspace_tools_message(agent_name: str | None) -> str:
 
 def _legacy_argument_message(names: list[str]) -> str:
     moves = '\n'.join(f'- `{name}`: {_LEGACY_ARGUMENTS[name]}' for name in names)
-    listed = ', '.join(f'`{name}`' for name in names)
+    listed = ', '.join(f'{name}=...' for name in names)
+    ignored = ' and ignored' if names != ['sandbox_id'] else ''
     return (
-        f"`ModalSandbox` no longer accepts {listed}. It now supplies the Modal sandbox as the run's "
+        f"`ModalSandbox({listed})` is deprecated{ignored}. `ModalSandbox` now supplies the Modal sandbox as the run's "
         '`ctx.workspace` and registers no tools of its own; add `Shell()` and/or `FileSystem()` alongside it '
         'to give the model command and file tools that run in the sandbox.\n'
         f'{moves}\n'
@@ -120,8 +123,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     The capability registers no tools. Pair it with `Coder`, or with `Shell` and `FileSystem`,
     which run their tools in the workspace, or write tools of your own that use it. Shell
     commands run under `sh -c` in the sandbox's shell environment. Constructor
-    arguments of the previous `ModalSandbox`, which bundled its own tools, raise a `UserError`
-    that says how to express each one now.
+    arguments of the previous `ModalSandbox`, which bundled its own tools, are deprecated and
+    ignored with a warning that says how to express each one now; `sandbox_id` still attaches.
     """
 
     image: str | modal.Image | None = None
@@ -158,6 +161,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     _warned_no_tools: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this instance has already warned that the run has no workspace tools."""
 
+    _legacy_ref: WorkspaceRef | None = field(default=None, init=False, repr=False, compare=False)
+    """The sandbox the deprecated `sandbox_id=` names, attached when the run has no ref of its own."""
+
     def __init__(
         self,
         *,
@@ -182,7 +188,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             unknown = [argument for argument in legacy if argument not in _LEGACY_ARGUMENTS]
             if unknown:
                 raise TypeError(f'ModalSandbox.__init__() got an unexpected keyword argument {unknown[0]!r}')
-            raise UserError(_legacy_argument_message(list(legacy)))
+            warnings.warn(_legacy_argument_message(list(legacy)), HarnessDeprecationWarning, stacklevel=2)
         if workdir is not None:
             if working_dir is not None:
                 raise UserError('Pass `working_dir` only; `workdir` is its deprecated name.')
@@ -213,6 +219,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.env = env
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
+        sandbox_id = legacy.get('sandbox_id')
+        self._legacy_ref = WorkspaceRef(provider='modal', id=sandbox_id) if sandbox_id else None
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
@@ -235,7 +243,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         if ref is not None and ref.provider != 'modal':
             return None
         return ModalSandboxBackend(
-            ref=ref,
+            ref=ref or self._legacy_ref,
             image=self.image,
             app_name=self.app_name,
             create_app_if_missing=self.create_app_if_missing,
