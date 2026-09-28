@@ -407,6 +407,15 @@ class WorkspaceBackendSuite:
             await workspace.remove(tree)
             assert not await workspace.exists(file) and not await workspace.exists(tree)
 
+    async def test_remove_refuses_the_working_dir_and_its_ancestors(self, backend: WorkspaceBackend) -> None:
+        # A model asking to remove `.` must not wipe the environment it works in.
+        workspace = Workspace(backend)
+        working_dir = await workspace.working_dir()
+        for path in ('.', working_dir, posixpath.dirname(working_dir), '/'):
+            with pytest.raises(ValueError):
+                await workspace.remove(path)
+        assert await workspace.exists(working_dir)
+
     async def test_realpath_and_entries_follow_symlinks(self, backend: WorkspaceBackend) -> None:
         commands = _commands(backend)
         workspace = Workspace(backend)

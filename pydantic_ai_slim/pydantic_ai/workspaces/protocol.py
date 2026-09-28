@@ -181,7 +181,10 @@ class SupportsFilesystem(Protocol):
         ...
 
     async def remove(self, path: str) -> None:
-        """Remove a file, or a directory and its contents."""
+        """Remove a file, or a directory and its contents.
+
+        Refuses the working directory and its ancestors with `ValueError`; a symlink is removed itself.
+        """
         ...
 
     async def exists(self, path: str) -> bool:
