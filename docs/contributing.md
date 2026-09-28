@@ -144,9 +144,13 @@ PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py
 `make typecheck-changed` checks only the files whose content changed since Pyright last passed plus
 everything that transitively imports them, but its fallbacks below can check nearly every file, so
 prefer targeted runs while iterating. It records what passed under your git directory, so the record
-is per-worktree and never committed. CI runs the same target, and there it checks everything:
-GitHub Actions always sets `CI`, and on seeing it `make typecheck-changed` narrows nothing and hands
-the whole project to `make typecheck-pyright`.
+is per-worktree and never committed.
+
+CI runs the same target with `CI` set, which splits the project in two: `pydantic-ai-harness` and
+`pydantic-clai2` with their tests, and everything else. On a pull request it skips a side that no
+changed file reaches through its imports, and checks everything when both are reached, when a
+change is not a Python file, or when a file was deleted or moved. A push to `main` always checks
+everything.
 
 Locally it follows the imports Pyright resolves statically, and never checks a file under `tests/`
 that did not itself change since the run it recorded. Tests are two thirds of the project's lines
@@ -160,7 +164,8 @@ Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a c
 or a new top-level module that could shadow an installed one; or a change reaching more than half the
 project. It then runs Pyright over every tracked file Pyright reports on, minus the `tests/` files
 that did not change; a first run has no record to compare them against, so it checks all of them.
-Only three things hand the whole project to `make typecheck-pyright`: `CI`, an interpreter older
+Only three things hand the whole project to `make typecheck-pyright`: `CI`, unless it can skip a
+side as described above, an interpreter older
 than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright configuration it
 cannot reproduce.
 

@@ -18,11 +18,18 @@ never committed. Anything the checkpoint cannot account for -- a first run, a de
 configuration change, an import that would resolve somewhere new, or a change large enough that
 narrowing stops paying for itself -- falls back to every file Pyright reports on, minus those
 unchanged tests. Only what leaves this script without a file list at all falls back to
-`make typecheck-pyright`, the same full run CI performs: `CI` itself, an interpreter older than
-the 3.11 this needs to read `pyproject.toml`, and a Pyright configuration this cannot reproduce.
+`make typecheck-pyright`, the full run: `CI` itself, unless it can skip a scope as below, an
+interpreter older than the 3.11 this needs to read `pyproject.toml`, and a Pyright configuration
+this cannot reproduce.
 
 Pyright never reports on a file under a dot directory from the root project, so `.github/scripts`
 is a project of its own, which runs whole whenever a change reaches a file under it.
+
+In CI, `PYRIGHT_CHANGED_FILES` lists the Pyright inputs a pull request changed, one per line. The
+project splits into two scopes, `pydantic-ai-harness` and `pydantic-clai2` with their tests, and
+everything else, and a scope no changed file reaches is skipped whole. Anything the import graph
+cannot account for -- a file that is not Python, or a deleted or moved one -- checks everything, as
+does a run without the variable, like a push to `main`.
 
 `PYRIGHT_TIME_BUDGET` fails a passing run that took longer than that many seconds, so a change
 that makes Pyright itself slow fails its own pull request rather than `main`.
@@ -83,6 +90,11 @@ _CONFIGURATION_FILES = (
 _SKIPPED_DIRECTORIES = frozenset({'__pycache__', 'node_modules'})
 
 _GLOB_CHARACTERS = frozenset('*?[')
+
+# `pydantic-ai-harness` and `pydantic-clai2` build on `pydantic_ai_slim`, and nothing else in the
+# root project imports them, so in CI each side is checked only when a change reaches it. The
+# import graph decides that, not these paths: a core edit the harness imports checks both.
+_HARNESS_SCOPE = ('src/pydantic_ai_harness', 'src/pydantic_clai2', 'tests/harness', 'tests/clai2')
 
 # Pyright's execution environment for tests is rooted here, so this prefix is the whole set.
 # Tests are 314 of the 739 files Pyright checks but 337k of its 490k lines, and 263 of them
@@ -211,8 +223,7 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
     runner = _BudgetedRunner(run, clock, budget)
 
     if os.environ.get('CI'):
-        # CI keeps no checkpoint between runs, so there is nothing to narrow against.
-        return _check_everything(runner, 'CI is set')
+        return _check_in_ci(runner)
 
     if sys.version_info < (3, 11):
         # Reading Pyright's file list out of pyproject.toml needs `tomllib`, added in 3.11.
@@ -307,6 +318,58 @@ def _pyright_commands(options: Sequence[str], paths: Sequence[str], nested: Sequ
         print(f'Type-checking the `{project}` project.')
         commands.append([sys.executable, '-m', 'pyright', '-p', project, *options])
     return commands
+
+
+def _check_in_ci(run: _BudgetedRunner) -> int:
+    """Check each scope the pull request's changed files reach, and skip the other whole."""
+    # CI keeps no checkpoint between runs, so the only thing to narrow against is the pull
+    # request's own list of changed files.
+    changed = [path for path in os.environ.get('PYRIGHT_CHANGED_FILES', '').splitlines() if path]
+    if not changed or sys.version_info < (3, 11):
+        return _check_everything(run, 'CI is set')
+    project = _load_project()
+    if project is None:
+        return _check_everything(run, 'the Pyright file list is not one this script can reproduce')
+    universe = _tracked_files()
+    tracked = set(universe)
+    for path in changed:
+        # `classify` only lists Pyright inputs, so a file that is not Python is configuration,
+        # dependencies or the command that runs Pyright, and reaches every file.
+        if not path.endswith(('.py', '.pyi')):
+            return _check_everything(run, f'`{path}` changed, and it is not a Python file')
+        # A deleted or moved file's importers are found only through the graph it left.
+        if path not in tracked:
+            return _check_everything(run, f'`{path}` was deleted or moved')
+    # A file directly under an execution environment root is a top-level module to every file in that
+    # environment, so naming modules from those roots too gives a changed `tests/anyio.py` an edge
+    # from everything that imports `anyio`. Packages still come from the import roots alone, which
+    # keeps the relative imports under `tests/` resolving; see `_Project.import_roots`.
+    roots = sorted({*project.import_roots, *project.environment_roots}, key=len, reverse=True)
+    modules = _module_map(universe, roots)
+    imports = {path: _imports_of(path, modules, project.import_roots) for path in universe}
+    reached = _reached(changed, [], {}, imports)
+    checkable = [path for path in universe if _is_checked(path, project)]
+    harness = [path for path in checkable if any(_covers(entry, path) for entry in _HARNESS_SCOPE)]
+    core = sorted(set(checkable).difference(harness))
+    checked_harness = not reached.isdisjoint(harness)
+    checked_core = not reached.isdisjoint(core)
+    if checked_harness and checked_core:
+        return _check_everything(run, 'the changes reach both the harness packages and the rest of the project')
+
+    nested = [
+        directory
+        for directory in _NESTED_PROJECTS
+        if Path(directory, 'pyrightconfig.json').is_file() and any(_covers(directory, path) for path in reached)
+    ]
+    paths = harness if checked_harness else core if checked_core else []
+    if not paths and not nested:
+        print('Nothing to type-check: no changed file reaches a file Pyright reports on.')
+        return 0
+    if paths:
+        skipped = 'the rest of the project' if checked_harness else f'`{"`, `".join(_HARNESS_SCOPE)}`'
+        print(f'Type-checking {len(paths)} of {len(checkable)} files: no changed file reaches {skipped}.')
+    threads = os.environ.get('PYRIGHT_THREADS', '')
+    return run(*_pyright_commands(['--threads', threads] if threads else [], paths, nested))
 
 
 def _check_everything(run: Runner, reason: str) -> int:

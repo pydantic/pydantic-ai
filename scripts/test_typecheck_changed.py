@@ -109,6 +109,8 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv('CI', raising=False)
     monkeypatch.delenv('PYRIGHT_PYTHON', raising=False)
     monkeypatch.delenv('PYRIGHT_TIME_BUDGET', raising=False)
+    monkeypatch.delenv('PYRIGHT_CHANGED_FILES', raising=False)
+    monkeypatch.delenv('PYRIGHT_THREADS', raising=False)
     return tmp_path
 
 
@@ -466,6 +468,125 @@ def test_ci_checks_everything_and_records_nothing(project: Path, monkeypatch: py
 
     assert recorder.commands == _FULL_RUN
     assert not _checkpoint(project).exists()
+
+
+_HARNESS_FILES = [
+    'src/pydantic_ai_harness/harness/__init__.py',
+    'src/pydantic_ai_harness/harness/cap.py',
+    'tests/harness/__init__.py',
+    'tests/harness/test_cap.py',
+]
+
+
+def _add_harness(project: Path, *, environment_root: bool = False) -> None:
+    # `cap.py` imports `middle.py`, so `leaf.py` reaches the harness too, while `aside.py` does not.
+    pyproject = _PYPROJECT.replace(
+        'include = ["pkg_src", "tests"]', 'include = ["pkg_src", "tests", "src/pydantic_ai_harness"]'
+    ).replace('members = ["pkg_src"]', 'members = ["pkg_src", "src/pydantic_ai_harness"]')
+    if environment_root:
+        pyproject += '\n[[tool.pyright.executionEnvironments]]\nroot = "tests"\n'
+    _write(project, 'pyproject.toml', pyproject)
+    _write(project, 'src/pydantic_ai_harness/harness/__init__.py', '')
+    _write(project, 'src/pydantic_ai_harness/harness/cap.py', 'from pkg.middle import DOUBLED\n\nCAP = DOUBLED\n')
+    _write(project, 'tests/harness/__init__.py', '')
+    _write(project, 'tests/harness/test_cap.py', 'import shadow\nfrom harness.cap import CAP\n\nCHECKED = CAP == 2\n')
+    _stage(project)
+
+
+def _typecheck_in_ci(monkeypatch: pytest.MonkeyPatch, *changed: str) -> _Recorder:
+    monkeypatch.setenv('CI', 'true')
+    monkeypatch.setenv('PYRIGHT_CHANGED_FILES', ''.join(f'{path}\n' for path in changed))
+    return _typecheck()
+
+
+def test_ci_skips_the_rest_of_the_project_when_only_the_harness_is_reached(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    _add_harness(project)
+
+    recorder = _typecheck_in_ci(monkeypatch, 'src/pydantic_ai_harness/harness/cap.py')
+
+    assert recorder.commands == [[*_PYRIGHT, *_HARNESS_FILES]]
+    assert 'Type-checking 4 of 15 files: no changed file reaches the rest of the project.' in capsys.readouterr().out
+    assert not _checkpoint(project).exists()
+
+
+def test_ci_skips_the_harness_when_a_change_does_not_reach_it(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    _add_harness(project)
+
+    recorder = _typecheck_in_ci(monkeypatch, 'pkg_src/pkg/aside.py')
+
+    assert recorder.commands == [[*_PYRIGHT, *sorted(_TRACKED)]]
+    assert 'no changed file reaches `src/pydantic_ai_harness`, `src/pydantic_clai2`' in capsys.readouterr().out
+
+
+def test_ci_checks_everything_when_a_change_reaches_both_sides(project: Path, monkeypatch: pytest.MonkeyPatch):
+    _add_harness(project)
+
+    assert _typecheck_in_ci(monkeypatch, 'pkg_src/pkg/leaf.py').commands == _FULL_RUN
+
+
+def test_ci_checks_everything_for_a_change_on_both_sides(project: Path, monkeypatch: pytest.MonkeyPatch):
+    _add_harness(project)
+
+    recorder = _typecheck_in_ci(monkeypatch, 'pkg_src/pkg/aside.py', 'tests/harness/test_cap.py')
+
+    assert recorder.commands == _FULL_RUN
+
+
+@pytest.mark.parametrize('changed', ['pyproject.toml', 'uv.lock', 'pkg_src/pkg/deleted.py'])
+def test_ci_checks_everything_for_a_change_the_graph_cannot_place(
+    project: Path, monkeypatch: pytest.MonkeyPatch, changed: str
+):
+    _add_harness(project)
+
+    assert _typecheck_in_ci(monkeypatch, changed, 'pkg_src/pkg/aside.py').commands == _FULL_RUN
+
+
+def test_ci_reaches_what_a_new_top_level_module_shadows(project: Path, monkeypatch: pytest.MonkeyPatch):
+    # `tests` is an execution environment root, so `tests/shadow.py` is the `shadow` that
+    # `tests/harness/test_cap.py` imports.
+    _add_harness(project, environment_root=True)
+    _write(project, 'tests/shadow.py', 'SHADOW = 1\n')
+    _stage(project)
+
+    assert _typecheck_in_ci(monkeypatch, 'tests/shadow.py').commands == _FULL_RUN
+
+
+def test_ci_hands_pyright_its_threads_on_a_scoped_run(project: Path, monkeypatch: pytest.MonkeyPatch):
+    _add_harness(project)
+    monkeypatch.setenv('PYRIGHT_THREADS', 'auto')
+
+    recorder = _typecheck_in_ci(monkeypatch, 'tests/harness/test_cap.py')
+
+    assert recorder.commands == [[*_PYRIGHT, '--threads', 'auto', *_HARNESS_FILES]]
+
+
+def test_ci_checks_only_a_reached_nested_project(project: Path, monkeypatch: pytest.MonkeyPatch):
+    _add_nested_project(project)
+
+    assert _typecheck_in_ci(monkeypatch, '.github/scripts/tool.py').commands == [_NESTED_RUN]
+
+
+def test_ci_checks_nothing_when_no_change_reaches_a_checked_file(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    _write(project, '.github/unchecked.py', 'UNCHECKED = 1\n')
+    _stage(project)
+
+    recorder = _typecheck_in_ci(monkeypatch, '.github/unchecked.py')
+
+    assert recorder.commands == []
+    assert recorder.exit_code == 0
+    assert 'Nothing to type-check: no changed file reaches a file Pyright reports on.' in capsys.readouterr().out
+
+
+def test_ci_checks_everything_when_it_cannot_reproduce_the_file_list(project: Path, monkeypatch: pytest.MonkeyPatch):
+    _write(project, 'pyrightconfig.json', '{}\n')
+
+    assert _typecheck_in_ci(monkeypatch, 'pkg_src/pkg/aside.py').commands == _FULL_RUN
 
 
 def test_a_failing_run_leaves_the_checkpoint_alone(project: Path):

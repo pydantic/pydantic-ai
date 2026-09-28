@@ -44,6 +44,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
+      pyright_changed_files: ${{ steps.classify.outputs.pyright_changed_files }}
     steps:
       - name: Classify pull request changes
         id: classify
@@ -101,19 +102,29 @@ jobs:
 
           docs_only=true
           pyright_changed=false
+          pyright_changed_files=()
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
             if ! is_docs_markdown "$filename" || \
               { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
               docs_only=false
             fi
-            if is_pyright_input "$filename" || \
-              { [ -n "$previous_filename" ] && is_pyright_input "$previous_filename"; }; then
-              pyright_changed=true
-            fi
+            for path in "$filename" "$previous_filename"; do
+              if [ -n "$path" ] && is_pyright_input "$path"; then
+                pyright_changed=true
+                pyright_changed_files+=("$path")
+              fi
+            done
           done
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
           echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
+          # `scripts/typecheck_changed.py` skips whichever of the harness packages and the rest of the
+          # project these do not reach. Only a pull request sets it, so every other run checks everything.
+          {
+            echo 'pyright_changed_files<<PYRIGHT_CHANGED_FILES_EOF'
+            printf '%s\n' "${pyright_changed_files[@]}"
+            echo 'PYRIGHT_CHANGED_FILES_EOF'
+          } >> "$GITHUB_OUTPUT"
 
   # The `pydantic-ai-harness` sandbox live tests start real, billed sandboxes, one provider at
   # a time. The script names the providers this change can affect (their own code, their SDK
@@ -284,9 +295,10 @@ jobs:
           # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
 
-      # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
-      # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
-      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
+      # Pyright runs here, not in pre-commit. With `CI` set, `make typecheck-changed` skips whichever of
+      # the harness packages and the rest of the project no file in `PYRIGHT_CHANGED_FILES` reaches, and
+      # otherwise hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET`
+      # that only that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
       # policy check does not hide type errors.
       - name: Type-check with Pyright
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
@@ -307,6 +319,7 @@ jobs:
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
           # 156 s, so 200 keeps the same headroom.
           PYRIGHT_TIME_BUDGET: "200"
+          PYRIGHT_CHANGED_FILES: ${{ needs.classify.outputs.pyright_changed_files }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
