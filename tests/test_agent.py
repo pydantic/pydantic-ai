@@ -14729,4 +14729,6 @@ def test_tool_sync_function_returning_coroutine():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot('tool result value')
+
+
 # pyright scoping shape PR: mixed
