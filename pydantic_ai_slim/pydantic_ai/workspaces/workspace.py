@@ -143,10 +143,7 @@ class _ShellFilesystem(SupportsFilesystem):
                     shell=True,
                 )
             except WorkspaceOutputLimitError as error:
-                operation = 'listing' if what == 'list' else what
-                raise WorkspaceError(
-                    f'shell filesystem {operation} exceeded command output limit for {path!r}'
-                ) from error
+                raise WorkspaceError(f'shell filesystem {what} exceeded command output limit for {path!r}') from error
             await self._raise_for_error(result, path)
             data.extend(_decode(result.stdout, min(_SHELL_READ_CHUNK_BYTES, size - len(data)), path))
         return bytes(data)
@@ -261,9 +258,7 @@ class _ShellFilesystem(SupportsFilesystem):
             if not separator or encoded.strip() != 'PAGED':
                 return _decode_sized(result.stdout, path)
             paged = True
-            listing = await self._read_chunks(temporary_path, _size(size, path), path, 'list')
-            completed = True
-            return listing
+            return await self._read_chunks(temporary_path, _size(size, path), path, 'listing')
         finally:
             # A cancelled command may be killed before its EXIT trap runs. Paged listings also
             # keep the file alive across commands; shield only the bounded cleanup.
