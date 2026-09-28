@@ -14,10 +14,10 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[sprites]"
+pip/uv-add "pydantic-ai-harness[sprites,anthropic]"
 ```
 
-Then set `SPRITE_TOKEN` to your Sprites API token.
+The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -32,7 +32,9 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in a Sprite, not on your machine. With `Coder`, `RepoContext` creates the Sprite when the run starts, even without a tool call; use `Coder(repo_context=False)` for lazy creation. It has no lifetime limit: it sleeps when idle and keeps its files, and costs money, until you delete it; see [Clean up](#clean-up).
 
-A new Sprite comes with git, Python, and Node.js ([preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/)). Ripgrep (`rg`) is not preinstalled. For faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep` once in the Sprite and store its ref to reuse it on later runs. Sprites retain installed packages.
+Give the agent a project directory with `SpritesSandbox(working_dir='/home/sprite/project')`: a new Sprite gets it created for you, and commands and relative paths start there.
+
+A new Sprite comes with git, Python, and Node.js ([preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/)), but not pytest or ripgrep (`rg`). Install what your project needs, such as `pip install pytest`; Sprites retain installed packages. For faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep` once in the Sprite and store its ref to reuse it on later runs.
 
 ## Continue in the same sandbox
 
@@ -74,6 +76,8 @@ async def run_python(ctx: RunContext, code: str) -> str:
 
 A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.sprites.dev/working-with-sprites/services/).
 
+Commands run as the non-root `sprite` user, but Unix permissions do not restrict it: a file with mode `000` is still readable. Do not rely on them to keep tools out of a path.
+
 File reads refuse FIFOs rather than waiting for a writer. File writes go through the Sprites filesystem API, which writes through a symlink to its target and creates missing parent directories.
 
 ### What a timeout stops
@@ -108,6 +112,34 @@ The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN
 Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
 A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `SPRITE_TOKEN`, not the Sprite, and a later operation opens a new one. A `client=` or `sandbox=` you passed is never closed.
+
+## Prepare a Sprite before the run
+
+To seed files before the agent starts, build the backend yourself, write through a `Workspace`, and pass the backend to the run:
+
+```python {names="defined"}
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+
+
+async def run_in_prepared_sprite() -> str:
+    backend = SpritesSandboxBackend(working_dir='/home/sprite/project')
+    try:
+        await Workspace(backend).write_text('TASK.md', 'Add a `--version` flag to cli.py.\n')
+        result = await agent.run('Do the task in TASK.md.', workspace=backend)
+        return result.output
+    finally:
+        await backend.aclose()
+        ref = backend.ref  # set once the Sprite exists
+        if ref is not None:
+            await SpritesSandbox().destroy(ref)
+```
+
+The run uses the backend as it is, so `SpritesSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the Sprite instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
 ## Clean up
 
@@ -161,7 +193,7 @@ Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so unde
 
 ## Durable execution
 
-If the exec socket drops after connection but before an exit status arrives, the command may have run. This raises a non-retryable workspace error rather than replaying a potentially non-idempotent command. Connection failures before the socket opens remain retryable.
+If the exec socket drops after connection but before an exit status arrives, the command may have run. This raises a non-retryable workspace error rather than replaying a potentially non-idempotent command. A handshake that fails before the socket opens cannot have started the command: the backend retries it three times over about five seconds, then lets it propagate as retryable.
 
 A shared client is created at module import so activities on this worker reuse it. Close it when the worker stops. Run a Temporal dev server on `localhost:7233` first.
 
