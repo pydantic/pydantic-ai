@@ -249,11 +249,24 @@ _DOCS_BLOCKS = python_blocks('docs/harness/modal-sandbox.md')
 
 
 @pytest.mark.parametrize('example', [pytest.param(block, id=f'line {block.start_line}') for block in _DOCS_BLOCKS])
-def test_docs_example(example: CodeExample) -> None:
+def test_docs_example(example: CodeExample, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every example on the docs page runs as written, and its agent's tools do their work in a real sandbox.
 
     A follow-up run, from the message history or a stored ref, works in the first run's sandbox.
     """
+    # The documented defaults keep a sandbox up to 24 hours, and a killed job skips the cleanup
+    # below, so bound the sandboxes these blocks create like every other live test's.
+    init = ModalSandboxBackend.__init__
+
+    def bounded_init(self: ModalSandboxBackend, **settings: Any) -> None:
+        bounded: dict[str, Any] = {
+            **settings,
+            'sandbox_timeout': LIVE_SANDBOX_TIMEOUT,
+            'idle_timeout': LIVE_IDLE_TIMEOUT,
+        }
+        init(self, **bounded)
+
+    monkeypatch.setattr(ModalSandboxBackend, '__init__', bounded_init)
     _, runs = run_block(example, cleanup=documented_cleanup(_DOCS_BLOCKS, 'terminate_sandbox'))
     assert all(run.used_sandbox for run in runs), runs
     assert len({run.ref for run in runs}) <= 1, runs
