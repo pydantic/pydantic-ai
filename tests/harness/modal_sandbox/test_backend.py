@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.abc
+import importlib.machinery
+import importlib.util
 import logging
 import subprocess
+import sys
+import threading
 import time
 import types
 from pathlib import Path
@@ -77,6 +82,28 @@ async def test_missing_credentials_are_reported_as_not_found(fake_modal: FakeMod
     fake_modal.attach_error = missing
     with pytest.raises(WorkspaceUnavailableError, match=r'^No Modal credentials found'):
         await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-owned'))
+
+
+async def test_destroy_imports_modal_off_the_event_loop(fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Importing Modal reads `~/.modal.toml`, so a cold import must not block the loop.
+    import_threads: list[int] = []
+
+    class _Loader(importlib.abc.Loader):
+        def create_module(self, spec: importlib.machinery.ModuleSpec) -> types.ModuleType:
+            import_threads.append(threading.get_ident())
+            return fake_modal.module
+
+        def exec_module(self, module: types.ModuleType) -> None:
+            pass
+
+    class _Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name: str, path: Any, target: Any = None) -> importlib.machinery.ModuleSpec | None:
+            return importlib.util.spec_from_loader(name, _Loader()) if name == 'modal' else None
+
+    monkeypatch.delitem(sys.modules, 'modal')
+    monkeypatch.setattr(sys, 'meta_path', [_Finder(), *sys.meta_path])
+    await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-gone'))
+    assert import_threads and import_threads[0] != threading.get_ident()
 
 
 async def test_destroy_rejects_foreign_ref_without_sdk_call(fake_modal: FakeModal) -> None:

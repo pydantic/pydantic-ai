@@ -303,9 +303,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         async with self._lock:
             if (sandbox := self._sandbox) is not None:
                 return sandbox
-            # Importing Modal reads `~/.modal.toml`. The import binds nothing to this loop:
-            # Modal runs its clients on its own event-loop thread.
-            await anyio.to_thread.run_sync(importlib.import_module, 'modal')
+            await _import_modal()
             ref = self._ref
             if ref is not None:
                 sandbox = await self._attach(ref.id)
@@ -827,6 +825,12 @@ async def _check_stop(process: modal.container_process.ContainerProcess[bytes], 
         logger.warning('Modal command stop exited nonzero in sandbox %s', sandbox_id)
 
 
+async def _import_modal() -> None:
+    # Importing Modal reads `~/.modal.toml`. The import binds nothing to this loop:
+    # Modal runs its clients on its own event-loop thread.
+    await anyio.to_thread.run_sync(importlib.import_module, 'modal')
+
+
 def _require_asyncio() -> None:
     if sniffio.current_async_library() != 'asyncio':
         raise UserError('Modal needs the asyncio event loop: the Modal SDK runs its calls on asyncio tasks.')
@@ -835,6 +839,7 @@ def _require_asyncio() -> None:
 async def terminate_sandbox(sandbox_id: str) -> None:
     """Terminate a sandbox by ID without attaching; one that no longer exists returns quietly."""
     _require_asyncio()
+    await _import_modal()
     import modal
 
     try:
