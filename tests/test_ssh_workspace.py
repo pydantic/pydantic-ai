@@ -132,8 +132,13 @@ async def test_a_login_banner_stays_out_of_the_output(tools: FakeRemoteTools) ->
 
 
 async def test_resolving_the_working_dir_counts_against_the_first_timeout(tools: FakeRemoteTools) -> None:
-    with anyio.fail_after(10), pytest.raises(WorkspaceTimeoutError):
+    # The stop after the timeout reaches a host that stalls too, so it gives up after its 2 second grace period.
+    started = anyio.current_time()
+
+    with pytest.raises(WorkspaceTimeoutError):
         await SSHWorkspaceBackend('slow').run(['true'], timeout=1)
+
+    assert anyio.current_time() - started < 4.5
 
 
 async def test_stderr_from_a_background_child_after_the_command_is_kept(tools: FakeRemoteTools) -> None:

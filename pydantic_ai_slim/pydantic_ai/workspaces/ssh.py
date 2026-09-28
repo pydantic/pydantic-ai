@@ -50,8 +50,12 @@ The `SIGKILL` for groups that outlast `SIGTERM` comes a second later in the back
 closed so `sshd` doesn't wait for it, so a stop costs one round trip.
 """
 
-_STOP_TIMEOUT = 5.0
-"""Bounds how late a stopped command's timeout or cancellation is raised when the host stops answering."""
+_STOP_TIMEOUT = 2.0
+"""Bounds how late a stopped command's timeout or cancellation is raised when the host stops answering.
+
+The same grace period `LocalWorkspaceBackend` gives reaping a killed process: past it, the stop gives up
+and the remote command may keep running.
+"""
 
 _MIN_TIMEOUT = 0.001
 """What's left of a timeout the working directory used up, so the command times out rather than running unbounded."""
