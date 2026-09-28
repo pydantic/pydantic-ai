@@ -4,7 +4,8 @@ Behavior is driven through `Agent(..., capabilities=[AbsurdDurability()])` insid
 `FakeAsyncTaskContext` (see `_helpers.py`) so there is no Postgres or Docker dependency. The two
 production behaviors the capability relies on -- encounter-order step-name disambiguation and a
 replay that serves stored checkpoints without re-running `fn` -- are reproduced faithfully by the
-fake. `test_pydantic_ai_absurd_compat.py` checks the same format against a real Absurd schema.
+fake. `src/pydantic_ai_harness/integration_tests/absurd/` checks the same format against a real
+Absurd schema.
 """
 
 from __future__ import annotations
@@ -42,8 +43,6 @@ from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai_harness.absurd import AbsurdDurability
 
 from ._helpers import FakeAsyncTaskContext, FakeSyncTaskContext, absurd_task_context
-
-pytestmark = pytest.mark.anyio
 
 
 def _text_model(counter: dict[str, int] | None = None) -> FunctionModel:

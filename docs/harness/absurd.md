@@ -124,9 +124,11 @@ going at once in one task would claim each other's checkpoints.
   Non-executing toolsets such as `ExternalToolset` are allowed at runtime.
 - Streaming inside a task is a replay, not a live wire: the model stream is consumed and captured
   inside the step, and the run-side stream replays the captured events.
-- An `event_stream_handler` runs live inside the model-request step, and its call is itself
-  checkpointed. The handler may run more than once if the run recovers before that step is
-  checkpointed, so keep its side effects idempotent.
+- An `event_stream_handler` handles model events live inside the model-request step, and each tool
+  event in its own `{name}__event_stream_handler` step. Either can run again if the run recovers
+  before that step is checkpointed, so keep the handler's side effects idempotent.
+- The capability emits no spans of its own; core's model-request and tool spans cover the
+  checkpointed work.
 - Do not use `run_sync` inside a task handler. The handler is async; use `await agent.run(...)`.
 
 ## Parallel execution

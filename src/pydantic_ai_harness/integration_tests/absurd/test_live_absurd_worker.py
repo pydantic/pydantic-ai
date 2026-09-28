@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from absurd_sdk import AsyncAbsurd, AsyncTaskContext, JsonValue
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse
@@ -10,8 +9,6 @@ from pydantic_ai.messages import TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.absurd import AbsurdDurability
-
-pytestmark = pytest.mark.anyio
 
 
 async def test_spawned_agent_task_completes_against_postgres(absurd: AsyncAbsurd) -> None:

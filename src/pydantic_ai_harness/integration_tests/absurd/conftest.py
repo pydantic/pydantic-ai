@@ -45,8 +45,7 @@ def db_dsn() -> str:
             # The schema script is not re-runnable, so a database kept between local runs is reused.
             installed = conn.execute("SELECT to_regnamespace('absurd') IS NOT NULL").fetchone()
             if installed != (True,):
-                # This is a trusted, checked-in schema fixture, not user input.
-                conn.execute(ABSURD_SQL)  # pyright: ignore[reportCallIssue, reportArgumentType]
+                conn.execute(ABSURD_SQL.encode())
     except psycopg.OperationalError as exc:
         message = f'PostgreSQL is unreachable at ABSURD_TEST_DATABASE_URL: {exc}'
         if os.environ.get('ABSURD_REQUIRE_LIVE', '').lower() in {'1', 'true', 'yes'}:

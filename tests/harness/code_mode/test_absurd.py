@@ -33,8 +33,6 @@ from tests.harness.absurd._helpers import (
     absurd_task_context,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 def _code_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     """Emit one `run_code` call whose code invokes `search`, then answer from its return."""

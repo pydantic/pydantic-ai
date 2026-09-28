@@ -161,7 +161,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
             return result.output
     ```
 
-    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, and Airflow](durable_execution/overview.md) integrations besides.
+    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, and Absurd](durable_execution/overview.md) integrations besides.
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
 

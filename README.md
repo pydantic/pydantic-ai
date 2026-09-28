@@ -150,7 +150,7 @@ class ResearchWorkflow(PydanticAIWorkflow):
         return result.output
 ```
 
-[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, and Airflow](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
+[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, and Absurd](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
 
 **Build this →** [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
 

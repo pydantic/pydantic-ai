@@ -28,8 +28,6 @@ from pydantic_ai_harness.absurd import AbsurdDurability
 from .._fake_mcp import FakeMCPToolset
 from ._helpers import FakeAsyncTaskContext, absurd_task_context
 
-pytestmark = pytest.mark.anyio
-
 
 def _add_then_done_model() -> FunctionModel:
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
