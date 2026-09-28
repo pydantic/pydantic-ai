@@ -319,13 +319,8 @@ class FakeFilesystem:
         self.users.append(user)
         del request_timeout
         await self._check(path)
-        # envd removes with `os.RemoveAll`, so a missing path is not an error.
+        # Only records the call: the host-backed fake's conformance run covers what removal deletes.
         self.removed.append(path)
-        prefix = f'{path.rstrip("/")}/'
-        for target in [target for target in self.files if target == path or target.startswith(prefix)]:
-            del self.files[target]
-        for directory in [d for d in self.directories if d == path or d.startswith(prefix)]:
-            self.directories.discard(directory)
 
     async def _exists(self, path: str) -> bool:
         return path in self.files or path in self.directories
