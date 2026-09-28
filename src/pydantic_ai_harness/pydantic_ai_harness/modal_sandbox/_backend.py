@@ -73,7 +73,7 @@ DEFAULT_APP_NAME = 'pydantic-ai-harness'
 # conversation can continue in it for as long as Modal allows.
 DEFAULT_SANDBOX_TIMEOUT = 86_400
 
-_AUTH_MESSAGE = 'Modal rejected the credentials. Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token new`.'
+_CREDENTIAL_HINT = 'Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token new`.'
 
 # Bound the workspace-create RPCs so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 600
@@ -93,6 +93,16 @@ _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
+def _auth_error(error: Exception) -> WorkspaceUnavailableError:
+    """Report an `AuthError` or `PermissionDeniedError`, telling missing credentials apart from rejected ones."""
+    # The SDK raises `Token missing` itself, before any request, when no token is configured.
+    if str(error).startswith('Token missing'):
+        return WorkspaceUnavailableError(f'No Modal credentials found. {_CREDENTIAL_HINT}')
+    return WorkspaceUnavailableError(
+        f'{safe_credential_reason(error)}. Modal rejected the credentials. {_CREDENTIAL_HINT}'
+    )
+
+
 def _translate(error: Exception, *, context: str, unavailable: str, path: str | None = None) -> Exception | None:
     """Map a Modal SDK exception onto the workspace protocol's typed failures.
 
@@ -106,7 +116,7 @@ def _translate(error: Exception, *, context: str, unavailable: str, path: str | 
 
     exc = modal.exception
     if isinstance(error, (exc.AuthError, exc.PermissionDeniedError)):
-        return WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}')
+        return _auth_error(error)
     # `SandboxTimeoutError` is the sandbox reaching its lifetime (`sandbox_timeout`), not a
     # command timing out; a command's own deadline is handled in `run()`.
     # For about 30 seconds after `terminate()`, Modal still polls the sandbox as running while
@@ -821,7 +831,7 @@ async def terminate_sandbox(sandbox_id: str) -> None:
     except modal.exception.NotFoundError:
         return
     except (modal.exception.AuthError, modal.exception.PermissionDeniedError) as error:
-        raise WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}') from error
+        raise _auth_error(error) from error
 
 
 def _unavailable_message(sandbox_id: str) -> str:

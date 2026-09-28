@@ -55,6 +55,20 @@ async def test_auth_failure_classifies_reason_without_echoing_secret(fake_modal:
     assert 'MODAL_TOKEN_ID' in str(exc.value)
 
 
+async def test_missing_credentials_are_reported_as_not_found(fake_modal: FakeModal) -> None:
+    """With no token configured the SDK raises before sending anything, so nothing was rejected."""
+    missing = fake_modal.exception('AuthError')('Token missing. Could not authenticate client.')
+    fake_modal.create_error = missing
+    with pytest.raises(WorkspaceUnavailableError) as exc:
+        await ModalSandboxBackend().get_sandbox()
+    assert str(exc.value) == (
+        'No Modal credentials found. Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token new`.'
+    )
+    fake_modal.attach_error = missing
+    with pytest.raises(WorkspaceUnavailableError, match=r'^No Modal credentials found'):
+        await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-owned'))
+
+
 async def test_destroy_rejects_foreign_ref_without_sdk_call(fake_modal: FakeModal) -> None:
     with pytest.raises(ValueError, match='unsupported workspace provider'):
         await ModalSandbox().destroy(WorkspaceRef(provider='other', id='sb-owned'))
