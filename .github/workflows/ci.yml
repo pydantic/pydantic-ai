@@ -1164,7 +1164,8 @@ jobs:
     needs: [sandbox-live-changes]
     # The provider tokens are repository secrets that fork and Dependabot pull requests cannot
     # read, so those skip; `sandbox-live-nightly.yml` covers them on demand. Tags run every
-    # provider and gate the release. `always()` because `sandbox-live-changes` skips on tags.
+    # provider without gating the release on them (see `check`). `always()` because
+    # `sandbox-live-changes` skips on tags.
     if: >-
       ${{ always()
           && (github.ref_type == 'tag'
@@ -1252,8 +1253,10 @@ jobs:
           # on the reduced PR path. The harness integration jobs run only when their paths change (always
           # on tags), and LocalStack also skips where its secret is unreadable. `sandbox-live` may skip off
           # tags: when no provider is affected, and on fork and Dependabot PRs, which cannot read its
-          # secrets. It still votes when it runs and fails.
-          allowed-failures: latest-versions-canary
+          # secrets. It still votes when it runs and fails, except on tags: a provider outage must not
+          # hold a release.
+          allowed-failures: >-
+            ${{ github.ref_type == 'tag' && 'latest-versions-canary,sandbox-live' || 'latest-versions-canary' }}
           allowed-skips: >-
             ${{
               needs.classify.outputs.docs_only == 'true'
