@@ -133,6 +133,7 @@ if __name__ == '__main__':
 | Sticky `cd`: `Shell(persist_cwd=True)` | Yes | Yes | Yes |
 | File-change approval: [`FileChangeRequestEvent`](filesystem.md#events) | Yes | Yes | Yes |
 | Live tool events | [File-change requests and write events only](#live-events-on-temporal) | Yes | Yes |
+| Delegation: `delegate_task` | [To `self` only](#delegation-on-temporal) | Yes | Yes |
 
 ### Live events on Temporal
 
@@ -146,6 +147,13 @@ and return their results as usual.
 
 When Temporal replays a workflow, approval listeners run again, so make their external effects
 idempotent.
+
+### Delegation on Temporal
+
+`Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools become
+activities of the same agent. Sub-agents read from `agent_folders` are not supported: reading the
+folders at run start adds a toolset at run time, which Temporal refuses, so pass
+`SubAgents(include_self=True, agent_folders=None)` when you compose `SubAgents` yourself.
 
 ### Temporal timeouts
 
