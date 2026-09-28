@@ -118,17 +118,16 @@ pre-agent-steps:
   # step is gated on *its* checkout having succeeded, so it never runs here, and
   # nothing restores `AGENTS.md`, `agent_docs/` or `scripts/` from base.
   #
-  # Fetched through `refs/pull/<n>/head`, not the head branch: a PR merged in the
-  # minutes between `eligibility` and this step has its branch deleted, and the
-  # branch fetch then failed the whole run. The pull ref outlives the branch, and
-  # the review still posts on the merged PR.
+  # Fetched by commit, not by head branch: a PR merged in the minutes between
+  # `eligibility` and this step has its branch deleted, and the branch fetch then
+  # failed the whole run. GitHub serves any reachable commit by SHA, and the review
+  # still posts on the merged PR.
   - name: Check out the PR head
     env:
       HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
-      PR_NUMBER: ${{ needs.eligibility.outputs.pr_number }}
     run: |
       set -euo pipefail
-      git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+      git fetch --no-tags origin "$HEAD_SHA"
       git checkout --detach "$HEAD_SHA"
   # Pre-fetch PR context into `$GITHUB_WORKSPACE/.review-context/`: pr-details, PR
   # comments, review threads (with annotated diff hunks + resolved/outdated
@@ -275,7 +274,8 @@ jobs:
 
           [ "$(printf '%s' "$PR_JSON" | jq -r '.state')" = 'OPEN' ] || skip "PR #${PR_NUMBER} is not open"
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isDraft')" = 'false' ] || skip "PR #${PR_NUMBER} is a draft"
-          # The agent job runs workspace scripts over the checked-out head with
+          # The checkout step fetches the head commit from this repository, where a
+          # fork head is reachable too, and runs workspace scripts over it with
           # repository secrets in scope; forks go through the `douwebot` label path
           # instead.
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
