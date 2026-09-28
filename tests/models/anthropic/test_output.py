@@ -602,12 +602,23 @@ def test_unsupported_native_output_raises(
 
 
 @pytest.mark.vcr
-@pytest.mark.parametrize('model_name', ['claude-opus-5-5', 'claude-sonnet-5-5'])
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        pytest.param(
+            'claude-opus-5-5', CityInfo(city='Tokyo', country='Japan', population=14000000), id='claude-opus-5-5'
+        ),
+        pytest.param(
+            'claude-sonnet-5-5', CityInfo(city='Tokyo', country='Japan', population=13960000), id='claude-sonnet-5-5'
+        ),
+    ],
+)
 def test_basemodel_output_falls_back_to_auto_without_forcing(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
     request_capture: RequestCapture,
     model_name: str,
+    expected: CityInfo,
 ) -> None:
     """Claude Opus 5.5 and Sonnet 5.5 reject a forced `tool_choice`, so a bare structured `output_type` still completes.
 
@@ -620,7 +631,7 @@ def test_basemodel_output_falls_back_to_auto_without_forcing(
     agent = Agent(model, output_type=CityInfo)
     result = agent.run_sync('Give me information about Tokyo')
 
-    assert (result.output.city, result.output.country) == ('Tokyo', 'Japan')
+    assert result.output == expected
     body = request_capture.bodies('/v1/messages')[0]
     assert body.get('tool_choice') == snapshot({'type': 'auto'})
     assert body['tools'] == snapshot(

@@ -769,9 +769,6 @@ async def test_native_tool_availability_delta(
 ):
     """A framework tool reveal reaches the model, which then calls the tool it just learned about.
 
-    `claude-sonnet-5-5` takes the `tool_addition` block although it isn't in
-    `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`: the two channels are gated separately.
-
     A delta arriving on its own has the same problem a lone system prompt does — nothing legal to
     sit behind — and takes the same `.` anchor, rather than the bespoke `<tool-availability-change>`
     user message it used to get. The `tool_addition` block already says what changed; a second,

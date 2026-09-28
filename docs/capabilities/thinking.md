@@ -152,6 +152,8 @@ Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://
 !!! note "Claude Sonnet 5.5 turns off up-front thinking with `between_tools`"
     Claude Sonnet 5.5 rejects `anthropic_thinking={'type': 'disabled'}`. Its lowest setting is `anthropic_thinking={'type': 'between_tools'}`, which skips up-front thinking and keeps only the short progress notes the model writes between tool calls. Anthropic accepts it at `low`, `medium`, and `high` effort only. The unified `thinking=False` setting sends no `thinking` field, so the model thinks adaptively at its default `high` effort; use `between_tools` where you previously disabled thinking.
 
+    Under adaptive thinking, Claude Sonnet 5.5 returns the notes it writes between tool calls as thinking blocks rather than text, and they arrive empty at Anthropic's default `display: 'omitted'`. To show them, set `anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}`; `between_tools` returns them without it.
+
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings

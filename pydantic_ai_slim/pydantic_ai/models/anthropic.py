@@ -654,12 +654,14 @@ def _is_stale_thinking_block_error(
 
     Scoped to models that bind and to requests that set no `block_binding` of their own, through the
     typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
-    fail, and an explicit `'drop_block'` cannot produce this error. `between_tools` thinking is out
-    too, since Anthropic rejects `block_binding` alongside it.
+    fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
+    `adaptive` is out too: Anthropic accepts `block_binding` only alongside adaptive thinking.
     """
     if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
-    if not isinstance(thinking, Omit) and ('block_binding' in thinking or thinking.get('type') == 'between_tools'):
+    if not isinstance(thinking, Omit) and (
+        'block_binding' in thinking or thinking.get('type', 'adaptive') != 'adaptive'
+    ):
         return False
     body: object | None = error.body
     return (
@@ -740,7 +742,7 @@ def _thinking_with_stale_block_history(
         profile.get('anthropic_binds_thinking_blocks', False)
         and (
             isinstance(effective_thinking, Omit)
-            or ('block_binding' not in effective_thinking and effective_thinking.get('type') != 'between_tools')
+            or ('block_binding' not in effective_thinking and effective_thinking.get('type', 'adaptive') == 'adaptive')
         )
         and _history_dropped_stale_thinking_blocks(
             messages,
