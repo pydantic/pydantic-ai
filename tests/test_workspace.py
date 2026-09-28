@@ -1080,12 +1080,18 @@ def test_has_get_workspace_mirrors_the_capability_tree() -> None:
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
             return None  # pragma: no cover
 
+    class Bundle(CombinedCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            return None  # pragma: no cover
+
     assert supplier._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert not AbstractCapability[Any]()._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert CombinedCapability([AbstractCapability[Any](), supplier])._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert WrapperCapability(supplier)._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert not WrapperCapability(AbstractCapability[Any]())._has_get_workspace  # pyright: ignore[reportPrivateUsage]
     assert Policy(AbstractCapability[Any]())._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert not CombinedCapability([AbstractCapability[Any]()])._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+    assert Bundle([AbstractCapability[Any]()])._has_get_workspace  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_new_workspace_ignores_the_ref_in_history() -> None:
@@ -1377,6 +1383,33 @@ async def test_borrowed_short_circuit_response_keeps_its_original_workspace_ref(
 
     assert result.output == 'cached'
     assert old_response.workspace_ref == old_ref
+
+
+async def test_copied_history_response_keeps_its_workspace_ref_when_the_model_fails() -> None:
+    old_ref = WorkspaceRef(provider='fake', id='old')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('old')]),
+        ModelResponse(parts=[TextPart('old')], workspace_ref=old_ref),
+    ]
+    backend = FakeWorkspace('copied-history')
+
+    class CopyHistory(AbstractCapability[Any]):
+        async def before_model_request(self, ctx: RunContext[Any], request_context: Any) -> Any:
+            await ctx.workspace.run(['used'])
+            request_context.messages = [replace(message) for message in request_context.messages]
+            return request_context
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model failed')
+
+    agent = Agent(FunctionModel(fail), capabilities=[CopyHistory()])
+    with capture_run_messages() as captured:
+        with pytest.raises(RuntimeError, match='model failed'):
+            await agent.run('new', message_history=history, workspace=backend)
+    copied = next(message for message in reversed(captured) if isinstance(message, ModelResponse))
+
+    assert copied.parts == [TextPart('old')]
+    assert copied.workspace_ref == old_ref
 
 
 async def test_streamed_short_circuit_result_keeps_the_workspace_identity() -> None:

@@ -375,7 +375,8 @@ activities.
 - A workspace call may run again if a worker dies mid-call. Calls made inside a tool retry with that
   tool. Calls made in workflow code use the engine's own settings (Temporal `activity_config`, DBOS
   `mcp_step_config`; Prefect runs them once), and only infrastructure failures are retried there, never
-  workspace or file errors. Timeouts, read-only refusals and a lost environment are never retried.
+  workspace or file errors. Timeouts, output-limit failures, read-only refusals and a lost environment are
+  never retried.
 - On Temporal, a command runs within an activity's `start_to_close_timeout`, 60 seconds by default,
   whatever its own `timeout`. Inside a tool that is the tool's activity; raise it with
   `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. From workflow code it is
