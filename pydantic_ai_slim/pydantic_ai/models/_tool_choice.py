@@ -5,6 +5,7 @@ from typing_extensions import assert_never
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
 ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[Literal['auto', 'required'], set[str]]
@@ -183,3 +184,43 @@ def resolve_tool_choice(  # noqa: C901
         return (mode, allowed_tools)
     else:
         assert_never(function_tool_choice)
+
+
+FORCING_UNSUPPORTED_REASON = "This model does not support forcing tool use. Use `tool_choice='auto'` instead."
+
+
+def tool_forcing_unavailable_reason(profile: ModelProfile, *, thinking: bool, thinking_remedy: str) -> str | None:
+    """Why a forced tool choice can't be sent to this model for this request, or `None` if it can.
+
+    `thinking_remedy` tells the user how to turn thinking off with this model's settings.
+    """
+    if not profile.get('supports_forced_tool_choice', True):
+        return FORCING_UNSUPPORTED_REASON
+    if thinking and not profile.get('supports_forced_tool_choice_with_thinking', True):
+        return (
+            f'This model does not support forcing tool use while thinking is enabled. '
+            f"{thinking_remedy}, or use `tool_choice='auto'`."
+        )
+    return None
+
+
+def support_tool_forcing(
+    model_name: str,
+    model_settings: ModelSettings | None,
+    unavailable_reason: str | None,
+) -> bool:
+    """Whether to send a forced tool choice, given why it can't be sent (if it can't).
+
+    A forced choice Pydantic AI resolved itself (such as an output tool's) falls back to an unforced one;
+    an explicit forcing `tool_choice` raises a `UserError` with the reason instead.
+    """
+    if unavailable_reason is None:
+        return True
+    explicit_choice = (model_settings or {}).get('tool_choice')
+    # `ToolOrOutput` and `[]` only resolve to a forced choice when the output type rules out direct output, so like
+    # an output tool's forcing, they fall back rather than raising.
+    if explicit_choice == 'required' or (isinstance(explicit_choice, list) and explicit_choice):
+        raise UserError(
+            f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {unavailable_reason}'
+        )
+    return False

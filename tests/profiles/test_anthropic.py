@@ -382,7 +382,7 @@ def test_model_profile_forced_tool_choice(model_name: str, supports_forcing: boo
     """
     profile = anthropic_model_profile(model_name)
     assert profile is not None
-    assert profile.get('anthropic_supports_forced_tool_choice') is supports_forcing
+    assert profile.get('supports_forced_tool_choice') is supports_forcing
 
 
 def test_model_profile_mythos_5():
@@ -420,7 +420,7 @@ def test_model_profile_fable_5_1():
 
     The pair diverges on forced `tool_choice`: `claude-fable-5-1` returns a 400 while
     `claude-fable-5` accepts forcing, so only 5.1 carries
-    `anthropic_supports_forced_tool_choice=False` — see `test_model_profile_forced_tool_choice`.
+    `supports_forced_tool_choice=False` — see `test_model_profile_forced_tool_choice`.
     """
     profile = anthropic_model_profile('claude-fable-5-1')
     assert profile == snapshot(
@@ -439,7 +439,7 @@ def test_model_profile_fable_5_1():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
-            'anthropic_supports_forced_tool_choice': False,
+            'supports_forced_tool_choice': False,
             'anthropic_binds_thinking_blocks': True,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
@@ -478,7 +478,7 @@ def test_model_profile_sonnet_5():
     assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
 
     # Sonnet-5-specific: forcing is allowed (unlike Fable/Mythos), fast speed is not (Opus-only)
-    assert profile.get('anthropic_supports_forced_tool_choice') is True
+    assert profile.get('supports_forced_tool_choice') is True
     assert profile.get('anthropic_supports_fast_speed') is False
 
 
@@ -513,7 +513,7 @@ def test_model_profile_opus_5():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
-            'anthropic_supports_forced_tool_choice': True,
+            'supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
@@ -550,7 +550,7 @@ def test_model_profile_opus_5_5():
     assert profile == {
         **opus_5,
         'anthropic_disallows_top_effort_when_thinking_disabled': False,
-        'anthropic_supports_forced_tool_choice': False,
+        'supports_forced_tool_choice': False,
         'anthropic_binds_thinking_blocks': True,
     }
 
@@ -573,7 +573,7 @@ def test_model_profile_sonnet_5_5():
     assert sonnet_5 is not None
     assert profile == {
         **sonnet_5,
-        'anthropic_supports_forced_tool_choice': False,
+        'supports_forced_tool_choice': False,
         'anthropic_binds_thinking_blocks': True,
     }
 
