@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
@@ -267,6 +268,46 @@ class TestOutcomes:
 
         # A crash from the child is not a soft timeout; with containment off it aborts.
         assert [type(event) for event in listener.events] == [DelegationStartEvent]
+
+    async def test_child_timeout_error_under_budget_propagates(self) -> None:
+        async def backend_timeout(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # An internal child operation overran and surfaces its own TimeoutError;
+            # the delegation budget is 60s and has not expired.
+            try:
+                await asyncio.wait_for(asyncio.Event().wait(), 0.01)
+            except asyncio.TimeoutError:
+                raise asyncio.TimeoutError('backend operation timed out') from None
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        worker = Agent(FunctionModel(backend_timeout), name='worker')
+        listener = Listener()
+        started = time.perf_counter()
+        with pytest.raises(asyncio.TimeoutError, match='backend operation timed out'):
+            await Agent(
+                _delegate_once(), capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=60)]), listener]
+            ).run('go')
+        assert time.perf_counter() - started < 60
+
+        # A crash from the child is not a soft timeout; with containment off it aborts.
+        assert [type(event) for event in listener.events] == [DelegationStartEvent]
+
+    async def test_child_timeout_error_under_budget_is_contained_when_contain_errors(self) -> None:
+        async def backend_timeout(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            try:
+                await asyncio.wait_for(asyncio.Event().wait(), 0.01)
+            except asyncio.TimeoutError:
+                raise asyncio.TimeoutError('backend operation timed out') from None
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        worker = Agent(FunctionModel(backend_timeout), name='worker')
+        listener, _ = await _run(
+            _delegate_once(), SubAgents(agents=[SubAgent(worker, timeout_seconds=60, contain_errors=True)])
+        )
+
+        _, end = _pair(listener)
+        assert end.outcome == 'contained'
+        assert "Sub-agent 'worker' crashed: TimeoutError: backend operation timed out" in end.output
+        assert 'exceeded its 60s time budget' not in end.output
 
     async def test_budget(self) -> None:
         def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

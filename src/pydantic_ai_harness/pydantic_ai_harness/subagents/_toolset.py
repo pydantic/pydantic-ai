@@ -496,13 +496,20 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         the caller raises. Everything else propagates and aborts the delegation.
         """
         timeout = sub_agent.timeout_seconds
+        # A child's own `TimeoutError` lands in the same `except` as the
+        # delegation budget's expiry, so record when the budget started to tell
+        # them apart: `asyncio.wait_for` only gives up at or after the deadline.
+        started = time.perf_counter()
         try:
             result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
         except asyncio.TimeoutError as exc:
-            if timeout is None or isinstance(exc, HookTimeoutError):
-                # The child itself timed out: a hook overran its own budget, or no
-                # delegation budget is set at all. That is a child crash, so the
-                # crash handlers decide what the parent sees.
+            budget_expired = timeout is not None and time.perf_counter() - started >= timeout
+            if not budget_expired or isinstance(exc, HookTimeoutError):
+                # The child itself timed out: a hook overran its own budget, a
+                # child operation raised its own `TimeoutError` before the
+                # delegation budget ran out, or no delegation budget is set at
+                # all. That is a child crash, so the crash handlers decide what
+                # the parent sees.
                 return self._crash_outcome(agent_name, sub_agent, exc)
             return _Ended(
                 outcome='timeout',
