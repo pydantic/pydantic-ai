@@ -204,7 +204,10 @@ def _convert_html(html: str) -> tuple[str, str]:
             if node.contents:
                 pending.append((node.contents[0], depth, indent_depth))
         elif isinstance(node, NavigableString):
-            work = len(node) + 4 * indent_depth * node.count('\n')
+            indent_work = 4 * indent_depth * node.count('\n')
+            work = len(node) + indent_work
+            # Indentation can dominate even within the first 16 levels.
+            cost += indent_depth * len(node) + indent_work
         else:
             work = 0
         cost += max(depth - 16, 0) * work
