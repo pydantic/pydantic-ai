@@ -30,7 +30,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
-from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands, workspace_path, workspace_relpath
+from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands, workspace_path
 from pydantic_ai_harness.filesystem._changes import Change
 from pydantic_ai_harness.filesystem._command_search import run_posix_search
 from pydantic_ai_harness.filesystem._events import (
@@ -224,7 +224,7 @@ def _model_safe_filename(filename: str | bytes, root: str) -> str:
         return raw
     path = posixpath.normpath(raw)
     if _contains(root, path):
-        return workspace_relpath(path, root)
+        return posixpath.relpath(path, root)
     return _OUTSIDE_WORKSPACE
 
 
@@ -663,9 +663,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             # Walks start inside the root and `rg` prints paths below its cwd; this guards a
             # backend or `rg` build that reports an entry elsewhere.
             return None
-        relative = workspace_relpath(path, scope.root)
+        relative = posixpath.relpath(path, scope.root)
         # The caller explicitly named `start`; only hidden components below it are omitted.
-        if (not include_hidden and _is_hidden(workspace_relpath(path, start))) or not self._is_accessible(relative):
+        if (not include_hidden and _is_hidden(posixpath.relpath(path, start))) or not self._is_accessible(relative):
             return None
         return relative
 
@@ -674,7 +674,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if not scope.checks_realpath:
             return True
         real = await scope.workspace.realpath(path)
-        return _contains(scope.root, real) and self._is_accessible(workspace_relpath(real, scope.root))
+        return _contains(scope.root, real) and self._is_accessible(posixpath.relpath(real, scope.root))
 
     def _event_location(self, scope: _Scope, resolved: str) -> _EventLocation:
         """Path fields for an event about `resolved`.
@@ -697,7 +697,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         resolved, real = await self._resolve_path(scope, path)
         for spelling in dict.fromkeys((resolved, real)):
-            self._check_access(workspace_relpath(spelling, scope.root), write=write, check_allowed=check_allowed)
+            self._check_access(posixpath.relpath(spelling, scope.root), write=write, check_allowed=check_allowed)
         return resolved
 
     async def _stat(self, scope: _Scope, resolved: str) -> FileEntry | None:
@@ -750,7 +750,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                         real not in seen_dirs
                         and _contains(scope.root, real)
                         and not self._first_matching_pattern(
-                            workspace_relpath(child.path, scope.root), self._denied_patterns, ancestors=True
+                            posixpath.relpath(child.path, scope.root), self._denied_patterns, ancestors=True
                         )
                     ):
                         seen_dirs.add(real)
@@ -939,7 +939,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             parent_entry = await scope.workspace.stat(parent)
         except FileNotFoundError as e:
-            parent_rel = workspace_relpath(parent, scope.root)
+            parent_rel = posixpath.relpath(parent, scope.root)
             raise FileNotFoundError(
                 f"Parent directory '{parent_rel}' does not exist. Create the parent directory first."
             ) from e
@@ -1146,7 +1146,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             # find_files so the three walkers agree on what exists.
             if self._walk_entry(scope, entry.path, resolved) is None:
                 continue
-            rel = workspace_relpath(entry.path, scope.cwd)
+            rel = posixpath.relpath(entry.path, scope.cwd)
             if entry.is_dir:
                 line = f'{rel}/'
             else:
@@ -1232,7 +1232,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
             # Hidden directories are pruned; count their directory entry, not unseen descendants.
             if not (include_glob and _explicit_hidden(include_glob)):
-                hidden_count = sum(_is_hidden(workspace_relpath(child.path, resolved)) for child in walked)
+                hidden_count = sum(_is_hidden(posixpath.relpath(child.path, resolved)) for child in walked)
             files = [child for child in walked if not child.is_dir]
 
         results: list[str] = []
@@ -1251,19 +1251,19 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if file_path != resolved and not await self._readable_entry(scope, file_path):
                 continue
             if file.size is not None and file.size > _MAX_SEARCH_FILE_BYTES:
-                skipped.append(workspace_relpath(file_path, scope.cwd))
+                skipped.append(posixpath.relpath(file_path, scope.cwd))
                 continue
             try:
                 raw = await scope.workspace.read_bytes(file_path)
             except (WorkspaceError, OSError):
                 # A single inaccessible file should not hide matches in the rest of the tree.
-                skipped.append(workspace_relpath(file_path, scope.cwd))
+                skipped.append(posixpath.relpath(file_path, scope.cwd))
                 continue
             if _is_binary(raw):
                 continue
             text = raw.decode('utf-8', errors='replace')
             matches, capped = _matching_lines(
-                text, compiled, workspace_relpath(file_path, scope.cwd), self._max_search_results - len(results)
+                text, compiled, posixpath.relpath(file_path, scope.cwd), self._max_search_results - len(results)
             )
             results.extend(matches)
             if capped:
@@ -1296,7 +1296,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         cwd = resolved if entry.is_dir else posixpath.dirname(resolved)
         target = '.' if entry.is_dir else posixpath.basename(resolved)
         prepare, permitted = self._batch_authorizer(scope, cwd)
-        prefix = workspace_relpath(cwd, scope.root)
+        prefix = posixpath.relpath(cwd, scope.root)
         command_glob = include_glob.removeprefix(prefix + '/') if include_glob and prefix != '.' else include_glob
 
         async def accept(record: Record) -> str | None:
@@ -1423,7 +1423,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             0
             if _explicit_hidden(pattern)
             else sum(
-                _is_hidden(relative := workspace_relpath(child.path, resolved))
+                _is_hidden(relative := posixpath.relpath(child.path, resolved))
                 and (child.is_dir and '**' in parts or _glob_match(parts, relative.split('/')))
                 for child in walked
             )
@@ -1432,7 +1432,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             child
             for child in walked
             if (not child.is_dir if files_only else child.is_dir or not directories_only)
-            and _glob_match(parts, workspace_relpath(child.path, resolved).split('/'))
+            and _glob_match(parts, posixpath.relpath(child.path, resolved).split('/'))
         ]
 
         matches: list[str] = []
@@ -1446,7 +1446,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if len(matches) >= self._max_find_results:
                 capped = True
                 break
-            rel = workspace_relpath(match.path, scope.cwd)
+            rel = posixpath.relpath(match.path, scope.cwd)
             suffix = '/' if match.is_dir else ''
             matches.append(f'{rel}{suffix}')
 
@@ -1712,7 +1712,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     for record in records
                     if record.real_path is not None
                     and _contains(scope.root, record.real_path)
-                    and self._is_accessible(workspace_relpath(record.real_path, scope.root))
+                    and self._is_accessible(posixpath.relpath(record.real_path, scope.root))
                 )
                 return
             # Resolve all candidates in the workspace in one command; never trust a lexical
@@ -1733,7 +1733,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 allowed.update(
                     path
                     for path, real in zip(chunk, realpaths)
-                    if _contains(scope.root, real) and self._is_accessible(workspace_relpath(real, scope.root))
+                    if _contains(scope.root, real) and self._is_accessible(posixpath.relpath(real, scope.root))
                 )
 
         def permitted(record: Record) -> bool:
@@ -1776,7 +1776,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         target = posixpath.normpath(posixpath.join(cwd, record.path))
         if self._walk_entry(scope, target, cwd, include_hidden=include_hidden) is None:
             return None
-        return workspace_relpath(target, scope.cwd)
+        return posixpath.relpath(target, scope.cwd)
 
     def _match_line(self, scope: _Scope, cwd: str, record: Record, *, include_hidden: bool = False) -> str | None:
         """Rebuild ripgrep's `path:line:text` (match) or `path-line-text` (context) line for an authorized path."""
