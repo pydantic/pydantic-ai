@@ -883,6 +883,14 @@ class BedrockConverseModel(Model[BaseClient]):
             response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
+    @property
+    def _streamed_response_cls(self) -> type[BedrockStreamedResponse]:
+        """Returns the `StreamedResponse` type that will be used for streamed responses.
+
+        This method may be overridden by subclasses of `BedrockConverseModel` to provide their own `StreamedResponse` type.
+        """
+        return BedrockStreamedResponse
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -898,7 +906,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield BedrockStreamedResponse(
+        yield self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _model_profile=cast(BedrockModelProfile, self.profile),

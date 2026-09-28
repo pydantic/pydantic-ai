@@ -1726,6 +1726,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             enabled_server_tool_names.update(implicit_code_execution_names)
         return frozenset(enabled_server_tool_names)
 
+    @property
+    def _streamed_response_cls(self) -> type[AnthropicStreamedResponse]:
+        """Returns the `StreamedResponse` type that will be used for streamed responses.
+
+        This method may be overridden by subclasses of `AnthropicModel` to provide their own `StreamedResponse` type.
+        """
+        return AnthropicStreamedResponse
+
     async def _process_streamed_response(
         self,
         response: AsyncStream[BetaRawMessageStreamEvent],
@@ -1749,7 +1757,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # iterator below skips these `message=None` events.
         model_name = first_chunk.message.model if first_chunk.message is not None else self.model_name  # pyright: ignore[reportUnnecessaryComparison]
 
-        return AnthropicStreamedResponse(
+        return self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
             _response=peekable_response,
