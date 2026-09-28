@@ -113,7 +113,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         # `ssh-agent` (via `SSH_AUTH_SOCK`) authenticate instead.
         self._ssh = ['ssh', '-T', '-o', 'BatchMode=yes', *ssh_args, '--', destination]
         # A local subprocess runner: it owns timeouts, output limits and killing `ssh` on cancellation.
-        self._client = LocalWorkspaceBackend(
+        self._runner = LocalWorkspaceBackend(
             '/', env={name: os.environ[name] for name in _CLIENT_ENV if name in os.environ}
         )
         self._ref = WorkspaceRef(
@@ -196,7 +196,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         # `ssh` hands the command to the remote login shell, so run `sh` there for POSIX semantics.
         argv = [*self._ssh, f'sh -c {shlex.quote(script)}']
         try:
-            result = await self._client.run(argv, timeout=timeout)
+            result = await self._runner.run(argv, timeout=timeout)
         except anyio.get_cancelled_exc_class():
             await self._stop(tag)
             raise
@@ -236,6 +236,6 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         # Best effort: a host that can't be reached now has nothing to report.
         with anyio.CancelScope(shield=True):
             try:
-                await self._client.run([*self._ssh, f'sh -c {shlex.quote(_STOP)} sh {tag}'], timeout=_STOP_TIMEOUT)
+                await self._runner.run([*self._ssh, f'sh -c {shlex.quote(_STOP)} sh {tag}'], timeout=_STOP_TIMEOUT)
             except WorkspaceError:  # pragma: no cover - the host went away between the command and the stop
                 pass
