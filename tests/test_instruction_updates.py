@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -24,6 +25,8 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -38,6 +41,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import RequestCapture, try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
@@ -508,6 +512,51 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         assert captured_parts == [expected_parts, expected_parts]
 
 
+async def test_instruction_updates_suspended_resume_merges_projected_tool_search():
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=State)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    first = await agent.run('One.', deps=State('A'))
+    second = await agent.run('Two.', deps=State('B'), message_history=first.all_messages())
+    baseline_request, _, delta_request, _ = second.all_messages()
+    foreign_search = ModelResponse(
+        parts=[
+            NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='search', provider_name='anthropic'),
+            NativeToolSearchReturnPart(
+                content={'discovered_tools': []}, tool_call_id='search', provider_name='anthropic'
+            ),
+        ],
+        provider_name='anthropic',
+    )
+    suspended = scripted_response(
+        texts=['partial'], state='suspended', provider_response_id='paused', input_tokens=1, output_tokens=1
+    )
+    captured_messages: list[list[ModelMessage]] = []
+
+    class ResumeModel(ScriptedContinuationModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            captured_messages.append(messages)
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    model = ResumeModel(
+        responses=[scripted_response(texts=['done'], provider_response_id='complete', input_tokens=1, output_tokens=1)]
+    )
+    await agent.run(
+        model=model, deps=State('C'), message_history=[baseline_request, foreign_search, delta_request, suspended]
+    )
+    assert [type(message).__name__ for message in captured_messages[0]] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+
+
 @pytest.mark.parametrize(
     'provider',
     [
@@ -858,17 +907,27 @@ async def test_instruction_updates_direct_model_calls_require_projection(model: 
         await model.request(messages, None, ModelRequestParameters())
 
 
-async def test_instruction_updates_direct_function_model_requires_projection():
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('ok')])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_instruction_updates_direct_function_model_requires_projection(stream: bool):
+    calls: list[str] = []
 
-    model = FunctionModel(respond)
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        calls.append('request')
+        return ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=1))
+
+    async def stream_respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
+        calls.append('stream')
+        yield 'ok'
+
+    model = FunctionModel(respond, stream_function=stream_respond)
+    messages: list[ModelMessage] = [ModelRequest(parts=[InstructionDeltaPart(id='agent', content='Updated.')])]
     with pytest.raises(UserError, match='prepare_messages'):
-        await model.request(
-            [ModelRequest(parts=[InstructionDeltaPart(id='agent', content='Updated.')])],
-            None,
-            ModelRequestParameters(),
-        )
+        if stream:
+            async with model.request_stream(messages, None, ModelRequestParameters()):
+                pass
+        else:
+            await model.request(messages, None, ModelRequestParameters())
+    assert calls == []
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')

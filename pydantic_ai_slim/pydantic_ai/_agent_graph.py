@@ -2018,7 +2018,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(message, _messages.ModelRequest)
             for part in message.parts
         ):
-            messages = model.prepare_messages(messages, model_request_parameters)
+            # Projection can split a foreign native tool-search exchange into a trailing
+            # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
+            # frontier, so its tool calls must not get synthesized returns.
+            messages = _merge_consecutive_messages(model.prepare_messages(messages, model_request_parameters))
 
         return model, model_settings or None, model_request_parameters, messages, run_context
 

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 
-import pydantic_ai.messages as messages_module
 import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent
@@ -1452,9 +1451,8 @@ class TestManualCompactionSemantics:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not hasattr(messages_module, 'InstructionDeltaPart'), reason='requires core instruction updates')
 class TestInstructionDeltaCounting:
-    def test_superseded_updates_do_not_count(self) -> None:  # pragma: lax no cover
+    def test_superseded_updates_do_not_count(self) -> None:
         history = ModelMessagesTypeAdapter.validate_python(
             [
                 {
@@ -1479,7 +1477,7 @@ class TestInstructionDeltaCounting:
             (None, "Instruction block 'agent:state' is withdrawn. Its previous instructions no longer apply."),
         ],
     )
-    def test_rendered_updates_count(self, content: str | None, rendered: str) -> None:  # pragma: lax no cover
+    def test_rendered_updates_count(self, content: str | None, rendered: str) -> None:
         history = ModelMessagesTypeAdapter.validate_python(
             [
                 {

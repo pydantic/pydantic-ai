@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-import pydantic_ai.messages as messages_module
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
@@ -859,10 +858,7 @@ class TestSearchScope:
         assert 'TEXTTAIL' not in excerpts
         assert '...' in excerpts
 
-    @pytest.mark.skipif(
-        not hasattr(messages_module, 'InstructionDeltaPart'), reason='requires core instruction updates'
-    )
-    async def test_instruction_updates_stay_searchable_past_display_cutoff(self) -> None:  # pragma: lax no cover
+    async def test_instruction_updates_stay_searchable_past_display_cutoff(self) -> None:
         history = ModelMessagesTypeAdapter.validate_python(
             [
                 {
