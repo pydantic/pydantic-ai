@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from keyring.errors import KeyringError
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
@@ -135,7 +136,13 @@ async def _command(args: list[str], *, settings: LogfireMCPSettings, announce: A
             raise ValueError(str(exc)) from None
         return 'Logfire runs use this sign-in when no API key is chosen, set, or saved.'
     if args == ['logout']:
-        if await asyncio.to_thread(forget):
+        try:
+            forgotten = await asyncio.to_thread(forget)
+        except (KeyringError, OSError) as exc:
+            raise ValueError(
+                f'Could not delete the saved Logfire browser sign-in ({type(exc).__name__}); run /logfire_mcp logout to retry.'
+            ) from None
+        if forgotten:
             return 'Forgot the Logfire browser sign-in. Keys in /keys are kept.'
         return 'There was no Logfire browser sign-in to forget.'
     raise ValueError('Usage: /logfire_mcp login|logout (settings and keys: /plugins configure logfire_mcp)')

@@ -318,7 +318,7 @@ to stock built-ins. See [telemetry](README.md#telemetry-and-references).
 
 The built-in `logfire_mcp` plugin (`pydantic_clai2.logfire_mcp`) gives the agent
 the tools of Logfire's hosted MCP server through harness
-[`LogfireMCP`](../docs/logfire-mcp.md). It starts disabled.
+[`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
 `/plugins enable logfire_mcp` loads it and opens its settings menu; reopen the
 menu any time with `/plugins configure logfire_mcp` or `C` in `/plugins`.
 

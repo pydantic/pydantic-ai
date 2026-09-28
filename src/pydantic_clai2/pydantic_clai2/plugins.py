@@ -308,8 +308,8 @@ class PluginHost(Generic[DepsT]):
                 f'{type(settings).__name__} cannot be saved as plugin settings: they must dump to a JSON'
                 ' object that validates back into the model.'
             ) from exc
-        self._settings = saved
         self._persist(saved)
+        self._settings = saved
 
     @property
     def configurer(self) -> Callable[[], Awaitable[str]] | None:

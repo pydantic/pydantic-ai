@@ -9,6 +9,7 @@ from pathlib import Path
 import anyio
 import pytest
 from fastmcp import Client
+from keyring.errors import KeyringError
 from pydantic import JsonValue, SecretStr
 from rich.console import Console
 from termflow.tui import MenuItem
@@ -357,6 +358,19 @@ async def test_logout_forgets_only_the_sign_in(monkeypatch: pytest.MonkeyPatch) 
     assert 'LOGFIRE_API_KEY' in api_keys.load_keys()
     with pytest.raises(ValueError, match=r'Usage: /logfire_mcp login\|logout'):
         await command([])
+
+
+@pytest.mark.parametrize('error', [KeyringError('locked'), OSError('read-only')], ids=['keyring', 'file'])
+async def test_logout_failures_are_reported(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    def refuse(*, account: str) -> None:
+        raise error
+
+    monkeypatch.setattr('pydantic_clai2.logfire_oauth.delete_credentials', refuse)
+    command, _ = logfire_command()
+    with pytest.raises(
+        ValueError, match=r'Could not delete the saved Logfire browser sign-in \((KeyringError|OSError)\)'
+    ):
+        await command(['logout'])
 
 
 async def test_registers_the_logout_command(tmp_path: Path) -> None:
