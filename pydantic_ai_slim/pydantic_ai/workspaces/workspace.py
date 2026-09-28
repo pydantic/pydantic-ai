@@ -402,6 +402,9 @@ class Workspace(WorkspaceBackend):
         There is no default `timeout`. Raises `UserError` if the backend can't run commands.
         """
         validate_timeout(timeout)
+        if not isinstance(command, str) and not command:
+            # Checked here so every backend reports it the same way, not as its SDK's own error.
+            raise ValueError('command must not be empty')
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')

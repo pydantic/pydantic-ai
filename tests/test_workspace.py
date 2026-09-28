@@ -206,6 +206,11 @@ async def test_realpath_of_resolve_names_the_file_a_file_method_opens(tmp_path: 
     assert await workspace.realpath(path) == str((root / 'x').resolve())
 
 
+async def test_run_rejects_an_empty_argv(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match='command must not be empty'):
+        await Workspace(LocalWorkspaceBackend(tmp_path)).run([])
+
+
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / 'large').write_bytes(b'x' * (80 * 1024))
     monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)

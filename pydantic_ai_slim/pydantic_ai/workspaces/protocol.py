@@ -143,6 +143,7 @@ class SupportsCommands(Protocol):
 
         Args:
             command: An argv sequence, or a shell string with `shell=True`; a mismatch raises `TypeError`.
+                [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] rejects an empty argv with `ValueError`.
             shell: Whether to interpret `command` with the workspace's shell.
             env: Extra environment variables, layered over the backend's own.
             timeout: A positive finite number of seconds before
