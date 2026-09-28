@@ -380,8 +380,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not remove {path!r}', path):
             # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
-            # reports that as `FileNotFoundError`.
-            if not await sandbox.files.exists(path, user=self._user):
+            # reports that as `FileNotFoundError`. envd's stat follows links, so a dangling
+            # symlink reads as missing; it is still removed itself.
+            if (
+                not await sandbox.files.exists(path, user=self._user)
+                and (await self.run(['test', '-L', path], timeout=_INTERNAL_EXEC_TIMEOUT)).exit_code != 0
+            ):
                 raise e2b.FileNotFoundException(path)
             # The removal is recursive, so refuse the working directory and its ancestors, like the
             # built-in backends. The leaf stays unresolved: removing a link removes only the link.

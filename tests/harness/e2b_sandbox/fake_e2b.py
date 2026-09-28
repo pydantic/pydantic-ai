@@ -194,10 +194,12 @@ class FakeCommands:
             if self._control.kill_command_error is not None:
                 raise self._control.kill_command_error
         user_command = _user_command(cmd)
-        # The in-memory fake has no FIFO objects; `test -p` must report false rather
-        # than inheriting a generic test responder's success status.
+        # The in-memory fake has no FIFOs or dangling links to probe; `test -p` and `test -L`
+        # must report false rather than inheriting a generic test responder's success status.
         stdout, stderr, exit_code = (
-            ('', '', 1) if 'test -p ' in user_command else self._control.responder(user_command, timeout)
+            ('', '', 1)
+            if 'test -p ' in user_command or 'test -L ' in user_command
+            else self._control.responder(user_command, timeout)
         )
         handle = FakeCommandHandle(
             self._control,

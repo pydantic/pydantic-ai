@@ -785,6 +785,13 @@ class TestFilesystem:
         await workspace.remove('child')
         assert sorted(root.iterdir()) == []
 
+    async def test_remove_deletes_a_dangling_symlink(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
+        # envd's stat follows the link and reports it missing; the link itself must still go.
+        fake_e2b.host_root = tmp_path.resolve()
+        (tmp_path / 'dangling').symlink_to('missing')
+        await E2BSandboxBackend().remove(str(tmp_path.resolve() / 'dangling'))
+        assert not (tmp_path / 'dangling').is_symlink()
+
     @pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
     async def test_a_missing_path_raises_the_builtin_error(self, fake_e2b: FakeE2B, operation: str) -> None:
         # The protocol's contract: backends translate their SDK's own missing-file exception
@@ -830,7 +837,8 @@ class TestFilesystem:
         backend = await started()
         with pytest.raises(FileNotFoundError):
             await backend.remove('/tmp/missing')
-        assert fake_e2b.sandboxes[0].files.removed == []
+        # Only the symlink probe's command claim is cleaned up.
+        assert '/tmp/missing' not in fake_e2b.sandboxes[0].files.removed
 
     async def test_exists_still_reports_other_failures(self, fake_e2b: FakeE2B) -> None:
         # Only "there is nothing at that path" is an answer; anything else is a failure.
