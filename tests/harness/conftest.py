@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import os
+import sys
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -32,7 +35,22 @@ if TYPE_CHECKING:
 else:
     from dirty_equals import IsDatetime, IsInstance, IsNow, IsPartialDict, IsStr
 
-__all__ = ('IsDatetime', 'IsInstance', 'IsNow', 'IsPartialDict', 'IsStr', 'agent_run_names')
+__all__ = (
+    'IsDatetime',
+    'IsInstance',
+    'IsNow',
+    'IsPartialDict',
+    'IsStr',
+    'agent_run_names',
+    'skip_temporal_sandbox_on_314',
+)
+
+skip_temporal_sandbox_on_314 = pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason='temporalio sandbox is incompatible with Python 3.14 '
+    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
+)
+"""Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14."""
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
@@ -111,3 +129,26 @@ def agent_run_names(capfire: CaptureLogfire) -> list[str]:
         for span in capfire.exporter.exported_spans_as_dict()
         if 'agent_name' in span['attributes']
     ]
+
+
+@pytest.fixture(scope='session')
+def session_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """One loop for every sync test that calls `run_sync`, closed when the session ends."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(autouse=True)
+def current_event_loop_for_sync_tests(
+    request: pytest.FixtureRequest, session_event_loop: asyncio.AbstractEventLoop
+) -> Iterator[None]:
+    """Give sync tests a current event loop.
+
+    anyio's runner unsets the current loop after each async test. Without one, `Agent.run_sync`
+    creates a new loop per call and never closes it, and the leak surfaces as an unraisable
+    `ResourceWarning` in an unrelated later test. Async tests are left to anyio's own runner.
+    """
+    if not inspect.iscoroutinefunction(request.function):
+        asyncio.set_event_loop(session_event_loop)
+    yield

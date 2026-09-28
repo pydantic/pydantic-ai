@@ -33,9 +33,9 @@ garbage collector" or "the caller remembers" is a bug, not a design.
   must still be stored on, and drained by, the enclosing context manager (core:
   `RealtimeSession._start_pump` is lazy and `__aexit__` drains it).
 - Prefer a task group, whose `async with` encloses everything the children
-  touch, over loose tasks. `ShellToolset.run_command` reads stdout and stderr
-  as two children of one group inside one `fail_after`, so a timeout cancels
-  both readers together (`shell/_toolset.py`). Avoid
+  touch, over loose tasks. Core's `LocalWorkspaceBackend.run` reads stdout and
+  stderr as two children of one group inside one `move_on_after`, so a timeout
+  cancels both readers together (`pydantic_ai/workspaces/local.py`). Avoid
   `asyncio.gather(..., return_exceptions=False)` when one failure should stop
   the batch: it propagates the first failure while siblings keep running.
   `return_exceptions=True` is fine for a cleanup-only drain.
@@ -48,8 +48,8 @@ garbage collector" or "the caller remembers" is a bug, not a design.
   still holds the shared loop. Pass `name=` when there are many of a kind.
 - A subprocess is a resource like any other. Every `anyio.open_process` needs
   an owner that waits on it, closes its pipes, and kills its process group on
-  the failure path. `ShellToolset` tracks background processes in a dict that
-  `__aexit__` terminates and cleans up (`shell/_toolset.py`), and
+  the failure path. `ShellToolset` tracks its detached workspace jobs in a dict
+  that `__aexit__` terminates and cleans up (`shell/_toolset.py`), and
   `LocalStackContainer` pairs a startup `fail_after` with a shielded teardown
   (`localstack/_container.py`).
 
@@ -63,8 +63,8 @@ before writing cleanup.
 
 - Shield cleanup that must complete under an outer `anyio` cancel. Your
   `finally` and each child's cleanup are unprotected unless they shield
-  themselves. `ShellToolset` waits for a killed process and drains its pipes
-  under `anyio.CancelScope(shield=True)` (`shell/_toolset.py`),
+  themselves. The `shell` tool stops a cancelled job and removes its files under
+  `anyio.move_on_after(..., shield=True)` (`shell/_persistent.py`),
   `ModalSandboxSession` shields both creation and teardown and bounds each with
   `move_on_after` so a shield can never hang (`modal_sandbox/_session.py`), and
   `_monty_exec.py` shields the interpreter's cleanup. Do not shield task-group
@@ -80,8 +80,8 @@ before writing cleanup.
 - One owner per deadline. Core's `FunctionToolset.call_tool` enforces exactly
   one scope for the per-tool timeout, so a longer per-tool value replaces the
   agent default instead of being capped by it. A harness toolset that owns a
-  transport owns its own deadline at that transport: `ShellToolset` applies
-  `timeout_seconds` around the readers, `LocalStackContainer` applies
+  transport owns its own deadline at that transport: `ShellToolset` passes
+  `timeout_seconds` to `workspace.run`, `LocalStackContainer` applies
   `_startup_timeout` around readiness, `SubAgentToolset` applies
   `timeout_seconds` with `asyncio.wait_for` around the child run. Do not stack
   a second scope over one of these.

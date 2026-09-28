@@ -339,6 +339,8 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/sandbox_live_changes.py",
+    ".github/scripts/test_sandbox_live_changes.py",
 ]
 
 [tool.ruff.lint]
@@ -403,6 +405,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_sandbox_live_changes.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
@@ -457,7 +460,10 @@ addopts = "-p no:cassetter"
 anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
-markers = ["modal_live: runs against a real Modal control plane; needs credentials"]
+markers = [
+    "modal_live: runs against a real Modal control plane; needs credentials",
+    "e2b_live: runs against a real E2B sandbox; needs credentials",
+]
 filterwarnings = [
     "error",
     # anyio 4.14+ intentionally leaves a task's coroutine unawaited when the task is cancelled natively

@@ -1,5 +1,4 @@
 import os
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -25,6 +24,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.researcher import Researcher
 
 if TYPE_CHECKING:
@@ -43,10 +43,8 @@ async def test_researcher_completes_task(
 ) -> None:
     monkeypatch.setenv('OPENAI_API_KEY', os.environ.get('OPENAI_API_KEY', 'replay-key'))
     # Replay recomputes tool returns while model responses come from the cassette, and the recorded
-    # `read_tool_result` calls reference spill handles keyed by the recording run's `run_id` — so the
-    # run below pins it. Rooting the overflow store in `tmp_path` keeps spills left behind by earlier
-    # runs out of the lookup.
-    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    # `read_tool_result` calls reference spill handles keyed by the recording run's `run_id`, so the
+    # run below pins it. A workspace in `tmp_path` keeps spills from earlier runs out of the lookup.
     agent = Agent(
         'openai:gpt-5.6-sol',
         capabilities=[Researcher()],
@@ -59,6 +57,7 @@ async def test_researcher_completes_task(
         'then synthesize the maturity status and main limitations. Search for and read the sources '
         'needed for each version, and include direct links.',
         run_id='01a0021a-aa83-7252-8a64-d7108e706f29',
+        workspace=LocalWorkspaceBackend(tmp_path),
     )
 
     assert result.all_messages() == snapshot(
@@ -106,6 +105,7 @@ Available sub-agents:
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                workspace_ref=WorkspaceRef(provider='local', id=str(tmp_path)),
             ),
             ModelRequest(
                 parts=[
@@ -113,7 +113,7 @@ Available sub-agents:
                         tool_name='delegate_task',
                         content=IsStr(
                             regex="""\
-\\[Tool\\ output\\ too\\ large\\ \\(20,719\\ chars\\);\\ stored\\ to\\ handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'\\.\\ Read\\ it\\ with\\ read_tool_result\\(handle='01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0',\\ offset=0,\\ limit=200,\\ from_end=False,\\ pattern=None\\)\\.\\]\\
+\\[Tool\\ output\\ too\\ large\\ \\(20,719\\ chars\\);\\ stored\\ to\\ handle\\ '.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'\\.\\ Read\\ it\\ with\\ read_tool_result\\(handle='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0',\\ offset=0,\\ limit=200,\\ from_end=False,\\ pattern=None\\)\\.\\]\\
 \\#\\ Free\\-threaded\\ CPython\\ 3\\.13\\
 \\
 \\#\\#\\ Executive\\ summary\\
@@ -130,7 +130,7 @@ html\\#c\\.PyUnstable_Module_SetGIL>\\ \\ \\
                         tool_call_id='call_ThjTLUpjfRlxSV43zSkDc4qF',
                         metadata={
                             'overflow_handle': IsStr(
-                                regex='01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'
+                                regex='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'
                             ),
                             'overflow_bytes': 20757,
                         },
@@ -233,6 +233,7 @@ Available sub-agents:
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                workspace_ref=WorkspaceRef(provider='local', id=str(tmp_path)),
             ),
             ModelRequest(
                 parts=[
@@ -405,6 +406,7 @@ Available sub-agents:
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                workspace_ref=WorkspaceRef(provider='local', id=str(tmp_path)),
             ),
             ModelRequest(
                 parts=[
@@ -597,6 +599,7 @@ Available sub-agents:
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                workspace_ref=WorkspaceRef(provider='local', id=str(tmp_path)),
             ),
             ModelRequest(
                 parts=[
@@ -732,6 +735,7 @@ Available sub-agents:
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                workspace_ref=WorkspaceRef(provider='local', id=str(tmp_path)),
             ),
             ModelRequest(
                 parts=[
@@ -739,7 +743,7 @@ Available sub-agents:
                         tool_name='web_fetch',
                         content=IsStr(
                             regex="""\
-\\[Tool\\ output\\ too\\ large\\ \\(28,078\\ chars\\);\\ stored\\ to\\ handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0'\\.\\ Read\\ it\\ with\\ read_tool_result\\(handle='01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0',\\ offset=0,\\ limit=200,\\ from_end=False,\\ pattern=None\\)\\.\\]\\
+\\[Tool\\ output\\ too\\ large\\ \\(28,078\\ chars\\);\\ stored\\ to\\ handle\\ '.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0'\\.\\ Read\\ it\\ with\\ read_tool_result\\(handle='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0',\\ offset=0,\\ limit=200,\\ from_end=False,\\ pattern=None\\)\\.\\]\\
 shape:\\ \\{'url':\\ str,\\ 'title':\\ str,\\ 'content':\\ str\\}\\
 \\{"url":"https://docs\\.python\\.org/3\\.14/howto/free\\-threading\\-extensions\\.html","title":"C\\ API\\ Extension\\ Support\\ for\\ Free\\ Threading\\ \\&\\#8212;\\ Python\\ 3\\.14\\.7\\ documentation","content":"C\\ API\\ Extension\\ Support\\ for\\ Free\\ Threading\\ —\\ Python\\ 3\\.14\\.7\\ documentation\\\\n\\\\n@media\\ only\\ screen\\ \\{\\\\ntable\\.full\\-width\\-table\\ \\{\\\\nwidth:\\ 100%;\\\\n\\}\\\\n\\}\\\\n\\\\nTheme\\\\nAuto\\\\nLight\\\\nDark\\\\n\\\\n\\#\\#\\#\\ \\[Table\\ of\\ Contents\\]\\(\\.\\./contents\\.html\\)\\\\n\\\\n\\*\\ \\[C\\ API\\ Extension\\ Support\\ for\\ Free\\ Threading\\]\\(\\#\\)\\\\n\\ \\ \\+\\ \\[Identifying\\ the\\ Free\\-Threaded\\ Build\\ in\\ C\\]\\(\\#identif\\
 \\.\\.\\.\\[27,078\\ chars\\ omitted\\]\\.\\.\\.\\
@@ -749,7 +753,7 @@ hon\\ Software\\ Foundation\\ License\\ Version\\ 2\\.\\\\n\\ \\ \\\\nExamples,\
                         tool_call_id='call_dmEMWZ9DEj1LpBAv20CBRl4f',
                         metadata={
                             'overflow_handle': IsStr(
-                                regex='01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0'
+                                regex='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0'
                             ),
                             'overflow_bytes': 28155,
                         },
@@ -794,6 +798,7 @@ Available sub-agents:
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                workspace_ref=WorkspaceRef(provider='local', id=str(tmp_path)),
             ),
             ModelRequest(
                 parts=[
@@ -961,6 +966,7 @@ Frame handling improved but remains hazardous:
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                workspace_ref=WorkspaceRef(provider='local', id=str(tmp_path)),
             ),
         ]
     )
