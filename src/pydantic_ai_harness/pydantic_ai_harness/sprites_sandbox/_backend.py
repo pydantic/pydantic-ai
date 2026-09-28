@@ -119,6 +119,10 @@ _PREVIEW_BYTES = 64 * 1024
 _AUTH_MESSAGE = (
     'Sprites rejected the credentials. Set SPRITE_TOKEN, or pass a configured `AsyncSpritesClient` as `client=`.'
 )
+# Nothing was sent, so nothing was rejected.
+_MISSING_TOKEN_MESSAGE = (
+    'No Sprites credentials found. Set SPRITE_TOKEN, or pass a configured `AsyncSpritesClient` as `client=`.'
+)
 
 
 def _require_asyncio() -> None:
@@ -134,7 +138,7 @@ async def _new_client() -> AsyncSpritesClient:
     """
     token = os.getenv('SPRITE_TOKEN')
     if not token:
-        raise WorkspaceUnavailableError(_AUTH_MESSAGE)
+        raise WorkspaceUnavailableError(_MISSING_TOKEN_MESSAGE)
     return await anyio.to_thread.run_sync(lambda: AsyncSpritesClient(token=token))
 
 

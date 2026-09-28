@@ -174,7 +174,7 @@ class TestSpritesSandbox:
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv('SPRITE_TOKEN')
-        with pytest.raises(WorkspaceUnavailableError, match='SPRITE_TOKEN'):
+        with pytest.raises(WorkspaceUnavailableError, match=r'^No Sprites credentials found\. Set SPRITE_TOKEN'):
             await SpritesSandbox[None]().destroy(WorkspaceRef(provider='sprites', id='target'))
         assert transport.clients == []
 
@@ -457,8 +457,11 @@ class TestSpritesSandbox:
 
     async def test_missing_token(self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('SPRITE_TOKEN')
-        with pytest.raises(WorkspaceUnavailableError, match='SPRITE_TOKEN'):
+        with pytest.raises(WorkspaceUnavailableError) as caught:
             await SpritesSandboxBackend().get_sandbox()
+        assert str(caught.value) == (
+            'No Sprites credentials found. Set SPRITE_TOKEN, or pass a configured `AsyncSpritesClient` as `client=`.'
+        )
 
     @pytest.mark.parametrize('attach', [False, True], ids=['create', 'attach'])
     async def test_stalled_acquisition_propagates_as_a_transport_timeout(
