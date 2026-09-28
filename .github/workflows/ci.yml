@@ -94,7 +94,7 @@ jobs:
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
             case "$1" in
-              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.github/workflows/ci.yml) ;;
               *) return 1 ;;
             esac
           }
@@ -192,8 +192,8 @@ jobs:
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_sandbox_live_changes.py
 
-      # The pre-commit `typecheck` hook narrows Pyright to the files a change reaches, so
-      # a wrong answer here silently stops type errors reaching a developer's terminal.
+      # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
+      # answer here silently stops type errors reaching a developer's terminal.
       # It lives outside `testpaths`, in the job that installs Pyright, because one of its
       # tests runs Pyright for real.
       - name: Test the incremental typecheck script
@@ -278,26 +278,35 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: ${{ needs.classify.outputs.pyright_changed == 'true' && 'no-commit-to-branch' || 'no-commit-to-branch,typecheck' }}
+          SKIP: no-commit-to-branch
+          # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
+          # down to the root package and drop the `--all-packages` install above.
+          UV_NO_SYNC: "1"
+
+      # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
+      # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
+      # that script enforces. `!cancelled()` reports type errors even when a pre-commit hook failed.
+      - name: Type-check with Pyright
+        if: ${{ !cancelled() && needs.classify.outputs.pyright_changed == 'true' }}
+        env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
           # CI opts back in.
           PYRIGHT_THREADS: auto
           # Fail a passing pyright run that outlasts this many seconds, so a change that makes
           # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
-          # nothing caught it (see #8177): the hook ran 328 to 490 s over the five `main` runs
+          # nothing caught it (see #8177): pyright ran 328 to 490 s over the five `main` runs
           # between those two. The budget was 110 (1.1x the p99 of 60 main runs, derived in
           # https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259), but by
-          # 2026-09-23 the hook ran 66 to 111 s on the same day's main runs (runner variance alone
+          # 2026-09-23 pyright ran 66 to 111 s on the same day's main runs (runner variance alone
           # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
           # 156 s, so 200 keeps the same headroom.
           PYRIGHT_TIME_BUDGET: "200"
-          # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
-          # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
+        run: make typecheck-changed
 
       # Run inside `quality checks`, which finishes several minutes before the test/coverage critical path.
       - name: Check public API compatibility with the latest release
@@ -407,7 +416,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,format,lint,typecheck,check-cassettes
+          SKIP: no-commit-to-branch,format,lint,check-cassettes
           UV_NO_SYNC: "1"
 
       - name: Test documentation snippets
