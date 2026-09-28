@@ -25,7 +25,7 @@ def _attach(ref: WorkspaceRef) -> WorkspaceBackend:
     return SpritesSandboxBackend(ref=ref)
 
 
-async def _delete(backend: WorkspaceBackend) -> None:
+async def _delete(backend: WorkspaceBackend) -> None:  # pragma: no cover - live tier only
     assert isinstance(backend, SpritesSandboxBackend)
     sprite = await backend.get_sandbox()
     await sprite.delete()
