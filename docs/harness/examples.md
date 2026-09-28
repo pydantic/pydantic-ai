@@ -40,6 +40,6 @@ the [model configuration docs](https://pydantic.dev/docs/ai/models/overview/) fo
 provider setup.
 
 Every example exposes a `build_agent()` factory you can import and embed in your own
-code, and a `main()` that runs a small demo. See
+code, and a `main()` that starts an interactive session. See
 [`examples/README.md`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/README.md)
 for per-example details.

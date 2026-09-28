@@ -3,11 +3,12 @@
 Each event carries two path fields:
 
 - `path`: normalized and relative to the emitting filesystem's root, never an
-  absolute path, so it is safe to echo to the model or a UI.
+  absolute path, so it is safe to echo to the model or a UI. A file reached
+  through a symlink keeps the name it was reached by.
 - `root_dir`: the root the `path` is relative to, as an absolute POSIX path
-  inside the run's workspace (normalized as text, not symlink-resolved), so a
-  subscriber can locate the file (`posixpath.join(root_dir, path)`) in that
-  workspace without assuming it shares the emitter's root.
+  inside the run's workspace with its symlinks resolved, so a subscriber can
+  locate the file (`posixpath.join(root_dir, path)`) in that workspace without
+  assuming it shares the emitter's root.
 
 A diff in an event is a unified diff cut at `MAX_EVENT_DIFF_CHARS` with a
 `truncated` flag, so an event stream that is persisted or forwarded to a UI
@@ -37,7 +38,11 @@ SearchKind = Literal['find', 'grep']
 
 @dataclass(kw_only=True)
 class FileReadEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'):
-    """A text file was read successfully."""
+    """A file was read successfully, including a binary one `read_file` answered with a placeholder.
+
+    `content_hash` is the hash of the whole file's bytes, whatever window was
+    returned: the hash `write_file` and `edit_file` check `expected_hash` against.
+    """
 
     path: str
     root_dir: str
