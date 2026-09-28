@@ -188,6 +188,24 @@ async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path:
     assert await workspace.realpath(path) == os.path.realpath(root.resolve() / path)
 
 
+@pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
+async def test_realpath_of_resolve_names_the_file_a_file_method_opens(tmp_path: Path, native: bool) -> None:
+    """File methods collapse `..` as text, so `realpath(resolve(p))`, not `realpath(p)`, names the file they open."""
+    root = tmp_path / 'root'
+    (root / 'a' / 'b').mkdir(parents=True)
+    (root / 'inlink').symlink_to(root / 'a' / 'b')
+    (tmp_path / 'x').write_text('beside the root')
+    (root / 'x').write_text('inside the root')
+    backend = LocalWorkspaceBackend(root)
+    workspace = Workspace(backend if native else RunOnlyWorkspaceBackend(backend))
+    path = 'inlink/../../x'
+
+    assert await workspace.read_text(path) == 'beside the root'
+    assert await workspace.realpath(await workspace.resolve(path)) == str((tmp_path / 'x').resolve())
+    # On the raw path, `..` climbs from the link's target, as a command would.
+    assert await workspace.realpath(path) == str((root / 'x').resolve())
+
+
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / 'large').write_bytes(b'x' * (80 * 1024))
     monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)

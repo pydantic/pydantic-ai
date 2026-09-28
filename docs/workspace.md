@@ -426,8 +426,8 @@ class UserDirectory(AbstractCapability[str]):
         return backend
 ```
 
-`LocalWorkspaceBackend` never creates its directory for relative file operations, so create each user's directory when you create
-the user. This separates where users start; like `LocalWorkspace`, it isolates nothing.
+`LocalWorkspaceBackend` never creates its directory, and every operation, absolute paths included,
+raises `WorkspaceUnavailableError` until it exists, so create each user's directory when you create the user. This separates where users start; like `LocalWorkspace`, it isolates nothing.
 
 - With `ref=None`, return the backend for a new or default environment.
 - With a `ref` you recognize, return a backend that attaches to it. Return `None` for any other.
@@ -476,9 +476,12 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 
 ### Resolving symlinks
 
-`Workspace.realpath(path)` answers "which file would this path really open?". Code that keeps an agent
+`Workspace.realpath` answers "which file does this path really lead to?". Code that keeps an agent
 inside a directory needs that answer, because a symlink can make a path that looks inside lead
-outside. For example, with a check that only allows paths under `/app` and a link
+outside. File methods open [`resolve(path)`][pydantic_ai.workspaces.Workspace.resolve], which collapses
+`..` as text, so to check the file a file method opens, use `realpath(await ws.resolve(path))`, as the
+`RootedWrites` example above does. `realpath(path)` on the raw path follows the kernel, where `..`
+climbs from a symlink's target, so it answers for commands. For example, with a check that only allows paths under `/app` and a link
 `/app/data -> /secrets`, `/app/data/key` looks inside, but opens `/secrets/key`.
 
 Backends answer it in one of three ways:
@@ -650,10 +653,10 @@ works without shell support, but cannot run commands.
 
 ## Limits
 
-- `LocalWorkspace` isolates nothing and runs only on POSIX systems. Create the configured local root before use, including absolute file writes beneath it.
-  Absolute paths outside that root remain allowed.
-  `defer_loading=True` is rejected: the workspace must be selected before deferred capabilities load.
-  (macOS and Linux). Its ref normalizes `.` and `..` without resolving symlinks, so differently
+- `LocalWorkspace` runs only on POSIX systems (macOS and Linux) and isolates nothing. Create its root
+  first: every operation needs it. While it exists, absolute paths outside it are allowed.
+  `defer_loading=True` is rejected because the workspace must be selected before deferred
+  capabilities load. Its ref normalizes `.` and `..` without resolving symlinks, so differently
   spelled symlink roots have distinct refs even if they point to the same directory.
 - `LocalWorkspace` serializes reads and writes of one file from the same process; other processes and commands can still interleave with them.
 - A run has one workspace.

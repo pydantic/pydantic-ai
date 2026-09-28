@@ -112,7 +112,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     Args:
         working_dir: Where commands start and relative paths resolve; `~` is expanded and a relative
             path is taken from the current directory. The caller creates and removes it.
-        env: Environment variables for every command, on top of `PATH` and `HOME`; the per-call `env` goes on top.
+        env: Environment variables for every command, on top of the inherited `PATH`, `HOME`, `LANG`,
+            `LC_ALL` and `LC_CTYPE`; the per-call `env` goes on top.
     """
 
     def __init__(self, working_dir: str | Path, *, env: Mapping[str, str] | None = None):

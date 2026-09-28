@@ -459,6 +459,10 @@ class Workspace(WorkspaceBackend):
         Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath], else `readlink` in
         its shell. Without either, it only normalizes the path as text: symlinks are not followed, so a
         path check built on it can be escaped through a link.
+
+        `..` climbs from a symlink's target, as it does for commands. File methods open
+        [`resolve(path)`][pydantic_ai.workspaces.Workspace.resolve], which collapses `..` as text, so
+        `realpath(await ws.resolve(path))` names the file they open.
         """
         if not posixpath.isabs(path):
             # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
