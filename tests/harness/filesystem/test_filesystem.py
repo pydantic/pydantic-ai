@@ -2013,6 +2013,9 @@ class TestFileSystemCapability:
         assert '`file_type` needs ripgrep' in await call_tool(
             [capability], 'grep', {'pattern': 'needle', 'file_type': 'py'}, workspace=workspace
         )
+        assert 'context lines are unavailable' in await call_tool(
+            [capability], 'grep', {'pattern': 'needle', 'context': 2}, workspace=workspace
+        )
 
     @pytest.mark.parametrize('anyio_backend', ['asyncio'])  # Agent.run needs asyncio
     async def test_read_only_refusal_is_a_failed_tool_result(self, tmp_path: Path, anyio_backend: object) -> None:

@@ -1612,6 +1612,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             # Read-only and filesystem-only workspaces refuse `rg`; read the files instead.
             if file_type is not None:
                 raise ValueError(_FILE_TYPE_NEEDS_RIPGREP)
+            if context:
+                raise ValueError(
+                    '`context` needs a search command, which this workspace cannot run, so context lines are '
+                    'unavailable; search with `context=0`, then call `read_file` with an `offset` near the match.'
+                )
             regex = re.escape(pattern) if literal else pattern
             return await self._search_files(
                 scope, ctx, f'(?i){regex}' if ignore_case else regex, path=path, include_glob=glob
