@@ -30,12 +30,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 def _text(output: ToolReturn[str]) -> str:
     """The model-facing text of a tool result."""
     body = output.return_value

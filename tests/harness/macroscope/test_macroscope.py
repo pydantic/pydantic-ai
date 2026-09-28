@@ -30,13 +30,6 @@ from pydantic_ai_harness.macroscope import (
     parse_macroscope_stream,
 )
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Pin async tests to asyncio: `Agent.run` schedules work with `asyncio.create_task`."""
-    return 'asyncio'
-
-
 _ISSUE_LINE = (
     'issue_event={"issue_id":"i1","sequence":1,"path":"a.py","line":4,'
     '"severity":"medium","category":"REVIEW_TYPE_CORRECTNESS","body":"only checks completion"}'

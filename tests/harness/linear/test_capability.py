@@ -31,11 +31,6 @@ pytestmark = [
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def server() -> FastMCP:
     server = FastMCP('provider', instructions='Provider instructions.')
 

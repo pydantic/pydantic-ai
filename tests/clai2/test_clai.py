@@ -32,11 +32,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.fixture(autouse=True)
 def no_model_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(models, 'ALLOW_MODEL_REQUESTS', False)

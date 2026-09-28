@@ -53,11 +53,6 @@ def scripted(values: list[str | BaseException]) -> tuple[list[str], CodexAuth]:
     return prompts, CodexAuth(Console(file=io.StringIO()), read_line=paste)
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_credentials_round_trip() -> None:
     source = CodexCredentials()
     with pytest.raises(UserError, match='/login'):

@@ -24,11 +24,6 @@ pytestmark = [
 ]
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def connections_for(capability: GoogleWorkspace[str | None], deps: str | None) -> list[MCPToolset[str | None]]:
     """The MCP connections a run with `deps` would open."""
     ctx = RunContext[str | None](deps=deps, model=TestModel(), usage=RunUsage())

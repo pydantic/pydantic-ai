@@ -126,11 +126,6 @@ async def _run(cap: ToolOutputLimits[object], result: Any, *, ctx: Any = None, t
     )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 # ---------------------------------------------------------------------------
 # _payload helpers
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ overrides with `executionEnvironments = [{ root = 'tests' }]`, which makes `test
 root -- so a `tests/logfire/` directory would shadow the third-party `logfire` package for
 every test file's `import logfire`. Keeping the directory off that name avoids the collision.
 
-Style follows `tests/code_mode/test_code_mode.py`: an `anyio_backend` fixture. All resolution runs
+Style follows `tests/code_mode/test_code_mode.py`. All resolution runs
 against the code default (no Logfire provider is configured), which is exactly the
 safety-net behavior `ManagedPrompt` relies on. Each test uses a unique slug because the
 default Logfire instance keeps its variable registry across `configure()` calls.
@@ -43,11 +43,6 @@ DEFAULT = 'You are a helpful assistant.'
 def _configure_logfire() -> None:
     """Configure Logfire once so variable resolution does not warn (warnings are errors)."""
     logfire.configure(send_to_logfire=False, console=False)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def instructions_seen(result_messages: list[ModelMessage]) -> list[str]:

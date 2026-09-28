@@ -13,11 +13,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai_harness.code_mode import CodeMode
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('warmup', [False, True])
 @pytest.mark.parametrize(
     'prefix, tail, expected',

@@ -56,6 +56,16 @@ skip_temporal_sandbox_on_314 = pytest.mark.skipif(
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
+@pytest.fixture(scope='session')
+def anyio_backend() -> str:
+    """The harness suite is asyncio-only: capabilities lean on `asyncio.create_task`, Temporal, Monty and
+    other asyncio-native pieces, so `--anyio-backend=trio` does not apply here.
+
+    Session-scoped like the root override so module-scoped async fixtures (`temporal_env`, Modal `session`)
+    can depend on it."""
+    return 'asyncio'
+
+
 @pytest.fixture
 def blockbuster_enabled() -> bool:
     """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal

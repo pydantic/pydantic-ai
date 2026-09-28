@@ -14,11 +14,6 @@ from pydantic_clai2.credential_store import credentials_path, save_codex_credent
 from tests.clai2.menu_script import make_context
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 class Prompt:
     def __init__(self, *, values: list[str | BaseException]) -> None:
         self.values = iter(values)

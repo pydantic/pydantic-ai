@@ -31,11 +31,6 @@ from tests.clai2.menu_script import Script, pick, typed
 PromptT = TypeVar('PromptT')
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -> None:
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
