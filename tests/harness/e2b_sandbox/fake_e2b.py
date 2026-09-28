@@ -18,13 +18,14 @@ import os
 import posixpath
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
 import threading
 import types
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Literal, Protocol
@@ -133,6 +134,10 @@ class FakeCommandHandle:
 
     def close(self) -> None:
         """Release a host-backed handle; in-memory handles have nothing to release."""
+
+    def terminate(self) -> None:
+        """End everything the command started, as killing the sandbox does; then release it."""
+        self.close()
 
     @property
     def stdout(self) -> str:
@@ -387,9 +392,12 @@ class _HostCommandHandle(FakeCommandHandle):
         process: subprocess.Popen[bytes],
         out: IO[bytes],
         err: IO[bytes],
+        *,
+        isolated: bool,
     ) -> None:
         super().__init__(control, sandbox, command=command, stdout='', stderr='', exit_code=0)
         self.process = process
+        self._isolated = isolated
         self._out = out
         self._err = err
 
@@ -410,6 +418,14 @@ class _HostCommandHandle(FakeCommandHandle):
         finally:
             self._out.close()
             self._err.close()
+
+    def terminate(self) -> None:
+        # Background children such as `sleep 30 &` outlive the launcher in its own session, so
+        # signal the whole group; only groups the fake created for `setsid` are touched.
+        if self._isolated:
+            with suppress(ProcessLookupError):
+                os.killpg(self.process.pid, signal.SIGKILL)
+        self.close()
 
     async def wait(self) -> CommandResult:
         while (exit_code := self.process.poll()) is None:
@@ -472,7 +488,7 @@ class _HostCommands(FakeCommands):
         # envd reaps every process it starts; without this, a killed command whose waiter was
         # cancelled stays a zombie that `kill -0` still reports as alive.
         threading.Thread(target=process.wait, daemon=True).start()
-        handle = _HostCommandHandle(self._control, self._sandbox, cmd, process, out, err)
+        handle = _HostCommandHandle(self._control, self._sandbox, cmd, process, out, err, isolated=isolated)
         self.handles.append(handle)
         return handle
 
@@ -627,7 +643,7 @@ class FakeSandbox:
         self.killed = True
         for handle in self.commands.handles:
             if isinstance(handle, _HostCommandHandle):
-                handle.close()
+                handle.terminate()
         return True
 
     def check_alive(self) -> None:
@@ -730,7 +746,7 @@ class FakeE2B:
         """Reap host commands even when a test leaves the SDK handle unwaited."""
         for sandbox in self.sandboxes:
             for handle in sandbox.commands.handles:
-                handle.close()
+                handle.terminate()
 
     def new_sandbox(self, sandbox_id: str) -> FakeSandbox:
         sandbox = FakeSandbox(self, sandbox_id)

@@ -281,6 +281,30 @@ class TestRun:
         assert process.poll() is not None
         assert handle._out.closed and handle._err.closed  # pyright: ignore[reportPrivateUsage]
 
+    async def test_host_fake_close_ends_background_children_of_a_finished_launcher(
+        self, fake_e2b: FakeE2B, tmp_path: Path
+    ) -> None:
+        # The launcher exits at once, leaving its `sleep` in the isolated group; teardown must end it.
+        fake_e2b.host_root = tmp_path
+        sandbox = fake_e2b.new_sandbox('host')
+        pid_file = tmp_path / 'child.pid'
+        handle = await sandbox.commands.run(
+            shlex.join(['setsid', 'sh', '-c', f'sleep 30 & echo $! > {shlex.quote(str(pid_file))}']), background=True
+        )
+        assert isinstance(handle, _HostCommandHandle)
+        handle.process.wait()
+        child = int(pid_file.read_text())
+        os.kill(child, 0)
+        fake_e2b.close()
+        # The orphaned child is reaped by init after the signal; the bound only guards a hang.
+        with anyio.fail_after(5):
+            while True:
+                try:
+                    os.kill(child, 0)
+                except ProcessLookupError:
+                    break
+                await anyio.sleep(0.01)
+
     async def test_host_fake_closes_output_when_spawn_fails(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
