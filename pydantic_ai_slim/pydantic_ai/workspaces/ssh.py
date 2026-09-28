@@ -30,7 +30,8 @@ __all__ = ('SSHWorkspaceBackend',)
 # The remote wrapper script reports on stderr that it reached the working directory, and then whether
 # the directory outlived the command. Without them, ssh's own failures (exit 255) look like results.
 _READY = '__pydantic_ai_ssh_ready__\n'
-_DONE = '\n__pydantic_ai_ssh_done__\n'
+_DONE = re.compile(r'\n__pydantic_ai_ssh_done__(\d+)\n')
+"""Carries the command's exit status: `ssh` itself exits 255 when the connection fails, which a command can too."""
 _GONE = '\n__pydantic_ai_ssh_gone__\n'
 
 _JOB_TAG = '__pydantic_ai_ssh_job_'
@@ -58,8 +59,6 @@ The same grace period `LocalWorkspaceBackend` gives reaping a killed process: pa
 and the remote command may keep running.
 """
 
-_MIN_TIMEOUT = 0.001
-"""What's left of a timeout the working directory used up, so the command times out rather than running unbounded."""
 
 _ENV_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 _CLIENT_ENV = ('SSH_AUTH_SOCK',)
@@ -169,7 +168,12 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         started = anyio.current_time()
         directory = await self._resolve_working_dir(timeout=timeout)
         if timeout is not None:
-            timeout = max(timeout - (anyio.current_time() - started), _MIN_TIMEOUT)
+            remaining = timeout - (anyio.current_time() - started)
+            if remaining <= 0:
+                raise WorkspaceTimeoutError(
+                    f'command timed out after {timeout:g}s while connecting and was not started', stdout='', stderr=''
+                )
+            timeout = remaining
         return await self._remote(directory, line, env=merged_env, timeout=timeout)
 
     async def _remote(
@@ -185,7 +189,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             f'{exports}__pydantic_ai_dir=$PWD\n'
             f'{line}\n'
             '__pydantic_ai_status=$?\n'
-            f'if [ -d "$__pydantic_ai_dir" ]; then printf \'%s\' {shlex.quote(_DONE)} >&2; '
+            'if [ -d "$__pydantic_ai_dir" ]; then printf \'\\n__pydantic_ai_ssh_done__%d\\n\' "$__pydantic_ai_status" >&2; '
             f"else printf '%s' {shlex.quote(_GONE)} >&2; fi\n"
             'exit "$__pydantic_ai_status"'
         )
@@ -214,13 +218,18 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         if not ready:
             reason = before.strip() or f'`ssh` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id} is unavailable: {reason}')
-        # A background child that kept stderr open can write after the marker, so look for it, not at the end.
-        head, done, tail = stderr.rpartition(_DONE)
-        if not done:
+        # A background child that kept stderr open can write after the marker, so take the last one, not the end.
+        markers = list(_DONE.finditer(stderr))
+        if not markers:
             if _GONE in stderr:
                 raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the working directory was removed')
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the connection was lost during the command')
-        return CommandResult(exit_code=result.exit_code, stdout=_after_ready(result.stdout), stderr=head + tail)
+        done = markers[-1]
+        return CommandResult(
+            exit_code=int(done[1]),
+            stdout=_after_ready(result.stdout),
+            stderr=stderr[: done.start()] + stderr[done.end() :],
+        )
 
     async def _stop(self, tag: str) -> None:
         # Killing the local `ssh` leaves the remote command running, so a second connection stops it.

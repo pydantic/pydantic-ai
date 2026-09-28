@@ -164,6 +164,28 @@ async def test_stderr_from_a_background_child_after_the_command_is_kept(tools: F
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'done', 'late')
 
 
+async def test_the_exit_code_is_the_commands_not_ssh_s(tools: FakeRemoteTools) -> None:
+    """`ssh` exits 255 when the connection fails, and so can a command (a nested `ssh`, `git` over SSH)."""
+    assert (await SSHWorkspaceBackend('lossy').run(['sh', '-c', 'exit 3'])).exit_code == 3
+    assert (await SSHWorkspaceBackend('box').run(['sh', '-c', 'exit 255'])).exit_code == 255
+
+
+async def test_a_timeout_used_up_while_connecting_never_starts_the_command(
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = SSHWorkspaceBackend('box', working_dir=str(tmp_path))
+
+    async def slow_resolve(*, timeout: float | None) -> str:
+        await anyio.sleep(0.3)
+        return str(tmp_path)
+
+    monkeypatch.setattr(backend, '_resolve_working_dir', slow_resolve)
+
+    with pytest.raises(WorkspaceTimeoutError, match='while connecting and was not started'):
+        await backend.run(['touch', 'started'], timeout=0.2)
+    assert not (tmp_path / 'started').exists()
+
+
 async def test_an_empty_argv_is_rejected(tools: FakeRemoteTools) -> None:
     with pytest.raises(ValueError, match='command must not be empty'):
         await SSHWorkspaceBackend('box').run([])

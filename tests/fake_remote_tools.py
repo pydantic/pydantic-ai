@@ -16,7 +16,8 @@ BWRAP_WORKS = (
 """Whether this machine has a working `bwrap` (Linux with user namespaces), for the tests that need the real one."""
 
 # Runs the remote command on this machine, starting in `$HOME` like a login. `unreachable` and `dropped` fail on
-# purpose, `chatty` prints a login banner first, and `slow` takes 30 seconds to log in.
+# purpose, `chatty` prints a login banner first, `slow` takes 30 seconds to log in, and `lossy` loses the
+# connection (`ssh` exits 255) after the command finishes.
 _FAKE_SSH = """#!/bin/sh
 bin=$(dirname "$0")
 while [ "$1" != -- ]; do printf '%s\\n' "$1" >> "$bin/ssh-options"; shift; done
@@ -27,6 +28,7 @@ unreachable) echo 'ssh: connect to host unreachable port 22: Connection refused'
 dropped) printf '__pydantic_ai_ssh_ready__\\n' >&2; exit 255 ;;
 chatty) echo 'Welcome to box!'; echo 'Last login: yesterday' >&2 ;;
 slow) sleep 30 ;;
+lossy) cd "$HOME" && sh -c "$*"; exit 255 ;;
 esac
 cd "$HOME" && exec sh -c "$*"
 """
