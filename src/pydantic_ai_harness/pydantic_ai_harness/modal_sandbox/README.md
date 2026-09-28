@@ -11,18 +11,18 @@ Run your agent's commands and file edits in an isolated [Modal](https://modal.co
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[modal]"
+uv add "pydantic-ai-harness[modal,anthropic]"
 uv run modal token new
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[modal]"
+pip install "pydantic-ai-harness[modal,anthropic]"
 modal token new
 ```
 
-This saves your Modal credentials; in CI, set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` instead.
+This saves your Modal credentials; in CI, set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` instead. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -209,13 +209,13 @@ Install the `temporal` extra too:
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[modal,temporal]"
+uv add "pydantic-ai-harness[modal,anthropic,temporal]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[modal,temporal]"
+pip install "pydantic-ai-harness[modal,anthropic,temporal]"
 ```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.
