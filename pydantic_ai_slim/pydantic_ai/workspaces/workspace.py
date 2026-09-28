@@ -202,6 +202,9 @@ class _ShellFilesystem(SupportsFilesystem):
             # than replace the file with a default mode; commit only after decoding succeeds.
             result = await self._backend.run(
                 f'if test -d {quoted_destination}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
+                # `mv` would replace a FIFO or device with a regular file; refuse as the local backend does.
+                f'elif test -e {quoted_destination} && ! test -f {quoted_destination}; '
+                f'then status={_SHELL_EXIT_NOT_REGULAR}; '
                 f'elif test -e {quoted_destination} && ! test -w {quoted_destination}; '
                 f'then status={_SHELL_EXIT_PERMISSION}; else '
                 f'if test -f {quoted_destination}; then cp {quoted_destination} {quoted_decoded}; fi && '

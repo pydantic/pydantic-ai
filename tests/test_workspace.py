@@ -8,6 +8,7 @@ import math
 import os
 import re
 import shutil
+import stat
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -363,6 +364,9 @@ async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) 
         for operation in (workspace.read_bytes, workspace.stat):
             with pytest.raises(OSError, match='not a regular file'):
                 await operation('fifo')
+        with pytest.raises(OSError, match='not a regular file'):
+            await workspace.write_bytes('fifo', b'data')
+    assert stat.S_ISFIFO(fifo.lstat().st_mode)
 
 
 async def test_local_write_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
