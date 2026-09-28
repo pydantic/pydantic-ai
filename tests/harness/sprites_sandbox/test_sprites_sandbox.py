@@ -542,16 +542,17 @@ class TestSpritesSandbox:
         assert failed.query['cmd'][5:] == ['touch', 'ran']
         assert (check.query['cmd'][-3:], check.query['dir']) == (['test', '-d', str(directory)], ['/'])
 
-    async def test_a_failing_command_in_an_existing_working_directory_is_not_checked(
-        self, transport: SpriteTransport
-    ) -> None:
+    async def test_a_command_in_an_existing_working_directory_is_one_exec(self, transport: SpriteTransport) -> None:
+        """No `test -d` runs before or after a command, whether it succeeds or fails."""
         transport.names.add('remote')
         backend = SpritesSandboxBackend(
             ref=WorkspaceRef(provider='sprites', id='remote'), working_dir=str(transport.root)
         )
+        assert (await backend.run(['pwd'])).stdout == f'{transport.root}\n'
+        assert len(transport.execs) == 1
         result = await backend.run('echo "chdir to nowhere"; exit 1', shell=True)
         assert (result.exit_code, result.stdout) == (1, 'chdir to nowhere\n')
-        assert len(transport.execs) == 1
+        assert len(transport.execs) == 2
 
     async def test_failed_acquisition_keeps_the_client_for_a_retry(self, transport: SpriteTransport) -> None:
         transport.get_error = SpriteError('lookup failed')
