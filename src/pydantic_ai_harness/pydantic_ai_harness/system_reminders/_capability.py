@@ -16,7 +16,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextContent,
     TextPart,
     ToolReturnPart,
@@ -383,11 +383,16 @@ def _has_user_content(parts: Sequence[ModelRequestPart]) -> bool:
 
     Anthropic and Bedrock reject a `CachePoint` that is the first content of a user message,
     so the tail reminder leads with one only when the request already contributes user-mappable
-    content: a non-empty user prompt, a tool return, or a retry prompt. `SystemPromptPart` maps
+    content: a non-empty user prompt, a tool return, or retry feedback. `SystemPromptPart` maps
     to the system field, not user content, so it does not count.
+
+    `RetryFeedbackPart` counts on both of those providers: it is translated at request time into a
+    `<validation_errors>`-fenced user prompt when it quotes the model's own output, and otherwise
+    into a mid-conversation system prompt, which neither provider takes inline and both therefore
+    receive as `<system>`-tagged user text.
     """
     for part in parts:
-        if isinstance(part, (ToolReturnPart, RetryPromptPart)):
+        if isinstance(part, (ToolReturnPart, RetryFeedbackPart)):
             return True
         if isinstance(part, UserPromptPart):
             content = part.content

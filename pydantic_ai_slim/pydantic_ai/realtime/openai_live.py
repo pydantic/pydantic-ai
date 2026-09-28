@@ -56,7 +56,8 @@ from ..messages import (
     ModelRequestPart,
     ModelResponsePart,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     TextContent,
     TextPart,
@@ -64,8 +65,16 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
+from ..models import (
+    Model,
+    ModelRequestParameters,
+    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+    infer_model,
+    parse_model_id,
+)
 from ..models.openai import _map_usage as map_openai_usage  # pyright: ignore[reportPrivateUsage]
 from ..providers import Provider, infer_provider
 from ..providers.gateway import normalize_gateway_provider
@@ -328,17 +337,26 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
     seeded history, and not a developer note: its content comes from whatever the tool read, which
     must not be replayed with more authority than it had as a tool result.
     """
+    # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one of
+    # them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and reads
+    # exactly like the retried return the framework emits for the same failure.
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        part = _translate_legacy_retry_part(part)
     if isinstance(part, UserPromptPart):
         return 'user', _prompt_text(part, provider_name=provider_name)
     if isinstance(part, SpeechPart):
         return 'user', part.transcript or ''
     if isinstance(part, ToolReturnPart):
+        # A retried call's content is wrapped in an `{"error": ...}` object, so without it the
+        # `ToolCallPart` before it would not read as a round that failed.
         return 'user', f'Result of `{part.tool_name}`: {part.model_response_str()}'
-    if isinstance(part, RetryPromptPart):
-        # Without this the `ToolCallPart` before it seeds as a call with no outcome, and the backend
-        # reads a round that failed as one that succeeded.
-        attempt = f'`{part.tool_name}` failed' if part.tool_name else 'The previous attempt failed'
-        return 'user', f'{attempt}: {part.model_response()}'
+    if isinstance(part, RetryFeedbackPart):
+        # A seeded item takes `user` or `assistant` only, and a retry answers one response rather
+        # than standing over the session, so it does not go to `instructions` either. Feedback bound
+        # for the system voice takes the `<system>` tagging every model without a mid-conversation
+        # system message gets (https://github.com/pydantic/pydantic-ai/issues/6404).
+        text = part.model_response()
+        return 'user', _wrap_in_system_tags(text) if _retry_feedback_speaks_for_the_harness(part) else text
     return None
 
 

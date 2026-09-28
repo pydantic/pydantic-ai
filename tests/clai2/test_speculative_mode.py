@@ -424,13 +424,7 @@ class TestSandboxCallDisplay:
         assert [call.tool_call_id for call in started] == [result.tool_call_id for result in finished]
         assert all(re.fullmatch(r'.+__\d+', call.tool_call_id) for call in started)
         # A failed speculative launch is still claimed and shown, like a cold failure.
-        assert [type(result).__name__ for result in finished] == [
-            'ToolReturnPart',
-            'ToolReturnPart',
-            'RetryPromptPart',
-            'RetryPromptPart',
-            'RetryPromptPart',
-        ]
+        assert [result.outcome for result in finished] == ['success', 'success', 'retried', 'retried', 'retried']
         headers = [line for line in output.getvalue().splitlines() if line.startswith('\u25cf')]
         assert headers == [
             '\u25cf run_code',

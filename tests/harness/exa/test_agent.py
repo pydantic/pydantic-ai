@@ -23,7 +23,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -136,13 +135,13 @@ def _call_tool_then_answer(messages: list[ModelMessage], info: AgentInfo) -> Mod
     return ModelResponse(parts=[TextPart('done')])
 
 
-def _retry_parts(messages: list[ModelMessage]) -> list[RetryPromptPart]:
+def _retry_parts(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, RetryPromptPart)
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ]
 
 
@@ -346,7 +345,7 @@ class TestExaAgent:
         assert result.output == 'done'
         [retry] = _retry_parts(result.all_messages())
         assert retry.tool_name == 'exa_agent'
-        assert 'did not match the configured schema' in retry.model_response()
+        assert 'did not match the configured schema' in retry.model_response_str(wrap_if_error=False)
 
     async def test_poll_timeout_becomes_retry_prompt_with_run_id(self) -> None:
         runs = _FakeRuns(
@@ -363,8 +362,8 @@ class TestExaAgent:
         assert result.output == 'done'
         [retry] = _retry_parts(result.all_messages())
         assert retry.tool_name == 'exa_agent'
-        assert 'run_t' in retry.model_response()
-        assert 'previous_run_id' in retry.model_response()
+        assert 'run_t' in retry.model_response_str(wrap_if_error=False)
+        assert 'previous_run_id' in retry.model_response_str(wrap_if_error=False)
 
     async def test_poll_transient_error_returned_as_retry_result(self) -> None:
         creator_runs = _FakeRuns(created=_run('queued', run_id='run_v'))

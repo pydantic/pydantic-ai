@@ -33,7 +33,7 @@ from pydantic_ai.capabilities import (
     ValidatedToolArgs,
     WrapToolExecuteHandler,
 )
-from pydantic_ai.messages import AgentStreamEvent, RetryPromptPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import AgentStreamEvent, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai_harness.code_mode import (
@@ -266,8 +266,8 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     before it emits `SpeculativeCallClaimedEvent`, even when the launch was not ready at the claim.
     """
 
-    _launched: dict[str, tuple[ToolCallPart, ToolReturnPart | RetryPromptPart]] = field(
-        default_factory=dict[str, tuple[ToolCallPart, ToolReturnPart | RetryPromptPart]], init=False, repr=False
+    _launched: dict[str, tuple[ToolCallPart, ToolReturnPart]] = field(
+        default_factory=dict[str, tuple[ToolCallPart, ToolReturnPart]], init=False, repr=False
     )
     _evicted: set[str] = field(default_factory=set[str], init=False, repr=False)
     """Launches evicted while still running, whose late result must not be held."""
@@ -295,7 +295,9 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         try:
             value = await handler(args)
         except Exception as error:
-            failure = RetryPromptPart(content=str(error), tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+            failure = ToolReturnPart(
+                tool_name=call.tool_name, content=str(error), tool_call_id=call.tool_call_id, outcome='retried'
+            )
             await self._finish(ctx, call, failure, speculative=speculative)
             raise
         returned = ToolReturnPart(tool_name=call.tool_name, content=value, tool_call_id=call.tool_call_id)
@@ -306,7 +308,7 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         call: ToolCallPart,
-        result: ToolReturnPart | RetryPromptPart,
+        result: ToolReturnPart,
         *,
         speculative: bool,
     ) -> None:

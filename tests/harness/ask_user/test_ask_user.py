@@ -15,7 +15,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -103,10 +102,10 @@ def calling(arguments: object) -> FunctionModel:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart(TOOL_NAME, {'questions': arguments}, tool_call_id='c1')])
         part = messages[-1].parts[-1]
-        if isinstance(part, ToolReturnPart):
-            return ModelResponse(parts=[TextPart(part.model_response_str())])
-        assert isinstance(part, RetryPromptPart)
-        return ModelResponse(parts=[TextPart(part.model_response())])
+        assert isinstance(part, ToolReturnPart)
+        if part.outcome == 'retried':
+            return ModelResponse(parts=[TextPart(part.model_response_str(wrap_if_error=False))])
+        return ModelResponse(parts=[TextPart(part.model_response_str())])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         (part,) = respond(messages, info).parts

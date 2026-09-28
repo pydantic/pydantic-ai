@@ -19,7 +19,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     TextContent,
     TextPart,
@@ -386,10 +387,18 @@ def _render_transcript(messages: Sequence[ModelMessage]) -> str:
                 if text:
                     lines.append(f'user: {text}')
             elif isinstance(part, ToolReturnPart):
-                lines.append(f'tool {part.tool_name} returned: {part.model_response_str()}')
+                if part.outcome == 'retried':
+                    lines.append(f'retry ({part.tool_name}): {part.model_response_str(wrap_if_error=False)}')
+                else:
+                    lines.append(f'tool {part.tool_name} returned: {part.model_response_str()}')
             elif isinstance(part, NativeToolReturnPart):
                 lines.append(f'native tool {part.tool_name} returned: {part.model_response_str()}')
-            elif isinstance(part, RetryPromptPart):
+            elif isinstance(part, RetryFeedbackPart):
+                lines.append(f'retry (output): {part.model_response()}')
+            # TODO(v3): remove RetryPromptPart
+            elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+                # A hand-built history passed as `message_history` can still hold one; the model
+                # translates it only when the request goes out.
                 lines.append(f'retry ({part.tool_name or "output"}): {part.model_response()}')
             elif isinstance(part, TextPart):
                 if part.content:

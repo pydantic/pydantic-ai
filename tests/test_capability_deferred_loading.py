@@ -1267,15 +1267,25 @@ def _secret_op_returns(messages: list[ModelMessage]) -> list[object]:
     return [
         part.content
         for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
-        if part.tool_name == 'secret_op'
+        if part.tool_name == 'secret_op' and part.outcome != 'retried'
+    ]
+
+
+def _refusals(messages: list[ModelMessage]) -> list[str]:
+    """The refused calls' feedback: a refusal answers its call as a return carrying `outcome='retried'`."""
+    return [
+        str(part.content)
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
     ]
 
 
 def _call_secret_op_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
     """Call `secret_op` on the first request, then finish however that call was answered."""
     answered = any(
-        part.tool_name == 'secret_op' for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
-    ) or any(True for _ in iter_message_parts(messages, ModelRequest, RetryPromptPart))
+        part.tool_name == 'secret_op' or part.outcome == 'retried'
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+    )
     if answered:
         return ModelResponse(parts=[TextPart('done')])
     return ModelResponse(parts=[ToolCallPart('secret_op', {}, tool_call_id='call-1')])
@@ -1322,7 +1332,7 @@ async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_
     result = await agent.run('call secret_op')
 
     assert _secret_op_returns(result.all_messages()) == []
-    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    refusals = _refusals(result.all_messages())
     if inject_load:
         # The capability is active, so its own filter decides — and it removed the tool.
         assert prepare_tools_calls[0] == snapshot(['secret_op'])
@@ -1366,9 +1376,7 @@ async def test_processor_injected_load_makes_capability_tool_callable() -> None:
     result = await agent.run('call secret_op')
 
     assert _secret_op_returns(result.all_messages()) == snapshot(['EXECUTED'])
-    assert [
-        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-    ] == snapshot([])
+    assert _refusals(result.all_messages()) == snapshot([])
 
 
 async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement() -> None:
@@ -1426,9 +1434,7 @@ async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement
     assert advertised[0] == snapshot(['load_capability'])
     # ...and the call the stub makes anyway is refused, rather than running ungoverned.
     assert _secret_op_returns(result.all_messages()) == []
-    assert [
-        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-    ] == snapshot(
+    assert _refusals(result.all_messages()) == snapshot(
         [
             "Tool 'secret_op' is not available yet: it belongs to capability 'secrets'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
         ]
@@ -1477,9 +1483,9 @@ async def test_processor_injected_load_is_governed_when_resuming_a_suspended_res
     assert _secret_op_returns(result.all_messages()) == []
     assert prepare_tools_calls[0] == snapshot(['secret_op'])
     assert loaded_ids_seen[0] == snapshot(['secrets'])
-    assert [
-        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-    ] == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])
+    assert _refusals(result.all_messages()) == snapshot(
+        ["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"]
+    )
 
 
 async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_revealed() -> None:

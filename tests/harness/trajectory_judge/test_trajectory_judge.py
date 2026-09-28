@@ -20,7 +20,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -36,6 +36,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.trajectory_judge import AllGood, Steer, TrajectoryJudge, TrajectoryVerdict
+from tests.conftest import legacy_retry_prompt_part
 
 _WAIT = 5
 
@@ -611,8 +612,10 @@ class TestTranscript:
             ModelRequest(
                 parts=[
                     ToolReturnPart(tool_name='lookup', content={'k': 'v'}, tool_call_id='c1'),
-                    RetryPromptPart(content='bad args', tool_name='lookup', tool_call_id='c2'),
-                    RetryPromptPart(content='not done yet'),
+                    ToolReturnPart(tool_name='lookup', content='bad args', tool_call_id='c2', outcome='retried'),
+                    RetryFeedbackPart(content='not done yet', cause='model_retry'),
+                    legacy_retry_prompt_part('legacy bad args', tool_name='lookup', tool_call_id='c3'),
+                    legacy_retry_prompt_part('legacy not done'),
                 ]
             ),
         ]
@@ -636,6 +639,8 @@ class TestTranscript:
         assert 'bad args' in transcript
         assert 'retry (output):' in transcript
         assert 'not done yet' in transcript
+        assert 'legacy bad args' in transcript
+        assert 'legacy not done' in transcript
         assert 'assistant: wrap-up' in transcript
         assert 'sys-secret' not in transcript
         assert 'thinking-secret' not in transcript

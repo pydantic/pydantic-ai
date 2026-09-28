@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1745,7 +1745,7 @@ async def test_a_message_history_that_ends_mid_turn_is_split_at_its_latest_promp
                 ToolReturnPart('look_up_order', 'Order #1 shipped yesterday.', 'c1'),
                 UserPromptPart('Thanks. It arrived broken.'),
                 UserPromptPart('Please refund it.'),
-                RetryPromptPart('Pick something else.'),
+                RetryFeedbackPart('Pick something else.', cause='model_retry'),
             ]
         ),
         ModelResponse(parts=[ThinkingPart('A refund, then.'), ToolCallPart('issue_refund', {}, 'c2')]),
@@ -1763,10 +1763,11 @@ async def test_a_message_history_that_ends_mid_turn_is_split_at_its_latest_promp
             'text': """\
 Thanks. It arrived broken.
 
-Please refund it.\
+Please refund it.
+
+<system>Pick something else.</system>\
 """,
             'done': [
-                {'retry': IsStr()},
                 {'thinking': 'A refund, then.'},
                 {'tool_call': {'name': 'issue_refund', 'args': {}}},
                 {'tool_return': {'name': 'issue_refund', 'content': 'Refunded.'}},

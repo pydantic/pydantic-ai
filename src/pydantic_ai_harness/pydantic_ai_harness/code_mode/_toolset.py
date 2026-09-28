@@ -265,9 +265,10 @@ def _describe_started_calls(calls: dict[str, ToolCallPart], returns: dict[str, T
     used = 0
     for call_id, call in calls.items():
         result = returns.get(call_id)
-        # `ToolReturnPart.outcome` also allows 'failed' and 'interrupted', but this function only
-        # ever sees parts built above, which set 'denied' or leave the default 'success'. Record
-        # any further outcome here rather than letting it fall through and read as a return.
+        # `ToolReturnPart.outcome` also allows 'failed', 'interrupted' and 'retried', but this
+        # function only ever sees parts built above, which set 'denied' or leave the default
+        # 'success'. Record any further outcome here rather than letting it fall through and read
+        # as a return.
         if result is None:
             outcome = 'did not finish, so it may have applied a partial change'
         elif result.outcome == 'denied':

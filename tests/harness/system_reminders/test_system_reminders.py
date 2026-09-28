@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -444,9 +444,10 @@ class TestCachePointGuard:
         seen = await _run_wrap(cap, [tail])
         assert _injected_leads_with_cache_point(seen)
 
-    async def test_cache_point_with_retry_prompt(self) -> None:
+    async def test_cache_point_with_retry_feedback(self) -> None:
+        """Feedback that answers no call still reaches Anthropic and Bedrock as user content."""
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        tail = ModelRequest(parts=[RetryPromptPart('try again', tool_name='tool', tool_call_id='c1')])
+        tail = ModelRequest(parts=[RetryFeedbackPart('try again', cause='model_retry')])
         seen = await _run_wrap(cap, [tail])
         assert _injected_leads_with_cache_point(seen)
 

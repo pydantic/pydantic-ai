@@ -24,7 +24,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -178,8 +179,13 @@ def _user_prompt_text(part: UserPromptPart) -> str:
     return ' '.join(texts)
 
 
-def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | None:
-    """Render one request part to a searchable line, or `None` for non-content parts."""
+def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | None:  # noqa: C901
+    """Render one request part to a searchable line, or `None` for non-content parts.
+
+    The complexity waiver covers the exhaustive part-type chain itself, which grows by one branch
+    every time pydantic-ai adds a part; splitting it would separate the branches from the
+    `assert_never` that keeps them exhaustive.
+    """
     if isinstance(part, UserPromptPart):
         content = _user_prompt_text(part)
         if truncate and len(content) > 500:
@@ -199,13 +205,36 @@ def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | Non
         content = part.render()  # pragma: lax no cover - requires core instruction updates
         return f'System: {content[:200] if truncate else content}'  # pragma: lax no cover
     if isinstance(part, ToolReturnPart):
+        # A retried call reads as a retry rather than a return: why a run changed course is what
+        # makes it worth recalling. `model_response_str` renders a validation failure's serialized
+        # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
+        # is a wire detail; `str(part.content)` would put a Python repr in the index.
+        label, content = (
+            ('Retry', part.model_response_str(wrap_if_error=False))
+            if part.outcome == 'retried'
+            else ('Tool', str(part.content))
+        )
+        if truncate and len(content) > 500:
+            content = content[:500] + '...'
+        return f'{label} [{part.tool_name}]: {content}'
+    if isinstance(part, RetryFeedbackPart):
+        # The same feedback for a response that answered no particular call. No tool name: it is
+        # never bound to a call. `model_response()` renders a validation failure's `ErrorDetails`
+        # the way the model was shown them; the display excerpt is capped like the branches above
+        # while the index keeps the full text.
+        feedback = part.model_response()
+        if truncate and len(feedback) > 500:
+            feedback = feedback[:500] + '...'
+        return f'Retry: {feedback}'
+    # TODO(v3): remove RetryPromptPart
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # The part the two above replaced. A stored history loads as one of them, but code that
+        # builds one by hand and passes it as `message_history` still puts an instance here, and
+        # this reads the history before the model translates it.
         content = str(part.content)
         if truncate and len(content) > 500:
             content = content[:500] + '...'
-        return f'Tool [{part.tool_name}]: {content}'
-    if isinstance(part, RetryPromptPart):
-        # A retry or validation-error prompt is worth recalling, so index it in full.
-        return f'Retry [{part.tool_name}]: {part.content}'
+        return f'Retry [{part.tool_name}]: {content}'
     if isinstance(part, SpeechPart):
         # A realtime user turn: index the spoken transcript so speech is searchable, not the
         # raw audio. `transcript` is optional, so an audio-only part contributes no text.
