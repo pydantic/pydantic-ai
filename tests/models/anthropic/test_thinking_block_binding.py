@@ -751,14 +751,12 @@ async def test_anthropic_failed_stale_thinking_retry_does_not_warn_that_run_cont
         pytest.param('claude-fable-5', None, id='model_does_not_bind'),
         pytest.param(
             'claude-fable-5-1',
-            AnthropicModelSettings(
-                anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
-            ),
+            {'anthropic_thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}},
             id='caller_asked_to_fail',
         ),
         pytest.param(
             'claude-sonnet-5-5',
-            AnthropicModelSettings(anthropic_thinking={'type': 'between_tools'}),
+            {'anthropic_thinking': {'type': 'between_tools'}},
             id='between_tools_rejects_block_binding',
         ),
     ],
