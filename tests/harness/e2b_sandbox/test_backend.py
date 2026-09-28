@@ -1041,3 +1041,17 @@ async def test_attaching_with_a_missing_working_dir_says_what_to_do(
     assert str(caught.value) == (
         "working_dir '/srv/app' does not exist in E2B sandbox sbx-old. Create it there, or pass a working_dir that exists."
     )
+
+
+async def test_created_sandbox_id_is_logged_and_attached_one_is_not(
+    fake_e2b: FakeE2B, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level('INFO', logger='pydantic_ai_harness')
+    created = await started()
+    fake_e2b.new_sandbox('sbx-old')
+    await started(ref=WorkspaceRef(provider='e2b', id='sbx-old'))
+    created_ref = created.ref
+    assert created_ref is not None
+    assert [record.getMessage() for record in caplog.records if record.levelname == 'INFO'] == [
+        f'Created E2B sandbox {created_ref.id}'
+    ]

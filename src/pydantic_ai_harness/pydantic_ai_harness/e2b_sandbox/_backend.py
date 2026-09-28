@@ -281,6 +281,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 return sandbox
             ref = self._ref
             sandbox = await self._attach(ref.id) if ref is not None else await self._create()
+            if ref is None:
+                # Recorded at creation, so the id can be found whatever ends the run before it is stored.
+                logger.info('Created E2B sandbox %s', sandbox.sandbox_id)
             self._sandbox = sandbox
             self._ref = WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
             if ref is None and self._working_dir is not None:
