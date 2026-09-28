@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import posixpath
+import re
 import stat
 from collections.abc import Sequence
 from dataclasses import replace
@@ -481,6 +482,31 @@ class TestRootDir:
     async def test_no_workspace_fails_the_run(self) -> None:
         with pytest.raises(UserError, match='`FileSystem` needs a workspace'):
             await call_tool([FileSystem[None]()], 'list_directory', {})
+
+    async def test_no_workspace_names_the_one_the_history_continues_in(self, tmp_path: Path) -> None:
+        capabilities: list[AbstractCapability[object]] = [LocalWorkspace(tmp_path), FileSystem[object]()]
+        first = await Agent(TestModel(call_tools=[]), capabilities=capabilities).run('go')
+        agent = Agent(TestModel(call_tools=[]), capabilities=[FileSystem[object]()])
+        local = f'local:{tmp_path}'
+        with pytest.raises(UserError, match=re.escape(f'history continues in workspace `{local}`')) as error:
+            await agent.run('again', message_history=first.all_messages())
+        assert f'(such as `LocalWorkspace({str(tmp_path)!r})`)' in str(error.value)
+
+        history: list[ModelMessage] = [
+            ModelResponse(parts=[TextPart('done')], workspace_ref=WorkspaceRef(provider='modal', id='sb-1'))
+        ]
+        with pytest.raises(UserError) as error:
+            await agent.run('again', message_history=history)
+        assert str(error.value) == (
+            '`FileSystem` needs a workspace. The message history continues in workspace `modal:sb-1`; attach the '
+            'capability that provides `modal` workspaces (such as `ModalSandbox()`) to continue there, or pass '
+            '`workspace=` to the run.'
+        )
+
+        # A provider the harness does not ship names no example capability.
+        history = [ModelResponse(parts=[TextPart('done')], workspace_ref=WorkspaceRef(provider='memfs', id='m1'))]
+        with pytest.raises(UserError, match=r'provides `memfs` workspaces to continue there'):
+            await agent.run('again', message_history=history)
 
     async def test_unavailable_workspace_names_policy_reason(self) -> None:
         with pytest.raises(UserError, match=r'`FileSystem`.*disabled by policy') as error:

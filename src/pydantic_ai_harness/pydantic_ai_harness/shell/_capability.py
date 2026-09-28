@@ -155,7 +155,7 @@ class Shell(AbstractCapability[AgentDepsT]):
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when it has no workspace to run commands in."""
-        require_workspace(ctx.workspace, 'Shell')
+        require_workspace(ctx.workspace, 'Shell', ctx.messages)
 
     def get_toolset(self) -> ShellToolset[AgentDepsT]:
         """The shell toolset, built once; its `for_run` gives each run a fresh copy."""
