@@ -479,6 +479,32 @@ async def test_stream_listener_exception_fails_run() -> None:
         await agent.run('go')
 
 
+async def test_stream_listener_exception_cancels_in_flight_tool() -> None:
+    """A failing listener cancels the tool that emitted, and the run awaits it before raising."""
+    cleaned_up: list[bool] = []
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        try:
+            await ctx.emit(FileReadEvent(path='a'))
+            await asyncio.Event().wait()
+        finally:
+            cleaned_up.append(True)
+        return 'unreachable'  # pragma: no cover
+
+    @dataclass
+    class Boom(AbstractCapability[Any]):
+        @on_event(FileReadEvent)
+        async def boom(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            raise RuntimeError('listener failed')
+
+    agent = Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()])
+    with pytest.raises(RuntimeError, match='listener failed'):
+        await agent.run('go')
+    assert cleaned_up == [True]
+
+
 async def test_immediate_listener_exception_propagates_to_emitter() -> None:
     """An immediately dispatched listener's exception surfaces from `emit`, where the emitter can recover."""
     caught: list[str] = []
