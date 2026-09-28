@@ -17,9 +17,11 @@ from __future__ import annotations
 import asyncio
 import codecs
 import importlib
+import importlib.util
 import logging
 import math
 import posixpath
+import sys
 import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -29,7 +31,6 @@ from uuid import uuid4
 import anyio
 import anyio.to_thread
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -51,6 +52,11 @@ from pydantic_ai_harness._workspace_provider import (
     stop_shielded,
 )
 
+# Checked without importing: importing Modal reads `~/.modal.toml`, so the import itself is
+# deferred to a worker thread on first use. A `None` entry in `sys.modules` blocks the import.
+if sys.modules.get('modal') is None and importlib.util.find_spec('modal') is None:
+    raise ImportError('Install `pydantic-ai-harness[modal]` to use ModalSandbox.')
+
 if TYPE_CHECKING:
     import modal
     import modal.container_process
@@ -64,10 +70,6 @@ DEFAULT_APP_NAME = 'pydantic-ai-harness'
 # Modal's maximum sandbox lifetime (24 hours). The framework never terminates a sandbox, so a
 # conversation can continue in it for as long as Modal allows.
 DEFAULT_SANDBOX_TIMEOUT = 86_400
-
-_MISSING_MODAL = (
-    'The \'modal\' package is required for ModalSandbox. Install it with `uv add "pydantic-ai-harness[modal]"`.'
-)
 
 _AUTH_MESSAGE = 'Modal rejected the credentials. Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token new`.'
 
@@ -261,9 +263,6 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         The lock serializes concurrent first uses -- two callers each creating a sandbox would
         leave the loser billed and unreferenced. Attaching by `ref` to a sandbox that no longer
         exists raises `WorkspaceUnavailableError`; it does not create a replacement.
-
-        Raises:
-            UserError: The `modal` package is not installed.
         """
         if (sandbox := self._sandbox) is not None:
             return sandbox
@@ -279,12 +278,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         async with self._lock:
             if (sandbox := self._sandbox) is not None:
                 return sandbox
-            try:
-                # Importing Modal reads `~/.modal.toml`. The import binds nothing to this loop:
-                # Modal runs its clients on its own event-loop thread.
-                await anyio.to_thread.run_sync(importlib.import_module, 'modal')
-            except ImportError as e:
-                raise UserError(_MISSING_MODAL) from e
+            # Importing Modal reads `~/.modal.toml`. The import binds nothing to this loop:
+            # Modal runs its clients on its own event-loop thread.
+            await anyio.to_thread.run_sync(importlib.import_module, 'modal')
             ref = self._ref
             sandbox = await self._attach(ref.id) if ref is not None else await self._create()
             self._sandbox = sandbox

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 import warnings
 from pathlib import Path
@@ -44,10 +45,13 @@ async def test_backend_acquires_fresh_workspace_and_records_ref(fake_modal: Fake
     assert backend.ref == WorkspaceRef(provider='modal', id=native.object_id)
 
 
-async def test_missing_modal_extra_has_install_hint(fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_modal_extra_fails_at_import_with_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The package refuses to import without `modal`, so no later call can hit a bare `ModuleNotFoundError`."""
     monkeypatch.setitem(sys.modules, 'modal', None)
-    with pytest.raises(UserError, match=r'pydantic-ai-harness\[modal\]'):
-        await ModalSandboxBackend().get_sandbox()
+    for name in [name for name in sys.modules if name.startswith('pydantic_ai_harness.modal_sandbox')]:
+        monkeypatch.delitem(sys.modules, name)
+    with pytest.raises(ImportError, match=r'^Install `pydantic-ai-harness\[modal\]` to use ModalSandbox\.$'):
+        importlib.import_module('pydantic_ai_harness.modal_sandbox')
 
 
 async def test_backend_attaches_explicit_ref_without_create(fake_modal: FakeModal) -> None:

@@ -198,7 +198,7 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 | `read_file`, `write_file`, `list_directory` tools | Removed. Use `FileSystem()`. It only reaches the working directory and below; `FileSystem(root_dir='/')` reaches the whole sandbox, as the old tools did. `read_file`'s `offset` is now zero-based: the old tool counted lines from 1. |
 | `PrefixTools(ModalSandbox(...), prefix='modal')` next to `Shell()` or `FileSystem()` | The `modal_*` tools are gone, and the unprefixed `Shell` and `FileSystem` tools, which used to act on your machine, now run in the sandbox. Drop `PrefixTools`. |
 | `ModalSandboxExecResult` | Removed. Use `pydantic_ai.workspaces.CommandResult`. |
-| `ModalSandboxError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceError`. It doesn't cover a missing `modal` package (`UserError`), sandbox creation that doesn't finish within 10 minutes (`TimeoutError`), or transient Modal errors such as connection failures, which propagate unchanged so a durable engine can retry them. |
+| `ModalSandboxError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceError`. It doesn't cover sandbox creation that doesn't finish within 10 minutes (`TimeoutError`), or transient Modal errors such as connection failures, which propagate unchanged so a durable engine can retry them. Without the `modal` package, importing `pydantic_ai_harness.modal_sandbox` raises `ImportError`. |
 | `ModalSandboxTerminalError`, `ModalSandboxUnavailableError`, `ModalSandboxAuthError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceUnavailableError`. |
 
 ## Durable execution
