@@ -77,8 +77,8 @@ class TestSSHWorkspaceBackend(WorkspaceBackendSuite):
 
     @staticmethod
     def attach(ref: WorkspaceRef) -> WorkspaceBackend:
-        destination, _, working_dir = ref.id.partition(':')
-        return SSHWorkspaceBackend(destination, working_dir=working_dir)
+        # Every ref here is on the fake host `box`; a real destination such as `ssh://host:2222` has colons of its own.
+        return SSHWorkspaceBackend('box', working_dir=ref.id.removeprefix('box:'))
 
     @pytest.fixture
     def backend(self, tmp_path: Path) -> WorkspaceBackend:
@@ -97,7 +97,7 @@ class TestSSHWorkspaceBackend(WorkspaceBackendSuite):
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
             assert backend.ref is not None
-            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id.partition(':')[2])
+            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id.removeprefix('box:'))
 
         return destroy
 

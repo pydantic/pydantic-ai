@@ -50,6 +50,8 @@ that started a session of its own (the harness `Shell`'s jobs) is in another gro
 """
 
 _STOP_TIMEOUT = 15.0
+_MIN_TIMEOUT = 0.001
+"""What's left of a timeout the working directory used up, so the command times out rather than running unbounded."""
 
 _ENV_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 _CLIENT_ENV = ('SSH_AUTH_SOCK',)
@@ -124,10 +126,13 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         return dict(env)
 
     async def working_dir(self) -> str:
+        return await self._resolve_working_dir(timeout=None)
+
+    async def _resolve_working_dir(self, *, timeout: float | None) -> str:
         if self._resolved_working_dir is None:
             # A relative directory starts in the login directory; `./` keeps a leading `-` from reading as an option.
             directory = '.' if self._working_dir is None else posixpath.join('.', self._working_dir)
-            result = await self._remote(directory, 'pwd -P', env={}, timeout=None)
+            result = await self._remote(directory, 'pwd -P', env={}, timeout=timeout)
             self._resolved_working_dir = result.stdout.removesuffix('\n')
         return self._resolved_working_dir
 
@@ -146,11 +151,18 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             line = f'sh -c {shlex.quote(command)}'
         elif shell:
             raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
+        elif not command:
+            raise ValueError('command must not be empty')
         else:
             # A subshell `exec` runs the program itself, never a builtin, and exits 127 when it's missing.
             line = f'(exec {shlex.join(command)})'
         merged_env = {**self._env, **self._checked_env(env or {})}
-        return await self._remote(await self.working_dir(), line, env=merged_env, timeout=timeout)
+        # The first command also resolves the working directory, within the same timeout.
+        started = anyio.current_time()
+        directory = await self._resolve_working_dir(timeout=timeout)
+        if timeout is not None:
+            timeout = max(timeout - (anyio.current_time() - started), _MIN_TIMEOUT)
+        return await self._remote(directory, line, env=merged_env, timeout=timeout)
 
     async def _remote(
         self, directory: str, line: str, *, env: Mapping[str, str], timeout: float | None
@@ -160,7 +172,8 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         script = (
             f': {tag}\n'
             f'cd {shlex.quote(directory)} || exit 1\n'
-            f"printf '%s' {shlex.quote(_READY)} >&2\n"
+            # On both streams, so output from `~/.ssh/rc` or a login banner is cut off.
+            f"printf '%s' {shlex.quote(_READY)}; printf '%s' {shlex.quote(_READY)} >&2\n"
             f'{exports}__pydantic_ai_dir=$PWD\n'
             f'{line}\n'
             '__pydantic_ai_status=$?\n'
@@ -177,14 +190,16 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             raise
         except WorkspaceTimeoutError as error:
             await self._stop(tag)
-            raise WorkspaceTimeoutError(str(error), stdout=error.stdout, stderr=_after_ready(error.stderr)) from error
+            raise WorkspaceTimeoutError(
+                str(error), stdout=_after_ready(error.stdout), stderr=_after_ready(error.stderr)
+            ) from error
         except WorkspaceOutputLimitError as error:
             await self._stop(tag)
             raise WorkspaceOutputLimitError(
                 "SSH workspace output exceeded its 10 MiB safety limit; redirect the command's output to a file "
                 'and read part of it instead',
                 limit=error.limit,
-                stdout=error.stdout,
+                stdout=_after_ready(error.stdout),
                 stderr=_after_ready(error.stderr),
             ) from error
         before, ready, stderr = result.stderr.partition(_READY)
@@ -195,7 +210,9 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the working directory was removed')
         if not stderr.endswith(_DONE):
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the connection was lost during the command')
-        return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=stderr.removesuffix(_DONE))
+        return CommandResult(
+            exit_code=result.exit_code, stdout=_after_ready(result.stdout), stderr=stderr.removesuffix(_DONE)
+        )
 
     async def _stop(self, tag: str) -> None:
         # Killing the local `ssh` leaves the remote command running, so a second connection stops it.

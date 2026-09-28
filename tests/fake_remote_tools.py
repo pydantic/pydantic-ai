@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-# Runs the remote command on this machine, starting in `$HOME` like a login. Two destinations fail on purpose.
+# Runs the remote command on this machine, starting in `$HOME` like a login. `unreachable` and `dropped` fail on
+# purpose, `chatty` prints a login banner first, and `slow` takes 30 seconds to log in.
 _FAKE_SSH = """#!/bin/sh
 bin=$(dirname "$0")
 while [ "$1" != -- ]; do printf '%s\\n' "$1" >> "$bin/ssh-options"; shift; done
@@ -16,6 +17,8 @@ shift 2
 case $destination in
 unreachable) echo 'ssh: connect to host unreachable port 22: Connection refused' >&2; exit 255 ;;
 dropped) printf '__pydantic_ai_ssh_ready__\\n' >&2; exit 255 ;;
+chatty) echo 'Welcome to box!'; echo 'Last login: yesterday' >&2 ;;
+slow) sleep 30 ;;
 esac
 cd "$HOME" && exec sh -c "$*"
 """

@@ -110,17 +110,35 @@ async def test_stopping_a_command_kills_its_process_group_on_the_host(tools: Fak
     remote = subprocess.Popen(['sh', '-c', f': {tag}; sleep 60; :'], start_new_session=True)
     bystander = subprocess.Popen(['sh', '-c', ': __pydantic_ai_ssh_job_other; sleep 60; :'], start_new_session=True)
     try:
+        # `_stop` gives the group a second after `SIGTERM` before `SIGKILL`, so it is gone once this returns.
         await SSHWorkspaceBackend('box')._stop(tag)  # pyright: ignore[reportPrivateUsage]
 
-        with anyio.fail_after(10):
-            while remote.poll() is None:
-                await anyio.sleep(0.05)
+        assert remote.poll() is not None
         assert bystander.poll() is None
     finally:
         remote.kill()
         bystander.kill()
         remote.wait()
         bystander.wait()
+
+
+async def test_a_login_banner_stays_out_of_the_output(tools: FakeRemoteTools) -> None:
+    backend = SSHWorkspaceBackend('chatty')
+
+    result = await backend.run(['sh', '-c', 'printf out; printf err >&2'])
+
+    assert await backend.working_dir() == str(tools.home.resolve())
+    assert (result.stdout, result.stderr) == ('out', 'err')
+
+
+async def test_resolving_the_working_dir_counts_against_the_first_timeout(tools: FakeRemoteTools) -> None:
+    with anyio.fail_after(10), pytest.raises(WorkspaceTimeoutError):
+        await SSHWorkspaceBackend('slow').run(['true'], timeout=1)
+
+
+async def test_an_empty_argv_is_rejected(tools: FakeRemoteTools) -> None:
+    with pytest.raises(ValueError, match='command must not be empty'):
+        await SSHWorkspaceBackend('box').run([])
 
 
 async def test_invalid_configuration_fails_at_construction(tools: FakeRemoteTools) -> None:
