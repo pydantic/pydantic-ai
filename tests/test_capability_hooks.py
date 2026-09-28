@@ -12,7 +12,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from types import NoneType
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -2051,7 +2051,8 @@ class TestRunErrorHooks:
                 raise GeneratorExit()
 
             async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
-                pytest.fail('on_run_error should not be called for control exceptions')
+                # Only reached if the control-exception guard regresses.
+                pytest.fail('on_run_error should not be called for control exceptions')  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[FailingSetupCapability()])
         with pytest.raises(GeneratorExit):
@@ -2105,6 +2106,66 @@ class TestRunErrorHooks:
             await Agent(TestModel(), capabilities=[hooks, FailingSetupCapability()]).run('hello')
 
         assert observed == ['first', 'second']
+
+    async def test_setup_on_run_error_continues_after_hook_error(self):
+        hooks = Hooks()
+        observed: list[str] = []
+
+        @hooks.on.run_error
+        async def first(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            observed.append('first')
+            raise ValueError('cleanup failed')
+
+        @hooks.on.run_error
+        async def second(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            observed.append('second')
+            return AgentRunResult(output='setup recovery is unavailable')
+
+        class FailingSetupCapability(AbstractCapability[Any]):
+            async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+                raise RuntimeError('capability setup failed')
+
+        with pytest.raises(ValueError, match='cleanup failed'):
+            await Agent(TestModel(), capabilities=[hooks, FailingSetupCapability()]).run('hello')
+
+        assert observed == ['first', 'second']
+
+    async def test_setup_error_is_reraised_when_single_capability_hook_returns(self):
+        observed: list[str] = []
+
+        class CleanupCapability(AbstractCapability[Any]):
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                observed.append('cleaned')
+                return AgentRunResult(output='setup recovery is unavailable')
+
+        class FailingToolset(FunctionToolset[Any]):
+            async def for_run(self, ctx: RunContext[Any]) -> FunctionToolset[Any]:
+                raise RuntimeError('toolset setup failed')
+
+        with pytest.raises(RuntimeError, match='toolset setup failed'):
+            await Agent(TestModel(), capabilities=[CleanupCapability()]).run('hello', toolsets=[FailingToolset()])
+
+        assert observed == ['cleaned']
+
+    async def test_setup_error_before_resolution_capture_dispatches_run_hooks(self, monkeypatch: pytest.MonkeyPatch):
+        observed: list[str] = []
+
+        class CleanupCapability(AbstractCapability[Any]):
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                observed.append('cleaned')
+                return AgentRunResult(output='setup recovery is unavailable')
+
+        agent = Agent(TestModel())
+
+        async def fail_before_resolution(*args: object, **kwargs: object) -> NoReturn:
+            raise RuntimeError('capability resolution failed')
+
+        monkeypatch.setattr(agent, '_resolve_run_capabilities', fail_before_resolution)
+
+        with pytest.raises(RuntimeError, match='capability resolution failed'):
+            await agent.run('hello', capabilities=[CleanupCapability()])
+
+        assert observed == ['cleaned']
 
     async def test_on_run_error_not_called_when_wrap_run_recovers(self):
         @dataclass
