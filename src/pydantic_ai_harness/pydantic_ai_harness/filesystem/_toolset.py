@@ -708,12 +708,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             return None
 
     async def _walk(
-        self, scope: _Scope, directory: str, *, max_depth: int | None = None
+        self, scope: _Scope, directory: str, *, max_depth: int | None = None, include_hidden: bool = False
     ) -> tuple[list[FileEntry], bool]:
         """Entries below `directory`, walked iteratively with `list_dir`, and whether the walk was cut short.
 
         Hidden directories are not descended into, since everything under them
-        is hidden, nor is a directory whose real path is outside the root, and a
+        is hidden, unless `include_hidden` (the caller named a hidden path), nor is a directory whose real path is outside the root, and a
         subdirectory that cannot be listed (removed mid-walk, unreadable, a symlink
         loop the backend reports) is skipped. `max_depth` bounds how many levels
         below `directory` are listed. The walk stops at `_MAX_WALK_DIRECTORIES`
@@ -741,7 +741,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if max_depth is None or depth < max_depth:
                 # Prefer a directory's own spelling over aliases, and do not revisit a real
                 # directory through a loop or another symlink inside the same walk.
-                directories = [child for child in children if child.is_dir and not child.name.startswith('.')]
+                directories = [
+                    child for child in children if child.is_dir and (include_hidden or not child.name.startswith('.'))
+                ]
                 resolved_dirs = [(child, await scope.workspace.realpath(child.path)) for child in directories]
                 for child, real in sorted(resolved_dirs, key=lambda pair: pair[0].path != pair[1]):
                     if (
@@ -1225,7 +1227,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         elif not entry.is_dir:
             files = [entry]
         else:
-            walked, walk_cut = await self._walk(scope, resolved)
+            walked, walk_cut = await self._walk(
+                scope, resolved, include_hidden=bool(include_glob and _explicit_hidden(include_glob))
+            )
             # Hidden directories are pruned; count their directory entry, not unseen descendants.
             if not (include_glob and _explicit_hidden(include_glob)):
                 hidden_count = sum(_is_hidden(workspace_relpath(child.path, resolved)) for child in walked)
@@ -1411,7 +1415,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         # Without `**`, nothing deeper than the pattern's own components can match.
         max_depth = None if '**' in parts else len(parts)
-        walked, walk_cut = await self._walk(scope, resolved, max_depth=max_depth)
+        walked, walk_cut = await self._walk(
+            scope, resolved, max_depth=max_depth, include_hidden=_explicit_hidden(pattern)
+        )
         # Report only the entries observed: the walk prunes hidden subdirectories.
         hidden_count = (
             0

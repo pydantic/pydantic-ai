@@ -1041,6 +1041,17 @@ class TestSearchFiles:
         )
         assert await toolset.list_directory('.github', workspace=workspace) == '.github/workflows/'
 
+    async def test_explicit_hidden_directory_in_pattern_is_walked(self, fs_root: Path) -> None:
+        (fs_root / '.github' / 'workflows').mkdir(parents=True)
+        (fs_root / '.github' / 'workflows' / 'ci.yml').write_text('needle\n')
+        toolset = FileSystem[None](root_dir=fs_root).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        workspace = FilesystemOnlyWorkspace(fs_root)
+        assert await toolset.find_files('.github/**/*.yml', workspace=workspace) == '.github/workflows/ci.yml'
+        assert await toolset.search_files('needle', include_glob='.github/**/*.yml', workspace=workspace) == (
+            '.github/workflows/ci.yml:1:needle'
+        )
+
     async def test_many_globstars_match_without_blowup(self, tmp_path: Path) -> None:
         # Each `**` tries every split of the remaining path; unmemoized, this is C(40, 20) splits per entry.
         deep = tmp_path.joinpath(*['d'] * 20)
