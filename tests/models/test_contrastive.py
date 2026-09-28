@@ -122,7 +122,7 @@ def test_infer_model():
 class OtherProvider(Provider[httpx2.AsyncClient]):
     @property
     def name(self) -> str:
-        return 'other'
+        raise NotImplementedError
 
     @property
     def base_url(self) -> str:
