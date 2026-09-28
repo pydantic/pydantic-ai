@@ -45,7 +45,6 @@ from ..test_anthropic import completion_message
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
@@ -641,6 +640,9 @@ THINKING_OUTPUT_CASES = {
     # Rejects a forced choice outright, and can't turn thinking off.
     'opus-5-5-default': ThinkingOutputCase(
         'claude-opus-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+    'sonnet-5-5-default': ThinkingOutputCase(
+        'claude-sonnet-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
     ),
 }
 

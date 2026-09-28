@@ -412,8 +412,8 @@ AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
 
-    Claude Fable 5.1 and Claude Opus 5.5 bind each thinking block to the conversation prefix that
-    produced it and reject a replay once that prefix changes — which a dynamic
+    Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5 bind each thinking block to the
+    conversation prefix that produced it and reject a replay once that prefix changes — which a dynamic
     [instructions][pydantic_ai.Agent.instructions] function and a
     [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
     check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
@@ -646,6 +646,18 @@ def _effective_thinking(
     return OMIT if isinstance(thinking, Omit) else dict(thinking)
 
 
+def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
+    """Whether a request may add `drop_block` to its wire `thinking` object.
+
+    Not when the caller set a `block_binding` of their own, and not for a thinking type other than
+    `adaptive`, since Anthropic accepts `block_binding` only alongside adaptive thinking. A missing
+    type counts as adaptive, which is what `_drop_stale_thinking_blocks` fills in.
+    """
+    return isinstance(thinking, Omit) or (
+        'block_binding' not in thinking and thinking.get('type', 'adaptive') == 'adaptive'
+    )
+
+
 def _is_stale_thinking_block_error(
     profile: ModelProfile,
     thinking: dict[str, object] | Omit,
@@ -655,11 +667,12 @@ def _is_stale_thinking_block_error(
 
     Scoped to models that bind and to requests that set no `block_binding` of their own, through the
     typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
-    fail, and an explicit `'drop_block'` cannot produce this error.
+    fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
+    `adaptive` is out too; see `_can_add_drop_block`.
     """
     if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
-    if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+    if not _can_add_drop_block(thinking):
         return False
     body: object | None = error.body
     return (
@@ -674,13 +687,14 @@ def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str,
     """The `thinking` object for the retried request, carrying the caller's own config plus the drop.
 
     A binding model emits thinking blocks whether or not the request configured thinking, so the
-    retry usually has no `thinking` object for the binding to ride in — and the API accepts one
-    holding `block_binding` alone, which the SDK's discriminated union cannot express. Rather than
-    split the two cases, the retry always sends the whole object through `extra_body`, which reaches
-    the same JSON key without needing a `type` the caller never asked for.
+    retry usually has no `thinking` object for the binding to ride in, and an `extra_body` one may
+    carry no `type`. Claude Sonnet 5.5 rejects a `thinking` object without a `type`, and every binding
+    model thinks adaptively when none is given, so `'adaptive'` fills the gap without changing what
+    the caller asked for. The retry sends the whole object through `extra_body`, since the SDK's
+    discriminated union has no typed home for `block_binding` on every config shape.
     """
     configured: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
-    return {**configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
+    return {'type': 'adaptive', **configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
 
 
 def _history_dropped_stale_thinking_blocks(
@@ -737,7 +751,7 @@ def _thinking_with_stale_block_history(
     """Resolve request parameters that keep a prior request-local drop active for this history."""
     keep_dropping = (
         profile.get('anthropic_binds_thinking_blocks', False)
-        and (isinstance(effective_thinking, Omit) or 'block_binding' not in effective_thinking)
+        and _can_add_drop_block(effective_thinking)
         and _history_dropped_stale_thinking_blocks(
             messages,
             compaction_boundary=compaction_boundary,

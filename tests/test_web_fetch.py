@@ -21,8 +21,6 @@ from pydantic_ai.common_tools.web_fetch import (
 )
 from pydantic_ai.exceptions import ModelRetry
 
-pytestmark = [pytest.mark.anyio]
-
 
 def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8') -> httpx2.Response:
     """Helper to create a mock HTML response."""

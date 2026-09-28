@@ -61,8 +61,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
-
 T = TypeVar('T')
 
 

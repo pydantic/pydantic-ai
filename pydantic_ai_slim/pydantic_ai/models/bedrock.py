@@ -345,6 +345,7 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-opus-5-5',
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-sonnet-5-5',
     'us.anthropic.claude-fable-5',
     'us.anthropic.claude-fable-5-1',
     'global.anthropic.claude-fable-5',
