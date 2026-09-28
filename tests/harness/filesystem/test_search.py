@@ -35,7 +35,8 @@ class CountingBackend(LocalWorkspaceBackend):
         self.realpaths += 1
         return await super().realpath(path)
 
-    async def read_bytes(self, path: str) -> bytes:
+    # Never called: the tests assert `reads == 0`, searching reads no file one by one.
+    async def read_bytes(self, path: str) -> bytes:  # pragma: no cover
         self.reads += 1
         return await super().read_bytes(path)
 

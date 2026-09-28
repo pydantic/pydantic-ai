@@ -82,12 +82,10 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
 
     def model(messages: list[ModelMessage], info: object) -> ModelResponse:
         returns = [p for m in messages for p in m.parts if isinstance(p, (ToolReturnPart, RetryPromptPart))]
-        if capability == 'shell' and len(returns) >= len(script) and '[status: running]' in str(returns[-1].content):
-            name, original = script[-1]
-        elif len(returns) >= len(script):
+        # Past the script's end, a shell job still running gets checked again.
+        if len(returns) >= len(script) and '[status: running]' not in str(returns[-1].content):
             return ModelResponse(parts=[TextPart('done')])
-        else:
-            name, original = script[len(returns)]
+        name, original = script[min(len(returns), len(script) - 1)]
         args = dict(original)
         if args.get('command_id') == '__ID__':
             ids = re.findall(r'ID: ([0-9a-f]{32})', ' '.join(str(p.content) for p in returns))
@@ -98,7 +96,8 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
         for index, part in enumerate(model(messages, info).parts):
             if isinstance(part, TextPart):
                 yield part.content
-            elif isinstance(part, ToolCallPart):
+            else:
+                assert isinstance(part, ToolCallPart)
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
 
     cap = {'filesystem': FileSystem, 'shell': lambda: Shell(persist_cwd=True), 'coder': Coder}[capability]()
@@ -201,14 +200,6 @@ async def _restart_model(messages: list[ModelMessage], info: object) -> ModelRes
     return ModelResponse(parts=[TextPart('done')])
 
 
-async def _restart_stream(messages: list[ModelMessage], info: object):
-    for index, part in enumerate((await _restart_model(messages, info)).parts):
-        if isinstance(part, TextPart):
-            yield part.content
-        elif isinstance(part, ToolCallPart):
-            yield {index: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
-
-
 @workflow.defn
 class ShellRestartWorkflow(PydanticAIWorkflow):
     agent: Agent[None, str]
@@ -232,7 +223,7 @@ async def test_temporal_new_worker_keeps_shell_cwd(tmp_path: Path) -> None:
     _restart_ready = anyio.Event()
     _restart_continue = anyio.Event()
     agent = Agent(
-        FunctionModel(_restart_model, stream_function=_restart_stream),
+        FunctionModel(_restart_model),
         name='restart_shell',
         capabilities=[LocalWorkspace(tmp_path), Shell(persist_cwd=True), TemporalDurability()],
     )
