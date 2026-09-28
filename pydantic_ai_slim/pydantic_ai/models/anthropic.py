@@ -646,7 +646,7 @@ def _effective_thinking(
 
 
 def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
-    """Whether the retry may add `drop_block` to the wire `thinking` object.
+    """Whether a request may add `drop_block` to its wire `thinking` object.
 
     Not when the caller set a `block_binding` of their own, and not for a thinking type other than
     `adaptive`, since Anthropic accepts `block_binding` only alongside adaptive thinking. A missing
