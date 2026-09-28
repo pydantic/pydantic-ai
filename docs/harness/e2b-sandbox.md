@@ -48,7 +48,7 @@ The build snippet is illustrative and not part of the runnable agent examples be
 
 The default template has Python and git but not your project's dependencies, not even pytest. Install them in a custom template, or with `await workspace.run(['pip', 'install', ...])` before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run).
 
-| Default template | |
+| Default template | Value |
 | --- | --- |
 | User | `user` |
 | `HOME` and default working directory | `/home/user` |
@@ -173,7 +173,7 @@ The `finally` kills the sandbox even when setup or the run fails. To keep it ins
 
 ## Preview a dev server
 
-With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, connect with `sandbox = await e2b.AsyncSandbox.connect(ref.id)` and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then `await kill_sandbox(ref)` as below. Do not leave a public preview running longer than necessary.
+With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, connect with `sandbox = await e2b.AsyncSandbox.connect(ref.id)` and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
 
 ## Clean up
 
