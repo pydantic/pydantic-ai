@@ -11,13 +11,13 @@ from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic_ai import Agent, ModelHTTPError, ToolCallPart
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import infer_model
-from pydantic_ai.models.contrastive import ContrastiveModel, ContrastiveModelSettings
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.system_one import SystemOneModel, SystemOneModelSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles.decision import decision_model_profile
 from pydantic_ai.profiles.typesafe import typesafe_model_profile
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.contrastive import ContrastiveProvider
+from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -54,10 +54,14 @@ class Mood(BaseModel):
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
 
+BASE_URL = 'http://localhost:8700'
 
-def mock_model(handler: Handler, *, api_key: str | None = None) -> ContrastiveModel:
+
+def mock_model(handler: Handler, *, api_key: str | None = None) -> SystemOneModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    return ContrastiveModel('clm-latest', provider=ContrastiveProvider(api_key=api_key, http_client=http_client))
+    return SystemOneModel(
+        'clm-latest', provider=SystemOneProvider(base_url=BASE_URL, api_key=api_key, http_client=http_client)
+    )
 
 
 def answers(**answers: Mapping[str, object]) -> httpx2.Response:
@@ -93,30 +97,37 @@ class Captured:
 
 
 def test_init(env: TestEnv):
-    env.remove('CLM_BASE_URL')
-    env.remove('CLM_API_KEY')
-    model = ContrastiveModel('clm-latest')
+    env.set('SYSTEM_ONE_BASE_URL', 'http://gpu-box:8700/')
+    env.remove('SYSTEM_ONE_API_KEY')
+    model = SystemOneModel('clm-latest')
     assert model.model_name == 'clm-latest'
-    assert model.system == 'contrastive'
-    assert model.base_url == 'http://127.0.0.1:8700'
+    assert model.system == 'system-one'
+    assert model.base_url == 'http://gpu-box:8700'
     assert isinstance(model.client, httpx2.AsyncClient)
     assert model._api_key is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_provider_reads_the_environment(env: TestEnv):
-    env.set('CLM_BASE_URL', 'http://gpu-box:8700/')
-    env.set('CLM_API_KEY', 'secret')
-    provider = ContrastiveProvider()
+    env.set('SYSTEM_ONE_BASE_URL', 'http://gpu-box:8700/')
+    env.set('SYSTEM_ONE_API_KEY', 'secret')
+    provider = SystemOneProvider()
     assert provider.base_url == 'http://gpu-box:8700'
     assert provider.api_key == 'secret'
-    assert provider.name == 'contrastive'
+    assert provider.name == 'system-one'
 
 
-def test_infer_model():
-    model = infer_model('contrastive:clm-latest')
-    assert isinstance(model, ContrastiveModel)
+def test_provider_needs_a_base_url(env: TestEnv):
+    env.remove('SYSTEM_ONE_BASE_URL')
+    with pytest.raises(UserError, match='SYSTEM_ONE_BASE_URL'):
+        SystemOneProvider()
+
+
+def test_infer_model(env: TestEnv):
+    env.set('SYSTEM_ONE_BASE_URL', BASE_URL)
+    model = infer_model('system-one:clm-latest')
+    assert isinstance(model, SystemOneModel)
     assert model.model_name == 'clm-latest'
-    assert isinstance(infer_provider('contrastive'), ContrastiveProvider)
+    assert isinstance(infer_provider('system-one'), SystemOneProvider)
 
 
 class OtherProvider(Provider[httpx2.AsyncClient]):
@@ -134,12 +145,14 @@ class OtherProvider(Provider[httpx2.AsyncClient]):
 
 
 def test_infer_model_refuses_another_provider():
-    with pytest.raises(UserError, match='require a `ContrastiveProvider`'):
-        infer_model('contrastive:clm-latest', provider_factory=lambda _: OtherProvider())
+    with pytest.raises(UserError, match='require a `SystemOneProvider`'):
+        infer_model('system-one:clm-latest', provider_factory=lambda _: OtherProvider())
 
 
 def test_profile():
-    model = ContrastiveModel('clm-latest', provider=ContrastiveProvider(http_client=httpx2.AsyncClient()))
+    model = SystemOneModel(
+        'clm-latest', provider=SystemOneProvider(base_url=BASE_URL, http_client=httpx2.AsyncClient())
+    )
     assert model.profile.get('supports_text_output') is False
     assert model.profile.get('supports_json_schema_output') is False
     assert model.profile.get('default_structured_output_mode') == 'tool'
@@ -158,7 +171,7 @@ async def test_output_type(allow_model_requests: None):
     assert result.response.parts == [ToolCallPart('final_result', result.output.model_dump(), tool_call_id=IsStr())]
     assert result.response.model_name == 'clm-latest'
     assert result.response.usage == RequestUsage(input_tokens=42)
-    assert result.response.provider_name == 'contrastive'
+    assert result.response.provider_name == 'system-one'
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'urgent': 0.82, 'area': 0.88},
@@ -167,7 +180,7 @@ async def test_output_type(allow_model_requests: None):
         }
     )
     request = captured.requests[0]
-    assert str(request.url) == 'http://127.0.0.1:8700/v1/systemone'
+    assert str(request.url) == 'http://localhost:8700/v1/systemone'
     assert 'authorization' not in request.headers
     assert captured.body == snapshot(
         {
@@ -197,7 +210,7 @@ async def test_output_type(allow_model_requests: None):
 
 
 async def test_score_levels_come_back_as_numbers(allow_model_requests: None):
-    """`clm-serve` keys a rubric's probabilities and legend by level as strings, as JSON has to."""
+    """A server keys a rubric's probabilities and legend by level as strings, as JSON has to."""
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         return answers(
@@ -222,10 +235,48 @@ async def test_score_levels_come_back_as_numbers(allow_model_requests: None):
     )
 
 
+async def test_laya_response(allow_model_requests: None):
+    """`laya-serve` adds keys of its own to the body and each answer, and leaves `billing_units` out of the usage."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        action = {'act_probability': 1.0}
+        return httpx2.Response(
+            200,
+            json={
+                'model': 'laya-rl-agent',
+                'answers': {
+                    'urgent': {
+                        'type': 'noul',
+                        'noul': 0.91,
+                        'confidence': 0.91,
+                        'answer_confidence': 0.91,
+                        'action': action,
+                    },
+                    'area': {
+                        'type': 'choice',
+                        'choice': 'billing',
+                        'probabilities': {'billing': 0.93, 'bug': 0.07},
+                        'confidence': 0.63,
+                        'answer_confidence': 0.93,
+                        'action': action,
+                    },
+                },
+                'usage': {'input_tokens': 74, 'output_tokens': 0},
+                'routing': {'model': 'english', 'repo': 'convaiinnovations/laya', 'reason': 'English Latin text'},
+            },
+        )
+
+    agent = Agent(mock_model(handler), output_type=Ticket)
+    result = await agent.run('I was charged twice this month.')
+    assert result.output == Ticket(urgent=True, area='billing')
+    assert result.response.model_name == 'laya-rl-agent'
+    assert result.usage.input_tokens == 74
+
+
 async def test_settings_are_forwarded(allow_model_requests: None):
     captured = Captured(ticket_answers)
     agent = Agent(mock_model(captured, api_key='secret'), output_type=Ticket)
-    settings: ContrastiveModelSettings = {
+    settings: SystemOneModelSettings = {
         'temperature': 0.5,
         'timeout': 3,
         'extra_headers': {'X-Team': 'support'},
@@ -250,7 +301,7 @@ async def test_extra_body_must_be_a_mapping(allow_model_requests: None):
 
 async def test_extra_body_that_will_not_encode(allow_model_requests: None):
     agent = Agent(mock_model(ticket_answers), output_type=Ticket)
-    with pytest.raises(UserError, match='Could not send this request to the CLM server'):
+    with pytest.raises(UserError, match='Could not send this request to the System One server'):
         await agent.run('Charged twice.', model_settings={'extra_body': {'when': object()}})
 
 
@@ -300,12 +351,12 @@ async def test_invalid_response(allow_model_requests: None):
         return answers(urgent={'type': 'noul'})
 
     agent = Agent(mock_model(handler), output_type=Ticket)
-    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the CLM server'):
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One server'):
         await agent.run('Charged twice.')
 
 
 async def test_provider_recreates_its_client():
-    provider = ContrastiveProvider()
+    provider = SystemOneProvider(base_url=BASE_URL)
     first = provider.client
     async with provider:
         pass

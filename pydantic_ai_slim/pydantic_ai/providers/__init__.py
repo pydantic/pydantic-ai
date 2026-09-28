@@ -209,10 +209,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .cohere import CohereProvider
 
         return CohereProvider
-    elif provider == 'contrastive':
-        from .contrastive import ContrastiveProvider
+    elif provider == 'system-one':
+        from .system_one import SystemOneProvider
 
-        return ContrastiveProvider
+        return SystemOneProvider
     elif provider == 'crusoe':
         from .crusoe import CrusoeProvider
 

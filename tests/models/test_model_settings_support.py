@@ -58,8 +58,8 @@ from pydantic_ai import models
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
-from pydantic_ai.models.contrastive import ContrastiveModel
-from pydantic_ai.providers.contrastive import ContrastiveProvider
+from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -585,8 +585,10 @@ def _typesafe(client: httpx2.AsyncClient) -> Model:
     return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _contrastive(client: httpx2.AsyncClient) -> Model:
-    return ContrastiveModel('clm-latest', provider=ContrastiveProvider(http_client=client))
+def _system_one(client: httpx2.AsyncClient) -> Model:
+    return SystemOneModel(
+        'clm-latest', provider=SystemOneProvider(base_url='http://localhost:8700', http_client=client)
+    )
 
 
 CASES = [
@@ -634,7 +636,7 @@ CASES = [
     Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
     Case('MCPSamplingModel', ('MCP Sampling',), mcp_sampling_probe, _needs(mcp_available, 'mcp')),
     Case('TypeSafeModel', ('TypeSafe',), decision_probe(_typesafe), _needs(typesafe_available, 'typesafe-sdk')),
-    Case('ContrastiveModel', ('CLM',), decision_probe(_contrastive)),
+    Case('SystemOneModel', ('System One',), decision_probe(_system_one)),
 ]
 
 

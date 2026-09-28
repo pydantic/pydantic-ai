@@ -6,23 +6,22 @@ import httpx2
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.decision import decision_model_profile
 from pydantic_ai.providers import Provider
 
-DEFAULT_BASE_URL = 'http://127.0.0.1:8700'
-"""Where `clm-serve` listens by default."""
 
+class SystemOneProvider(Provider[httpx2.AsyncClient]):
+    """Provider for a server that answers the `POST /v1/systemone` decisions API.
 
-class ContrastiveProvider(Provider[httpx2.AsyncClient]):
-    """Provider for a [CLM](https://github.com/Contrastive-LM/CLM) server, which serves Contrastive Language Models.
-
-    `clm-serve`, from the `contrastive-lm` package, serves the open-weight checkpoints such as
-    [`Contrastive-LM/CLM-v0.1-8B`](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) on your own hardware.
+    Open-weight decision models ship servers for it that you run on your own hardware, such as `clm-serve` for
+    [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and `laya-serve` for
+    [Laya](https://huggingface.co/convaiinnovations/laya).
     """
 
     @property
     def name(self) -> str:
-        return 'contrastive'
+        return 'system-one'
 
     @property
     def base_url(self) -> str:
@@ -34,7 +33,7 @@ class ContrastiveProvider(Provider[httpx2.AsyncClient]):
 
     @property
     def api_key(self) -> str | None:
-        """The key sent as a bearer token, if the server was started with `CLM_API_KEY` set."""
+        """The key sent as a bearer token, if the server needs one."""
         return self._api_key
 
     @staticmethod
@@ -48,17 +47,23 @@ class ContrastiveProvider(Provider[httpx2.AsyncClient]):
         api_key: str | None = None,
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
-        """Create a new CLM provider.
+        """Create a new System One provider.
 
         Args:
-            base_url: The URL of the CLM server. If not provided, the `CLM_BASE_URL` environment variable is used
-                if set, and `http://127.0.0.1:8700`, where `clm-serve` listens by default, otherwise.
-            api_key: The API key the server was started with. If not provided, the `CLM_API_KEY` environment
-                variable is used if set. `clm-serve` needs no key unless it was started with one.
+            base_url: The URL of the server, without the `/v1/systemone` path. If not provided, the
+                `SYSTEM_ONE_BASE_URL` environment variable is used.
+            api_key: The key the server was started with, sent as a bearer token. If not provided, the
+                `SYSTEM_ONE_API_KEY` environment variable is used if set. Servers started without a key need none.
             http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
-        self._base_url = (base_url or os.getenv('CLM_BASE_URL') or DEFAULT_BASE_URL).rstrip('/')
-        self._api_key = api_key or os.getenv('CLM_API_KEY')
+        base_url = base_url or os.getenv('SYSTEM_ONE_BASE_URL')
+        if not base_url:
+            raise UserError(
+                'Set the `SYSTEM_ONE_BASE_URL` environment variable or pass it via `SystemOneProvider(base_url=...)` '
+                'to point the System One provider at your server.'
+            )
+        self._base_url = base_url.rstrip('/')
+        self._api_key = api_key or os.getenv('SYSTEM_ONE_API_KEY')
         if http_client is None:
             http_client = create_async_httpx2_client()
             self._own_http_client = http_client

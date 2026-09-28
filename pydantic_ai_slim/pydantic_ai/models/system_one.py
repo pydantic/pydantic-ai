@@ -11,7 +11,7 @@ from .._http import to_httpx2_timeout
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..providers.contrastive import ContrastiveProvider
+from ..providers.system_one import SystemOneProvider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from .decision import (
@@ -24,35 +24,30 @@ from .decision import (
 )
 
 __all__ = (
-    'ContrastiveModel',
-    'ContrastiveModelName',
-    'ContrastiveModelSettings',
-    'LatestContrastiveModelNames',
+    'SystemOneModel',
+    'SystemOneModelName',
+    'SystemOneModelSettings',
 )
 
-LatestContrastiveModelNames = Literal['clm-latest']
-"""The name `clm-serve` gives the checkpoint it was started with: by default the reference head,
-[`Contrastive-LM/CLM-v0.1-8B`](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B). A checkpoint served with
-`clm-serve --model NAME=PATH` is addressed by its `NAME`."""
-
-ContrastiveModelName = str | LatestContrastiveModelNames
-"""Possible Contrastive Language Model names."""
+SystemOneModelName = str
+"""The name the server serves a checkpoint under, such as `clm-latest` for `clm-serve`."""
 
 
-class ContrastiveModelSettings(DecisionModelSettings, total=False):
-    """Settings used for a Contrastive Language Model request."""
+class SystemOneModelSettings(DecisionModelSettings, total=False):
+    """Settings used for a request to a System One server."""
 
-    # ALL FIELDS MUST BE `contrastive_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    # This class is a placeholder for any future CLM-specific settings.
+    # ALL FIELDS MUST BE `system_one_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    # This class is a placeholder for any future System One-specific settings.
 
 
 @dataclass(init=False)
-class ContrastiveModel(DecisionModel[httpx2.AsyncClient]):
-    """The model class for Contrastive Language Models (CLM), open-weight [decision models][pydantic_ai.models.decision.DecisionModel].
+class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
+    """The model class for [decision models][pydantic_ai.models.decision.DecisionModel] served over the `/v1/systemone` API.
 
-    A CLM scores each option of a question by how well it matches the state, rather than writing text. It runs on
-    your own hardware behind `clm-serve`, from the `contrastive-lm` package, and an agent whose job is to decide
-    something runs on it like on any other model, with the `output_type` as the questions:
+    Open-weight decision models such as [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and
+    [Laya](https://huggingface.co/convaiinnovations/laya) run on your own hardware behind a server that speaks this
+    API, and an agent whose job is to decide something runs on one like on any other model, with the `output_type`
+    as the questions:
 
     ```python
     from pydantic import BaseModel, Field
@@ -64,43 +59,43 @@ class ContrastiveModel(DecisionModel[httpx2.AsyncClient]):
         irreversible: bool = Field(description='Would running this destroy data or leak secrets?')
 
 
-    agent = Agent('contrastive:clm-latest', output_type=Handling)
+    agent = Agent('system-one:clm-latest', output_type=Handling)
     ...
     ```
 
     See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for how an agent's output type and tools
-    become questions, and [Contrastive Language Models](https://pydantic.dev/docs/ai/models/contrastive/) for
-    serving a checkpoint and what it answers badly.
+    become questions, and [System One servers](https://pydantic.dev/docs/ai/models/system-one/) for serving a
+    checkpoint and what each model answers badly.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    # `max_choice_options` and `max_score_levels` stay `None`: a CLM scores every option of a question in one
-    # softmax, so neither has a limit of its own.
+    # `max_choice_options` and `max_score_levels` stay `None`: they are the server's to enforce, and it refuses a
+    # request over its limits with an error response.
 
-    _model_name: ContrastiveModelName = field(repr=False)
+    _model_name: SystemOneModelName = field(repr=False)
     _provider: Provider[httpx2.AsyncClient] = field(repr=False)
     _api_key: str | None = field(repr=False)
 
     def __init__(
         self,
-        model_name: ContrastiveModelName,
+        model_name: SystemOneModelName,
         *,
-        provider: Literal['contrastive'] | ContrastiveProvider = 'contrastive',
+        provider: Literal['system-one'] | SystemOneProvider = 'system-one',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
-        """Initialize a Contrastive Language Model.
+        """Initialize a System One model.
 
         Args:
-            model_name: The name `clm-serve` serves the checkpoint under, such as `clm-latest`.
-            provider: The provider to use for the CLM server's address and API key.
+            model_name: The name the server serves the checkpoint under, such as `clm-latest` for `clm-serve`.
+            provider: The provider to use for the server's address and API key.
             profile: The model profile to use. Defaults to one selected by the provider.
             settings: Model-specific settings used as defaults for this model.
         """
         self._model_name = model_name
         if isinstance(provider, str):
-            provider = ContrastiveProvider()
+            provider = SystemOneProvider()
         self._provider = provider
         self._api_key = provider.api_key
         super().__init__(settings=settings, profile=profile)
@@ -114,7 +109,7 @@ class ContrastiveModel(DecisionModel[httpx2.AsyncClient]):
         return self._provider.base_url
 
     @property
-    def model_name(self) -> ContrastiveModelName:
+    def model_name(self) -> SystemOneModelName:
         """The model name."""
         return self._model_name
 
@@ -124,7 +119,7 @@ class ContrastiveModel(DecisionModel[httpx2.AsyncClient]):
         return self._provider.name
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
-        """Send one request to the CLM server's `/v1/systemone` endpoint."""
+        """Send one request to the server's `/v1/systemone` endpoint."""
         body: dict[str, object] = {
             'state': request.state,
             'model': self._model_name,
@@ -134,7 +129,9 @@ class ContrastiveModel(DecisionModel[httpx2.AsyncClient]):
             body['temperature'] = temperature
         if (extra_body := model_settings.get('extra_body')) is not None:
             if not isinstance(extra_body, Mapping):
-                raise UserError(f'`extra_body` must be a mapping to send it to a CLM server; got {extra_body!r}.')
+                raise UserError(
+                    f'`extra_body` must be a mapping to send it to a System One server; got {extra_body!r}.'
+                )
             body.update(cast('Mapping[str, object]', extra_body))
 
         headers = dict(model_settings.get('extra_headers') or {})
@@ -151,7 +148,7 @@ class ContrastiveModel(DecisionModel[httpx2.AsyncClient]):
             )
         except (TypeError, ValueError) as e:
             # An `extra_body` that will not encode as JSON is the caller's to fix, not the model's.
-            raise UserError(f'Could not send this request to the CLM server: {e}') from e
+            raise UserError(f'Could not send this request to the System One server: {e}') from e
         try:
             response = await self.client.send(http_request)
         except httpx2.TransportError as e:
@@ -167,7 +164,7 @@ class ContrastiveModel(DecisionModel[httpx2.AsyncClient]):
         try:
             parsed = _response_adapter.validate_json(response.content)
         except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from the CLM server: {e}', response.text) from e
+            raise UnexpectedModelBehavior(f'Invalid response from the System One server: {e}', response.text) from e
         return DecisionResponse(
             answers=parsed.answers,
             model_name=parsed.model,
@@ -183,7 +180,7 @@ class _Usage:
 
 @dataclass(kw_only=True)
 class _SystemOneResponse:
-    """The body `clm-serve` answers `/v1/systemone` with."""
+    """The body a server answers `/v1/systemone` with."""
 
     model: str
     answers: dict[str, Annotated[DecisionAnswer, Field(discriminator='type')]]

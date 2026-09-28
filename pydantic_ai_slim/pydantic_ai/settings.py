@@ -167,7 +167,7 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake
     * Z.AI
     * Bedrock Mantle
-    * CLM
+    * System One
     """
 
     top_p: float
@@ -236,7 +236,7 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI
     * Bedrock Mantle
     * TypeSafe
-    * CLM
+    * System One
     """
 
     parallel_tool_calls: bool
@@ -431,7 +431,7 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI
     * Bedrock Mantle
     * TypeSafe
-    * CLM
+    * System One
     """
 
     thinking: ThinkingLevel
@@ -522,7 +522,7 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI
     * Bedrock Mantle
     * TypeSafe
-    * CLM
+    * System One
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.
