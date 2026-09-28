@@ -261,4 +261,6 @@ class TestCoder:
         await call(workspace, 'write_file', {'path': 'local.txt', 'content': 'local'}, unrestricted_filesystem=True)
         assert (workspace / 'local.txt').read_text() == 'local'
         assert 'after' in await call(workspace, 'read_file', {'path': '../.env'}, unrestricted_filesystem=True)
-        assert 'outside the root' in await call(workspace, 'read_file', {'path': '../.env'})
+        refused = await call(workspace, 'read_file', {'path': '../.env'})
+        assert f'`{outside}` is outside the project root `{workspace.resolve()}`' in refused
+        assert 'Create or clone it inside the project, or use a shell tool if you have one.' in refused

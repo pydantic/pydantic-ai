@@ -641,13 +641,27 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         resolved = await scope.workspace.resolve(path, base=scope.cwd)
         if not _contains(scope.root, resolved):
-            raise PermissionError(f'Path {path!r} resolves outside the root directory.')
+            raise PermissionError(
+                f'`{resolved}` is outside {self._root_name(scope)}; the file tools only work inside it. '
+                f'Create or clone it inside {self._root_place(scope)}, or use a shell tool if you have one.'
+            )
         if not scope.checks_realpath:
             return resolved, resolved
         real = await scope.workspace.realpath(resolved)
         if not _contains(scope.root, real):
-            raise PermissionError(f'Path {path!r} resolves outside the root directory.')
+            # The link's target is not named: absolute paths outside the root stay out of tool results.
+            raise PermissionError(
+                f'`{path}` leads outside {self._root_name(scope)} through a symlink; the file tools only work '
+                f'inside it. Use a path inside {self._root_place(scope)}, or a shell tool if you have one.'
+            )
         return resolved, real
+
+    def _root_name(self, scope: _Scope) -> str:
+        """The boundary as an error names it: the project itself unless `root_dir` was set."""
+        return f'the project root `{scope.root}`' if self._root_spelling is None else f'root_dir `{scope.root}`'
+
+    def _root_place(self, scope: _Scope) -> str:
+        return 'the project' if self._root_spelling is None else f'`{scope.root}`'
 
     async def _real_path_inside(self, scope: _Scope, path: str) -> bool:
         """Whether a path a walk reached still leads inside the root once symlinks are resolved."""

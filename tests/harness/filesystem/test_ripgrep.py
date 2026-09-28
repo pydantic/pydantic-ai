@@ -248,7 +248,7 @@ class TestGrep:
             ({'pattern': '(', 'context': 0}, 'ripgrep failed'),
             ({'pattern': 'os', 'context': 21}, 'context must be between'),
             ({'pattern': 'os', 'path': 'missing'}, 'not a file or directory'),
-            ({'pattern': 'os', 'path': '../outside'}, 'outside the root'),
+            ({'pattern': 'os', 'path': '../outside'}, 'is outside root_dir'),
         ],
     )
     async def test_retries(self, workspace: Path, arguments: dict[str, object], message: str) -> None:
