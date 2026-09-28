@@ -56,12 +56,6 @@ class _RecordingCapability(AbstractCapability[AgentDepsT]):
         return _instructions
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 async def test_workspace_free_temporal_delegate() -> None:
     pytest.importorskip('temporalio')
     from pydantic_ai.durable_exec.temporal import TemporalRunContext

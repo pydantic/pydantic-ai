@@ -49,12 +49,6 @@ pytestmark = [
 ]
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 def _ctx(
     *,
     run_step: int = 1,

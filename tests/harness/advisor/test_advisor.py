@@ -31,11 +31,6 @@ if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 class _ProviderFunctionModel(FunctionModel):
     def __init__(
         self,

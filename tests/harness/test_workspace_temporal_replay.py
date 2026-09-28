@@ -68,11 +68,6 @@ class ReplayWorkflow(PydanticAIWorkflow):
         return [str(p.content) for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_temporal_history_replays_veto_and_background_job_once(tmp_path: Path) -> None:
     _vetoes.clear()
     workflow_id = uuid4().hex

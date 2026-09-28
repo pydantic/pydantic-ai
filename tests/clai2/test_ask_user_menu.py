@@ -36,11 +36,6 @@ from pydantic_clai2.question_input import Paste
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def question_pipe(monkeypatch: pytest.MonkeyPatch) -> Generator[PipeInput]:
     with create_pipe_input() as pipe:
         monkeypatch.setattr('pydantic_clai2.question_input.create_input', lambda: pipe)

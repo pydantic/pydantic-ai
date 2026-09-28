@@ -30,11 +30,6 @@ from pydantic_clai2.usage_report import cost_line, format_cost, session_usage, u
 PromptT = TypeVar('PromptT')
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def priced_history() -> list[ModelMessage]:
     """Two turns as core would retain them: a tool round trip, then a plain answer, then an unpriced one."""
     return [

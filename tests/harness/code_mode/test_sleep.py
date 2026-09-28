@@ -16,11 +16,6 @@ from pydantic_monty import AsyncMonty
 from pydantic_ai_harness._monty_exec import MontyExecutor
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def _run(
     code: str, *, max_sleep_secs: float | None = None, global_sequential: bool = False, starts_before_waking: int = 1
 ) -> tuple[Any, list[str]]:

@@ -21,11 +21,6 @@ from ._tool_calls import call_tool
 _ON_THE_WORKSPACE = r"set it on the workspace, e\.g\. `LocalWorkspace\('\./repo'\)`"
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def _coder(elsewhere: str, fake_cli: Path) -> AbstractCapability[None]:
     return Coder[None](elsewhere)
 

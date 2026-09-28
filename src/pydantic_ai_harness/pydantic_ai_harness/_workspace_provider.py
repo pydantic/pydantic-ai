@@ -85,7 +85,7 @@ async def command_deadline(
         if not stopped:
             await stop_shielded(stop)
         stdout, stderr = output()
-        raise WorkspaceTimeoutError(f'Command timed out after {timeout}s', stdout=stdout, stderr=stderr)
+        raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
 
 
 def absolute_path(name: str, value: str | None) -> str | None:

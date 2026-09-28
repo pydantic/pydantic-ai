@@ -114,8 +114,3 @@ async def test_open_menu_closes_quietly_without_changes(tmp_path: Path, names: t
 
     assert await open_plugins_menu(loader, run=run) == ''
     assert all(entry.host is None for entry in loader.entries())
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'

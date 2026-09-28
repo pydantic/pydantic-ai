@@ -52,11 +52,6 @@ from pydantic_ai_harness.memory import (
 from tests.harness._recording_durability import RecordingDurability
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def _ctx(
     tool_call_id: str = 'call-1',
     run_id: str = 'run-1',

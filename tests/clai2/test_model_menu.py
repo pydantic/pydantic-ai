@@ -23,11 +23,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def test_catalog_merges_sources_and_only_lists_runnable_providers() -> None:
     providers = runnable_providers()
     assert {'openai', 'anthropic', 'google', 'openai-codex', 'github-copilot'} <= providers
