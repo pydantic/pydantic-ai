@@ -134,6 +134,10 @@ class FailingWorkspace(LocalWorkspaceBackend):
         self._fail('list_dir', path)
         return await super().list_dir(path)
 
+    async def realpath(self, path: str) -> str:
+        self._fail('realpath', path)
+        return await super().realpath(path)
+
 
 class FilesystemOnlyWorkspace:
     """Storage without commands or file sizes in listings: the shape of an object-store backend.
@@ -2465,6 +2469,10 @@ class TestWorkspaceBackends:
             'No matches found.',
             '[1 hidden entries omitted; name a hidden path explicitly to include it]',
         )
+
+    async def test_unresolvable_subdirectory_is_skipped(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        workspace = FailingWorkspace(fs_root, {'realpath': PermissionError(errno.EACCES, 'denied')}, where='/subdir')
+        assert 'hello.txt' in await toolset.find_files('**/*.txt', workspace=workspace)
 
     async def test_unlistable_search_root_is_recoverable(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         workspace = FailingWorkspace(
