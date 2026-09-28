@@ -250,7 +250,6 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self._create_name: str | None = None
         # The default Debian image includes setsid; custom and attached images need a probe.
         self._setsid_available: bool | None = True if image is None and ref is None and sandbox is None else None
-        self._setsid_lock = anyio.Lock()
 
     async def get_sandbox(self) -> modal.Sandbox:
         """Return the typed `modal.Sandbox`, creating or attaching to it on first use.
@@ -522,20 +521,19 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         return self._resolved_working_dir
 
     async def _has_setsid(self, sandbox: modal.Sandbox) -> bool:
-        # Cache the probe across concurrent runs on custom or attached images.
-        async with self._setsid_lock:
-            if self._setsid_available is None:
-                async with self._mapped_errors(sandbox, 'Could not check Modal process isolation'):
-                    probe = await sandbox.exec.aio(
-                        'sh',
-                        '-c',
-                        'command -v setsid >/dev/null 2>&1 && setsid -w true',
-                        timeout=_INTERNAL_EXEC_TIMEOUT,
-                        workdir='/',
-                        text=False,
-                    )
-                    self._setsid_available = await probe.wait.aio() == 0
-            return self._setsid_available
+        # Idempotent, like `working_dir()`: concurrent first runs may each probe.
+        if self._setsid_available is None:
+            async with self._mapped_errors(sandbox, 'Could not check Modal process isolation'):
+                probe = await sandbox.exec.aio(
+                    'sh',
+                    '-c',
+                    'command -v setsid >/dev/null 2>&1 && setsid -w true',
+                    timeout=_INTERNAL_EXEC_TIMEOUT,
+                    workdir='/',
+                    text=False,
+                )
+                self._setsid_available = await probe.wait.aio() == 0
+        return self._setsid_available
 
     async def run(  # noqa: C901 - deadline, cancellation and Modal exit classification share the same process state
         self,
