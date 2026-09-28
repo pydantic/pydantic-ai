@@ -1176,5 +1176,3 @@ def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
         for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
             docstrings[name] = inspect.cleandoc(node.value.value)
     return docstrings
-
-_SEEDED_TYPE_ERROR: int = 'not an int'  # temporary: proves CI catches type errors
