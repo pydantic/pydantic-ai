@@ -10,12 +10,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 _HAS_E2B = importlib.util.find_spec('e2b') is not None
 collect_ignore = (
     [] if _HAS_E2B else ['test_backend.py', 'test_conformance.py', 'test_e2b_live.py', 'test_e2b_sandbox.py']

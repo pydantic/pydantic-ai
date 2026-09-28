@@ -74,11 +74,6 @@ async def _owned(**settings: object) -> AsyncGenerator[E2BSandboxBackend]:
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def sandbox() -> AsyncIterator[E2BSandboxBackend]:
     """One live owned sandbox shared by command and filesystem tests.
 
