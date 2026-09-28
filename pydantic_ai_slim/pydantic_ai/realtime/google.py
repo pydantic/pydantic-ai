@@ -1294,6 +1294,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._recent_image: tuple[BinaryImage, float] | None = None
 
     @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        # A blocking tool-call frame is answered once, when every call has its result. A non-blocking
+        # call's result cuts into the speech on its own, so it may get an answer of its own.
+        return not self._async_tool_calls_enabled
+
+    @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
 
@@ -1303,7 +1309,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         Accepts `BinaryAudio` (raw PCM16, 16kHz, mono), a `str` text turn, `TextContext` (text sent
         with `turn_complete=False`, so it waits for the next turn), `BinaryImage` (a live video
         frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
-        automatic VAD).
+        automatic VAD), and a `ToolResult`'s `respond` is ignored: Gemini answers a tool-call frame by
+        itself once every call in it has a result.
         """
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
         if isinstance(content, BinaryAudio):
@@ -1553,7 +1560,17 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # A tool call opens the turn like audio output does: the session holds a partial
                 # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
                 self._turn_open = True
-                events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=to_json(call.args or {}).decode()))
+                # Every call in the frame belongs to one model response, which Gemini answers once all of
+                # them have results. `response_usage_follows` keeps them together until the frame's usage
+                # below closes the response.
+                events.append(
+                    ToolCall(
+                        tool_call_id=call_id,
+                        tool_name=name,
+                        args=to_json(call.args or {}).decode(),
+                        response_usage_follows=True,
+                    )
+                )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
             # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
             # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
@@ -1572,6 +1589,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     )
                 )
             )
+        elif message.tool_call is not None and message.tool_call.function_calls:
+            # A tool-call frame carries no usage of its own (the turn's usage comes with a later
+            # `turn_complete`), but the calls above were promised some: an empty report closes their
+            # response now, since Gemini answers only once it has their results.
+            events.append(SessionUsage(usage=RequestUsage()))
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
         # tokens into the finalized `ModelResponse` / `chat` span before `ResponseDone` closes it.
         if message.server_content is not None and message.server_content.turn_complete:
