@@ -31,6 +31,17 @@ async def _delete(backend: WorkspaceBackend) -> None:
     await sprite.delete()
 
 
+async def _teardown(backend: SpritesSandboxBackend) -> None:  # pragma: no cover - live tier only
+    if backend.ref is not None:
+        from sprites.exceptions import NotFoundError
+
+        try:
+            await _delete(backend)
+        except NotFoundError:
+            pass
+    await backend.aclose()
+
+
 class TestFakeSpritesSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, transport: SpriteTransport) -> SpritesSandboxBackend:
@@ -62,8 +73,6 @@ class TestLiveSpritesSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover 
     def anyio_backend(cls) -> str:
         return 'asyncio'
 
-    # Class-scoped so the rules share one Sprite instead of creating one each; the suite runs its
-    # destroy rule last.
     @pytest.fixture
     def can_detect_exit_with_inherited_output_pipes(self) -> bool:
         # Live Sprite (2026-09-26): the exec socket sends EXIT only after a background child
@@ -76,19 +85,13 @@ class TestLiveSpritesSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover 
         # The Sprite filesystem does not enforce ordinary POSIX mode checks for this user.
         return False
 
+    # Class-scoped so the rules share one Sprite instead of creating one each.
     @pytest.fixture(scope='class')
     @classmethod
     async def backend(cls) -> AsyncIterator[SpritesSandboxBackend]:
         backend = SpritesSandboxBackend()
         yield backend
-        if backend.ref is not None:
-            from sprites.exceptions import NotFoundError
-
-            try:
-                await _delete(backend)
-            except NotFoundError:
-                pass
-        await backend.aclose()
+        await _teardown(backend)
 
     # The suite drops the backend it attaches; each one opened its own SDK client, which is closed
     # here rather than left to the garbage collector with a socket still open.
@@ -104,6 +107,21 @@ class TestLiveSpritesSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover 
         yield attach
         for backend in attached:
             await backend.aclose()
+
+    # Destructive rules need their own Sprite, not the shared class-scoped one. Sprites have no
+    # lifetime of their own, so one a failed rule left behind is deleted here, and its client closed.
+    @pytest.fixture
+    async def destructive_backend(self) -> AsyncIterator[Callable[[], WorkspaceBackend]]:
+        created: list[SpritesSandboxBackend] = []
+
+        def create() -> WorkspaceBackend:
+            backend = SpritesSandboxBackend()
+            created.append(backend)
+            return backend
+
+        yield create
+        for backend in created:
+            await _teardown(backend)
 
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
