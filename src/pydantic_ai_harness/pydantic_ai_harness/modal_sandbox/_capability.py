@@ -88,6 +88,13 @@ _WORKSPACE_TOOL_NAMES = frozenset(
 
 
 # The previous `ModalSandbox` terminated the sandbox it created when the run ended; this one does not.
+class ModalSandboxNoToolsWarning(UserWarning):
+    """Warned once per `ModalSandbox` when a run has no `Shell` or `FileSystem` tool to use the sandbox.
+
+    Pass `ModalSandbox(warn_if_no_tools=False)`, or filter this category, when only your own tools use it.
+    """
+
+
 _LIFETIME_NOTE = (
     'The sandbox is no longer terminated when the run ends: it keeps running, and billing, until its '
     '`sandbox_timeout` (24 hours by default) ends it. Set `idle_timeout=...`, or terminate it with '
@@ -286,7 +293,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             agent_name = ctx.agent.name if ctx.agent is not None else None
             warnings.warn(
                 _no_workspace_tools_message(agent_name, attached=self._legacy_ref is not None),
-                UserWarning,
+                ModalSandboxNoToolsWarning,
                 stacklevel=2,
             )
         return tool_defs

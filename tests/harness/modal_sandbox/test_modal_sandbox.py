@@ -29,7 +29,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
+from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, ModalSandboxNoToolsWarning
 
 from .._tool_calls import call_tools
 from .conftest import skip_or_fail_live_tier
@@ -266,7 +266,7 @@ async def test_backend_rejects_foreign_ref(fake_modal: FakeModal) -> None:
 
 async def test_agent_without_workspace_tool_does_not_create(fake_modal: FakeModal) -> None:
     agent = Agent(TestModel(), capabilities=[ModalSandbox()])
-    with pytest.warns(UserWarning, match='registers no tools') as record:
+    with pytest.warns(ModalSandboxNoToolsWarning, match='registers no tools') as record:
         result = await agent.run('go')
     assert result.output
     assert not fake_modal.sandboxes
@@ -278,7 +278,7 @@ async def test_no_tools_warning_does_not_advise_destroying_a_sandbox_id_sandbox(
     with pytest.warns(HarnessDeprecationWarning):
         capability = ModalSandbox(sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
     agent = Agent(TestModel(), capabilities=[capability])
-    with pytest.warns(UserWarning, match='registers no tools') as record:
+    with pytest.warns(ModalSandboxNoToolsWarning, match='registers no tools') as record:
         await agent.run('go')
     assert 'destroy' not in str(record[0].message)
 
@@ -488,7 +488,7 @@ async def test_each_agent_without_workspace_tools_warns_once(fake_modal: FakeMod
         # Under `always`, only the instance itself can keep a repeat run quiet.
         warnings.simplefilter('always')
         await first.run('go again')
-    messages = [str(warning.message) for warning in caught if issubclass(warning.category, UserWarning)]
+    messages = [str(warning.message) for warning in caught if issubclass(warning.category, ModalSandboxNoToolsWarning)]
     assert len(messages) == 2
     assert "this run of agent 'first' has no `Shell` or `FileSystem` tool" in messages[0]
     assert "this run of agent 'second' has no `Shell` or `FileSystem` tool" in messages[1]

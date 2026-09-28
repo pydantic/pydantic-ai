@@ -7,9 +7,13 @@ want to create or attach to a sandbox themselves and pass it to a run as `worksp
 """
 
 from pydantic_ai_harness.modal_sandbox._backend import ModalSandboxBackend
-from pydantic_ai_harness.modal_sandbox._capability import UPGRADE_DOCS_URL as _UPGRADE_DOCS_URL, ModalSandbox
+from pydantic_ai_harness.modal_sandbox._capability import (
+    UPGRADE_DOCS_URL as _UPGRADE_DOCS_URL,
+    ModalSandbox,
+    ModalSandboxNoToolsWarning,
+)
 
-__all__ = ['ModalSandbox', 'ModalSandboxBackend']
+__all__ = ['ModalSandbox', 'ModalSandboxBackend', 'ModalSandboxNoToolsWarning']
 
 # Public names of the previous `ModalSandbox` release, each mapped to what replaces it. Importing
 # one raises an `ImportError` that says where to go, instead of Python's bare "cannot import name".

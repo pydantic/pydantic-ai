@@ -81,7 +81,7 @@ See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more
 
 Cancellation and command deadlines attempt to stop the foreground command without ending the sandbox; see [What a timeout stops](#what-a-timeout-stops) for the best-effort caveat. `Shell` sets a 30-second timeout; in your own tools, pass a `timeout`, as above.
 
-If only your own tools use the sandbox, pass `ModalSandbox(warn_if_no_tools=False)` to silence the missing-tools warning.
+If only your own tools use the sandbox, pass `ModalSandbox(warn_if_no_tools=False)` to silence the missing-tools warning, or filter its category, `ModalSandboxNoToolsWarning`. Old arguments warn with `HarnessDeprecationWarning` from `pydantic_ai_harness`.
 
 ## Reattach later
 
