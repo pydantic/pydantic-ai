@@ -925,8 +925,9 @@ async def test_auth_error_classifies_expired_key_without_leaking_it(fake_e2b: Fa
     fake_e2b.create_error = AuthenticationException('expired credential sensitive-credential-value')
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
-    assert 'Credential expired' in str(exc.value)
-    assert 'E2B_API_KEY' in str(exc.value)
+    assert str(exc.value) == (
+        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+    )
     assert 'sensitive-credential-value' not in str(exc.value)
 
 

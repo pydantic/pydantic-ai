@@ -49,10 +49,10 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """Whether a newly created workspace may reach the internet."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading is True:
+        if self.defer_loading:
             raise UserError(
-                '`defer_loading` is not supported on `E2BSandbox`: a run never takes its workspace '
-                'from a deferred capability, so the sandbox would never be used.'
+                '`E2BSandbox` does not support `defer_loading=True`: '
+                'the workspace is selected before deferred capabilities load.'
             )
         check_integer('sandbox_timeout', self.sandbox_timeout)
         check_working_dir(self.working_dir)

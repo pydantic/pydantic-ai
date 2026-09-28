@@ -80,7 +80,13 @@ async def test_foreign_reference_is_rejected(fake_e2b: FakeE2B) -> None:
         ({'working_dir': 'repo'}, "working_dir must be an absolute POSIX path or None, got 'repo'"),
         ({'sandbox_timeout': 0}, 'sandbox_timeout must be an integer of at least 1, got 0'),
         ({'sandbox_timeout': 1.5}, 'sandbox_timeout must be an integer of at least 1, got 1.5'),
-        ({'defer_loading': True, 'id': 'e2b'}, '`defer_loading` is not supported on `E2BSandbox`'),
+        (
+            {'defer_loading': True, 'id': 'e2b'},
+            (
+                '`E2BSandbox` does not support `defer_loading=True`: '
+                'the workspace is selected before deferred capabilities load.'
+            ),
+        ),
     ],
 )
 def test_invalid_settings_fail_at_construction(settings: dict[str, object], message: str) -> None:

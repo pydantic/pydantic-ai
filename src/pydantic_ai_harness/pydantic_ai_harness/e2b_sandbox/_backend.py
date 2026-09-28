@@ -301,7 +301,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if isinstance(error, e2b.InvalidArgumentException) and 'cwd ' in str(error) and 'does not exist' in str(error):
             return FileNotFoundError(str(error))
         if isinstance(error, e2b.AuthenticationException):
-            return WorkspaceUnavailableError(f'{_AUTH_MESSAGE} {safe_credential_reason(error)}.')
+            return WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}')
         if isinstance(error, e2b.SandboxNotFoundException) and sandbox_id is not None:
             return WorkspaceUnavailableError(_unavailable_message(sandbox_id))
         if isinstance(error, e2b.FileNotFoundException):
