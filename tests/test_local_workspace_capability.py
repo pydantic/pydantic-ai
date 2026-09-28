@@ -35,9 +35,10 @@ async def test_override_workspace_precedence(tmp_path: Path) -> None:
     replacement_backend = LocalWorkspaceBackend(replacement)
     with agent.override(workspace=replacement_backend):
         assert (await agent.run('go')).workspace.ref == replacement_backend.ref
-        assert (await agent.run('go', workspace=LocalWorkspaceBackend(explicit))).workspace.ref == WorkspaceRef(
-            provider='local', id=str(explicit)
-        )
+        # Like `override(model=)`, the override also wins over the run's own argument.
+        assert (
+            await agent.run('go', workspace=LocalWorkspaceBackend(explicit))
+        ).workspace.ref == replacement_backend.ref
     assert (await agent.run('go')).workspace.ref == WorkspaceRef(provider='local', id=str(original))
     with WrapperAgent(agent).override(workspace=replacement_backend):
         assert (await agent.run('go')).workspace.ref == replacement_backend.ref
