@@ -646,6 +646,20 @@ def _effective_thinking(
     return OMIT if isinstance(thinking, Omit) else dict(thinking)
 
 
+_DEFAULT_MAX_TOKENS = 4096
+
+
+def _default_max_tokens(thinking: dict[str, object] | Omit) -> int:
+    """The `max_tokens` to send when the request doesn't set one.
+
+    Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose
+    `max_tokens` isn't greater than the budget, so the budget is added on top of the default.
+    """
+    wire_thinking: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
+    budget = wire_thinking.get('budget_tokens') if wire_thinking.get('type') == 'enabled' else None
+    return _DEFAULT_MAX_TOKENS + (budget if isinstance(budget, int) else 0)
+
+
 def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
     """Whether a request may add `drop_block` to its wire `thinking` object.
 
@@ -1205,7 +1219,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             thinking_override: dict[str, object] | None,
         ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', 4096),
+                max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking)),
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,
@@ -1541,7 +1555,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     self._model_name,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
-                    max_tokens=model_settings.get('max_tokens', 4096),
+                    max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking)),
                     tools=tools or OMIT,
                     tool_choice=tool_choice or OMIT,
                     mcp_servers=mcp_servers or OMIT,
