@@ -107,7 +107,7 @@ class _ShellFilesystem(SupportsFilesystem):
     `SupportsFilesystem` when their provider has a native API: native calls avoid the shell's
     utility assumptions and the base64 transfer overhead used here to preserve arbitrary bytes.
 
-    It needs a POSIX `sh` with `test` and `printf`, plus `base64`, `cp`, `mv`, `rm`, `mkdir`,
+    It needs a POSIX `sh` with `test` and `printf`, plus `base64`, `cp`, `dd`, `mv`, `rm`, `mkdir`,
     `find` and `wc`, and `readlink` for `realpath`. A path under a directory the command cannot search reads as missing:
     `test -e` cannot tell a permission error from a missing path.
     """
