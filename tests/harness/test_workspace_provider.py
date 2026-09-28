@@ -82,7 +82,7 @@ async def test_stop_shielded_finishes_under_outer_cancellation() -> None:
 
 @pytest.mark.anyio
 async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) -> None:
-    if anyio_backend != 'asyncio':
+    if anyio_backend != 'asyncio':  # pragma: no cover
         pytest.skip('Native task.cancel() is asyncio-specific')
 
     async def exercise(timeout: float | None, cancellations: int) -> None:
