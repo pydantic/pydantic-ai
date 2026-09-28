@@ -341,6 +341,14 @@ async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) 
                 await operation('fifo')
 
 
+async def test_local_write_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
+    os.mkfifo(tmp_path / 'fifo')
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+    with anyio.fail_after(30):
+        with pytest.raises(OSError, match='not a regular file'):
+            await workspace.write_bytes('fifo', b'data')
+
+
 async def test_shell_realpath_leaves_a_symlink_loop_unresolved(tmp_path: Path) -> None:
     (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
