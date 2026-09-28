@@ -1306,6 +1306,14 @@ jobs:
         with:
           skip-existing: true
 
+  # `src/pydantic_ai_harness/gh-aw/pydantic.md` pins the `pydantic-ai-harness` release a generated
+  # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
+  # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
+  # nothing: it only notices that the harness release just cut is not the release the definition
+  # names, and asks for that pull request.
+  #
+  # An issue rather than a pull request, because a pull request opened with GITHUB_TOKEN triggers no
+  # workflow runs: it would arrive with none of this repository's required checks.
   gh-aw-engine-pin-reminder:
     name: gh-aw engine / pin reminder
     needs: [release-build, release]
@@ -1315,6 +1323,12 @@ jobs:
     permissions:
       contents: read
       issues: write
+    # The workflow-level `GIT_CONFIG_*` carries the token into every step, including the one that
+    # resolves the guard script's dependencies from PyPI. Nothing here installs from git.
+    env:
+      GIT_CONFIG_COUNT: '0'
+      GIT_CONFIG_KEY_0: ''
+      GIT_CONFIG_VALUE_0: ''
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1340,9 +1354,10 @@ jobs:
         run: |
           pinned="$PINNED"
           released="$RELEASED"
-          # A pre-release is not a pin consumers should move to.
-          if ! [[ "$released" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "pydantic-ai-harness ${released} is not a final release."
+          # The harness version carries no pre-release stage, so the tag is what tells a final
+          # release apart, and a pre-release is not a pin consumers should move to.
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "${GITHUB_REF_NAME} is not a final release."
             exit 0
           fi
           if [ "$pinned" = "$released" ]; then
