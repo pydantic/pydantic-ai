@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 import pytest
+from cassetter import RawResponse
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -28,6 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.usage import RequestUsage
 
+from .. import cassette_hooks
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
@@ -53,15 +55,10 @@ def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
     depends on the value, so there's no reason to publish their internal topology.
     """
 
-    def scrub_response(response: dict[str, Any]) -> dict[str, Any]:
-        body: dict[str, Any] = response['body']
-        body.update(
-            {
-                key: _INTERNAL_SERVING_ADDRESSES.sub(b'', value)
-                for key, value in body.items()
-                if isinstance(value, bytes)
-            }
-        )
+    def scrub_response(response: RawResponse) -> RawResponse:
+        response = cassette_hooks.before_record_response(response)
+        if response.body is not None:
+            response.body = _INTERNAL_SERVING_ADDRESSES.sub(b'', response.body)
         return response
 
     return {**vcr_config, 'before_record_response': scrub_response}

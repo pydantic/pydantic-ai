@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from urllib.parse import parse_qs
+from typing import Any
+from urllib.parse import parse_qs, urlencode
 
 import anyio
 import httpx2
 import pytest
-from typing_extensions import TypedDict
+from cassetter import RawRequest, RawResponse
 
 from pydantic_ai.exceptions import UserError
 
+from .. import cassette_hooks
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -34,31 +36,31 @@ DEVICE = {
 TOKEN = {'access_token': 'secret-access-token', 'token_type': 'bearer', 'scope': 'read:user'}
 
 
-class RecordedBody(TypedDict):
-    string: bytes | str
-
-
-class RecordedResponse(TypedDict):
-    body: RecordedBody
-
-
 @pytest.fixture(scope='module')
-def vcr_config() -> dict[str, object]:
-    def scrub_response(response: RecordedResponse) -> RecordedResponse:
-        body = response['body']['string']
-        data: dict[str, object] = json.loads(body)
-        for key in ('device_code', 'user_code', 'access_token', 'refresh_token'):
-            if key in data:
-                data[key] = 'scrubbed'
-        response['body']['string'] = json.dumps(data).encode()
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    """Keep the device grant's one-time codes and tokens out of the cassettes."""
+
+    def scrub_request(request: RawRequest) -> RawRequest:
+        request = cassette_hooks.before_record_request(request)
+        if request.body is not None:
+            form = parse_qs(request.body.decode())
+            for key in ('device_code', 'refresh_token'):
+                if key in form:
+                    form[key] = ['scrubbed']
+            request.body = urlencode(form, doseq=True).encode()
+        return request
+
+    def scrub_response(response: RawResponse) -> RawResponse:
+        response = cassette_hooks.before_record_response(response)
+        if response.body is not None:
+            data: dict[str, object] = json.loads(response.body)
+            for key in ('device_code', 'user_code', 'access_token', 'refresh_token'):
+                if key in data:
+                    data[key] = 'scrubbed'
+            response.body = json.dumps(data).encode()
         return response
 
-    return {
-        'filter_headers': ['authorization', 'cookie'],
-        'filter_post_data_parameters': ['device_code', 'refresh_token'],
-        'before_record_response': scrub_response,
-        'decode_compressed_response': True,
-    }
+    return {**vcr_config, 'before_record_request': scrub_request, 'before_record_response': scrub_response}
 
 
 @pytest.mark.vcr
