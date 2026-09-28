@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -269,15 +268,5 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         ):
             self._warned_no_tools = True
             agent_name = ctx.agent.name if ctx.agent is not None else None
-            # Python's default filter shows a message from one location once per process, which would
-            # hide this from a second unnamed agent. Without a registry, `warn_explicit` keeps no such
-            # record; the flag above already limits it to once per instance. Attributed like `stacklevel=2`.
-            caller = sys._getframe(1)  # pyright: ignore[reportPrivateUsage]
-            warnings.warn_explicit(
-                _no_workspace_tools_message(agent_name),
-                UserWarning,
-                caller.f_code.co_filename,
-                caller.f_lineno,
-                module_globals=caller.f_globals,
-            )
+            warnings.warn(_no_workspace_tools_message(agent_name), UserWarning, stacklevel=2)
         return tool_defs

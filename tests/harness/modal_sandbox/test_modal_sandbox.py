@@ -31,7 +31,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _capability
+from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
 
 from .._docs_examples import python_blocks
 from .._tool_calls import call_tools
@@ -478,22 +478,6 @@ async def test_each_agent_without_workspace_tools_warns_once(fake_modal: FakeMod
     assert 'ModalSandbox(warn_if_no_tools=False)' in messages[0]
     assert messages[0].endswith('#upgrading-from-the-previous-modalsandbox')
     assert not fake_modal.sandboxes
-
-
-async def test_each_unnamed_agent_without_workspace_tools_warns_once(fake_modal: FakeModal) -> None:
-    # Unnamed agents run under the same variable name get the same inferred name, so their warnings
-    # read the same and come from the same location, which the default filter would show only once.
-    agents = [Agent(TestModel(), capabilities=[ModalSandbox()]) for _ in range(2)]
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('default')
-        for _ in range(2):
-            for agent in agents:
-                await agent.run('go')
-    warned = [warning for warning in caught if issubclass(warning.category, UserWarning)]
-    assert len(warned) == 2
-    assert str(warned[0].message) == str(warned[1].message)
-    # Attributed to the code that prepares the tools, as `stacklevel=2` was, not to the capability.
-    assert warned[0].filename != _capability.__file__
 
 
 async def test_warn_if_no_tools_false_silences_the_warning(fake_modal: FakeModal) -> None:
