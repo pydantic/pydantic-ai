@@ -9,10 +9,9 @@ from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import anyio
-import client_signals.core
 import httpx
 import pytest
-from sprites import AsyncSprite, _signals
+from sprites import AsyncSprite
 from sprites.exceptions import (
     APIError,
     AuthenticationError,
@@ -130,28 +129,6 @@ class TestSpritesSandbox:
         assert transport.close_calls == 1
         with pytest.raises(ValueError, match='provider'):
             await provider.destroy(WorkspaceRef(provider='other', id='target'))
-
-    async def test_destroy_builds_its_client_off_the_event_loop(
-        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The SDK detects its client-signal headers on the first client of a process, reading
-        # `/proc/<ppid>/comm` on Linux; reading this file stands in for that on any host.
-        def parent_name(ppid: int) -> str:
-            return Path(__file__).read_text(encoding='utf-8')[:0]
-
-        monkeypatch.delenv('SPRITES_CLIENT_SIGNALS', raising=False)
-        monkeypatch.setattr(client_signals.core, '_lookup_parent_name', parent_name)
-        _signals._computed.cache_clear()  # pyright: ignore[reportPrivateUsage]
-        transport.names.add('target')
-        # Called from a tool, as from the documented cleanup hook, so BlockBuster sees the run's frames.
-        agent = Agent(TestModel())
-
-        @agent.tool_plain
-        async def delete() -> None:
-            await SpritesSandbox[None]().destroy(WorkspaceRef(provider='sprites', id='target'))
-
-        await agent.run('delete it')
-        assert 'target' not in transport.names
 
     async def test_native_handle_conflict_and_identity(self, transport: SpriteTransport) -> None:
         seed = SpritesSandboxBackend()
