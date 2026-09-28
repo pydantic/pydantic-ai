@@ -167,6 +167,32 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
 - Veto writes with `@agent.on_event(FileChangeRequestEvent)` + `event.cancel(reason)` (from
   `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
 
+
+## SmartGrep
+
+Semantic code search (`.smart_grep`, `[smart-grep]` for tree-sitter chunking beyond Python). One tool,
+`smart_grep(query, directory='.', glob=None, limit=5, candidates=128)`, returns a `SmartGrepResult`
+(`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with `rg --files` in the workspace
+(needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run commands), shortlisted with BM25,
+and each shortlisted snippet is judged by a model.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import SmartGrep
+
+agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartGrep(model='test')])
+```
+
+- `model` is **any** Pydantic AI model or name. Unset: `'typesafe:jev-latest'` if the `typesafe` SDK is
+  installed and `TYPESAFE_API_KEY` is set (recommended), else the run's own model. Never TypeSafe-only.
+- `threshold=0.5` (tuned for Jev; retune for a language-model judge), `concurrency=8`, `guidance=None`
+  (default discovery instructions; `''` for none).
+- Judge usage is not added to the run's usage or limits; bound cost with `candidates`. A failed judgment
+  fails the search as a tool failure the model sees.
+- Sends the query, snippets and paths to the judge's provider.
+
 ## Shell
 
 Default tools `run_command`, `start_command`, `check_command`, `stop_command`; `tools=['shell']`
