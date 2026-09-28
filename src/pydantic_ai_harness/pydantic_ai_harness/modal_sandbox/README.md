@@ -313,6 +313,10 @@ For a lazily created sandbox outside this example, use `Coder(repo_context=False
 
 Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
 
+## Telemetry
+
+`ModalSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command and file operation runs inside the tool call span that asked for it. Creating a sandbox logs its ID at `INFO` on the `pydantic_ai_harness.modal_sandbox._backend` logger (`Created Modal sandbox <id>`).
+
 ## API reference
 
 ::: pydantic_ai_harness.modal_sandbox.ModalSandbox
