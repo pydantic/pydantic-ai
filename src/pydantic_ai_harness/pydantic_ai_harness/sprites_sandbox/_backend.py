@@ -548,6 +548,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                             sandbox = await client.get_sprite(self._new_sprite_name)
                         except (NotFoundError, NetworkError, TimeoutError):
                             raise error from None
+                    # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
+                    logger.info('Created Sprite %s', sandbox.name)
                 # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
                 self._sandbox = sandbox
                 self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)

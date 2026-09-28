@@ -87,6 +87,16 @@ class TestSpritesSandbox:
         assert transport.created == [first.name]
         assert backend.ref == WorkspaceRef(provider='sprites', id=first.name)
 
+    async def test_creation_logs_the_sprite_id(
+        self, transport: SpriteTransport, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level('INFO', logger='pydantic_ai_harness.sprites_sandbox._backend')
+        backend = SpritesSandboxBackend()
+        await backend.run(['true'])
+        # Attaching creates nothing, so it logs nothing.
+        await SpritesSandboxBackend(ref=backend.ref).run(['true'])
+        assert [record.getMessage() for record in caplog.records] == [f'Created Sprite {transport.created[0]}']
+
     @pytest.mark.parametrize(
         ('kwargs', 'message'),
         [
