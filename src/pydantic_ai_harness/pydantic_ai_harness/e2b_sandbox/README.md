@@ -154,23 +154,25 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
 
 async def main() -> None:
     backend = E2BSandboxBackend(working_dir='/home/user/project')
-    workspace = Workspace(backend)
-    await workspace.write_text('calc.py', 'def add(a, b):\n    return a - b\n')
-    await workspace.run(['pip', 'install', 'pytest'], timeout=300)
-    ref = backend.ref  # set once the sandbox exists
-    assert ref is not None
     try:
+        workspace = Workspace(backend)
+        await workspace.write_text('calc.py', 'def add(a, b):\n    return a - b\n')
+        install = await workspace.run(['pip', 'install', 'pytest'], timeout=300)
+        if install.exit_code != 0:
+            raise RuntimeError(f'pip install failed: {install.stderr}')
         result = await agent.run('Fix the bug in calc.py.', workspace=backend)
         print(result.output)
     finally:
-        await E2BSandbox().destroy(ref)
+        ref = backend.ref  # set once the sandbox exists
+        if ref is not None:
+            await E2BSandbox().destroy(ref)
 
 
 if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-Read `backend.ref` before the run: a failed run returns no result to take it from.
+The `finally` kills the sandbox even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
 ## Preview a dev server
 
