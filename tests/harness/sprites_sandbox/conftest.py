@@ -25,11 +25,6 @@ if TYPE_CHECKING or _HAS_SPRITES:  # pragma: no branch - installed and slim jobs
     from .fake_sprites import SpriteTransport
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def live_token() -> str:
     """Return `SPRITE_TOKEN` for the live tier, or skip it.
 

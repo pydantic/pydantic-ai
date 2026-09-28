@@ -51,11 +51,6 @@ def _unique(prefix: str) -> str:
     return f'{prefix}-{uuid.uuid4().hex}'
 
 
-@pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.fixture(scope='module', autouse=True)
 def wait_out_the_creation_rate_limit(sprites_token: str) -> Iterator[None]:
     """The account creates at most 10 Sprites a minute, and this module creates more than that."""
