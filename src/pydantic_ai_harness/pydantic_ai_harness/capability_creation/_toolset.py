@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import anyio
+import anyio.to_thread
+
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
@@ -11,9 +14,14 @@ from pydantic_ai_harness.capability_creation._store import CapabilityStore
 class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
     """Exposes `author_capability`, `list_authored_capabilities`, and `disable_authored_capability`."""
 
+    # The store is synchronous disk I/O (and imports the authored module), so each tool runs it
+    # in a worker thread rather than on the event loop.
     def __init__(self, store: CapabilityStore) -> None:
         super().__init__()
         self._store = store
+        # Parallel tool calls would otherwise overlap the manifest's read-modify-write cycles
+        # (losing an update) and the import's process-global `sys.dont_write_bytecode` toggle.
+        self._store_lock = anyio.Lock()
         self.add_function(
             self.author_capability,
             name='author_capability',
@@ -37,7 +45,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
             code: Complete Python source defining one `AbstractCapability` subclass.
         """
         try:
-            record = self._store.write(name, code)
+            async with self._store_lock:
+                record = await anyio.to_thread.run_sync(self._store.write, name, code)
         except ValueError as exc:
             raise ModelRetry(str(exc)) from exc
         if record.last_error is not None:
@@ -52,7 +61,7 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
 
     async def list_authored_capabilities(self) -> str:
         """List the capabilities authored so far, with their status and any validation error."""
-        records = self._store.list_all()
+        records = await anyio.to_thread.run_sync(self._store.list_all)
         if not records:
             return 'No capabilities authored yet.'
         lines: list[str] = []
@@ -68,6 +77,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         Args:
             name: Name of the capability to disable.
         """
-        if self._store.disable(name):
+        async with self._store_lock:
+            found = await anyio.to_thread.run_sync(self._store.disable, name)
+        if found:
             return f'Capability {name!r} disabled; it will not be injected on the next run.'
         return f'No authored capability named {name!r}.'

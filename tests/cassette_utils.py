@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
     from yaml import SafeLoader
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette, RecordedRequest
 
 PrefixBlock = tuple[str, str]
 
@@ -240,8 +240,22 @@ def classify_prefix_pair(a: list[PrefixBlock], b: list[PrefixBlock]) -> tuple[st
     return f'{level}-divergent', divergent_index
 
 
+def recorded_request_body(request: dict[str, Any]) -> Any:
+    """The decoded body of a request mapping read straight from a cassette file.
+
+    Cassettes recorded under vcrpy carry the parsed JSON as `parsed_body` (and the raw text as `body`);
+    cassetter writes a typed `body: {type: json | text | binary | none, content: ...}` mapping.
+    """
+    if (parsed_body := request.get('parsed_body')) is not None:
+        return parsed_body
+    body = request.get('body')
+    if is_str_dict(body) and 'type' in body:
+        return body.get('content') if body['type'] in ('json', 'text') else None
+    return body
+
+
 def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePrefixViolation]:
-    """Yield prompt-cache prefix violations from one VCR cassette.
+    """Yield prompt-cache prefix violations from one cassette.
 
     Across 1,177 cassettes on 2026-07-15, this found 15 deliberately prefix-moving pairs in ten
     cassettes. Requests are grouped by host and provider shape so unrelated endpoints are not paired.
@@ -265,7 +279,7 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
         method = request.get('method')
         if not isinstance(method, str) or method.upper() != 'POST':
             continue
-        body = request.get('parsed_body')
+        body = recorded_request_body(request)
         if not is_str_dict(body):
             continue
         uri = request.get('uri')
@@ -324,23 +338,22 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
 
 
 def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
-    """Return the first POST request body in a VCR cassette, parsed as JSON.
-
-    Some VCR serializers (e.g. the project's custom JSON body serializer used for
-    huggingface cassettes) deserialize `request.body` to a dict ahead of time;
-    others leave it as raw bytes/str. Handle both shapes.
-    """
-    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        if request.method != 'POST':  # pyright: ignore[reportUnknownMemberType]
+    """Return the first POST request body in a cassette, parsed as JSON."""
+    for request in cassette.requests:
+        if request.method != 'POST':
             continue
-        body = request.body  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        body = request.body
         if not body:
             continue  # pragma: no cover
-        if isinstance(body, dict):
-            return body  # pyright: ignore[reportUnknownVariableType]
-        parsed: dict[str, Any] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
+        parsed: dict[str, Any] = json.loads(body)
         return parsed
     return {}  # pragma: no cover
+
+
+def request_json(request: RecordedRequest) -> Any:
+    """Decode the JSON body of one recorded request."""
+    assert request.body is not None, f'Expected the recorded {request.method} {request.uri} to carry a body'
+    return json.loads(request.body)
 
 
 def single_request_body(cassette: Cassette) -> dict[str, Any]:
@@ -351,9 +364,9 @@ def single_request_body(cassette: Cassette) -> dict[str, Any]:
     translation). Asserts the single-request invariant — tests with intentional
     multi-request cassettes should access `cassette.requests` directly.
     """
-    requests = cassette.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'  # pyright: ignore[reportUnknownArgumentType]
-    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    requests = cassette.requests
+    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'
+    return request_json(requests[0])
 
 
 # Provider-specific cassette extractors — group new ones under this header so the module
@@ -378,34 +391,28 @@ def get_cohere_tool_names_from_cassette(cassette: Cassette) -> list[str]:
 
 
 def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
-    """Get all request bodies from a VCR cassette as strings."""
+    """Get all request bodies from a cassette as strings."""
     bodies: list[str] = []
-    for request in cassette.requests:  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        raw_body = request.body  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    for request in cassette.requests:
+        raw_body = request.body
         if raw_body:
-            body = raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body  # pyright: ignore[reportUnknownVariableType]
-            bodies.append(body)  # pyright: ignore[reportUnknownArgumentType]
-        elif getattr(request, 'parsed_body', None):  # pyright: ignore[reportUnknownArgumentType]  # pragma: no cover
-            bodies.append(json.dumps(request.parsed_body))  # pyright: ignore[reportUnknownMemberType]
+            bodies.append(raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body)
     return bodies
 
 
 def _get_cassette_bodies_from_yaml(path: Path) -> list[str]:
-    """Read request bodies from a VCR cassette YAML file on disk.
+    """Read request bodies from a cassette YAML file on disk.
 
-    Used as fallback when the VCR cassette object is not available (e.g. CI playback).
+    Used as fallback when the cassette object is not available (e.g. CI playback).
     """
     data: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
     bodies: list[str] = []
     for interaction in data.get('interactions', []):
-        request = interaction.get('request', {})
-        parsed_body = request.get('parsed_body') or request.get('body')
-        if parsed_body is None:
-            continue
-        if isinstance(parsed_body, dict | list):
-            bodies.append(json.dumps(parsed_body))
-        elif isinstance(parsed_body, str) and parsed_body:
-            bodies.append(parsed_body)
+        body = recorded_request_body(interaction.get('request', {}))
+        if isinstance(body, dict | list):
+            bodies.append(json.dumps(body))
+        elif isinstance(body, str) and body:
+            bodies.append(body)
     return bodies
 
 
@@ -450,9 +457,9 @@ def _pattern_in_bodies(pattern: str, bodies: list[str]) -> bool:
 
 @dataclass
 class CassetteContext:
-    """Unified cassette verification context for VCR and XAI cassettes.
+    """Unified cassette verification context for HTTP and XAI cassettes.
 
-    Encapsulates provider-specific cassette handling (VCR vs XAI proto format)
+    Encapsulates provider-specific cassette handling (cassetter vs XAI proto format)
     and provides a uniform verification interface.
     """
 

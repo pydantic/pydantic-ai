@@ -50,6 +50,55 @@ _ROOT = Path(__file__).parents[2]
 _HARNESS = 'pydantic_ai_harness'
 
 
+def test_coder_mentions_post_run_backend_close() -> None:
+    for path in ('docs/harness/coder.md', 'src/pydantic_ai_harness/pydantic_ai_harness/coder/README.md'):
+        assert 'result.workspace.backend.aclose()' in (_ROOT / path).read_text(encoding='utf-8')
+
+
+def test_coder_explains_sandbox_creation_timing() -> None:
+    for path in (
+        'docs/harness/coder.md',
+        'src/pydantic_ai_harness/pydantic_ai_harness/coder/README.md',
+        'docs/harness/index.md',
+    ):
+        text = (_ROOT / path).read_text(encoding='utf-8')
+        assert 'Coder(repo_context=False)' in text
+        assert 'sandbox' in text.lower()
+
+
+def test_durable_guidance_lives_on_one_page() -> None:
+    durable = (_ROOT / 'docs/harness/durable-execution.md').read_text()
+    assert 'FileChangeRequestEvent' in durable
+    assert '.pydantic-ai-harness/shell/run-state/' in durable
+    for name in ('coder', 'filesystem', 'shell'):
+        for page, link in (
+            (f'docs/harness/{name}.md', '(durable-execution.md)'),
+            (f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md', '/harness/durable-execution/)'),
+        ):
+            text = (_ROOT / page).read_text()
+            section = text.split('## Durable execution\n', 1)[1].split('\n## ', 1)[0]
+            assert link in section
+            assert 'cannot refuse a change' not in text
+            assert 'fails under Prefect' not in text
+
+
+def test_remote_search_and_shell_output_guidance() -> None:
+    for name in ('coder', 'filesystem'):
+        for page in (f'docs/harness/{name}.md', f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md'):
+            text = (_ROOT / page).read_text()
+            assert 'cat' in text and 'rg' in text and 'filesystem-only' in text
+    for page in ('docs/harness/shell.md', 'src/pydantic_ai_harness/pydantic_ai_harness/shell/README.md'):
+        text = (_ROOT / page).read_text()
+        assert 'capped preview' in text and 'redirect' in text and 'tail' in text
+
+
+def test_remote_workspace_store_locations_are_documented() -> None:
+    for page in ('docs/harness/repo-context.md', 'src/pydantic_ai_harness/pydantic_ai_harness/repo_context/README.md'):
+        assert "home_dir='/home/user'" in (_ROOT / page).read_text()
+    for page in ('docs/harness/planning.md', 'src/pydantic_ai_harness/pydantic_ai_harness/planning/README.md'):
+        assert 'machine running the agent' in (_ROOT / page).read_text()
+
+
 def _harness_import_targets(tree: ast.AST) -> Iterable[tuple[str, str | None]]:
     """`(module, name)` for every `pydantic_ai_harness` symbol a snippet imports.
 
