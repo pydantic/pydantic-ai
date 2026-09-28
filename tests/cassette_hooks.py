@@ -57,7 +57,7 @@ def normalize_body(obj: Any) -> Any:
         return {k: normalize_body(v) for k, v in cast('dict[Any, Any]', obj).items()}
     elif isinstance(obj, list):
         return [normalize_body(item) for item in cast('list[Any]', obj)]
-    return obj  # pragma: no cover
+    return obj
 
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
