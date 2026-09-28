@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -8,6 +10,7 @@ from typing import Annotated, Any, Literal, cast
 
 import pydantic_core
 import pytest
+from griffe import Docstring
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
@@ -1086,6 +1089,94 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     # Without suppressing griffe logging, we get:
     # assert caplog.messages == snapshot(['<module>:4: No type or annotation for returned value 1'])
     assert caplog.messages == snapshot([])
+
+
+def google_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    Args:
+        x: The x.
+        y: Not a parameter.
+
+    Returns:
+        The result.
+    """
+    return ''
+
+
+def numpy_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    Parameters
+    ----------
+    x
+        The x, with no type.
+    y : int
+        Not a parameter.
+    """
+    return ''
+
+
+def sphinx_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    :param x: The x.
+    :param y: Not a parameter.
+    :returns: The result.
+    """
+    return ''
+
+
+@pytest.mark.parametrize(
+    'func, style',
+    [
+        (google_docstring_griffe_warns_about, 'google'),
+        (numpy_docstring_griffe_warns_about, 'numpy'),
+        (sphinx_docstring_griffe_warns_about, 'sphinx'),
+    ],
+)
+def test_griffe_docstring_warnings_are_not_logged(
+    caplog: LogCaptureFixture, func: Callable[..., Any], style: Literal['google', 'numpy', 'sphinx']
+):
+    # Some installed packages (e.g. fastmcp) raise griffe's logger to ERROR on import; undo that so
+    # this test sees whatever griffe would log.
+    caplog.set_level(logging.WARNING, logger='griffe')
+    Docstring(func.__doc__ or '', parser=style).parse()
+    assert caplog.messages, 'griffe should warn about this docstring on its own'
+    caplog.clear()
+
+    tool = Tool(func, docstring_format=style)
+
+    assert 'Do the thing.' in (tool.description or '')
+    assert caplog.messages == []
+
+
+def test_parsing_a_tool_docstring_leaves_logging_alone(caplog: LogCaptureFixture, monkeypatch: pytest.MonkeyPatch):
+    # Tools can be built on several threads at once (e.g. Temporal workflows). Parsing must not change
+    # logging config, or other threads lose their warnings mid-parse and the change can outlive the parse.
+    caplog.set_level(logging.WARNING, logger='griffe')
+    parse = Docstring.parse
+    entered = threading.Event()
+    release = threading.Event()
+
+    def held_parse(self: Docstring, *args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        assert release.wait(30)
+        return parse(self, *args, **kwargs)
+
+    monkeypatch.setattr(Docstring, 'parse', held_parse)
+    root_level = logging.root.level
+    thread = threading.Thread(target=Tool, args=(google_docstring_griffe_warns_about,))
+    thread.start()
+    assert entered.wait(30)
+    logging.getLogger('tests.test_tools').warning('logged while another thread parses')
+    logging.getLogger('griffe').warning('griffe logged while another thread parses')
+    release.set()
+    thread.join(30)
+    assert not thread.is_alive()
+
+    assert caplog.messages == ['logged while another thread parses', 'griffe logged while another thread parses']
+    assert logging.root.level == root_level
 
 
 async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: no cover

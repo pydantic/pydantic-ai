@@ -171,8 +171,9 @@ you pass only sets where commands start. The directory must already exist. Use i
 trusted work, and a sandbox for code you don't trust.
 
 Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, so they find
-host tools and configuration and use your locale. No other host variables reach them. Pass other variables
-with `env=`:
+host tools and configuration and use your locale. They don't inherit the rest of the agent process's
+environment: pass what they need with `env=`, never the whole `os.environ`, which would hand your API
+keys to the commands the model runs:
 
 ```python
 from pydantic_ai import Agent
@@ -183,10 +184,6 @@ agent = Agent(
     capabilities=[LocalWorkspace('.', env={'UV_OFFLINE': '1'})],
 )
 ```
-
-!!! warning
-    Don't pass `os.environ` itself: that hands the model's commands every secret in the process,
-    LLM API keys included.
 
 ## Using the workspace in tools
 
@@ -369,14 +366,11 @@ activities.
 - Without an explicit `run_id`, a run inside a workflow or flow gets an ID derived from the Temporal
   execution run ID, the DBOS workflow ID or the Prefect flow run ID, so its workspace state stays
   addressable after a worker restart or flow retry.
-- On DBOS, a run with a workspace runs its tool calls one at a time, with a warning unless you pass
-  `parallel_execution_mode='sequential'`: DBOS numbers steps as they start, so parallel tools making
-  several workspace calls each could not be replayed reliably.
-- A workspace call may run again if a worker dies mid-call. Calls made inside a tool retry with that
-  tool. Calls made in workflow code use the engine's own settings (Temporal `activity_config`, DBOS
-  `mcp_step_config`; Prefect runs them once), and only infrastructure failures are retried there, never
-  workspace or file errors. Timeouts, output-limit failures, read-only refusals and a lost environment are
-  never retried.
+- On DBOS, a run with a workspace runs its tool calls one at a time: DBOS numbers steps as they
+  start, so parallel tools making several workspace calls each could not be replayed reliably.
+- A workspace call may run again if a worker dies mid-call: inside a tool it retries with the tool,
+  and from workflow code it follows the engine's activity or step settings. Workspace and file errors,
+  timeouts, output-limit failures and a lost environment are never retried.
 - On Temporal, a command runs within an activity's `start_to_close_timeout`, 60 seconds by default,
   whatever its own `timeout`. Inside a tool that is the tool's activity; raise it with
   `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. From workflow code it is
@@ -392,6 +386,15 @@ activities.
   runs as an activity or task.
 - Inside a workflow or flow, the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers
   refuse a workspace; use the durability capability instead.
+- On Temporal, `LocalWorkspace` calls run in activities on whichever worker picks them up, so every
+  worker needs the directory at the same absolute path, on storage they share.
+
+!!! warning "Adding a workspace with runs in flight"
+    Adding a workspace to an agent changes what its runs record, so runs started before the change no
+    longer match their history: Temporal replay fails with a nondeterminism error, and DBOS can't
+    recover the workflow. Let in-flight runs finish first, or deploy the change separately: with
+    Temporal worker versioning or a new task queue, or a new DBOS application version. On Prefect,
+    let running flows finish before you deploy.
 
 The engine guides cover the rest, such as matching capabilities across Temporal workers.
 
@@ -475,12 +478,8 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 
 `Workspace.realpath(path)` answers "which file would this path really open?". Code that keeps an agent
 inside a directory needs that answer, because a symlink can make a path that looks inside lead
-outside. For example, with a check that only allows paths under `/app`:
-
-- `/app/data -> /secrets`: `/app/data/key` looks inside, but opens `/secrets/key`.
-- `/app/envlink -> .env`: a rule that denies `.env` by name misses `/app/envlink`.
-- `/app/a/link -> /secrets`: `/app/a/link/../key` normalizes as text to `/app/a/key`, but opens
-  `/key`, because `..` climbs from the link's target.
+outside. For example, with a check that only allows paths under `/app` and a link
+`/app/data -> /secrets`, `/app/data/key` looks inside, but opens `/secrets/key`.
 
 Backends answer it in one of three ways:
 
@@ -489,14 +488,10 @@ Backends answer it in one of three ways:
   gets a shell fallback that follows links with `readlink`, in one command.
 - A backend with neither only gets the path normalized as text. That is exact for storage that
   cannot hold symlinks, such as an object store. Where symlinks can exist, a path check such as the
-  harness `FileSystem`'s `root_dir` then sees only the text, and each example above leads outside.
+  harness `FileSystem`'s `root_dir` then sees only the text, and the example above leads outside.
 
-A `SupportsRealpath` implementation behaves like `os.path.realpath(path, strict=False)`: it follows
-links in the existing components, resolves a relative link target from the link's directory, applies
-`..` after following a link, keeps missing components as written, and returns an absolute, normalized
-path. On a link loop it must not hang: it either raises `OSError` or returns a path inside the
-directory holding the loop. The check and the later file operation are separate calls, so a link
-swapped in between them is not caught; for untrusted code, rely on the sandbox, not on path checks.
+The check and the later file operation are separate calls, so a link swapped in between them is not
+caught; for untrusted code, rely on the sandbox, not on path checks.
 
 A backend for a cloud sandbox has this shape (`sandbox_sdk` stands in for the provider's SDK):
 

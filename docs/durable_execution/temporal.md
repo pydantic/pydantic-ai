@@ -247,6 +247,10 @@ Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, wh
 - Construct every worker's agent with the same workspace capabilities as the workflow's.
 - In a custom [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace], read only `deps` and the [run context fields listed above](#agent-run-context-and-dependencies).
 - Move large files inside a tool: a workflow-side call carries the file in the activity payload, which counts against the [payload size limit](#large-payloads).
+- With `LocalWorkspace`, give every worker the directory at the same absolute path, on shared storage.
+
+Adding a workspace to an agent changes its workflows' history, so drain in-flight workflows first or
+deploy the change with Temporal worker versioning or on a new task queue.
 
 Temporal stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
 Keep secrets in the workspace capability's `env=` or use them inside a tool rather than passing
