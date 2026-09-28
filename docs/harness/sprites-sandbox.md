@@ -72,15 +72,17 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
-
 A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.sprites.dev/working-with-sprites/services/).
 
-## What a timeout stops
+File reads refuse FIFOs rather than waiting for a writer. File writes go through the Sprites filesystem API, which writes through a symlink to its target and creates missing parent directories.
+
+### What a timeout stops
 
 A command timeout starts after the Sprite is ready. The backend closes that command's exec connection and asks Sprites to stop it after one second; it does not delete the Sprite. Stopping is best effort: the command's process group, plain `&` children of a shell included, is not guaranteed to have stopped. If stopping is uncertain, inspect the Sprite or delete it explicitly. `timeout=None` removes the command deadline, not the Sprite's idle pause or transport limits.
 
 A background child that inherits stdout or stderr keeps `run()` waiting until that child exits, because Sprites reports the exit status only after the output stream closes. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
+
+See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 
 ## Reattach later
 
@@ -104,6 +106,8 @@ The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN
 `runtime` only shapes a new Sprite, and an unknown one raises a clear error on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
 
 Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
+
+A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `SPRITE_TOKEN`, not the Sprite, and a later operation opens a new one. A `client=` or `sandbox=` you passed is never closed.
 
 ## Clean up
 
@@ -148,10 +152,10 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder
 
 | Option | What it does |
 | --- | --- |
-| `runtime` | Runtime for a new Sprite. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. A default Sprite runs as non-root `sprite` in `/home/sprite`; use relative paths or set `working_dir=` for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
-| `env` | Environment variables every command gets. Nothing from your machine's environment reaches the Sprite. |
-| `client` | A `sprites.AsyncSpritesClient` to share across runs on one event loop, or to set its base URL or timeout. You close it; `SpritesSandbox` never does. |
+| `client` | A `sprites.AsyncSpritesClient` to share across runs on one event loop, or to set its base URL or timeout. Default: `None`, a client each run opens from `SPRITE_TOKEN` and closes when it ends. You close a client you pass; `SpritesSandbox` never does. |
+| `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the Sprite's own (`/home/sprite`, where commands run as non-root `sprite`); set a project directory, or use relative paths for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. |
 
 Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 
