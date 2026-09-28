@@ -15,6 +15,7 @@ from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
@@ -189,13 +190,14 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen', 'xai'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
+    - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
     - `None`: No unified thinking support.
 
     Default: `None`.
@@ -457,6 +459,26 @@ def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
+def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an xAI Grok model used via Bedrock Converse."""
+    # Grok 4.6 on Converse always reasons: `additionalModelRequestFields.reasoning.effort` takes
+    # `low` (default), `medium`, `high`, or `xhigh`, and there is no value that turns reasoning off.
+    # Structured output (`outputConfig`) is listed as "Not Supported" on the Bedrock model card, so the
+    # upstream Grok profile's `supports_json_schema_output`/`supports_json_object_output` are turned off.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-6.html
+    return merge_profile(
+        _strip_builtin_tools(grok_model_profile(model_name)),
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_thinking_variant='xai',
+            supports_thinking=True,
+            thinking_always_enabled=True,
+            supports_json_schema_output=False,
+            supports_json_object_output=False,
+        ),
+    )
+
+
 # MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
 # these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
 # profile. OpenAI is handled separately because Converse support differs between its model families.
@@ -569,6 +591,7 @@ class BedrockProvider(Provider[BaseClient]):
             # Moonshot AI's Kimi models ship under both provider prefixes on Bedrock.
             'moonshot': bedrock_moonshotai_model_profile,
             'moonshotai': bedrock_moonshotai_model_profile,
+            'xai': bedrock_xai_model_profile,
         }
 
         # Bedrock model IDs are `<provider>.<model-name>-v<n>(:<m>)?`, optionally with a
