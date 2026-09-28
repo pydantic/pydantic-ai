@@ -163,6 +163,32 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get install -y bubblewrap
 
+      # The action fetches the live `refs/pull/<n>/head`, which can move after
+      # the check above ran on HEAD_SHA. This hook rejects any local branch
+      # update to a different commit, so the action fails instead of running
+      # on code the check never saw.
+      - name: Pin PR checkout to the checked commit
+        run: |
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected PR head SHA: $HEAD_SHA"; exit 1; }
+          hook="$(git rev-parse --git-path hooks)/reference-transaction"
+          cat > "$hook" <<EOF
+          #!/bin/sh
+          [ "\$1" = prepared ] || exit 0
+          while read -r old new ref; do
+            case "\$ref" in
+              refs/heads/*)
+                if [ "\$new" != "$HEAD_SHA" ]; then
+                  echo "::error::PR head changed after the @claude comment; comment again to run on the new code." >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          done
+          EOF
+          chmod +x "$hook"
+        env:
+          HEAD_SHA: ${{ needs.get-pr-info.outputs.pr_head_sha }}
+
       - uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
