@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 import types
@@ -11,6 +12,13 @@ from pathlib import Path
 import pytest
 
 from .fake_modal import FakeModal
+
+# The backend refuses to import without the SDK, so the slim test jobs skip these modules.
+collect_ignore = (
+    []
+    if importlib.util.find_spec('modal') is not None
+    else ['test_backend.py', 'test_conformance.py', 'test_modal_live.py', 'test_modal_sandbox.py']
+)
 
 # CI stops the live job after 15 minutes, before a `finally` can terminate what it started.
 # Live tests create sandboxes with these limits so one left behind that way ends on its own.
