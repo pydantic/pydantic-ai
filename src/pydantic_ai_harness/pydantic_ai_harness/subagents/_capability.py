@@ -280,8 +280,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     runs over unchanged files reuse the same agents and `tool_resolver` is not asked again."""
 
     _warned_host_folders: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """Folders on this machine already reported as no longer read, shared with every per-run copy so
-    each is reported once per instance rather than once per run."""
+    """Whether the no-longer-read host folder warning was given, shared with every per-run copy so it
+    is given once per instance rather than once per run."""
 
     _run_toolset: SubAgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """This run's delegate toolset, on a per-run copy only. Built once per run, so every step of the
@@ -423,10 +423,14 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if workspace is None:
             if isinstance(folders, str) and not ctx.workspace.attached:
                 # Convention discovery: a run with no workspace has no project to look in.
-                await self._warn_host_folder_ignored(folders)
+                await self._warn_host_folder_ignored(folders, [await anyio.Path.cwd(), await anyio.Path.home()])
                 return
             require_workspace(ctx.workspace, 'SubAgents')
             workspace = ctx.workspace
+            home = await anyio.Path.home()
+            if isinstance(folders, str) and str(home) != await workspace.working_dir():
+                # Earlier releases also read the home folder, which the run's workspace does not reach.
+                await self._warn_host_folder_ignored(folders, [home])
         definitions = await load_definitions(
             workspace, folders if isinstance(folders, str) else [_folder_path(folder) for folder in folders]
         )
@@ -435,44 +439,23 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         self._build_roster(self._disk_agents(definitions))
         self._run_toolset = self._make_toolset()
 
-    async def _warn_host_folder_ignored(self, name: str) -> None:
-        """Warn when this machine has a convention folder earlier releases read without a workspace.
-
-        Those releases read it under the process's working directory, then under the home
-        directory, so a run without a workspace would otherwise lose those delegates silently.
-        """
-        cwd, home = await anyio.Path.cwd(), await anyio.Path.home()
-        project = home_folder = None
-        for root in (cwd, home):
-            folder = (root / '.agents' if await (root / '.agents').is_dir() else root / '.claude') / name
-            if not await folder.is_dir():
-                continue
-            if root == cwd:
-                project = folder
-            else:
-                home_folder = folder
-        found = [str(folder) for folder in (project, home_folder) if folder is not None]
-        if not found or set(found) <= self._warned_host_folders:
+    async def _warn_host_folder_ignored(self, name: str, roots: Sequence[anyio.Path]) -> None:
+        """Earlier releases read this folder under `roots` on this machine; say so once rather than drop it silently."""
+        if self._warned_host_folders:
             return
-        self._warned_host_folders.update(found)
-        if home_folder is None:
-            fix = (
-                "add `LocalWorkspace('.')` to the agent's capabilities, or pass "
-                "`SubAgents(workspace=LocalWorkspaceBackend('.'))`"
-            )
-        elif project is None:
-            fix = 'pass `SubAgents(workspace=LocalWorkspaceBackend(Path.home()))`'
-        else:
-            # One workspace reaches both: a local one reads absolute paths anywhere on this machine.
-            fix = f"add `LocalWorkspace('.')` to the agent's capabilities and pass `SubAgents(agent_folders={found!r})`"
-        folders = ' and '.join(f'`{folder}`' for folder in found)
-        warnings.warn(
-            f'`SubAgents` did not load the agent definitions in {folders} on this machine: definitions '
-            f"are now read through the run's workspace, and this run has none. To keep loading them, {fix}; "
-            'pass `SubAgents(agent_folders=None)` to turn discovery off and silence this warning.',
-            category=HarnessDeprecationWarning,
-            stacklevel=2,
-        )
+        for root in roots:
+            folder = (root / '.agents' if await (root / '.agents').is_dir() else root / '.claude') / name
+            if await folder.is_dir():
+                self._warned_host_folders.add(str(folder))
+                warnings.warn(
+                    f'`SubAgents` did not load the agent definitions in `{folder}`: definitions are now read '
+                    'through a workspace only. Pass '
+                    f'`SubAgents(workspace=LocalWorkspaceBackend({str(root)!r}))` to keep loading them, or '
+                    '`agent_folders=None` to turn discovery off.',
+                    category=HarnessDeprecationWarning,
+                    stacklevel=2,
+                )
+                return
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Run the parent agent, then drop this run's delegation counts so they don't accumulate."""

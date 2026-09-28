@@ -277,6 +277,9 @@ navigation:
           - page: "E2B Sandbox"
             path: "harness/e2b-sandbox.md"
             slug: "harness/e2b-sandbox"
+          - page: "Durable Execution"
+            path: "harness/durable-execution.md"
+            slug: "harness/durable-execution"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:

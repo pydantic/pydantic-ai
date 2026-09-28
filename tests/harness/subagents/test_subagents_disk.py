@@ -335,8 +335,8 @@ class TestWorkspaceDiscovery:
         assert seen[0] == (None, [])
 
     async def test_no_workspace_skips_convention_discovery(self) -> None:
-        # Neither the home root nor the host's cwd stands in for a missing workspace, but the folders
-        # earlier releases read are reported once per instance, not dropped without a word.
+        # Neither the home root nor the host's cwd stands in for a missing workspace, but a folder
+        # earlier releases read is reported once per instance, not dropped without a word.
         _write_agent(Path.home() / '.agents' / 'agents', 'reviewer.md', 'Review.')
         _write_agent(Path.cwd() / '.agents' / 'agents', 'planner.md', 'Plan.')
         cap: SubAgents[object] = SubAgents()
@@ -344,36 +344,33 @@ class TestWorkspaceDiscovery:
             assert await _listing(cap, None) is None
             assert await _listing(cap, None) is None
         assert len(record) == 1
-        message = str(record[0].message)
-        assert str(Path.cwd() / '.agents' / 'agents') in message
-        assert str(Path.home() / '.agents' / 'agents') in message
-
-        # The fix the warning names brings both folders back, the project's first.
-        folders = [str(Path.cwd() / '.agents' / 'agents'), str(Path.home() / '.agents' / 'agents')]
-        assert (
-            f"add `LocalWorkspace('.')` to the agent's capabilities and pass `SubAgents(agent_folders={folders!r})`"
-            in (message)
-        )
-        listing = await _listing(SubAgents(agent_folders=folders), LocalWorkspaceBackend('.'))
-        assert listing is not None and '- planner' in listing and '- reviewer' in listing
+        assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.cwd())!r}))`' in str(record[0].message)
 
     async def test_no_workspace_warns_about_the_home_folder(self) -> None:
         _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions') as record:
             assert await _listing(SubAgents(), None) is None
-        message = str(record[0].message)
-        assert f'`{Path.home() / ".agents" / "agents"}`' in message
-        assert 'pass `SubAgents(workspace=LocalWorkspaceBackend(Path.home()))`' in message
+        assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.home())!r}))`' in str(record[0].message)
 
         # The fix the warning names reads the home folder with the default `agent_folders`.
         listing = await _listing(SubAgents(workspace=LocalWorkspaceBackend(Path.home())), None)
+        assert listing is not None and '- planner' in listing
+
+    async def test_workspace_run_warns_about_the_home_folder(self, tmp_path: Path) -> None:
+        # The run's workspace holds the project, not this machine's home folder.
+        _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
+        with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions'):
+            assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
+
+        # A workspace at the home directory reads the folder, so there is nothing to report.
+        listing = await _listing(SubAgents(), LocalWorkspaceBackend(Path.home()))
         assert listing is not None and '- planner' in listing
 
     async def test_no_workspace_warns_about_the_claude_fallback(self) -> None:
         _write_agent(Path.cwd() / '.claude' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'\.claude') as record:
             assert await _listing(SubAgents(), None) is None
-        assert "SubAgents(workspace=LocalWorkspaceBackend('.'))" in str(record[0].message)
+        assert f'LocalWorkspaceBackend({str(Path.cwd())!r})' in str(record[0].message)
 
     async def test_no_workspace_and_no_host_folder_is_silent(self) -> None:
         # Nothing was there to lose. `filterwarnings = error` turns any warning into a failure.

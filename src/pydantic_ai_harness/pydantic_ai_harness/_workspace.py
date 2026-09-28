@@ -35,20 +35,6 @@ def workspace_path(path: Path) -> str:
     return path.as_posix()
 
 
-def workspace_relpath(path: str, start: str) -> str:
-    """`posixpath.relpath` for absolute workspace paths, computed from their components alone.
-
-    `posixpath.relpath` calls `os.path.abspath`, which reads this process's working directory: a
-    blocking call on the event loop, and a host path that says nothing about the workspace's.
-    """
-    target = [part for part in posixpath.normpath(path).split('/') if part]
-    base = [part for part in posixpath.normpath(start).split('/') if part]
-    common = 0
-    while common < min(len(target), len(base)) and target[common] == base[common]:
-        common += 1
-    return '/'.join(['..'] * (len(base) - common) + target[common:]) or '.'
-
-
 def raise_tool_failure(error: WorkspaceError) -> NoReturn:
     """Report a deliberate workspace failure to the model as a failed tool call.
 
@@ -109,7 +95,8 @@ def require_workspace(workspace: Workspace, owner: str) -> None:
     if not workspace.attached:
         raise UserError(
             f'`{owner}` needs a workspace, but none is attached to this run. '
-            "Add `LocalWorkspace('.')` (this machine) or a sandbox capability such as `ModalSandbox()` "
+            "Add `LocalWorkspace('.')` (this machine; `from pydantic_ai.capabilities import LocalWorkspace`, "
+            'or `- LocalWorkspace: .` in an agent spec) or a sandbox capability such as `ModalSandbox()` '
             "to the agent's capabilities, or pass `workspace=` to the run. "
             'See https://pydantic.dev/docs/ai/workspace/'
         )
@@ -156,8 +143,8 @@ async def metadata_dir(workspace: Workspace, name: str) -> str:
     `.pydantic-ai-harness` gets a `.gitignore` holding `*` whenever it has none, including a
     directory that already existed, so none of it shows up in `git status`. Only filesystem operations are used, so a workspace that
     cannot run commands works too. A path in the way raises `WorkspaceError`: it is no tool
-    argument's fault, so a retry cannot fix it. So does a symlink in place of either directory
-    or the `.gitignore`, before anything is created: it could lead outside the working directory.
+    argument's fault, so a retry cannot fix it. So does a symlink in place of either directory, or a
+    dangling `.gitignore`: it could lead outside the working directory.
     """
     working_dir = await workspace.working_dir()
     root = posixpath.join(working_dir, METADATA_DIR)
@@ -166,12 +153,12 @@ async def metadata_dir(workspace: Workspace, name: str) -> str:
     real_root = posixpath.join(await workspace.realpath(working_dir), METADATA_DIR)
     if await workspace.realpath(directory) != posixpath.join(real_root, name):
         raise WorkspaceError(f'`{METADATA_DIR}/{name}` in the workspace is a symlink, so it is not used.')
-    # A dangling `.gitignore` symlink reads as missing, and writing it would create its target.
-    if await workspace.realpath(gitignore) != posixpath.join(real_root, '.gitignore'):
-        raise WorkspaceError(f'`{METADATA_DIR}/.gitignore` in the workspace is a symlink, so it is not used.')
     try:
         await workspace.make_dir(directory)
         if not await workspace.exists(gitignore):
+            # A dangling symlink reads as missing; writing it would create its target.
+            if await workspace.realpath(gitignore) != posixpath.join(real_root, '.gitignore'):
+                raise WorkspaceError(f'`{METADATA_DIR}/.gitignore` in the workspace is a symlink, so it is not used.')
             await workspace.write_text(gitignore, '*\n')
     except WorkspaceError:
         raise

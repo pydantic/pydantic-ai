@@ -66,17 +66,20 @@ def test_coder_explains_sandbox_creation_timing() -> None:
         assert 'sandbox' in text.lower()
 
 
-def test_durable_file_veto_and_shell_run_state_guidance() -> None:
-    for name in ('coder', 'filesystem'):
-        for page in (f'docs/harness/{name}.md', f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md'):
+def test_durable_guidance_lives_on_one_page() -> None:
+    durable = (_ROOT / 'docs/harness/durable-execution.md').read_text()
+    assert 'FileChangeRequestEvent' in durable
+    assert '.pydantic-ai-harness/shell/run-state/' in durable
+    for name in ('coder', 'filesystem', 'shell'):
+        for page, link in (
+            (f'docs/harness/{name}.md', '(durable-execution.md)'),
+            (f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md', '/harness/durable-execution/)'),
+        ):
             text = (_ROOT / page).read_text()
-            assert 'FileChangeRequestEvent' in text
+            section = text.split('## Durable execution\n', 1)[1].split('\n## ', 1)[0]
+            assert link in section
             assert 'cannot refuse a change' not in text
-    for page in ('docs/harness/shell.md', 'src/pydantic_ai_harness/pydantic_ai_harness/shell/README.md'):
-        text = (_ROOT / page).read_text()
-        assert '.pydantic-ai-harness/shell/run-state/' in text
-        assert 'fails under Prefect' not in text
-    assert 'class FileWorkflow(PydanticAIWorkflow)' in (_ROOT / 'docs/harness/filesystem.md').read_text()
+            assert 'fails under Prefect' not in text
 
 
 def test_remote_search_and_shell_output_guidance() -> None:

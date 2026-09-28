@@ -741,6 +741,13 @@ class AgentRunResult(Generic[OutputDataT]):
         workspace = self.__dict__.get('_workspace')
         return workspace if workspace is not None else no_workspace()
 
+    def __getstate__(self) -> dict[str, Any]:
+        # DBOS pickles workflow results. The live workspace can hold secrets (`LocalWorkspace(env=)`) and
+        # means nothing in another process; its ref stays in the messages' `workspace_ref`.
+        state = self.__dict__.copy()
+        state.pop('_workspace', None)
+        return state
+
     @model_validator(mode='before')
     @classmethod
     def _validate_serialized(cls, value: Any) -> Any:

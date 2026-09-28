@@ -45,8 +45,6 @@ Every store implements the `MediaStore` protocol -- `put`, `get`, `exists`, `pub
 
 `S3MediaStore` uses path-style URLs plus handrolled SigV4, so it is compatible with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. `SqliteMediaStore` also accepts `connection=` instead of `database=` to share a `sqlite3.Connection`.
 
-`DiskMediaStore` and `SqliteMediaStore` are not routed through the run's workspace: `DiskMediaStore`'s `directory` and `SqliteMediaStore`'s `database=`, when given, are paths on the machine running the agent, even when the agent works in a sandbox. This is expected to change in a future release.
-
 `MongoMediaStore` needs the `mongodb` extra (which installs `pymongo>=4.17.0`). Pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client -- call `await store.aclose()` to release it); `database=` is always required. Each blob is stored as sha256-addressed chunks in a `media_chunks` collection, with a `media` manifest document per blob (`_id = <digest>`). The chunking bounds each BSON document, so a blob larger than MongoDB's 16 MiB document cap still stores and reads back. It does not bound memory: `put` takes the whole payload as `bytes` and `get` reassembles every chunk into one `bytearray`, so a blob has to fit in process memory in both directions -- there is no streaming API. The manifest holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. Manual chunking is used rather than the GridFS driver on purpose: the digest is the manifest `_id`, so identical bytes deduplicate (GridFS keys files by `ObjectId` and does no dedup), and the plain-collection surface stays fully testable in-memory.
 
 ```bash
