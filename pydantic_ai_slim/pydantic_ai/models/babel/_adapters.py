@@ -1,9 +1,10 @@
 """The boundary between Pydantic AI's message model and babel's canonical IR.
 
-`messages_to_ir` renders a message history as a babel IR request, `ir_to_model_response` reads a
-decoded IR response back into a `ModelResponse`, and `fold_stream_emits` routes babel's stream emits
-into the parts manager. Everything below the IR, the actual provider wire mapping, is babel's
-compiled transform; this module only crosses the boundary in both directions.
+`messages_to_ir` renders a message history as a babel IR request, `reconcile_ir` fits that request
+to a target's capability facts, `ir_to_model_response` reads a decoded IR response back into a
+`ModelResponse`, and `fold_stream_emits` routes babel's stream emits into the parts manager.
+Everything below the IR, the actual provider wire mapping, is babel's compiled transform; this
+module only crosses the boundary in both directions.
 """
 
 from __future__ import annotations as _annotations
@@ -16,8 +17,11 @@ from typing import Any, Literal, TypeAlias, TypeVar, cast
 from urllib.parse import urlparse
 
 from llm_transform import ir_build
+from llm_transform.capabilities import Capabilities
+from llm_transform.dsl.rt import TransformError
 from llm_transform.ir_types import IRRequestDict, MessageDict, PartDict, TextPartDict
-from llm_transform.registry import canonical_json
+from llm_transform.reconcile import caps_as_input
+from llm_transform.registry import canonical_json, reconcile
 
 from ... import _utils
 from ..._parts_manager import ModelResponsePartsManager
@@ -73,9 +77,14 @@ _MEDIA_KIND_PREFIXES: tuple[tuple[str, _MediaKind], ...] = (
     ('video/', 'video'),
 )
 
-# Anthropic and Bedrock report the uncached input tokens apart from the cache reads and writes;
-# the other wires (and `RequestUsage.input_tokens`) report the inclusive total.
-_DISJOINT_INPUT_TOKEN_FORMATS: frozenset[BabelFormat] = frozenset({'anthropic-messages', 'bedrock-converse'})
+# The `reconcile` failure codes for media a target cannot take, keyed to the content kind, so the
+# refusal is raised the way the native models raise it.
+_UNSUPPORTED_MEDIA: dict[str, str] = {
+    'reconcile_image_unsupported': 'Image',
+    'reconcile_audio_unsupported': 'Audio',
+    'reconcile_document_unsupported': 'Document',
+    'reconcile_video_unsupported': 'Video',
+}
 
 # A reasoning part's replay signature has no cross-provider meaning, so babel carries it in the
 # source provider's `provider_ext` bucket. These tables map a `ThinkingPart.provider_name` to that
@@ -158,11 +167,53 @@ def messages_to_ir(
     return ir_build.request(model=model_name, messages=ir_messages, system=system or None)
 
 
+def uploaded_files(messages: Sequence[ModelMessage]) -> Iterator[UploadedFile]:
+    """Every `UploadedFile` in the user prompts and tool returns of `messages`.
+
+    A model validates them before mapping, as the native models do, since a file uploaded to one
+    provider cannot be referenced from another.
+    """
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                yield from (item for item in part.content if isinstance(item, UploadedFile))
+            elif isinstance(part, ToolReturnPart):
+                yield from (item for item in part.files if isinstance(item, UploadedFile))
+
+
+def reconcile_ir(ir: IRRequestDict, caps: Capabilities) -> IRRequestDict:
+    """Fit a babel IR request to a target's capability facts.
+
+    babel's `reconcile` drops what the target cannot take, pads a conversation the target rejects
+    and leaves the target encoder its fitting hints (`provider_ext.target`), all read from `caps`,
+    so a fact a model profile states, such as the block a tool result takes or the role a system
+    prompt takes, reaches the wire as data rather than as a branch in the model.
+
+    Raises:
+        NotImplementedError: For media the target cannot take, as the native models raise it.
+        UserError: For anything else the target rejects.
+    """
+    try:
+        return cast(IRRequestDict, reconcile(ir, caps_as_input(caps)))
+    except TransformError as e:
+        if (kind := _UNSUPPORTED_MEDIA.get(e.code)) is not None:
+            raise NotImplementedError(f'{kind} content is not supported by this model') from e
+        raise UserError(f'The request cannot be sent to this model: {e}') from e
+
+
 def _request_to_ir(message: ModelRequest, system: list[TextPartDict]) -> list[MessageDict]:
+    """One request's parts as IR messages: the tool results first, then the user content.
+
+    Every wire babel targets wants a tool result directly after the call it answers, so the results
+    lead whatever else the request carries, and media a tool returned trails its result as a user
+    message, the split the native models make for wires whose tool results only take text. Only a
+    failed call takes the wire's error channel: a denial or an interruption is an ordinary result
+    whose content says what happened, as the native models send them.
+    """
     user_parts: list[PartDict] = []
     tool_parts: list[PartDict] = []
-    # Media a tool returned trails the tool result as a user message, the split native models make
-    # for wires whose tool results only take text.
     tool_media_parts: list[PartDict] = []
     for part in message.parts:
         if isinstance(part, SystemPromptPart):
@@ -177,12 +228,17 @@ def _request_to_ir(message: ModelRequest, system: list[TextPartDict]) -> list[Me
                     else:
                         user_parts.append(_user_content_to_ir(item))
         elif isinstance(part, ToolReturnPart):
-            text, files = part.model_response_str_and_user_content()
+            is_error = part.outcome == 'failed'
+            text, files = part.model_response_str_and_user_content(wrap_if_error=False)
             if files:
-                tool_parts.append(ir_build.tool_result(text, id=part.tool_call_id, name=part.tool_name))
+                tool_parts.append(
+                    ir_build.tool_result(text, id=part.tool_call_id, name=part.tool_name, is_error=is_error)
+                )
                 tool_media_parts.extend(_user_content_to_ir(file) for file in files if not isinstance(file, CachePoint))
             else:
-                tool_parts.append(ir_build.tool_result(part.content, id=part.tool_call_id, name=part.tool_name))
+                tool_parts.append(
+                    ir_build.tool_result(part.content, id=part.tool_call_id, name=part.tool_name, is_error=is_error)
+                )
         elif isinstance(part, RetryPromptPart):
             if part.tool_name is None:
                 user_parts.append(ir_build.text(part.model_response()))
@@ -341,8 +397,8 @@ def ir_to_model_response(
         fmt: The babel format the response was decoded from.
         provider_name: The provider the response came from, recorded on the response and its parts.
         provider_url: The provider's base URL.
-        usage: The request usage. Defaults to the IR's token counts, with Anthropic's and Bedrock's
-            cache reads and writes folded into `input_tokens` to match `RequestUsage`'s inclusive counts.
+        usage: The request usage. Defaults to the IR's token counts, which babel reports the way
+            `RequestUsage` counts them: cache reads and writes are buckets inside `input_tokens`.
         model_name: The model name to record when the response body carries none, as Bedrock's does not.
         provider_response_id: The response id when it is not in the body, as Bedrock's is not.
         provider_details: The provider details to record. The babel models read them from the raw
@@ -405,7 +461,7 @@ def ir_to_model_response(
         finish_reason = _FINISH_REASON.get(candidate.get('stop_reason', 'other')) if candidate else None
     return ModelResponse(
         parts=parts,
-        usage=usage if usage is not None else _ir_usage(ir, fmt),
+        usage=usage if usage is not None else _ir_usage(ir),
         model_name=ir.get('model') or model_name,
         provider_name=provider_name,
         provider_url=provider_url,
@@ -450,17 +506,18 @@ def _tool_args_json(value: Any) -> Any:
     return canonical_json(value) if isinstance(value, dict | list) else value
 
 
-def _ir_usage(ir: IR, fmt: BabelFormat) -> RequestUsage:
+def _ir_usage(ir: IR) -> RequestUsage:
+    """The IR's token counts as a `RequestUsage`.
+
+    babel's `Usage` is the model `RequestUsage` uses: `input_tokens` is the inclusive total and the
+    cache reads and writes are buckets inside it, whatever the provider's own accounting, so the
+    fields copy across.
+    """
     usage: dict[str, Any] = ir.get('usage') or {}
-    cache_read: int = usage.get('cache_read_tokens') or 0
-    cache_write: int = usage.get('cache_write_tokens') or 0
-    input_tokens: int = usage.get('input_tokens') or 0
-    if fmt in _DISJOINT_INPUT_TOKEN_FORMATS:
-        input_tokens += cache_read + cache_write
     return RequestUsage(
-        input_tokens=input_tokens,
-        cache_read_tokens=cache_read,
-        cache_write_tokens=cache_write,
+        input_tokens=usage.get('input_tokens') or 0,
+        cache_read_tokens=usage.get('cache_read_tokens') or 0,
+        cache_write_tokens=usage.get('cache_write_tokens') or 0,
         output_tokens=usage.get('output_tokens') or 0,
     )
 
@@ -595,10 +652,11 @@ def gemini_rest_to_sdk(node: Any) -> Any:
     """Convert a babel Gemini REST-wire node to the `google.genai` SDK's snake_case dict shape.
 
     Only structural keys are converted; tool-call `args`, `response` payloads and JSON schemas are
-    user data and stay untouched. A scalar `functionResponse.response` is wrapped in
-    `{'return_value': ...}`, the object the SDK requires, as the native model does.
+    user data and stay untouched. babel renders a `functionResponse.response` as the object Google
+    documents (`{'output': ...}` around a scalar, `{'error': ...}` for a failed call), which is also
+    the object the SDK requires.
     """
-    return _wrap_scalar_function_responses(_rekey(node, _camel_to_snake))
+    return _rekey(node, _camel_to_snake)
 
 
 _GEMINI_OPAQUE_KEYS = frozenset({'args', 'response', 'responseSchema', 'response_schema'})
@@ -611,18 +669,6 @@ def _rekey(value: Any, key_fn: Callable[[str], str]) -> Any:
         }
     if isinstance(value, list):
         return [_rekey(item, key_fn) for item in cast(list[Any], value)]
-    return value
-
-
-def _wrap_scalar_function_responses(value: Any) -> Any:
-    if _utils.is_str_dict(value):
-        function_response = value.get('function_response')
-        if _utils.is_str_dict(function_response) and not isinstance(function_response.get('response'), dict):
-            function_response = {**function_response, 'response': {'return_value': function_response.get('response')}}
-            value = {**value, 'function_response': function_response}
-        return {key: _wrap_scalar_function_responses(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_wrap_scalar_function_responses(item) for item in cast(list[Any], value)]
     return value
 
 

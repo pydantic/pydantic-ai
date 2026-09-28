@@ -7,9 +7,17 @@ import httpx2
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, AudioUrl, ModelRequest, TextPart, ToolCallPart
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
-from pydantic_ai.messages import FinalResultEvent, PartDeltaEvent, PartEndEvent, PartStartEvent
+from pydantic_ai import Agent, AudioUrl, BinaryContent, ModelRequest, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import (
+    FinalResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    ToolReturnPart,
+    UploadedFile,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
@@ -243,6 +251,62 @@ async def test_single_system_message_profile(allow_model_requests: None):
     single = Agent(model, system_prompt='only')
     await single.run('hello')
     assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'][0] == {'role': 'system', 'content': 'only'}
+
+
+async def test_single_system_message_profile_merges_under_the_configured_role(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock([completion({'content': 'hi'}, 'stop')] * 2)
+    developer = OpenAIModelProfile(
+        openai_system_prompt_role='developer', openai_chat_supports_multiple_system_messages=False
+    )
+    await Agent(make_model(mock_client, profile=developer), system_prompt=['first', 'second']).run('hello')
+    # Prompts cast as `user` cannot be told from the user's own turn, so the native model leaves them alone.
+    user = OpenAIModelProfile(openai_system_prompt_role='user', openai_chat_supports_multiple_system_messages=False)
+    await Agent(make_model(mock_client, profile=user), system_prompt=['first', 'second']).run('hello')
+    assert [kwargs['messages'][:3] for kwargs in get_mock_chat_completion_kwargs(mock_client)] == snapshot(
+        [
+            [{'role': 'developer', 'content': 'first\n\nsecond'}, {'role': 'user', 'content': 'hello'}],
+            [
+                {'role': 'user', 'content': 'first'},
+                {'role': 'user', 'content': 'second'},
+                {'role': 'user', 'content': 'hello'},
+            ],
+        ]
+    )
+
+
+async def test_tool_results_are_the_strings_the_wire_takes(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock([completion({'content': 'hi'}, 'stop')] * 2)
+    model = make_model(mock_client)
+    history = [
+        ModelRequest.user_text_prompt('hi'),
+        ModelResponse(parts=[ToolCallPart(tool_name='f', args={}, tool_call_id='c1')]),
+    ]
+    # A structured result is serialized, as the native model serializes it.
+    structured = ModelRequest(parts=[ToolReturnPart(tool_name='f', content={'temp': 18}, tool_call_id='c1')])
+    await model.request([*history, structured], None, ModelRequestParameters())
+    # The wire has no error channel, so a failed result is sent as the `{"error": ...}` object the native model sends.
+    failed = ModelRequest(parts=[ToolReturnPart(tool_name='f', content='boom', tool_call_id='c1', outcome='failed')])
+    await model.request([*history, failed], None, ModelRequestParameters())
+    assert [kwargs['messages'][-1] for kwargs in get_mock_chat_completion_kwargs(mock_client)] == snapshot(
+        [
+            {'role': 'tool', 'tool_call_id': 'c1', 'content': '{"temp":18}'},
+            {'role': 'tool', 'tool_call_id': 'c1', 'content': '{"error":"boom"}'},
+        ]
+    )
+
+
+async def test_video_is_not_supported(allow_model_requests: None):
+    model = make_model(MockOpenAI.create_mock(completion({'content': 'hi'}, 'stop')))
+    request = ModelRequest(parts=[UserPromptPart(content=[BinaryContent(data=b'mp4', media_type='video/mp4')])])
+    with pytest.raises(NotImplementedError, match='Video content is not supported by this model'):
+        await model.request([request], None, ModelRequestParameters())
+
+
+async def test_uploaded_file_from_another_provider_is_rejected(allow_model_requests: None):
+    model = make_model(MockOpenAI.create_mock(completion({'content': 'hi'}, 'stop')))
+    request = ModelRequest(parts=[UserPromptPart(content=[UploadedFile(file_id='file-1', provider_name='anthropic')])])
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with BabelOpenAIChatModel"):
+        await model.request([request], None, ModelRequestParameters())
 
 
 async def test_audio_url_is_downloaded(allow_model_requests: None, mocker: Any):

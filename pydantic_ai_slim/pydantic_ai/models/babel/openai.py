@@ -2,11 +2,14 @@
 
 from __future__ import annotations as _annotations
 
+import dataclasses
 from collections.abc import AsyncIterator, Sequence
+from functools import cached_property
 from typing import Any, cast
 
+from llm_transform.capabilities import Capabilities, capabilities_for
 from llm_transform.media import MEDIA_URL_OK
-from llm_transform.registry import decode_response, encode, stream_step
+from llm_transform.registry import canonical_json, decode_response, encode, stream_step
 from openai.types import chat
 from openai.types.chat import chat_completion_chunk
 from pydantic import ValidationError
@@ -14,6 +17,7 @@ from pydantic import ValidationError
 from ... import _utils
 from ...exceptions import ModelAPIError, UnexpectedModelBehavior
 from ...messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
+from ...profiles import ModelProfile, merge_profile
 from ...profiles.openai import OpenAIModelProfile
 from ...settings import ModelSettings
 from .. import ModelRequestParameters
@@ -21,8 +25,16 @@ from ..openai import (
     OpenAIChatModel,
     OpenAIStreamedResponse,
     _map_api_errors,  # pyright: ignore[reportPrivateUsage]
+    _merge_leading_system_messages,  # pyright: ignore[reportPrivateUsage]
 )
-from ._adapters import download_url_media, fold_stream_emits, ir_to_model_response, messages_to_ir
+from ._adapters import (
+    download_url_media,
+    fold_stream_emits,
+    ir_to_model_response,
+    messages_to_ir,
+    reconcile_ir,
+    uploaded_files,
+)
 
 __all__ = ('BabelOpenAIChatModel', 'BabelOpenAIStreamedResponse')
 
@@ -117,14 +129,27 @@ class BabelOpenAIChatModel(OpenAIChatModel):
 
     Construct it exactly like `OpenAIChatModel`. The provider, HTTP client, settings and model
     profile behave as they do there; only the translation between the message history and the
-    Chat Completions wire is babel's. The profile's `openai_system_prompt_role` and
-    `openai_chat_supports_multiple_system_messages` are still applied on top of the mapping, and
-    the response is validated, its refusal, logprobs, moderation and service tier recorded, as the
-    native model does.
+    Chat Completions wire is babel's. The profile's `openai_system_prompt_role` is the role every
+    system message is emitted under, `openai_chat_supports_multiple_system_messages` still merges
+    the leading ones into one, and the response is validated, its refusal, logprobs, moderation and
+    service tier recorded, as the native model does. A tool return is sent as the string the wire
+    takes, a structured one serialized, and a failed one as `{"error": ...}`, the shapes the native
+    model sends, since the wire has no error channel.
 
     Audio and document URLs are downloaded and inlined as base64, as the Chat Completions API
-    requires; image URLs are sent as URLs unless `force_download` is set.
+    requires; image URLs are sent as URLs unless `force_download` is set. Thinking parts are not
+    replayed, as babel's `openai-chat` codec has no reasoning field yet, so the profile's
+    `openai_chat_send_back_thinking_parts` has no effect.
     """
+
+    @cached_property
+    def profile(self) -> OpenAIModelProfile:
+        # babel carries one request-level system prompt, so a mid-conversation `SystemPromptPart` is
+        # delivered the way `Model.prepare_messages` delivers it to any wire with no inline system
+        # role: as `<system>`-tagged user text, in place.
+        return cast(
+            OpenAIModelProfile, merge_profile(super().profile, ModelProfile(supports_inline_system_prompts=False))
+        )
 
     @property
     def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
@@ -137,6 +162,8 @@ class BabelOpenAIChatModel(OpenAIChatModel):
         *,
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
+        for file in uploaded_files(messages):
+            self._validate_uploaded_file_provider(file)
         messages = await download_url_media(messages, MEDIA_URL_OK['openai-chat'])
         ir = messages_to_ir(
             messages,
@@ -144,8 +171,14 @@ class BabelOpenAIChatModel(OpenAIChatModel):
             provider_name=self._provider.name,
             instruction_parts=self._get_instruction_parts(messages, model_request_parameters),
         )
-        openai_messages = _apply_system_prompt_profile(self.profile, encode('openai-chat', ir)['messages'])
-        return cast(list[chat.ChatCompletionMessageParam], openai_messages)
+        ir = reconcile_ir(ir, _capabilities(self.profile))
+        openai_messages = cast(
+            list[chat.ChatCompletionMessageParam], _tool_results_as_strings(encode('openai-chat', ir)['messages'])
+        )
+        if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
+            # The messages already carry the profile's role, so the native merge finds them by it.
+            openai_messages = _merge_leading_system_messages(openai_messages, _system_prompt_role(self.profile))
+        return openai_messages
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         # The SDK does not validate the completion it returns, and a plain-text body arrives as a string.
@@ -198,22 +231,33 @@ class BabelOpenAIChatModel(OpenAIChatModel):
         )
 
 
-def _apply_system_prompt_profile(profile: OpenAIModelProfile, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Apply the model profile's system-prompt facts to encoded messages.
+def _capabilities(profile: OpenAIModelProfile) -> Capabilities:
+    """The Chat Completions facts babel ships, with the two the profile and the wire add.
 
-    Some models take instructions under the `developer` or `user` role rather than `system`, and
-    some OpenAI-compatible APIs accept a single system message, in which case the leading system
-    messages are merged into one.
+    The profile's system-prompt role rides the reconcile hint the encoder reads, so every system
+    message is emitted under it, whichever spelling babel's own tables would pick for the model.
+    The wire has no status on a tool result, so `reconcile` folds a failed one into its content as
+    `{"error": ...}`, the shape `OpenAIChatModel` sends.
     """
-    role = profile.get('openai_system_prompt_role') or 'system'
-    messages = [{**message, 'role': role} if message.get('role') == 'system' else message for message in messages]
-    if profile.get('openai_chat_supports_multiple_system_messages', True) or role != 'system':
-        return messages
-    leading: list[str] = []
-    rest = 0
-    while rest < len(messages) and messages[rest].get('role') == 'system':
-        leading.append(messages[rest]['content'])
-        rest += 1
-    if len(leading) <= 1:
-        return messages
-    return [{'role': 'system', 'content': '\n\n'.join(leading)}, *messages[rest:]]
+    return dataclasses.replace(
+        capabilities_for('openai-chat'), system_role=_system_prompt_role(profile), tool_result_status=False
+    )
+
+
+def _system_prompt_role(profile: OpenAIModelProfile) -> str:
+    return profile.get('openai_system_prompt_role') or 'system'
+
+
+def _tool_results_as_strings(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Serialize a structured tool result, since a Chat Completions tool message takes its `content` as a string.
+
+    babel's `openai-chat` encoder carries the IR content as it is, so a dict or list a tool returned,
+    and the `{"error": ...}` a failed result was folded into, are serialized here the way the native
+    model serializes them.
+    """
+    return [
+        {**message, 'content': canonical_json(message['content'])}
+        if message.get('role') == 'tool' and not isinstance(message.get('content'), str)
+        else message
+        for message in messages
+    ]

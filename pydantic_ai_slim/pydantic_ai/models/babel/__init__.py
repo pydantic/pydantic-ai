@@ -27,6 +27,6 @@ except ImportError as _import_error:
         'you can use the `babel` optional group — `pip install "pydantic-ai-slim[babel]"`'
     ) from _import_error
 
-from ._adapters import fold_stream_emits, ir_to_model_response, messages_to_ir
+from ._adapters import fold_stream_emits, ir_to_model_response, messages_to_ir, reconcile_ir
 
-__all__ = ('fold_stream_emits', 'ir_to_model_response', 'messages_to_ir')
+__all__ = ('fold_stream_emits', 'ir_to_model_response', 'messages_to_ir', 'reconcile_ir')

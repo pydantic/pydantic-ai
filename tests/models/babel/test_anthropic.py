@@ -9,10 +9,21 @@ import httpx2
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart
-from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import FinalResultEvent, InstructionPart, PartDeltaEvent, PartEndEvent, PartStartEvent
+from pydantic_ai import Agent, BinaryContent, ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart
+from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.messages import (
+    FinalResultEvent,
+    InstructionPart,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    SystemPromptPart,
+    ToolReturnPart,
+    UploadedFile,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import CodeExecutionTool
 
 from ...conftest import try_import
 from ..mock_async_stream import MockAsyncStream
@@ -361,3 +372,75 @@ async def test_stream_api_error_is_mapped(allow_model_requests: None):
             _ = [event async for event in response]
     assert exc_info.value.status_code == 529
     assert exc_info.value.body == {'error': 'overloaded'}
+
+
+def tool_result_history(content: Any, outcome: str = 'success') -> list[ModelRequest | ModelResponse]:
+    return [
+        ModelRequest.user_text_prompt('run it'),
+        ModelResponse(parts=[ToolCallPart(tool_name='f', args={}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='f', content=content, tool_call_id='c1', outcome=outcome)]),  # pyright: ignore[reportArgumentType]
+    ]
+
+
+async def test_code_execution_files_reach_the_container(allow_model_requests: None):
+    client = MockAnthropic.as_client([message([{'type': 'text', 'text': 'ok'}])])
+    tool = CodeExecutionTool(files=[UploadedFile('file_1', 'anthropic'), UploadedFile('file_2', 'openai')])
+    await make_model(client).request(tool_result_history('done'), None, ModelRequestParameters(native_tools=[tool]))
+    messages = cast(MockAnthropic, client).kwargs[0]['messages']
+    # This provider's file joins every user turn that opens one; another provider's file is dropped, and a
+    # turn that only answers tool calls gets no upload, as from the native model.
+    assert messages[0]['content'] == snapshot(
+        [{'type': 'text', 'text': 'run it'}, {'type': 'container_upload', 'file_id': 'file_1'}]
+    )
+    assert messages[2]['content'] == snapshot([{'type': 'tool_result', 'tool_use_id': 'c1', 'content': 'done'}])
+
+
+async def test_tool_results_take_the_shapes_the_wire_takes(allow_model_requests: None):
+    client = MockAnthropic.as_client([message([{'type': 'text', 'text': 'ok'}])] * 4)
+    model = make_model(client)
+    # A structured result is serialized, as the native model serializes it, and a failed one carries `is_error`.
+    await model.request(tool_result_history({'temp': 18}), None, ModelRequestParameters())
+    await model.request(tool_result_history(['a', 1]), None, ModelRequestParameters())
+    await model.request(tool_result_history('boom', outcome='failed'), None, ModelRequestParameters())
+    # A list of typed blocks is already wire content (a tool-search reveal's `tool_reference` blocks), so it stays.
+    blocks = [{'type': 'tool_reference', 'tool_name': 'f'}]
+    await model.request(tool_result_history(blocks), None, ModelRequestParameters())
+    assert [request['messages'][2]['content'] for request in cast(MockAnthropic, client).kwargs] == snapshot(
+        [
+            [{'type': 'tool_result', 'tool_use_id': 'c1', 'content': '{"temp":18}'}],
+            [{'type': 'tool_result', 'tool_use_id': 'c1', 'content': '["a",1]'}],
+            [{'type': 'tool_result', 'tool_use_id': 'c1', 'content': 'boom', 'is_error': True}],
+            [{'type': 'tool_result', 'tool_use_id': 'c1', 'content': [{'type': 'tool_reference', 'tool_name': 'f'}]}],
+        ]
+    )
+
+
+async def test_later_system_prompt_is_delivered_in_place(allow_model_requests: None):
+    client = MockAnthropic.as_client([message([{'type': 'text', 'text': 'ok'}])])
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[SystemPromptPart(content='be nice'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='now be brief'), UserPromptPart(content='ok?')]),
+    ]
+    await Agent(make_model(client)).run(message_history=history)
+    request = cast(MockAnthropic, client).kwargs[0]
+    # babel carries one request-level system prompt, so the framework delivers the later instruction as
+    # tagged user text where it was authored, rather than the adapter hoisting it over earlier turns.
+    assert request['system'] == 'be nice'
+    assert request['messages'][-1]['content'] == snapshot(
+        [{'type': 'text', 'text': '<system>now be brief</system>'}, {'type': 'text', 'text': 'ok?'}]
+    )
+
+
+async def test_audio_is_not_supported(allow_model_requests: None):
+    client = MockAnthropic.as_client([message([{'type': 'text', 'text': 'ok'}])])
+    request = ModelRequest(parts=[UserPromptPart(content=[BinaryContent(data=b'mp3', media_type='audio/mpeg')])])
+    with pytest.raises(NotImplementedError, match='Audio content is not supported by this model'):
+        await make_model(client).request([request], None, ModelRequestParameters())
+
+
+async def test_uploaded_file_from_another_provider_is_rejected(allow_model_requests: None):
+    client = MockAnthropic.as_client([message([{'type': 'text', 'text': 'ok'}])])
+    request = ModelRequest(parts=[UserPromptPart(content=[UploadedFile(file_id='file-1', provider_name='openai')])])
+    with pytest.raises(UserError, match=r"provider_name='openai'.*cannot be used with BabelAnthropicModel"):
+        await make_model(client).request([request], None, ModelRequestParameters())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import dataclasses
 from datetime import timezone
 from typing import Any, cast, get_args
 from unittest.mock import AsyncMock
@@ -33,6 +34,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     FilePart,
     InstructionPart,
+    ModelMessage,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -48,14 +50,17 @@ from pydantic_ai.usage import RequestUsage
 from ...conftest import IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
+    from llm_transform import ir_build
+    from llm_transform.capabilities import capabilities_for
     from llm_transform.ir import StopReason
     from llm_transform.registry import decode_response, encode, stream_step
 
-    from pydantic_ai.models.babel import fold_stream_emits, ir_to_model_response, messages_to_ir
+    from pydantic_ai.models.babel import fold_stream_emits, ir_to_model_response, messages_to_ir, reconcile_ir
     from pydantic_ai.models.babel._adapters import (
         _FINISH_REASON,  # pyright: ignore[reportPrivateUsage]
         download_url_media,
         gemini_rest_to_sdk,
+        uploaded_files,
     )
 
 pytestmark = [
@@ -403,7 +408,7 @@ def test_ir_to_model_response_anthropic_usage_and_signatures():
                 'stop_reason': 'end_turn',
             }
         ],
-        'usage': {'input_tokens': 25, 'output_tokens': 9, 'cache_read_tokens': 50, 'cache_write_tokens': 100},
+        'usage': {'input_tokens': 175, 'output_tokens': 9, 'cache_read_tokens': 50, 'cache_write_tokens': 100},
         'provider_ext': {'anthropic-messages': {'id': 'msg_1'}},
     }
     response = ir_to_model_response(ir, fmt='anthropic-messages', provider_name='anthropic', provider_url='u')
@@ -422,7 +427,8 @@ def test_ir_to_model_response_anthropic_usage_and_signatures():
             ),
         ]
     )
-    # Anthropic reports uncached input apart from the cache reads and writes; `RequestUsage` counts them all as input.
+    # babel already counts the cache reads and writes inside `input_tokens`, as `RequestUsage` does, so the
+    # fields copy across whichever way the provider reported them.
     assert response.usage == snapshot(
         RequestUsage(input_tokens=175, cache_write_tokens=100, cache_read_tokens=50, output_tokens=9)
     )
@@ -633,11 +639,12 @@ def test_gemini_rest_to_sdk():
                 'role': 'model',
                 'parts': [{'functionCall': {'name': 'f', 'args': {'cityName': 'Paris', 'nested': {'someKey': 1}}}}],
             },
-            {'role': 'user', 'parts': [{'functionResponse': {'name': 'f', 'response': 'plain string'}}]},
-            {'role': 'user', 'parts': [{'functionResponse': {'name': 'f', 'response': {'already': 'dict'}}}]},
+            {'role': 'user', 'parts': [{'functionResponse': {'name': 'f', 'response': {'output': 'plain string'}}}]},
+            {'role': 'user', 'parts': [{'functionResponse': {'name': 'f', 'response': {'someKey': 'kept'}}}]},
         ],
         'responseSchema': {'type': 'OBJECT', 'properties': {'someKey': {}}},
     }
+    # Only structural keys change case: a tool result's `response`, a call's `args` and a schema are user data.
     assert gemini_rest_to_sdk(node) == snapshot(
         {
             'system_instruction': {'parts': [{'text': 'hi'}]},
@@ -650,9 +657,9 @@ def test_gemini_rest_to_sdk():
                 },
                 {
                     'role': 'user',
-                    'parts': [{'function_response': {'name': 'f', 'response': {'return_value': 'plain string'}}}],
+                    'parts': [{'function_response': {'name': 'f', 'response': {'output': 'plain string'}}}],
                 },
-                {'role': 'user', 'parts': [{'function_response': {'name': 'f', 'response': {'already': 'dict'}}}]},
+                {'role': 'user', 'parts': [{'function_response': {'name': 'f', 'response': {'someKey': 'kept'}}}]},
             ],
             'response_schema': {'type': 'OBJECT', 'properties': {'someKey': {}}},
         }
@@ -751,3 +758,72 @@ async def test_download_url_media_passes_through_schemes_the_wire_takes(mocker: 
     messages = await download_url_media([request], frozenset(), passthrough_schemes=frozenset({'s3'}))
     assert messages[0] is request
     assert download.await_count == 0
+
+
+def test_only_a_failed_tool_return_takes_the_error_channel():
+    ir = messages_to_ir(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='f', content='boom', tool_call_id='c1', outcome='failed'),
+                    ToolReturnPart(tool_name='f', content='not allowed', tool_call_id='c2', outcome='denied'),
+                    ToolReturnPart(tool_name='f', content='no result', tool_call_id='c3', outcome='interrupted'),
+                    ToolReturnPart(
+                        tool_name='f',
+                        content=['boom', ImageUrl(url='https://x/y.png')],
+                        tool_call_id='c4',
+                        outcome='failed',
+                    ),
+                ]
+            )
+        ]
+    )
+    tool_parts = cast(list[dict[str, Any]], ir['messages'][0]['content'])
+    assert tool_parts[:3] == snapshot(
+        [
+            {'kind': 'tool_result', 'content': 'boom', 'id': 'c1', 'name': 'f', 'is_error': True},
+            {'kind': 'tool_result', 'content': 'not allowed', 'id': 'c2', 'name': 'f'},
+            {'kind': 'tool_result', 'content': 'no result', 'id': 'c3', 'name': 'f'},
+        ]
+    )
+    # With files the text is the native split; the failure rides `is_error`, not an `{"error": ...}` wrapper,
+    # so a target with an error channel uses it and one without folds it the same way as for `c1`.
+    assert tool_parts[3]['is_error'] is True
+    assert '"error"' not in tool_parts[3]['content']
+
+
+def test_reconcile_ir_applies_the_target_facts():
+    ir = messages_to_ir([ModelResponse(parts=[TextPart(content='Hello!')]), ModelRequest.user_text_prompt('hi')])
+    # Converse rejects a conversation that opens with an assistant turn, so the filler user turn leads.
+    reconciled = reconcile_ir(ir, capabilities_for('bedrock-converse'))
+    assert [(m['role'], m['content']) for m in reconciled['messages']] == snapshot(
+        [
+            ('user', [{'kind': 'text', 'text': '.'}]),
+            ('assistant', [{'kind': 'text', 'text': 'Hello!'}]),
+            ('user', [{'kind': 'text', 'text': 'hi'}]),
+        ]
+    )
+    # A target with no such rule leaves the conversation as it is.
+    assert reconcile_ir(ir, capabilities_for('anthropic-messages'))['messages'] == ir['messages']
+
+
+def test_reconcile_ir_raises_the_way_the_native_models_raise():
+    audio = messages_to_ir(
+        [ModelRequest(parts=[UserPromptPart(content=[BinaryContent(data=b'mp3', media_type='audio/mpeg')])])]
+    )
+    with pytest.raises(NotImplementedError, match='Audio content is not supported by this model'):
+        reconcile_ir(audio, capabilities_for('anthropic-messages'))
+    rejecting = dataclasses.replace(capabilities_for('anthropic-messages'), rejected_params=frozenset({'seed'}))
+    with pytest.raises(UserError, match='reconcile_rejected_param: seed'):
+        reconcile_ir(ir_build.request(messages=[], params={'seed': 1}), rejecting)
+
+
+def test_uploaded_files_are_found_in_prompts_and_tool_returns():
+    in_prompt = UploadedFile(file_id='file-1', provider_name='openai')
+    in_tool_return = UploadedFile(file_id='file-2', provider_name='openai')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='plain'), UserPromptPart(content=['look', in_prompt])]),
+        ModelResponse(parts=[ToolCallPart(tool_name='f', args={}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='f', content=['see', in_tool_return], tool_call_id='c1')]),
+    ]
+    assert list(uploaded_files(messages)) == [in_prompt, in_tool_return]

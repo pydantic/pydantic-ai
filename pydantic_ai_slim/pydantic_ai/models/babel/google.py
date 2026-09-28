@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator
+from functools import cached_property
 from typing import Any, cast
 
 from google.genai import errors
@@ -15,10 +16,13 @@ from google.genai.types import (
     GenerateContentResponsePromptFeedback,
     SafetyRating,
 )
+from llm_transform.capabilities import capabilities_for
 from llm_transform.media import MEDIA_URL_OK
 from llm_transform.registry import decode_response, encode, stream_step
 
 from ...messages import FinishReason, ModelMessage, ModelResponse, ModelResponseStreamEvent
+from ...profiles import ModelProfile, merge_profile
+from ...profiles.google import GoogleModelProfile
 from .. import ModelRequestParameters
 from ..google import (
     _FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
@@ -27,7 +31,15 @@ from ..google import (
     _map_api_error,  # pyright: ignore[reportPrivateUsage]
     _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
 )
-from ._adapters import download_url_media, fold_stream_emits, gemini_rest_to_sdk, ir_to_model_response, messages_to_ir
+from ._adapters import (
+    download_url_media,
+    fold_stream_emits,
+    gemini_rest_to_sdk,
+    ir_to_model_response,
+    messages_to_ir,
+    reconcile_ir,
+    uploaded_files,
+)
 
 __all__ = ('BabelGeminiStreamedResponse', 'BabelGoogleModel')
 
@@ -83,10 +95,20 @@ class BabelGoogleModel(GoogleModel):
     Construct it exactly like `GoogleModel`. The provider, client, settings and native tools behave
     as they do there; only the translation between the message history and the `generateContent`
     wire is babel's. Gemini takes no media by plain URL, so every `FileUrl` is downloaded and
-    inlined as base64. The response details the native model records (the raw finish reason, safety
-    ratings, a blocked prompt's feedback, logprobs, service tier and traffic type) are recorded the
-    same way.
+    inlined as base64. A tool result is sent as the object Google documents, `{"output": ...}`
+    around a scalar and `{"error": ...}` for a failed call. The response details the native model
+    records (the raw finish reason, safety ratings, a blocked prompt's feedback, logprobs, service
+    tier and traffic type) are recorded the same way.
     """
+
+    @cached_property
+    def profile(self) -> GoogleModelProfile:
+        # babel carries one request-level system prompt, so a mid-conversation `SystemPromptPart` is
+        # delivered the way `Model.prepare_messages` delivers it to any wire with no inline system
+        # role: as `<system>`-tagged user text, in place.
+        return cast(
+            GoogleModelProfile, merge_profile(super().profile, ModelProfile(supports_inline_system_prompts=False))
+        )
 
     @property
     def _streamed_response_cls(self) -> type[GeminiStreamedResponse]:
@@ -97,6 +119,8 @@ class BabelGoogleModel(GoogleModel):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+        for file in uploaded_files(messages):
+            self._validate_uploaded_file_provider(file)
         messages = await download_url_media(messages, MEDIA_URL_OK['gemini'])
         ir = messages_to_ir(
             messages,
@@ -104,6 +128,7 @@ class BabelGoogleModel(GoogleModel):
             provider_name=self._provider.name,
             instruction_parts=self._get_instruction_parts(messages, model_request_parameters),
         )
+        ir = reconcile_ir(ir, capabilities_for('gemini'))
         encoded = encode('gemini', ir)
         system_instruction = encoded.get('systemInstruction')
         return (

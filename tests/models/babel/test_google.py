@@ -8,8 +8,16 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart
-from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import FinalResultEvent, PartDeltaEvent, PartEndEvent, PartStartEvent
+from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.messages import (
+    FinalResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    ToolReturnPart,
+    UploadedFile,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
@@ -138,7 +146,7 @@ async def test_tool_loop(allow_model_requests: None, mocker: Any):
             },
             {
                 'role': 'user',
-                'parts': [{'function_response': {'name': 'get_weather', 'response': {'return_value': 'Paris: sunny'}}}],
+                'parts': [{'function_response': {'name': 'get_weather', 'response': {'output': 'Paris: sunny'}}}],
             },
         ]
     )
@@ -329,3 +337,27 @@ async def test_stream_records_safety_ratings_and_service_tier(allow_model_reques
     details = streamed.provider_details
     assert safety_ratings(details) == [('HARM_CATEGORY_HARASSMENT', 'LOW', None)]
     assert details == {'service_tier': 'flex', 'finish_reason': 'STOP'}
+
+
+async def test_failed_tool_return_takes_the_error_key(allow_model_requests: None, mocker: Any):
+    model = make_model()
+    generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response([{'text': 'ok'}]))
+    await model.request(
+        [
+            ModelRequest.user_text_prompt('hi'),
+            ModelResponse(parts=[ToolCallPart(tool_name='f', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='f', content='boom', tool_call_id='c1', outcome='failed')]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+    # Google's convention: `error` for a failed call, `output` around any scalar result.
+    assert generate.call_args.kwargs['contents'][-1] == snapshot(
+        {'role': 'user', 'parts': [{'function_response': {'name': 'f', 'response': {'error': 'boom'}}}]}
+    )
+
+
+async def test_uploaded_file_from_another_provider_is_rejected(allow_model_requests: None):
+    request = ModelRequest(parts=[UserPromptPart(content=[UploadedFile(file_id='file-1', provider_name='openai')])])
+    with pytest.raises(UserError, match=r"provider_name='openai'.*cannot be used with BabelGoogleModel"):
+        await make_model().request([request], None, ModelRequestParameters())

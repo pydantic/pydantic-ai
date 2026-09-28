@@ -3,10 +3,12 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Sequence
+from functools import cached_property
 from typing import Any, Literal, cast
 
 from anthropic.types.beta import (
     BetaContainer,
+    BetaContentBlockParam,
     BetaInputTransformation,
     BetaMessage,
     BetaMessageParam,
@@ -16,11 +18,17 @@ from anthropic.types.beta import (
     BetaStopReason,
     BetaTextBlockParam,
 )
+from llm_transform.capabilities import capabilities_for
 from llm_transform.media import MEDIA_URL_OK
-from llm_transform.registry import decode_response, encode, stream_step
+from llm_transform.registry import canonical_json, decode_response, encode, stream_step
 
+from ... import _utils
 from ...messages import FinishReason, InstructionPart, ModelMessage, ModelResponse, ModelResponseStreamEvent
+from ...native_tools import CodeExecutionTool
+from ...profiles import ModelProfile, merge_profile
+from ...profiles.anthropic import AnthropicModelProfile
 from .. import ModelRequestParameters
+from .._anthropic_containers import is_tool_result_only
 from ..anthropic import (
     _FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
     AnthropicModel,
@@ -30,7 +38,15 @@ from ..anthropic import (
     _map_usage,  # pyright: ignore[reportPrivateUsage]
     _report_input_transformations,  # pyright: ignore[reportPrivateUsage]
 )
-from ._adapters import IR, download_url_media, fold_stream_emits, ir_to_model_response, messages_to_ir
+from ._adapters import (
+    IR,
+    download_url_media,
+    fold_stream_emits,
+    ir_to_model_response,
+    messages_to_ir,
+    reconcile_ir,
+    uploaded_files,
+)
 
 __all__ = ('BabelAnthropicModel', 'BabelAnthropicStreamedResponse')
 
@@ -98,13 +114,24 @@ class BabelAnthropicModel(AnthropicModel):
     Construct it exactly like `AnthropicModel`. The provider, client, settings, native tools and
     beta headers behave as they do there; only the translation between the message history and the
     Messages wire is babel's. `anthropic_cache_instructions` and `CachePoint` breakpoints are placed
-    the same way as in the native model, and the 4-breakpoint limit is enforced by it. The response
-    details the native model's next request depends on (the container id, a paused turn, a dropped
-    thinking block) are recorded the same way.
+    the same way as in the native model, and the 4-breakpoint limit is enforced by it. The files a
+    `CodeExecutionTool` uploads are attached to the conversation as the native model attaches them,
+    a structured tool result is sent as the string the native model sends, and a failed one carries
+    `is_error`. The response details the native model's next request depends on (the container id,
+    a paused turn, a dropped thinking block) are recorded the same way.
 
     Audio and video are not supported by the Messages API; document and image URLs are sent as
     URLs unless `force_download` is set.
     """
+
+    @cached_property
+    def profile(self) -> AnthropicModelProfile:
+        # babel carries one request-level system prompt, so a mid-conversation `SystemPromptPart` is
+        # delivered the way `Model.prepare_messages` delivers it to any wire with no inline system
+        # role: as `<system>`-tagged user text, in place.
+        return cast(
+            AnthropicModelProfile, merge_profile(super().profile, ModelProfile(supports_inline_system_prompts=False))
+        )
 
     @property
     def _streamed_response_cls(self) -> type[AnthropicStreamedResponse]:
@@ -117,6 +144,8 @@ class BabelAnthropicModel(AnthropicModel):
         model_settings: AnthropicModelSettings,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         messages = self._trim_before_compaction(messages)
+        for file in uploaded_files(messages):
+            self._validate_uploaded_file_provider(file)
         messages = await download_url_media(messages, MEDIA_URL_OK['anthropic-messages'])
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         ir = messages_to_ir(
@@ -125,11 +154,28 @@ class BabelAnthropicModel(AnthropicModel):
             provider_name=self._provider.name,
             instruction_parts=instruction_parts,
         )
+        ir = reconcile_ir(ir, capabilities_for('anthropic-messages'))
         encoded = encode('anthropic-messages', ir)
+        anthropic_messages = cast(list[BetaMessageParam], encoded['messages'])
+        _tool_results_as_strings(anthropic_messages)
+        _append_container_uploads(anthropic_messages, self._container_uploads(model_request_parameters))
         system = _pack_system(
             encoded.get('system') or [], instruction_parts, model_settings.get('anthropic_cache_instructions')
         )
-        return cast('str | list[BetaTextBlockParam]', system), cast(list[BetaMessageParam], encoded['messages'])
+        return cast('str | list[BetaTextBlockParam]', system), anthropic_messages
+
+    def _container_uploads(self, model_request_parameters: ModelRequestParameters) -> list[str]:
+        """The ids of the files a `CodeExecutionTool` uploaded to this provider.
+
+        Files uploaded to another provider are dropped, as the native model drops them.
+        """
+        return [
+            file.file_id
+            for tool in model_request_parameters.native_tools
+            if isinstance(tool, CodeExecutionTool) and tool.files
+            for file in tool.files
+            if file.provider_name == self.system
+        ]
 
     def _process_response(
         self,
@@ -154,6 +200,51 @@ class BabelAnthropicModel(AnthropicModel):
             finish_reason=_finish_reason(response.stop_reason),
             state=_response_state(response.stop_reason),
         )
+
+
+def _tool_results_as_strings(messages: list[BetaMessageParam]) -> None:
+    """Serialize a structured tool result in place, since a `tool_result` block takes a string or content blocks.
+
+    babel's `anthropic-messages` encoder carries the IR content as it is, so a dict or list a tool
+    returned is serialized here the way the native model serializes it. A list of typed content
+    blocks stays one: that is the shape a tool-search reveal already has (`tool_reference` blocks),
+    and the API takes it directly.
+    """
+    for message in messages:
+        content = message['content']
+        if message['role'] != 'user' or isinstance(content, str):
+            continue
+        for block in cast(list[dict[str, Any]], content):
+            if block.get('type') == 'tool_result' and not _is_wire_content(block.get('content')):
+                block['content'] = canonical_json(block['content'])
+
+
+def _is_wire_content(content: Any) -> bool:
+    """Whether `content` is already what a `tool_result` block takes: a string, or a list of typed blocks."""
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        blocks = cast(list[Any], content)
+        return bool(blocks) and all(_utils.is_str_dict(block) and 'type' in block for block in blocks)
+    return False
+
+
+def _append_container_uploads(messages: list[BetaMessageParam], file_ids: list[str]) -> None:
+    """Attach a `container_upload` block per file to every user message that opens a turn.
+
+    The native model attaches the uploads to each user message that is not only tool results, so the
+    code execution container sees the files whichever turn it runs in.
+    """
+    if not file_ids:
+        return
+    uploads: list[Any] = [{'type': 'container_upload', 'file_id': file_id} for file_id in file_ids]
+    for message in messages:
+        content = message['content']
+        if message['role'] != 'user' or isinstance(content, str):
+            continue
+        blocks = cast(list[BetaContentBlockParam], content)
+        if not is_tool_result_only(blocks):
+            message['content'] = [*blocks, *uploads]
 
 
 def _finish_reason(stop_reason: BetaStopReason | None) -> FinishReason | None:
