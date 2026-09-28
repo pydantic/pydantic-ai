@@ -69,6 +69,26 @@ async def test_backend_attaches_explicit_ref_without_create(fake_modal: FakeModa
     assert not fake_modal.create_kwargs
 
 
+async def test_attaching_with_a_missing_working_dir_says_what_to_do(fake_modal: FakeModal, tmp_path: Path) -> None:
+    fake_modal.host_root = tmp_path
+    missing = str(tmp_path / 'srv' / 'app')
+    backend = ModalSandboxBackend(ref=WorkspaceRef(provider='modal', id='existing'), working_dir=missing)
+    with pytest.raises(WorkspaceError) as caught:
+        await backend.run(['pwd'])
+    assert str(caught.value) == (
+        f"working_dir {missing!r} does not exist in Modal sandbox 'existing'. "
+        'Create it there, or pass a working_dir that exists.'
+    )
+
+
+async def test_a_command_exiting_128_in_an_existing_working_dir_is_its_result(
+    fake_modal: FakeModal, tmp_path: Path
+) -> None:
+    fake_modal.host_root = tmp_path
+    backend = ModalSandboxBackend(ref=WorkspaceRef(provider='modal', id='existing'), working_dir=str(tmp_path))
+    assert (await backend.run('exit 128', shell=True)).exit_code == 128
+
+
 @pytest.mark.parametrize(
     ('name', 'expected'),
     [('AuthError', WorkspaceUnavailableError), ('InvalidError', WorkspaceError), ('ConnectionError', None)],

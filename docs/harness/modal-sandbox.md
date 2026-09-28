@@ -161,7 +161,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 | `create_app_if_missing` | Create that app if it doesn't exist. Default: `True`. |
 | `sandbox_timeout` | Seconds a new sandbox lives before Modal stops it (10-86,400). Default: `86_400` (24 hours, Modal's maximum). |
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 

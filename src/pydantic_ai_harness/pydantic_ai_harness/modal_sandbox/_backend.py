@@ -83,6 +83,8 @@ _INTERNAL_EXEC_TIMEOUT = 10
 
 _CLIENT_DEADLINE_EXIT = -1
 _SIGKILL_EXIT = 137
+# What Modal's exec reports when it cannot start the command, such as for a missing workdir.
+_EXEC_FAILED_EXIT = 128
 
 _PARTIAL_OUTPUT_LIMIT = 65_536
 # Like the local backend: a runaway command (`yes`, `cat` on a huge log) must not exhaust this
@@ -522,7 +524,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             if result.exit_code != 0 or not posixpath.isabs(printed):
                 raise WorkspaceError(
                     f'Could not determine the working directory of Modal sandbox {sandbox.object_id!r}: '
-                    f'`pwd` exited {result.exit_code} and printed {result.stdout!r}. Use absolute paths.'
+                    f'`pwd` exited {result.exit_code} and printed {result.stdout!r}.'
                 )
             self._resolved_working_dir = printed
         return self._resolved_working_dir
@@ -713,7 +715,19 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             with anyio.move_on_after(2):
                 if (gone := await _probe(sandbox, exec_probe=True)) is not None:
                     raise gone
+        if exit_code == _EXEC_FAILED_EXIT and workdir is not None and not await self._dir_exists(sandbox, workdir):
+            # Modal reports a missing workdir as a 128 exit with its own error text, before the
+            # command starts: typically an attached sandbox, since a created one gets it made.
+            raise WorkspaceError(
+                f'working_dir {workdir!r} does not exist in Modal sandbox {sandbox.object_id!r}. '
+                'Create it there, or pass a working_dir that exists.'
+            )
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+
+    async def _dir_exists(self, sandbox: modal.Sandbox, path: str) -> bool:
+        async with self._mapped_errors(sandbox, 'Could not check the working directory'):
+            probe = await sandbox.exec.aio('test', '-d', path, timeout=_INTERNAL_EXEC_TIMEOUT, workdir='/', text=False)
+            return await probe.wait.aio() == 0
 
 
 async def _collect_output(

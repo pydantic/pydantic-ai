@@ -482,6 +482,10 @@ class FakeSandbox:
         assert self._control.host_root is not None
         variables = {**os.environ, **{key: value for key, value in (env or {}).items() if value is not None}}
         cwd = workdir or self.workdir or str(self._control.host_root)
+        if not os.path.isdir(cwd):
+            # Modal refuses to start the command and reports a 128 exit, as it does live.
+            message = f'failed to find initial working directory "{cwd}": no such file or directory\n'
+            return _FakeProcess(b'', message.encode(), 128, None, False)
         process = subprocess.Popen(
             argv, cwd=cwd, env=variables, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
         )
