@@ -18,11 +18,6 @@ from .._tool_calls import call_tool
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def workspace(tmp_path: Path) -> Path:
     (tmp_path / 'src').mkdir()
     (tmp_path / 'src' / 'app.py').write_text('import os\n\n\ndef main():\n    return os.name\n')

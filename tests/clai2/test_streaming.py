@@ -15,11 +15,6 @@ from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)

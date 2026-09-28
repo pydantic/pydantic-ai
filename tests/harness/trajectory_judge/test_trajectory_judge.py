@@ -40,12 +40,6 @@ from pydantic_ai_harness.trajectory_judge import AllGood, Steer, TrajectoryJudge
 _WAIT = 5
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 def _steer_response(message: str) -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart('final_result_Steer', {'message': message})])
 

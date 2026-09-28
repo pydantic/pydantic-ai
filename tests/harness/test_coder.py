@@ -19,11 +19,6 @@ from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.subagents import SubAgents
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def test_coder_agent_is_model_less_and_composed() -> None:
     assert isinstance(coder_agent, Agent)
     assert coder_agent.model is None

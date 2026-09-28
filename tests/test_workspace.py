@@ -450,10 +450,10 @@ async def test_backend_with_part_of_the_filesystem_protocol_names_what_it_lacks(
     class NoExistsBackend(WorkspaceBackend):
         @property
         def ref(self) -> None:
-            return None
+            return None  # pragma: no cover
 
         async def working_dir(self) -> str:
-            return '/workspace'
+            return '/workspace'  # pragma: no cover
 
         async def read_bytes(self, path: str) -> bytes:
             raise NotImplementedError
@@ -487,7 +487,7 @@ async def test_shell_exists_raises_when_the_command_itself_fails(exit_code: int,
     class BrokenShellBackend(WorkspaceBackend, SupportsCommands):
         @property
         def ref(self) -> None:
-            return None
+            return None  # pragma: no cover
 
         async def working_dir(self) -> str:
             return '/workspace'

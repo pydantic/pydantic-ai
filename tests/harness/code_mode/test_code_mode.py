@@ -1,7 +1,7 @@
 """Tests for the `CodeMode` capability and the `CodeModeToolset` it wraps.
 
-Style follows `pydantic_ai/tests/test_toolsets.py`: an `anyio_backend` fixture, async
-tests, and a `build_run_context` factory.
+Style follows `pydantic_ai/tests/test_toolsets.py`: async tests and a `build_run_context`
+factory.
 """
 
 from __future__ import annotations
@@ -94,12 +94,6 @@ async def _close_direct_toolsets(anyio_backend: str) -> AsyncIterator[None]:
 
 
 T = TypeVar('T')
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
 
 
 def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:

@@ -38,11 +38,6 @@ from tests.harness.conftest import skip_temporal_sandbox_on_314
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def prefect_server() -> Generator[None, None, None]:
     # Prefect is an optional core extra; its absence must not hide the DBOS cells.
     pytest.importorskip('prefect')
