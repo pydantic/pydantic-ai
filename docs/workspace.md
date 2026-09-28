@@ -560,11 +560,18 @@ class MySandbox(WorkspaceBackend, SupportsCommands):
 ```
 
 - The constructor does no I/O. The first operation creates the environment, or attaches to the one
-  `ref` names. Concurrent first operations must create only one environment and share its ref.
-- `ref` is `None` until the environment exists, then names it. Durable execution needs it set once
-  any operation has completed.
+  `ref` names.
+- `ref` is `None` until the environment exists, then names it and never changes. Set it as soon as
+  the create call returns, before any setup that can fail, so a failed setup still leaves a ref to
+  clean up. Durable execution needs it set once any operation has completed.
+- Concurrent first operations must create only one environment and share its ref. `Workspace` holds
+  no lock, so the backend owns its get-or-create lock.
+- A caller cancelled while the environment is being created must not lose its ref: finish recording
+  it even though the caller has gone. The example above skips this; the harness sandboxes show one way.
 - A `ref` whose environment is gone raises `WorkspaceUnavailableError`. The backend never creates a
   replacement for it.
+- The backend never destroys the environment when a run ends. Whoever holds the ref decides when to
+  delete it; see [Cleaning up](#cleaning-up).
 - A non-zero exit is a result, not an exception. A program that can't start is exit 127 (not found)
   or 126 (not executable), as in `sh`. A path-level failure raises the builtin file error, and a
   timeout raises `WorkspaceTimeoutError`. Let a provider SDK's own transient errors propagate, so a
