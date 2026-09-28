@@ -14,11 +14,6 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.advisor import Advisor
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 class Decision(BaseModel):
     proceed: bool
     risk: Literal['low', 'high']

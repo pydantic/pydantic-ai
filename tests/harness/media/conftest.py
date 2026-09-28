@@ -159,12 +159,6 @@ def vcr_config() -> dict[str, Any]:
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    """Restrict the S3 cassette tests to asyncio — we don't need trio cassettes."""
-    return 'asyncio'
-
-
-@pytest.fixture
 def s3_credentials() -> dict[str, str]:
     """Real R2 creds when env is set; sanitised placeholders otherwise.
 

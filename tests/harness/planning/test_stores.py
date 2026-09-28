@@ -24,11 +24,6 @@ pytestmark = [
 ]
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 StoreFactory = Callable[[PlanEventEmitter | None], PlanStore]
 
 

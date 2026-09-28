@@ -18,11 +18,6 @@ OPEN = f'\x1b]8;;{URL}\x1b\\'
 CLOSE = '\x1b]8;;\x1b\\'
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('terminal', [False, True])
 @pytest.mark.parametrize('thinking', [False, True])
 async def test_markdown_link_labels(*, terminal: bool, thinking: bool) -> None:

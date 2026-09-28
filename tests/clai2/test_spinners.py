@@ -65,11 +65,6 @@ CODE_PUPPY_BUILTINS = (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def catalogue(tmp_path: Path, *, selected: str = DEFAULT_SPINNER, registered: tuple[Spinner, ...] = ()) -> Spinners:
     return Spinners(selected=lambda: selected, registered=lambda: registered, path=tmp_path / 'spinners.json')
 

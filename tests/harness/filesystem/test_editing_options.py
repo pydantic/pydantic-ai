@@ -12,11 +12,6 @@ from pydantic_ai_harness.filesystem import FILE_SYSTEM_TOOL_NAMES, FileSystem, F
 from .._tool_calls import call_tool
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def toolset(root: Path, **settings: object) -> FileSystemToolset[None]:
     capability = FileSystem[None](root_dir=root, **settings)  # pyright: ignore[reportArgumentType]
     built = capability.get_toolset()

@@ -33,11 +33,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.speculation import Speculation, SpeculationCounters
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def plain(row: str) -> str:
     return Text.from_ansi(row).plain
 

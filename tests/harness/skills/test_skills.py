@@ -17,11 +17,6 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.skills import Skills
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def _write_skill(
     library: Path,
     name: str,

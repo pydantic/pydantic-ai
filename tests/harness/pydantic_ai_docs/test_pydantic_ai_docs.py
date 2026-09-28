@@ -14,12 +14,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs, PydanticAIDocsToolset, PydanticAIDocsTopic
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 class _FakeClient:
     """Stand-in for `httpx.AsyncClient` that returns a canned response or raises."""
 

@@ -41,12 +41,6 @@ from pydantic_ai_harness.exa import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 def _text(result: ToolReturn[str]) -> str:
     """The model-facing text of a tool result."""
     body = result.return_value

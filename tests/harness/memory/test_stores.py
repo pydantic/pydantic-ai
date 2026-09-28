@@ -29,11 +29,6 @@ from pydantic_ai_harness.memory import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 class Store(MemoryStore, SearchableMemoryStore, Protocol):
     """Combined contract implemented by the bundled stores."""
 
