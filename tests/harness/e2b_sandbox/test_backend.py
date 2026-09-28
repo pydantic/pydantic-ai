@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -977,3 +979,32 @@ async def test_filesystem_first_use_preserves_auth_error(fake_e2b: FakeE2B) -> N
     fake_e2b.create_error = AuthenticationException('denied')
     with pytest.raises(WorkspaceUnavailableError):
         await E2BSandboxBackend().read_bytes('/file')
+
+
+async def test_timeout_stops_a_command_run_with_a_different_locale(
+    fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A `ps` whose start-time format follows the locale, as it does with LC_ALL=de_DE.UTF-8: the launcher
+    # has the user's env and the stopper does not, so the recorded and checked times would differ.
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    fake_ps = bin_dir / 'ps'
+    real_ps = shutil.which('ps')
+    assert real_ps is not None
+    fake_ps.write_text(
+        f'#!/bin/sh\ncase "$*" in *lstart*) printf "%s " "${{LC_ALL:-default}}";; esac; exec {real_ps} "$@"\n'
+    )
+    fake_ps.chmod(0o755)
+    monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
+    fake_e2b.host_root = tmp_path
+    backend = await started(env={'LC_ALL': 'de_DE.UTF-8'})
+    marker = tmp_path / 'child-marker'
+    try:
+        with anyio.fail_after(5):
+            with pytest.raises(WorkspaceTimeoutError):
+                await backend.run(f'(sleep 0.6; touch {shlex.quote(str(marker))}) & sleep 20', shell=True, timeout=0.1)
+        await anyio.sleep(0.7)
+        assert not marker.exists()
+    finally:
+        for handle in fake_e2b.sandboxes[0].commands.handles:
+            handle.close()

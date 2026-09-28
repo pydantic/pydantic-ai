@@ -520,7 +520,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # The launcher and canceller race on one atomic mkdir. A cancelled late launcher
         # exits before user code; if launch wins, the canceller waits for its registration.
         # Keep a cancellation claim when the start ACK is lost so a late RPC stays fenced.
-        launch = f'mkdir {claim} 2>/dev/null || exit 143; echo "$$:$(ps -o lstart= -p $$)" > {pgid_file}; exec {line}'
+        launch = f'mkdir {claim} 2>/dev/null || exit 143; echo "$$:$(LC_ALL=C ps -o lstart= -p $$)" > {pgid_file}; exec {line}'
         # Probe only custom/attached images: default E2B images include util-linux.
         isolated = await self._has_setsid(sandbox) if self._probe_setsid else True
         launch = f'{"setsid " if isolated else ""}sh -c {shlex.quote(launch)}'
@@ -534,8 +534,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
                 f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
                 'p=${record%%:*}; '
-                # Match creation time before signalling: a reused PID belongs to another run.
-                '[ "$(ps -o lstart= -p "$p")" = "${record#*:}" ] || exit 0; '
+                # Match creation time before signalling: a reused PID belongs to another run. Both sides
+                # format it under LC_ALL=C, since only the launcher gets the user's locale.
+                '[ "$(LC_ALL=C ps -o lstart= -p "$p")" = "${record#*:}" ] || exit 0; '
                 + ('[ "$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ")" = "$p" ] || exit 0; ' if isolated else '')
                 + f'kill -TERM {"-" if isolated else ""}"$p" 2>/dev/null || true; sleep 0.1; '
                 + f'kill -KILL {"-" if isolated else ""}"$p" 2>/dev/null || true; fi'
