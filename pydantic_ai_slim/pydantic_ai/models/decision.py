@@ -425,7 +425,7 @@ class DecisionModel(Model[InterfaceClient]):
 
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile, with text output off and inline system prompts on, whatever the provider says.
+        """The model profile: text output off and inline system prompts on, whatever the provider or `profile=` says.
 
         A decision model answers questions and has no way to write text, so this is a fact about the class
         rather than a default to override: with text output left on, an `output_type` like `[Ticket, str]`
@@ -2119,8 +2119,8 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     With `turn`, a tool has returned or a retry was sent since the latest user prompt, and the state splits at that
     prompt into three: the `history` before it, the prompt itself as `text`, and what has been done since under `done`
     — the calls, their results, the retries, and anything else in the turn — so the request stays the text being
-    judged while the steps taken for it are told apart from it. Every entry lands in exactly one of the three, however the messages arrived: a run's own,
-    or a `message_history` passed in that ends partway through a turn.
+    judged while the steps taken for it are told apart from it. Every entry lands in exactly one of the three,
+    however the messages arrived: a run's own, or a `message_history` passed in that ends partway through a turn.
     """
     if turn and any(isinstance(part, UserPromptPart) for message in messages for part in message.parts):
         return _map_turn(messages)
