@@ -12,10 +12,10 @@ with (state / 'calls').open('a') as calls:
     calls.write(' '.join(args) + '\n')
 if args[:2] == ['auth', 'token']:
     if (state / 'token-hang').exists():
-        time.sleep(60)
+        time.sleep(60)  # pragma: lax no cover - the test kills `gh` before its coverage is saved
     token = state / host
     if os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN'):
-        print('token-from-the-environment')
+        print('token-from-the-environment')  # pragma: no cover - `gh_cli` must strip these variables
     elif token.exists():
         print(token.read_text())
     else:
@@ -23,13 +23,13 @@ if args[:2] == ['auth', 'token']:
     sys.exit(0)
 mode = (state / 'login').read_text() if (state / 'login').exists() else 'ok'
 if mode == 'silent':
-    time.sleep(60)
+    time.sleep(60)  # pragma: lax no cover - the test kills `gh` before its coverage is saved
 if mode == 'early':
     sys.exit('error: authentication failed before a code was issued')
 print('\n! One-time code (ABCD-1234) copied to clipboard', file=sys.stderr)
 print('Open this URL to continue in your web browser: https://github.com/login/device', file=sys.stderr, flush=True)
 if mode == 'hang':
-    time.sleep(60)
+    time.sleep(60)  # pragma: lax no cover - the test kills `gh` before its coverage is saved
 elif mode == 'fail':
     sys.exit('error: the code expired')
 elif mode == 'no-token':
