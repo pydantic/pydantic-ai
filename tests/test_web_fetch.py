@@ -9,6 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import httpx
 import pytest
 from markdownify import markdownify
@@ -657,6 +658,39 @@ class TestWebFetchLocalTool:
             with pytest.raises(ModelRetry, match='nested too deeply'):
                 await tool('https://example.com')
 
+    async def test_nested_html_conversion_keeps_event_loop_responsive(self):
+        """A deeply nested definition list cannot occupy a worker and delay other coroutines for seconds."""
+        html = '<dd>' * 120 + 'line\n' * 150_000 + '</dd>' * 120
+        finished = anyio.Event()
+        heartbeat_delays: list[float] = []
+
+        async def heartbeat() -> None:
+            previous = time.perf_counter()
+            while not finished.is_set():
+                await anyio.sleep(0.01)
+                now = time.perf_counter()
+                heartbeat_delays.append(now - previous)
+                previous = now
+
+        started = time.perf_counter()
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(heartbeat)
+            await anyio.sleep(0)
+            try:
+                with patch(
+                    'pydantic_ai.common_tools.web_fetch.safe_download',
+                    new_callable=AsyncMock,
+                    return_value=_html_response(html),
+                ):
+                    tool = WebFetchLocalTool(max_content_length=50_000, allow_local_urls=False, timeout=30)
+                    with pytest.raises(ModelRetry, match='too complex'):
+                        await tool('https://example.com')
+            finally:
+                finished.set()
+
+        assert time.perf_counter() - started < 3
+        assert heartbeat_delays and max(heartbeat_delays) < 0.5
+
     @pytest.mark.parametrize('charset', ['idna', 'rot_13', 'base64_codec'])
     async def test_undecodable_charset_raises_model_retry(self, charset: str):
         """A charset the server picks that can't decode a document is reported as a failed fetch.
@@ -733,6 +767,12 @@ _CONVERTER_PARITY_CASES = [
         id='blocks',
     ),
     pytest.param(
+        '<blockquote><blockquote>quote\nsecond</blockquote></blockquote>'
+        '<dl><dd><dd>definition\nnext</dd></dd></dl>'
+        '<ul><li><ul><li>one<br>two</li></ul></li></ul>',
+        id='nested-indentation',
+    ),
+    pytest.param(
         '<p>a<![CDATA[ x   y \n z ]]>b<?php  echo  1 ?>c</p>',
         id='cdata-and-pi',
     ),
@@ -753,6 +793,15 @@ class TestMarkdownConverter:
         """
         _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
         assert content == '1. one\n2. two'
+
+    @pytest.mark.parametrize('tag', ['blockquote', 'dd', 'li'])
+    def test_deeply_nested_indentation_is_bounded(self, tag: str):
+        """The converter rejects repeated indentation before intermediate Markdown expands."""
+        html = f'<{tag}>' * 120 + 'line\n' * 150_000 + f'</{tag}>' * 120
+        started = time.perf_counter()
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+        assert time.perf_counter() - started < 3
 
     @pytest.mark.parametrize(
         'html',
