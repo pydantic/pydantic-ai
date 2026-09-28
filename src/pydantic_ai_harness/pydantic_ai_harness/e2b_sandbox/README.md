@@ -160,7 +160,7 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await kill_sandbox(ctx.workspace.ref)
+        await E2BSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
