@@ -6,7 +6,7 @@ import signal
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import anyio
 import anyio.lowlevel
@@ -196,13 +196,11 @@ class TestSpritesSandbox:
         await backend.write_bytes(note, b'hi')
         assert (len(transport.clients), transport.close_calls) == (1, 1)
 
-        attached = SpritesSandbox[None]().get_workspace(context(), ref=backend.ref)
+        attached = SpritesSandbox[None](working_dir=str(transport.root)).get_workspace(context(), ref=backend.ref)
         assert isinstance(attached, SpritesSandboxBackend)
-        # One operation, however many commands it runs (here the `cwd` check and the command), and
-        # concurrent operations share one client, closed once the last of them ends.
-        first, second = await asyncio.gather(
-            attached.run(['cat', 'note.txt'], cwd=str(transport.root)), attached.exists(note)
-        )
+        # One operation, however many commands it runs (here the working-directory check and the
+        # command), and concurrent operations share one client, closed once the last of them ends.
+        first, second = await asyncio.gather(attached.run(['cat', 'note.txt']), attached.exists(note))
         assert (first.stdout, second) == ('hi', True)
         assert (len(transport.clients), transport.close_calls) == (2, 2)
 
@@ -477,6 +475,23 @@ class TestSpritesSandbox:
             with pytest.raises(WorkspaceTimeoutError, match=r'after 0.2 seconds'):
                 await backend.run(['echo', 'ran'], timeout=0.2)
         assert ['echo', 'ran'] not in commands
+
+    async def test_missing_working_directory_raises_before_the_command_runs(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        connect = transport.connect
+
+        async def ignoring_missing_dir(url: str, **kwargs: Any) -> Any:
+            # Like Sprites, run in the default directory when `dir` does not exist.
+            parts = urlsplit(url)
+            query = [(key, value) for key, value in parse_qsl(parts.query) if key != 'dir' or Path(value).is_dir()]
+            return await connect(parts._replace(query=urlencode(query)).geturl(), **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', ignoring_missing_dir)
+        backend = SpritesSandboxBackend(working_dir=str(tmp_path / 'missing'))
+        with pytest.raises(FileNotFoundError):
+            await backend.run(['touch', 'ran'])
+        assert not (transport.root / 'ran').exists()
 
     async def test_failed_acquisition_keeps_the_client_for_a_retry(self, transport: SpriteTransport) -> None:
         transport.get_error = SpriteError('lookup failed')

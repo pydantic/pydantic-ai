@@ -426,21 +426,19 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         _capture_stderr: bool = True,
-        _check_cwd: bool = True,
+        _check_working_dir: bool = True,
     ) -> CommandResult:
         async with self._operation():
             return await self._run(
                 command,
                 shell=shell,
-                cwd=cwd,
                 env=env,
                 timeout=timeout,
                 _capture_stderr=_capture_stderr,
-                _check_cwd=_check_cwd,
+                _check_working_dir=_check_working_dir,
             )
 
     async def _run(
@@ -448,15 +446,14 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         command: WorkspaceCommand,
         *,
         shell: bool,
-        cwd: str | None,
         env: Mapping[str, str] | None,
         timeout: float | None,
         _capture_stderr: bool,
-        _check_cwd: bool,
+        _check_working_dir: bool,
     ) -> CommandResult:
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
-        directory = absolute_path('cwd', cwd) if cwd is not None else self._working_dir
+        directory = self._working_dir
         marker = f'pydantic-ai-end-{uuid.uuid4().hex}'
         capture = f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}'
         # `env` runs inside the wrapper: a `sh` such as dash drops variables whose names are not shell
@@ -464,12 +461,12 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         args = _ending_with(marker, capture, _with_env(command_argv(command, shell), {**self._env, **(env or {})}))
 
         # Acquiring the Sprite has its own bound; the command's deadline starts after it and covers
-        # the `cwd` check.
+        # the working-directory check.
         sandbox = await self.get_sandbox()
         deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
-        if directory is not None and _check_cwd:
+        if directory is not None and _check_working_dir:
             # Sprites exec silently ignores a nonexistent `dir`; reject it before running user work.
-            check = await self.run(['test', '-d', directory], timeout=timeout, _check_cwd=False)
+            check = await self.run(['test', '-d', directory], timeout=timeout, _check_working_dir=False)
             if check.exit_code != 0:
                 raise FileNotFoundError(directory)
         exec_command = _ExecCommand(sandbox.command(*args, cwd=directory))
@@ -535,7 +532,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 ['sh', '-c', 'head -c 65536 -- "$1"; rm -f -- "$1"', 'sh', path],
                 timeout=1,
                 _capture_stderr=False,
-                _check_cwd=False,
+                _check_working_dir=False,
             )
             output = result.stdout
 
