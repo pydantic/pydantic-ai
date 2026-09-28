@@ -1630,6 +1630,23 @@ class _RecordingKill(LocalWorkspaceBackend):
         return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
 
+class _NeverReady(LocalWorkspaceBackend):
+    """A local backend whose launcher never tells the wrapper to start the command."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if isinstance(command, str):
+            command = command.replace(': > "$dir/launch.ready"\n', '')
+        return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+
+
 class TestSignalling:
     async def test_signals_go_through_the_shell_builtin(self, shell_dir: Path) -> None:
         # Slim images ship no `kill` executable, so no argv may start with a bare `kill`.
@@ -1645,6 +1662,17 @@ class TestSignalling:
         assert signals[0] == ['sh', '-c', _KILL_SCRIPT, 'kill', 'TERM', target]
         assert all(argv[-2:] == ['0', target] for argv in signals[1:])
         assert all(argv[0] != 'kill' for argv in backend.argv)
+        await _wait_for_exit(job.pid)
+
+    async def test_stop_before_the_command_starts_never_starts_it(self, shell_dir: Path) -> None:
+        # Without `launch.ready` the wrapper waits forever, so the stop always lands before the command.
+        backend = _NeverReady(shell_dir)
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(backend))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'echo started; exec sleep 300'))
+        job = await _job(ts, ctx, command_id)
+        stopped = await ts.stop_command(ctx, command_id)
+        assert stopped.splitlines() == ['(no output)', '[stopped]', '[exit code: 143]']
         await _wait_for_exit(job.pid)
 
     async def test_failed_signal_is_not_reported_as_stopped(self, shell_dir: Path) -> None:
