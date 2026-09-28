@@ -102,6 +102,7 @@ try:
         NetworkError,
         NotADirectoryError_,
         NotFoundError,
+        PermissionError_,
         SpriteError,
         TimeoutError as SpriteTimeoutError,
     )
@@ -705,18 +706,21 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     raise WorkspaceUnavailableError('Sprites exec connection failed; command may have run') from error
             if timeout is not None and deadline.cancelled_caught:
                 interrupted = True
+                # A handshake that never opened started no command, so there is no capture to read.
+                started = exec_command.ws is not None
                 await _close_command(exec_command)
                 partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
                 # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
-                stderr = await self._collect_stderr(capture) if capture_stderr else ''
+                stderr = await self._collect_stderr(capture) if capture_stderr and started else ''
                 raise WorkspaceTimeoutError(
                     f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
                 )
         except BaseException as error:
             # On a timeout or a cancellation, closing the socket is what ends the command in the Sprite.
             if not interrupted:
+                started = exec_command.ws is not None
                 await _close_command(exec_command)
-                if capture_stderr:
+                if capture_stderr and started:
                     # Removes the capture file, as far as the shielded grace allows.
                     await stop_shielded(lambda: self._read_capture(capture))
             if isinstance(error, Exception) and (mapped := _map_error(error, sandbox.name)) is not None:
@@ -808,6 +812,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise IsADirectoryError(path) from error
         except NotADirectoryError_ as error:
             raise NotADirectoryError(path) from error
+        except PermissionError_ as error:
+            raise PermissionError(path) from error
         except FileNotFoundError_ as error:
             # Missing parents are created, so a 404 here means the Sprite itself is gone: a command
             # reports that as `WorkspaceUnavailableError`.

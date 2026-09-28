@@ -21,6 +21,7 @@ from sprites.exceptions import (
     FilesystemError,
     NetworkError,
     NotFoundError,
+    PermissionError_,
     SpriteError,
 )
 from websockets.datastructures import Headers
@@ -800,9 +801,16 @@ class TestSpritesSandbox:
         transport.connect_error = InvalidMessage('bad handshake')
         with pytest.raises(NetworkError, match='handshake'):
             await SpritesSandboxBackend().run(['true'])
-        assert transport.execs == []
-        # Three attempts for the command, then three for the stderr capture read-back after it failed.
-        assert transport.connects == 6
+        # Three attempts for the command; with no socket opened there is no stderr capture to read back.
+        assert (transport.connects, transport.execs) == (3, [])
+
+    async def test_timeout_during_a_stalled_handshake_reads_no_capture(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        transport.exec_latency = 5
+        with pytest.raises(WorkspaceTimeoutError):
+            await backend.run(['true'], timeout=0.3)
+        assert (transport.connects, transport.execs) == (1, [])
 
     async def test_exec_handshake_retries_when_command_cannot_have_started(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
@@ -927,7 +935,8 @@ class TestSpritesSandbox:
         ('failure', 'expected'),
         [
             (FileNotFoundError_('write', '/f'), WorkspaceError),
-            (FilesystemError('permission', 'write', '/f'), WorkspaceError),
+            (PermissionError_('write', '/f'), PermissionError),
+            (FilesystemError('refused', 'write', '/f'), WorkspaceError),
             # The SDK raises a transport failure as a `FilesystemError` from the `httpx` error.
             (_caused_by(FilesystemError('connect failed', 'write', '/f'), httpx.ConnectError('down')), FilesystemError),
         ],
