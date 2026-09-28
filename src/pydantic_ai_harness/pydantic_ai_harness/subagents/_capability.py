@@ -425,7 +425,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                 # Convention discovery: a run with no workspace has no project to look in.
                 await self._warn_host_folder_ignored(folders, [await anyio.Path.cwd(), await anyio.Path.home()])
                 return
-            require_workspace(ctx.workspace, 'SubAgents')
+            require_workspace(ctx.workspace, 'SubAgents', ctx.messages)
             workspace = ctx.workspace
             home = await anyio.Path.home()
             if isinstance(folders, str) and str(home) != await workspace.working_dir():

@@ -1,12 +1,14 @@
 """Private helpers for capabilities adopting the run sandbox."""
 
 import posixpath
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     SupportsCommands,
@@ -15,6 +17,7 @@ from pydantic_ai.workspaces import (
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceReadOnlyError,
+    WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WrapperWorkspace,
@@ -82,16 +85,39 @@ def is_unattached(workspace: Workspace) -> bool:
     return innermost_backend(workspace) is NO_WORKSPACE
 
 
-def require_workspace(workspace: Workspace, owner: str) -> None:
+_PROVIDER_CAPABILITIES = {'modal': 'ModalSandbox()', 'e2b': 'E2BSandbox()', 'sprites': 'SpritesSandbox()'}
+"""The capability that provides each first-party provider's workspaces, to name in an error."""
+
+
+def _history_ref(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
+    """The workspace the message history continues in: the last response's ref, as core reads it."""
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    return None if response is None else response.workspace_ref
+
+
+def require_workspace(workspace: Workspace, owner: str, messages: Sequence[ModelMessage]) -> None:
     """Raise `UserError` when the run has no workspace, naming `owner` and how to attach one.
 
     Called from `before_run`, so a missing workspace fails the run at its start rather than on
-    the first tool call.
+    the first tool call. When `messages` continue in a workspace, the error names it, since
+    attaching another workspace would not reach the files the conversation worked on.
     """
     backend = innermost_backend(workspace)
     # A deliberate refusal carries the caller's reason; an unattached run gets the setup hint.
     if isinstance(backend, UnavailableWorkspace) and not is_unattached(workspace):
         raise UserError(f'`{owner}` cannot use this workspace: {backend.reason}')
+    if not workspace.attached and (ref := _history_ref(messages)) is not None:
+        if ref.provider == 'local':
+            example = f' (such as `LocalWorkspace({ref.id!r})`)'
+        elif (capability := _PROVIDER_CAPABILITIES.get(ref.provider)) is not None:
+            example = f' (such as `{capability}`)'
+        else:
+            example = ''
+        raise UserError(
+            f'`{owner}` needs a workspace. The message history continues in workspace '
+            f'`{ref.provider}:{ref.id}`; attach the capability that provides `{ref.provider}` workspaces'
+            f'{example} to continue there, or pass `workspace=` to the run.'
+        )
     if not workspace.attached:
         raise UserError(
             f'`{owner}` needs a workspace, but none is attached to this run. '
@@ -114,7 +140,7 @@ class RequireWorkspace(AbstractCapability[AgentDepsT]):
     owner: str
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        require_workspace(ctx.workspace, self.owner)
+        require_workspace(ctx.workspace, self.owner, ctx.messages)
 
 
 def secondary_workspace(value: WorkspaceBackend | None, owner: str) -> Workspace | None:

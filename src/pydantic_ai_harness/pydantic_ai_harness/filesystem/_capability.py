@@ -159,7 +159,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""
-        require_workspace(ctx.workspace, 'FileSystem')
+        require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
 
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
         """The filesystem toolset, the same one for every run, so durable execution sees the leaf it registered."""

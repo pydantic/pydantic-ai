@@ -80,7 +80,7 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when a local checkout is configured but no workspace holds it."""
         if self._resolved_local_path() is not None:
-            require_workspace(ctx.workspace, 'PydanticAIDocs')
+            require_workspace(ctx.workspace, 'PydanticAIDocs', ctx.messages)
 
     def _resolved_local_path(self) -> Path | None:
         """The local checkout path: `local_docs_path`, else the env var, else `None`.
