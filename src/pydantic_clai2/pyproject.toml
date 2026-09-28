@@ -46,7 +46,7 @@ dependencies = [
 typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 
 [project.urls]
-Homepage = "https://pydantic.dev/docs/ai/harness/clai2/"
+Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2"
 Source = "https://github.com/pydantic/pydantic-ai"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
