@@ -288,7 +288,7 @@ Two `Skills` on one agent combine into one catalog.
 - [Agent Skills specification](https://agentskills.io/specification)
 - [Adding skills support to an agent](https://agentskills.io/client-implementation/adding-skills-support)
 - [Pydantic AI workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/)
-- [Pydantic AI capabilities overview](/ai/capabilities/overview/)
+- [Pydantic AI capabilities overview](../capabilities/overview.md)
 
 ## API reference
 
