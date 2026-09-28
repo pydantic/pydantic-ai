@@ -142,9 +142,9 @@ PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py
 ```
 
 `make typecheck-changed` checks only the files whose content changed since Pyright last passed plus
-everything that transitively imports them, but its fallbacks below check the whole project, so prefer
-targeted runs while iterating. It records what passed under your git directory, so the
-record is per-worktree and never committed. CI runs the same target, and there it checks everything:
+everything that transitively imports them, but its fallbacks below can check nearly every file, so
+prefer targeted runs while iterating. It records what passed under your git directory, so the record
+is per-worktree and never committed. CI runs the same target, and there it checks everything:
 GitHub Actions always sets `CI`, and on seeing it `make typecheck-changed` narrows nothing and hands
 the whole project to `make typecheck-pyright`.
 
