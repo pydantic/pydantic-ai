@@ -93,6 +93,7 @@ with try_import() as imports_successful:
     )
     from openai.types.responses.response import IncompleteDetails
     from openai.types.responses.response_compaction_item import ResponseCompactionItem
+    from openai.types.responses.response_function_web_search import ActionSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import AnnotationURLCitation, ResponseOutputText
@@ -4675,6 +4676,73 @@ async def test_openai_responses_web_search_usage_without_token_usage(allow_model
     result = await agent.run('What is pydantic?')
     # The mock response's model name (`gpt-4o-123`) is unknown to genai-prices, so `cost` stays `None`.
     assert result.usage == snapshot(RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=2))
+
+
+async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(allow_model_requests: None):
+    """A search already listed in an `in_progress` snapshot is counted once, from the terminal response.
+
+    Mocked because the recorded streams' `in_progress` snapshots carry no output items.
+    """
+    search = ResponseFunctionWebSearch(
+        id='web-search-1',
+        action=ActionSearch(type='search', query='pydantic'),
+        status='completed',
+        type='web_search_call',
+    )
+    message = ResponseOutputMessage(
+        id='msg_001',
+        content=[ResponseOutputText(text='done', type='output_text', annotations=[])],
+        role='assistant',
+        status='completed',
+        type='message',
+    )
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(
+            response=base_response.model_copy(update={'status': 'in_progress', 'output': [search]}),
+            type='response.in_progress',
+            sequence_number=1,
+        ),
+        resp.ResponseOutputItemAddedEvent(
+            item=message.model_copy(update={'content': [], 'status': 'in_progress'}),
+            output_index=1,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='done',
+            item_id='msg_001',
+            output_index=1,
+            type='response.output_text.delta',
+            sequence_number=3,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed', 'output': [search, message]}),
+            type='response.completed',
+            sequence_number=4,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('What is pydantic?') as result:
+        assert await result.get_output() == 'done'
+    assert result.usage == snapshot(
+        RunUsage(requests=1, web_searches=1, details={'web_search_requests': 1}, cost=Decimal('0.01'))
+    )
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):

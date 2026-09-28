@@ -5181,9 +5181,10 @@ def _map_usage(
     # OpenAI bills native web search per search action (see
     # <https://developers.openai.com/api/docs/guides/tools-web-search>) but never reports the count in `usage`,
     # so count the `web_search_call` output items here. Reasoning models also emit `open_page` and
-    # `find_in_page` actions, which aren't searches and aren't billed as one.
+    # `find_in_page` actions, which aren't searches and aren't billed as one. A streamed `in_progress` or
+    # `queued` snapshot is skipped: its searches are counted again from the terminal event's response.
     web_search_requests = 0
-    if isinstance(response, responses.Response):
+    if isinstance(response, responses.Response) and response.status not in ('in_progress', 'queued'):
         web_search_requests = sum(
             1
             for item in response.output
