@@ -72,6 +72,10 @@ Every tool runs in the background, so a slow tool does not block session events,
 turn tracking. [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps each
 result adjacent to its call even when calls finish out of order.
 
+When one response calls several tools, each result goes back to the model as its tool finishes, but the
+model is asked to answer only once all of them are in, so it answers them together, once, rather than
+answering the first result while its siblings are still running.
+
 Whether the *model* keeps the conversation going while a tool runs — speaking (typically saying
 what it's doing) and answering the user before the result is back — depends on the model. Its
 profile's [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode]

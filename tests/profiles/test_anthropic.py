@@ -365,21 +365,24 @@ def test_model_profile_fable_5():
         ('claude-mythos-preview', True),
         ('claude-opus-5-5', False),
         ('claude-opus-5', True),
+        ('claude-sonnet-5-5', False),
+        ('claude-sonnet-5', True),
     ],
 )
 def test_model_profile_forced_tool_choice(model_name: str, supports_forcing: bool):
-    """The 5.1 generation and Opus 5.5 reject a forced `tool_choice` outright.
+    """The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` outright.
 
     Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and the Opus 5.5
-    migration guide lists forced tool use among its breaking changes. Verified live: `claude-fable-5-1`
-    and `claude-opus-5-5` return a 400 for `{'type': 'any'}` and `{'type': 'tool'}` while
-    `claude-fable-5` and `claude-opus-5` return 200 for both.
+    and Sonnet 5.5 migration guides list forced tool use among their breaking changes. Verified live:
+    `claude-fable-5-1`, `claude-opus-5-5`, and `claude-sonnet-5-5` return a 400 for `{'type': 'any'}`
+    and `{'type': 'tool'}` while `claude-fable-5`, `claude-opus-5`, and `claude-sonnet-5` return 200
+    for both.
     The Mythos ids are Project Glasswing-only and unreachable with our credentials, so they follow
     the table.
     """
     profile = anthropic_model_profile(model_name)
     assert profile is not None
-    assert profile.get('anthropic_supports_forced_tool_choice') is supports_forcing
+    assert profile.get('supports_forced_tool_choice') is supports_forcing
 
 
 def test_model_profile_mythos_5():
@@ -417,7 +420,7 @@ def test_model_profile_fable_5_1():
 
     The pair diverges on forced `tool_choice`: `claude-fable-5-1` returns a 400 while
     `claude-fable-5` accepts forcing, so only 5.1 carries
-    `anthropic_supports_forced_tool_choice=False` — see `test_model_profile_forced_tool_choice`.
+    `supports_forced_tool_choice=False` — see `test_model_profile_forced_tool_choice`.
     """
     profile = anthropic_model_profile('claude-fable-5-1')
     assert profile == snapshot(
@@ -436,7 +439,7 @@ def test_model_profile_fable_5_1():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
-            'anthropic_supports_forced_tool_choice': False,
+            'supports_forced_tool_choice': False,
             'anthropic_binds_thinking_blocks': True,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
@@ -475,7 +478,7 @@ def test_model_profile_sonnet_5():
     assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
 
     # Sonnet-5-specific: forcing is allowed (unlike Fable/Mythos), fast speed is not (Opus-only)
-    assert profile.get('anthropic_supports_forced_tool_choice') is True
+    assert profile.get('supports_forced_tool_choice') is True
     assert profile.get('anthropic_supports_fast_speed') is False
 
 
@@ -510,7 +513,7 @@ def test_model_profile_opus_5():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
-            'anthropic_supports_forced_tool_choice': True,
+            'supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
@@ -547,7 +550,30 @@ def test_model_profile_opus_5_5():
     assert profile == {
         **opus_5,
         'anthropic_disallows_top_effort_when_thinking_disabled': False,
-        'anthropic_supports_forced_tool_choice': False,
+        'supports_forced_tool_choice': False,
+        'anthropic_binds_thinking_blocks': True,
+    }
+
+
+def test_model_profile_sonnet_5_5():
+    """Claude Sonnet 5.5 carries Sonnet 5's capability surface plus the forcing and binding changes.
+
+    Verified live against the Anthropic API by probing `claude-sonnet-5-5` side by side with
+    `claude-sonnet-5`: both reject sampling settings, budget-based thinking, and fast mode, and both
+    accept adaptive thinking at `xhigh` effort, task budgets, and json-schema output.
+
+    Where Sonnet 5.5 diverges, it matches Opus 5.5: it returns a 400 for a forced `tool_choice` and for a
+    thinking block replayed after the `system` prompt changes (with an explicit
+    `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` in favor of
+    `{'type': 'between_tools'}`, which passes through `anthropic_thinking` unchanged.
+    """
+    profile = anthropic_model_profile('claude-sonnet-5-5')
+    sonnet_5 = anthropic_model_profile('claude-sonnet-5')
+    assert profile is not None
+    assert sonnet_5 is not None
+    assert profile == {
+        **sonnet_5,
+        'supports_forced_tool_choice': False,
         'anthropic_binds_thinking_blocks': True,
     }
 
