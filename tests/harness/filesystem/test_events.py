@@ -205,6 +205,28 @@ class TestFileSystemEvents:
         assert read_events[0].path == 'binary.bin'
         assert read_events[0].content_hash == hashlib.sha256(content).hexdigest()[:12]
 
+    async def test_partial_read_emits_the_whole_file_hash(self, tmp_path: Path) -> None:
+        content = 'one\ntwo\nthree\n'
+        (tmp_path / 'target.txt').write_text(content)
+
+        events = await _run_and_collect(tmp_path, 'read_file', '{"path":"target.txt","offset":1,"limit":1}')
+
+        (read,) = [event for event in events if isinstance(event, FileReadEvent)]
+        assert read.content_hash == _hash(content)
+
+    async def test_root_dir_is_the_real_root_and_path_the_spelling_used(self, tmp_path: Path) -> None:
+        real = tmp_path / 'real'
+        real.mkdir()
+        (real / 'target.txt').write_text('hello\n')
+        (real / 'alias.txt').symlink_to(real / 'target.txt')
+        link = tmp_path / 'link'
+        link.symlink_to(real)
+
+        events = await _run_and_collect(link, 'read_file', '{"path":"alias.txt"}')
+
+        (read,) = [event for event in events if isinstance(event, FileReadEvent)]
+        assert (read.path, read.root_dir) == ('alias.txt', _root(real))
+
     async def test_list_emits_normalized_path_and_entry_count(self, tmp_path: Path) -> None:
         sub = tmp_path / 'sub'
         sub.mkdir()

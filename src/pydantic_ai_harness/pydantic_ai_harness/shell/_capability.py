@@ -44,9 +44,9 @@ LLM_API_KEY_ENV_PATTERNS: tuple[str, ...] = (
 
 Pass these to keep provider credentials in an explicit `env` from reaching commands.
 The patterns filter only `env`: the workspace decides the rest of a command's
-environment, and a local workspace passes on only the host's `PATH` and `HOME`
-plus its own `env`. Covers provider prefixes only -- not other secrets, and the
-prefixes are coarse (`GOOGLE_*` also strips `GOOGLE_APPLICATION_CREDENTIALS`), so
+environment, and a local workspace passes on only the host's `PATH`, `HOME`,
+`LANG`, `LC_ALL` and `LC_CTYPE` plus its own `env`. Covers provider prefixes only --
+not other secrets, and the prefixes are coarse (`GOOGLE_*` also strips `GOOGLE_APPLICATION_CREDENTIALS`), so
 treat it as a starting point. Not a default: opt in explicitly.
 """
 
@@ -107,8 +107,8 @@ class Shell(AbstractCapability[AgentDepsT]):
     """Variables added to every command's environment, on top of the workspace's own.
 
     Commands get exactly the workspace's environment plus these, minus names matching
-    `denied_env_patterns`. A local workspace's environment is the host's `PATH` and `HOME`
-    plus its own `env`.
+    `denied_env_patterns`. A local workspace's environment is the host's `PATH`, `HOME`,
+    `LANG`, `LC_ALL` and `LC_CTYPE` plus its own `env`.
     """
 
     denied_env_patterns: Sequence[str] = field(default_factory=list[str])

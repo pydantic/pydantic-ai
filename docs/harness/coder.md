@@ -145,7 +145,7 @@ or allowlist commands.
 
 | Tool | Behavior |
 | --- | --- |
-| `read_file(path, offset=0, limit=None)` | Zero-based line offset, one-based displayed line numbers, up to 2,000 lines or 50,000 characters of complete lines; the continuation hint names the exact next offset, and a line too long for the window is named and skippable. No hash header. |
+| `read_file(path, offset=0, limit=None)` | Zero-based line offset, one-based displayed line numbers, 2,000 lines unless `limit` says otherwise, and at most 50,000 characters of complete lines; the continuation hint names the exact next offset, and a line too long for the window is named and skippable. No hash header. |
 | `write_file(path, content)` | Create a file in an existing directory, or replace one. No `expected_hash`. |
 | `edit_file(path, old_text, new_text)` or `edit_file(path, replacements=[...])` | Exact replacements, each matching once; a batch is checked in memory and written only if every replacement matches. |
 | `list_files(path='.', glob=None)` | `rg --files`, sorted by path, respecting ignore files and skipping hidden files. |
@@ -153,7 +153,7 @@ or allowlist commands.
 | `shell(command, mode='foreground', timeout=270)` | Unrestricted commands rooted at the workspace that outlive the run. |
 | `delegate_task(agent_name, task)` | Hand a self-contained sub-task to `self`, a fresh run of this agent. Present unless `sub_agents=False`. |
 
-Results are bounded by `FileSystem`'s caps (2,000 lines or 50,000 characters per `read_file`, 1,000 lines or files per search or listing) and Coder's 64,000-character
+Results are bounded by `FileSystem`'s caps (2,000 lines by default and 50,000 characters per `read_file`, 1,000 lines or files per search or listing) and Coder's 64,000-character
 tool-output limit; a truncation marker means more output was omitted, so narrow the search rather than
 assuming it was complete. A `read_file` window stays under the output limit, so paging by `offset` never skips lines. Use `shell` for `mkdir`, `find`, process inspection, and `kill`. File writes
 keep the standalone filesystem's read-only path rules (`.git`, `.env`, keys, and secrets); shell can bypass
@@ -248,7 +248,7 @@ When retaining `result.workspace` after a run with a provider backend that expos
 
 Sandbox refs identify existing environments; provider-specific cleanup should use an ID-only delete API for refs your application owns (where that provider offers one). Do not create or attach a backend merely to delete a sandbox. Directory upload and preview URLs depend on the provider SDK.
 
-With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily; the instructions then do not name the working directory. Choose a working directory that exists in your image.
+With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily; the instructions then do not name the working directory. A new sandbox creates its `working_dir` for you.
 
 ## Benchmarking
 
