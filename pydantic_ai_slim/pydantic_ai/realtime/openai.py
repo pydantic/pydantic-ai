@@ -107,7 +107,13 @@ from ._openai_protocol import (
     with_realtime_query,
 )
 from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
-from ._utils import inject_trace_context, reconnect_with_backoff, require_pcm_audio, resolve_advertised_tools
+from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
+    inject_trace_context,
+    reconnect_with_backoff,
+    require_pcm_audio,
+    resolve_advertised_tools,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -409,6 +415,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
+        self._gave_up = False
         self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
@@ -472,6 +479,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None:
         """The call so far, when a session has offered it for replay on reconnect."""
         return self._message_history
+
+    @property
+    def _can_reconnect(self) -> bool:
+        return (
+            not self._gave_up
+            and self._dial is not None
+            and self._reconnect is not None
+            and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
+        )
 
     @property
     def _answers_tool_calls_per_response(self) -> bool:
@@ -749,6 +765,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if await self._try_reconnect():
                 yield RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
                 continue
+            # Out of attempts: no reconnect is coming any more.
+            self._gave_up = True
             yield RealtimeSessionErrorEvent(
                 message=f'{self._provider_label} connection closed; reconnect failed: {closed}', recoverable=False
             )

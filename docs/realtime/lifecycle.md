@@ -68,6 +68,14 @@ realtime = agent.realtime(
 session, preventing an endpoint that repeatedly accepts and closes connections from redialing
 forever.
 
+While the policy is replacing a dropped connection, an audio chunk sent with
+[`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] is dropped instead of raising, so
+a microphone capture task survives the reconnect (live audio is no use once late). Other sends made
+during the reconnect still raise [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. A reconnect
+in the middle of an utterance commits only the audio sent after it, so with push-to-talk, prompt the
+user to repeat themselves on
+[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent].
+
 Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
