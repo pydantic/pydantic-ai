@@ -600,10 +600,10 @@ The latter defaults to `fresh_backend` when supplied. The destructive rule never
 Before shipping a backend, use the suite to check:
 
 - Concurrent first use creates one environment (supply `fresh_backend` for this rule), with a stable ref.
-- Command errors use the right types: invalid arguments, missing paths, unavailable environments,
-  and timeouts with partial output; stdin at EOF and non-zero exits remain normal results.
-- Timeout and cancellation stop the foreground process group, and background children holding
-  output pipes do not indefinitely delay a finished command.
+- Command errors use the right types: invalid arguments, missing paths and unavailable environments;
+  timeouts raise `WorkspaceTimeoutError`; stdin at EOF and non-zero exits remain normal results.
+- Cancellation stops the foreground command, and background children holding output pipes do not
+  indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
