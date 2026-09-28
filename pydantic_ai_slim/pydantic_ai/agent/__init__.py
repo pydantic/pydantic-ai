@@ -4310,14 +4310,6 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:  # noqa: C901
         graph_deps = self.graph_deps
         state = self.state
-        # Snapshot the responses that existed before this run, by identity, so `refresh_workspace_ref`
-        # can tell a response this run produced from one that arrived via `message_history`. Identity
-        # rather than position: a history processor may reorder or rewrite messages mid-run, and the
-        # ref must land only on a newly produced response, never overwrite a prior run's on an existing
-        # one.
-        initial_responses = tuple(
-            message for message in state.message_history if isinstance(message, _messages.ModelResponse)
-        )
 
         def refresh_workspace_ref() -> None:
             message = next(
@@ -4328,7 +4320,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 ),
                 None,
             )
-            if message is not None and all(message is not original for original in initial_responses):
+            # By `run_id`, not identity: a history processor may copy a prior run's response, and its
+            # ref must stay; this run's `run_id` never appears in the history it was given.
+            if message is not None and (message.run_id == state.run_id or message is graph_deps.adopted_response):
                 message.workspace_ref = graph_deps.workspace_ref
 
         pending_message_queue = state.pending_messages
