@@ -175,7 +175,7 @@ class GeminiBehavior:
     """End a filler turn `IN_PROGRESS` before calling a tool (`gemini-3.8-live-extended-thinking`)."""
     input_transcription: bool = True
     async_tool_calls: bool = False
-    """Run tool calls asynchronously (`google_async_tool_calls`): the model keeps talking after the call.
+    """Run tool calls asynchronously (`async_tool_calls`): the model keeps talking after the call.
 
     The extended-thinking model (`stalls_in_progress`) always runs them asynchronously, in the shape the
     stall models: its filler ends before the call, and the answer follows the result.
@@ -675,7 +675,7 @@ class GeminiSimulation(Simulation):
     def model_settings(self) -> RealtimeModelSettings:
         settings: GoogleRealtimeModelSettings = {
             'google_input_transcription': self.behavior.input_transcription,
-            'google_async_tool_calls': self.behavior.async_tool_calls,
+            'async_tool_calls': self.behavior.async_tool_calls,
         }
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
         return settings
