@@ -528,7 +528,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
