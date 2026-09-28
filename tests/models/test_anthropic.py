@@ -4441,6 +4441,20 @@ async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
     assert 'thinking' not in single_request_body(vcr)
 
 
+async def test_anthropic_sonnet_5_5_between_tools(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    """Claude Sonnet 5.5 turns off up-front thinking with `between_tools`, its replacement for `disabled`.
+
+    `anthropic_thinking` passes the type through unchanged, and the model answers without thinking.
+    """
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'between_tools'}))
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert not any(isinstance(p, ThinkingPart) for p in response.parts)
+    assert single_request_body(vcr)['thinking'] == snapshot({'type': 'between_tools'})
+
+
 _REFUSAL_CASE_PARAMS = [
     pytest.param(
         'cyber',
