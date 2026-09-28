@@ -2614,3 +2614,29 @@ def _toolset_with_patterns(read_only: list[str] | None, protected: list[str]) ->
         max_search_results=1,
         max_find_results=1,
     )
+
+
+class TestUsedAsAToolset:
+    """The tools emit capability events, which core accepts only from a capability's tools."""
+
+    @pytest.fixture
+    def anyio_backend(self) -> str:
+        # Agent.run needs asyncio.
+        return 'asyncio'
+
+    @pytest.mark.parametrize('prefix', [None, 'fs'])
+    async def test_a_bare_toolset_points_to_the_capability(self, tmp_path: Path, prefix: str | None) -> None:
+        (tmp_path / 'a.txt').write_text('a\n')
+        toolset = FileSystem[object]().get_toolset()
+        name = 'read_file' if prefix is None else f'{prefix}_read_file'
+
+        def read(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(name, {'path': 'a.txt'})])
+
+        agent = Agent(
+            FunctionModel(read),
+            capabilities=[LocalWorkspace(tmp_path)],
+            toolsets=[toolset if prefix is None else toolset.prefixed(prefix)],
+        )
+        with pytest.raises(UserError, match=r'Pass `capabilities=\[FileSystem\(\)\]` rather than its toolset'):
+            await agent.run('go')
