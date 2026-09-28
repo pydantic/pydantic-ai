@@ -34,6 +34,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 A sandbox lives for 1 hour by default. When that runs out it pauses, and the next run resumes it. On E2B's Pro plan you can pass up to `E2BSandbox(sandbox_timeout=86400)`. A plan-limit hint is added only when E2B rejects the requested lifetime; other create errors, including network timeouts, retain the upstream error.
 
+Commands start in the home directory, `/home/user`, which holds dotfiles and the pip cache. Pass a project directory, such as `E2BSandbox(working_dir='/home/user/project')`, so the project is not the home directory; it is created for you on a new sandbox.
+
 E2B's default template does not include ripgrep (`rg`). `Coder` can search without it, but installing `rg` makes searches faster. Build a reusable [template](https://e2b.dev/docs/template/quickstart) once, outside an agent run (building can take a minute):
 
 ```text
