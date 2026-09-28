@@ -6,10 +6,11 @@ import re
 import sqlite3
 from collections.abc import Generator
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from typing import Protocol
 
 from prompt_toolkit import PromptSession
-from pydantic import BaseModel, Field, SecretStr, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
 
@@ -22,6 +23,8 @@ from .menu_worker import menu_key, run_worker
 
 class KeyReference(BaseModel):
     """A name resolved from the credential store, not a cached secret."""
+
+    model_config = ConfigDict(extra='forbid')
 
     name: str = Field(min_length=1)
 
@@ -36,6 +39,25 @@ def resolve_key(*, token: SecretStr | KeyReference) -> str:
             f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through /add_model.'
         )
     return keys[token.name].get_secret_value()
+
+
+@dataclass(frozen=True, kw_only=True)
+class SavedKey:
+    """A capability's `auth` function: the named key's current value, looked up on every run.
+
+    Plugins keep only the name in their settings. Replacing the key in `/keys` reaches the next
+    run of every plugin that names it; deleting it fails that run closed with `setup` as the fix.
+    """
+
+    name: str
+    setup: str
+
+    def __call__(self, ctx: object, /) -> str:
+        """Resolve now, so a stale value is never reused."""
+        keys = load_keys()
+        if self.name not in keys:
+            raise UserError(f'Saved API key {self.name} is missing. {self.setup}')
+        return keys[self.name].get_secret_value()
 
 
 def save_key_connection(*, account: str, token: SecretStr | KeyReference, value: str) -> None:
@@ -91,14 +113,20 @@ def _load_keys() -> dict[str, SecretStr]:
         raise UserError('Stored API keys are invalid. Repair the api-keys credential bundle.') from None
 
 
-def save_key(*, name: str, value: str) -> str:
-    """Save one key without touching unrelated credentials or SQLite."""
+def save_key(*, name: str, value: str, replace: bool = True) -> str:
+    """Save one key without touching unrelated credentials or SQLite.
+
+    With `replace=False`, the existence check happens under the same lock as the write, so a key another
+    process saved after the caller looked is not overwritten without the user confirming it.
+    """
     name = normalize_name(name=name)
     value = value.strip()
     if not value:
         raise ValueError('An API key is required.')
     with key_transaction():
         keys = _load_keys()
+        if not replace and name in keys:
+            raise ValueError(f'{name} was saved in /keys by another session meanwhile. Choose it again to replace it.')
         keys[name] = SecretStr(value)
         _save_keys(keys=keys)
     path = credentials_path(account='api-keys')

@@ -24,7 +24,7 @@ from ._settings import (
     http_client,
 )
 from ._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from ._tokens import TokenStore, oauth
+from ._tokens import TokenStore, browser_sign_in, oauth
 
 __all__ = [
     'CLAUDE_MCP_FILE',
@@ -48,6 +48,7 @@ __all__ = [
     'TokenStore',
     'UserFile',
     'activate',
+    'browser_sign_in',
     'edit_form',
     'edit_in_editor',
     'http_client',

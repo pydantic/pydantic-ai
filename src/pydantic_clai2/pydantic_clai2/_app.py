@@ -97,6 +97,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
+    PluginSettings(id='day_ai', factory='pydantic_clai2.day_ai', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 

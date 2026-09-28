@@ -157,8 +157,11 @@ class TokenStore:
         return await self.delete_many([key], collection=collection) == 1
 
 
-def oauth(name: str, server: RemoteServer) -> OAuth | None:
-    """A sign-in handler with keyring-backed tokens; FastMCP refreshes them or opens the browser on connect."""
-    if not server.auth:
-        return None
+def browser_sign_in(name: str) -> OAuth:
+    """A sign-in handler with tokens kept under `mcp-NAME`; FastMCP refreshes them or opens the browser on connect."""
     return OAuth(client_name='CLAI', callback_host='127.0.0.1', token_storage=TokenStore(name))
+
+
+def oauth(name: str, server: RemoteServer) -> OAuth | None:
+    """The server's browser sign-in, or `None` when it does not use OAuth."""
+    return browser_sign_in(name) if server.auth else None
