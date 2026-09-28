@@ -5178,12 +5178,17 @@ def _map_usage(
     model: str,
 ) -> usage.RequestUsage:
     response_usage = response.usage
-    # OpenAI bills native web searches per call (see
-    # <https://developers.openai.com/api/docs/guides/tools-web-search#usage-and-pricing>) but never reports
-    # the count in `usage` — it only shows up as `web_search_call` output items, so count them here.
-    web_search_requests = sum(
-        1 for item in getattr(response, 'output', None) or [] if getattr(item, 'type', None) == 'web_search_call'
-    )
+    # OpenAI bills native web search per search action (see
+    # <https://developers.openai.com/api/docs/guides/tools-web-search>) but never reports the count in `usage`,
+    # so count the `web_search_call` output items here. Reasoning models also emit `open_page` and
+    # `find_in_page` actions, which aren't searches and aren't billed as one.
+    web_search_requests = 0
+    if isinstance(response, responses.Response):
+        web_search_requests = sum(
+            1
+            for item in response.output
+            if isinstance(item, responses.ResponseFunctionWebSearch) and item.action.type == 'search'
+        )
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
@@ -5227,8 +5232,9 @@ def _map_usage(
     )
     # genai-prices prices `web_searches` straight off the usage object (its OpenAI extractors have no mapping
     # for it since the count never appears in the wire `usage`), so lift the count we found in the output items.
+    # It isn't a declared field, so it's set the way `RequestUsage.__init__` sets extra units.
     if web_search_requests:
-        request_usage.web_searches = web_search_requests
+        setattr(request_usage, 'web_searches', web_search_requests)
     # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
     # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
     # provider's extractor does — Azure's still omits it — so lift it manually here.
