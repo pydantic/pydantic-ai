@@ -471,7 +471,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
@@ -479,7 +478,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # `commands.run` takes only a string, which E2B hands to `/bin/bash -l -c`; `shlex.join`
         # keeps each argv element one word, and a `shell=True` string runs under `/bin/sh -c`.
         line = shlex.join(command_argv(command, shell))
-        cwd = absolute_path('cwd', cwd)
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
@@ -527,7 +525,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     background=True,
                     # Explicit caller settings take precedence over the portable UTF-8 default.
                     envs={'LC_ALL': 'C.UTF-8', **(self._env or {}), **(env or {})},
-                    cwd=cwd if cwd is not None else self._working_dir,
+                    cwd=self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
                     user=self._user,
                 )

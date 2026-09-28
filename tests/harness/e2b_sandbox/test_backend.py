@@ -408,11 +408,10 @@ class TestRun:
         await backend.run(['true'], env={'LC_ALL': 'en_US.UTF-8'})
         assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'LC_ALL': 'en_US.UTF-8'}
 
-    async def test_cwd_and_env_reach_the_command(self, fake_e2b: FakeE2B) -> None:
+    async def test_env_reaches_the_command(self, fake_e2b: FakeE2B) -> None:
         backend = await started()
-        await backend.run(['env'], cwd='/srv', env={'FOO': 'bar'})
-        call = fake_e2b.sandboxes[0].commands.calls[-1]
-        assert (call.cwd, call.envs) == ('/srv', {'LC_ALL': 'C.UTF-8', 'FOO': 'bar'})
+        await backend.run(['env'], env={'FOO': 'bar'})
+        assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'LC_ALL': 'C.UTF-8', 'FOO': 'bar'}
 
     async def test_configured_env_reaches_an_attached_sandbox_under_the_commands_own(self, fake_e2b: FakeE2B) -> None:
         # Creation `envs` never reach a sandbox made elsewhere, so the configured env rides on
@@ -427,13 +426,7 @@ class TestRun:
             'SHARED': 'command',
         }
 
-    async def test_rejects_relative_cwd(self, fake_e2b: FakeE2B) -> None:
-        backend = await started()
-
-        with pytest.raises(ValueError, match='cwd must be an absolute workspace path'):
-            await backend.run(['pwd'], cwd='repo')
-
-    async def test_configured_working_dir_is_the_default_cwd(self, fake_e2b: FakeE2B) -> None:
+    async def test_commands_start_in_the_configured_working_dir(self, fake_e2b: FakeE2B) -> None:
         # E2B has no create-time working directory, so the backend applies it per command.
         backend = await started(working_dir='/work')
         await backend.run(['pwd'])

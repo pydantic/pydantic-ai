@@ -253,15 +253,13 @@ class TestCreateConfiguration:
 
         assert result.stdout.strip() == '/tmp'
 
-    async def test_per_command_cwd_and_env_reach_the_process(self) -> None:
-        """Validates the fake-encoded assumption that E2B applies per-command `cwd` and `envs`."""
+    async def test_per_command_env_reaches_the_process(self) -> None:
+        """Validates the fake-encoded assumption that E2B applies per-command `envs`."""
         probe = _unique('per-command')
         async with _owned(sandbox_timeout=120) as backend:
-            result = await backend.run(
-                'printf "%s %s" "$(pwd)" "$PROBE"', shell=True, cwd='/etc', env={'PROBE': probe}, timeout=30
-            )
+            result = await backend.run('printf %s "$PROBE"', shell=True, env={'PROBE': probe}, timeout=30)
 
-        assert result.stdout == f'/etc {probe}'
+        assert result.stdout == probe
 
 
 class TestRealFilesystem:
