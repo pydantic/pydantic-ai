@@ -197,9 +197,10 @@ async def load_definitions(workspace: Workspace, agent_folders: str | Sequence[s
     result: list[DiskDefinition] = []
     seen: set[str] = set()
     for folder in folders:
-        real_path = await workspace.realpath(folder)
+        resolved = await workspace.resolve(folder)
+        real_path = await workspace.realpath(resolved)
         if real_path in seen:
             continue
         seen.add(real_path)
-        result.extend(await _load_folder(workspace, real_path))
+        result.extend(await _load_folder(workspace, resolved))
     return result

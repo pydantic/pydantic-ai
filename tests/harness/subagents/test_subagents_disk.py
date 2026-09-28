@@ -347,6 +347,16 @@ class TestWorkspaceDiscovery:
             listing = await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path))
         assert listing is not None and '- planner' in listing
 
+    async def test_explicit_folder_resolves_parent_segments_before_symlinks(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / 'agents', 'expected.md', 'Expected.')
+        (tmp_path / 'target' / 'child').mkdir(parents=True)
+        _write_agent(tmp_path / 'target' / 'agents', 'wrong.md', 'Wrong.')
+        (tmp_path / 'link').symlink_to(tmp_path / 'target' / 'child', target_is_directory=True)
+
+        listing = await _listing(SubAgents(agent_folders=['link/../agents']), LocalWorkspaceBackend(tmp_path))
+
+        assert listing is not None and '- expected' in listing and 'wrong' not in listing
+
     async def test_no_workspace_skips_convention_discovery(self) -> None:
         # Neither the home root nor the host's cwd stands in for a missing workspace, but a folder
         # earlier releases read is reported once per instance, not dropped without a word.
