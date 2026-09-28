@@ -233,9 +233,9 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
 
     async def _stop(self, tag: str) -> None:
         # Killing the local `ssh` leaves the remote command running, so a second connection stops it.
-        # Best effort: a host that can't be reached now has nothing to report.
+        # Best effort: a host that stalls or can't be reached now has nothing to report.
         with anyio.CancelScope(shield=True):
             try:
                 await self._runner.run([*self._ssh, f'sh -c {shlex.quote(_STOP)} sh {tag}'], timeout=_STOP_TIMEOUT)
-            except WorkspaceError:  # pragma: no cover - the host went away between the command and the stop
+            except WorkspaceError:
                 pass

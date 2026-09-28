@@ -115,10 +115,9 @@ class TestBubblewrapAroundSSH(TestSSHWorkspaceBackend):
         return BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('box', working_dir=str(tmp_path))))
 
 
+# The same rules hold with every command in a real bubblewrap sandbox.
 @pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
 class TestRealBubblewrap(TestLocalWorkspaceBackend):  # pragma: no cover - CI hosts may not have bubblewrap
-    """The same rules hold with every command in a real bubblewrap sandbox."""
-
     @pytest.fixture
     def backend(self, tmp_path: Path) -> WorkspaceBackend:
         return BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
