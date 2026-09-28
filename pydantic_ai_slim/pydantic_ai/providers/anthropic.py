@@ -52,6 +52,9 @@ restriction the top-level prompt set, it refuses every time where Opus 5 complie
 a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
 entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
 
+`claude-sonnet-5-5` is absent for the same measured reason, although Anthropic lists it as supported:
+asked to lift a restriction the top-level prompt set, it refuses every time, as Sonnet 5 does.
+
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
 """
 
@@ -60,12 +63,14 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
+    'claude-sonnet-5-5',
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
-The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta, and it happens
-to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate settings because they're
-separate features, one GA and one beta, that could diverge again. Models predating the beta reject
+The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta. It differs from
+`_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` only by `claude-sonnet-5-5`, which calls a tool added this way
+but doesn't act on a plain system entry that overrides the top-level prompt — the two are separate
+settings because they're separate features, one GA and one beta. Models predating the beta reject
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
 the way it does a plain system entry. Verified live per model except `claude-mythos-5`, which isn't
