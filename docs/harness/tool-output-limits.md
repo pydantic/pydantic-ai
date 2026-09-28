@@ -100,8 +100,8 @@ returns untouched.
 Every action takes an optional `then`, applied when the action cannot run: a `Spill` whose
 store errors (for example, the workspace is read-only), a `Truncate` / `Summarize` on a binary
 payload, a `Summarize` whose model call raises. `then` chains, so
-`Summarize(then=Spill(then=Truncate()))` degrades summarize -> spill -> truncate. Each failed
-spill or summarize is logged at `WARNING` on the
+`Summarize(then=Spill(then=Truncate()))` degrades summarize -> spill -> truncate. Store and
+summarizer exceptions that would otherwise fall back silently are logged at `WARNING` on the
 `pydantic_ai_harness.tool_output_limits` logger, with the exception type and traceback, before
 the fallback runs.
 

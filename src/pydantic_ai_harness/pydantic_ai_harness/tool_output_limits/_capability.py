@@ -463,7 +463,6 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         except (UserError, WorkspaceReadOnlyError) as error:
             # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
             # say so rather than degrading quietly.
-            _log_fallback('Spilling', call.tool_name, action.then, error)
             warnings.warn(f'ToolOutputLimits: could not spill a {call.tool_name!r} result: {error}', stacklevel=2)
             return await self._fallback(ctx, call, action.then, unit)
         except Exception as exc:
