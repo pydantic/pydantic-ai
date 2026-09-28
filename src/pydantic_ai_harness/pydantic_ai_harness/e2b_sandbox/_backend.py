@@ -260,14 +260,14 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._setsid_lock = anyio.Lock()
 
     async def get_sandbox(self) -> e2b.AsyncSandbox:
-        """Return the typed `e2b.AsyncSandbox`, creating or attaching to it on first use.
+        """Return the typed `e2b.AsyncSandbox`, for E2B features the workspace API does not cover.
 
-        Every operation takes the handle from here, so none reaches an unacquired one. The lock
-        serializes concurrent first uses -- two callers each creating a sandbox would leave the
-        loser billed and unreferenced. A caller cancelled while E2B creates the sandbox still records
-        it before the cancellation propagates, so `ref` names it and a retry reuses it.
-        Attaching by `ref` to a sandbox that no longer exists raises
-        `WorkspaceUnavailableError`; it does not create a replacement.
+        On a backend with no sandbox yet, this creates one (which E2B bills) or attaches to the one
+        `ref` names, just like the first operation; attaching resumes a paused sandbox. Attaching by
+        `ref` to a sandbox that no longer exists raises `WorkspaceUnavailableError`; it does not
+        create a replacement. After that it returns the cached handle without checking that the
+        sandbox is still running: one killed elsewhere surfaces on the next operation. Calling this
+        does not make you responsible for killing the sandbox; whoever holds the `ref` decides, as before.
         """
         if self._ref is None and sniffio.current_async_library() == 'asyncio':
             # An AnyIO shield cannot stop native Task.cancel(); the backend owns this task
