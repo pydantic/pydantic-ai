@@ -4246,7 +4246,6 @@ class _GatedConnectSequence:
         return False
 
 
-@pytest.mark.anyio
 async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `response.create` that hit the dead socket never reached the server, so it isn't left active.
 
@@ -4274,7 +4273,6 @@ async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypa
     assert [frame['type'] for frame in second.sent] == ['session.update']
 
 
-@pytest.mark.anyio
 async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_replayed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4307,7 +4305,6 @@ async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_rep
     assert [frame['type'] for frame in second.sent] == ['session.update', 'response.create']
 
 
-@pytest.mark.anyio
 async def test_a_stale_response_request_failing_after_the_redial_keeps_the_replayed_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
