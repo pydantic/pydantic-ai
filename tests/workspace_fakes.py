@@ -141,7 +141,6 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         command: str | Sequence[str],
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
@@ -247,7 +246,6 @@ class RecordingWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         command: str | Sequence[str],
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
@@ -278,12 +276,11 @@ class RunOnlyWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> WorkspaceResult:
         self.commands.append(command)
-        return await self.inner.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        return await self.inner.run(command, shell=shell, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
         return await self.inner.working_dir()
@@ -400,7 +397,6 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:

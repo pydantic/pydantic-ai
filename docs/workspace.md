@@ -542,12 +542,11 @@ class MySandbox(WorkspaceBackend, SupportsCommands):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
         sandbox = await self._connect()
-        result = await sandbox.exec(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        result = await sandbox.exec(command, shell=shell, env=env, timeout=timeout)
         return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
     async def working_dir(self) -> str:
