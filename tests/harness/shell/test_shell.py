@@ -1619,7 +1619,6 @@ class _RecordingKill(LocalWorkspaceBackend):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
@@ -1627,7 +1626,7 @@ class _RecordingKill(LocalWorkspaceBackend):
             self.argv.append(list(command))
             if self.kill_result is not None and command[:3] == ['sh', '-c', _KILL_SCRIPT]:
                 return self.kill_result
-        return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
 class _NeverReady(LocalWorkspaceBackend):
@@ -1638,13 +1637,12 @@ class _NeverReady(LocalWorkspaceBackend):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
         if isinstance(command, str):
             command = command.replace(': > "$dir/launch.ready"\n', '')
-        return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
 class TestSignalling:
@@ -1727,13 +1725,15 @@ class _KillGroupOnExit(LocalWorkspaceBackend):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str) and shell and cwd is not None
+        assert isinstance(command, str) and shell
         async with await anyio.open_process(
-            ['/bin/sh', '-c', command], cwd=cwd, env={**self._env, **(env or {})}, start_new_session=True
+            ['/bin/sh', '-c', command],
+            cwd=await self.working_dir(),
+            env={**self._env, **(env or {})},
+            start_new_session=True,
         ) as process:
             assert process.stdout is not None
             stdout = b''.join([chunk async for chunk in process.stdout])
@@ -1822,15 +1822,14 @@ class _NoSetsidInCallersGroup(LocalWorkspaceBackend):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
         if not (isinstance(command, str) and 'command -v setsid' in command):
-            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return await super().run(command, shell=shell, env=env, timeout=timeout)
         async with await anyio.open_process(
             ['bash', '-c', command.replace('command -v setsid', 'false')],
-            cwd=cwd,
+            cwd=await self.working_dir(),
             env={**self._env, **(env or {})},
         ) as process:
             assert process.stdout is not None
@@ -2163,7 +2162,6 @@ class _RaisingWorkspace(LocalWorkspaceBackend):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:

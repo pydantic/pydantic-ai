@@ -112,15 +112,11 @@ async def test_missing_working_dir_is_unavailable_until_it_exists(tmp_path: Path
     assert await workspace.working_dir() == str((tmp_path / 'missing').resolve())
 
 
-@pytest.mark.parametrize('operation', ['cwd', 'filesystem_path'])
-async def test_relative_cwd_and_filesystem_paths_are_rejected(tmp_path: Path, operation: str):
+async def test_relative_filesystem_paths_are_rejected(tmp_path: Path):
     """A relative path would resolve against the host process's working directory rather than the
     workspace's, so the backend rejects it instead of silently depending on ambient state."""
     with pytest.raises(ValueError, match='absolute'):
-        if operation == 'cwd':
-            await LocalWorkspaceBackend(tmp_path).run(['pwd'], cwd='subdir')
-        else:
-            await LocalWorkspaceBackend(tmp_path).write_bytes('relative.txt', b'data')
+        await LocalWorkspaceBackend(tmp_path).write_bytes('relative.txt', b'data')
 
 
 async def test_relative_working_dir_resolves_against_the_directory_at_construction(
@@ -178,9 +174,14 @@ async def test_a_program_that_cannot_run_is_a_result_like_in_sh(tmp_path: Path):
     assert await workspace.run([not_executable]) == CommandResult(
         exit_code=126, stdout='', stderr=f'{not_executable}: Permission denied\n'
     )
-    # A missing `cwd` is not the program failing to run, so it still raises.
-    with pytest.raises(FileNotFoundError):
-        await workspace.run(['true'], cwd=str(tmp_path / 'missing-dir'))
+    # An unenterable working directory is not the program failing to run, so it still raises.
+    locked = tmp_path / 'locked'
+    locked.mkdir(mode=0o600)
+    try:
+        with pytest.raises(PermissionError):
+            await LocalWorkspaceBackend(locked).run(['true'])
+    finally:
+        locked.chmod(0o700)
 
 
 async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
