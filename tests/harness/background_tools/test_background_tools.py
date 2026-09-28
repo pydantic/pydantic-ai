@@ -1218,7 +1218,11 @@ class TestBackgroundTools:
                 for message in messages
                 for part in message.parts
             )
-            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            if any(
+                isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+                for message in messages
+                for part in message.parts
+            ):
                 return ModelResponse(parts=[TextPart(content='researched')])
             if retry_seen:
                 return ModelResponse(parts=[ToolCallPart(tool_name='research', args='{}')])
