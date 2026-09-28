@@ -232,8 +232,9 @@ class PluginLoader(Generic[DepsT]):
             full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
+            # The declaration saved now, not at load: another CLAI process may have replaced it since.
             save_settings=lambda settings: self._store.save_plugin(
-                entry.declaration.model_copy(update={'settings': settings, 'enabled': True})
+                self._entry(name).declaration.model_copy(update={'settings': settings, 'enabled': True})
             ),
         )
         try:
