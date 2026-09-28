@@ -263,9 +263,7 @@ class TestSpritesSandbox:
             await backend.exists(note)
         assert transport.gets == 2
 
-    async def test_backends_for_one_sprite_share_its_lookup_and_working_directory(
-        self, transport: SpriteTransport
-    ) -> None:
+    async def test_backends_for_one_sprite_share_its_lookup(self, transport: SpriteTransport) -> None:
         transport.names.add('shared')
         ref = WorkspaceRef(provider='sprites', id='shared')
         capability = SpritesSandbox[None](working_dir=str(transport.root))
@@ -275,12 +273,18 @@ class TestSpritesSandbox:
             assert isinstance(backend, SpritesSandboxBackend)
             assert await backend.working_dir() == str(transport.root.resolve())
             assert (await backend.run(['true'])).exit_code == 0
-        # One lookup and one `pwd -P`, then each backend's own command.
-        assert (transport.gets, len(transport.execs)) == (1, 3)
+        # One lookup, then each backend's own `pwd -P` and command.
+        assert (transport.gets, len(transport.execs)) == (1, 4)
         # Other credentials may not see the Sprite, so they look it up themselves.
         other = SpritesSandboxBackend(client=transport.client('other-token'), ref=ref)
         assert (await other.run(['true'])).exit_code == 0
         assert transport.gets == 2
+        # Deleted outside this process: the cached lookup must not hide it from `working_dir()`.
+        transport.names.discard('shared')
+        backend = capability.get_workspace(context(), ref=ref)
+        assert isinstance(backend, SpritesSandboxBackend)
+        with pytest.raises(WorkspaceUnavailableError):
+            await backend.working_dir()
 
     @pytest.mark.parametrize('end', ['destroyed', 'unavailable'])
     async def test_a_sprite_destroyed_or_unavailable_is_looked_up_again(
@@ -314,10 +318,11 @@ class TestSpritesSandbox:
         await SpritesSandboxBackend(ref=ref).working_dir()
         now[0] = 59.0
         await SpritesSandboxBackend(ref=ref).working_dir()
-        assert (transport.gets, len(transport.execs)) == (1, 1)
+        # Each backend runs its own `pwd -P`; only the lookup is shared.
+        assert (transport.gets, len(transport.execs)) == (1, 2)
         now[0] = 61.0
         await SpritesSandboxBackend(ref=ref).working_dir()
-        assert (transport.gets, len(transport.execs)) == (2, 2)
+        assert (transport.gets, len(transport.execs)) == (2, 3)
 
     async def test_a_failed_lookup_is_not_cached(self, transport: SpriteTransport) -> None:
         transport.names.add('flaky')

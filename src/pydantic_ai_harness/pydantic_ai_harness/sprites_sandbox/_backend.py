@@ -65,7 +65,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TypeVar
 
 import anyio
@@ -138,15 +138,14 @@ _LOOKUP_TTL = 60.0
 @dataclass
 class _Lookup:
     expires_at: float
-    # Configured `working_dir` (`None` for the Sprite's default) to its `pwd -P` resolution.
-    working_dirs: dict[str | None, str] = field(default_factory=dict[str | None, str])
 
 
 class _LookupCache:
-    """What backends in this process recently learned about a Sprite: that it exists, and its resolved working directories.
+    """Sprites that backends in this process recently found to exist.
 
     Under Temporal each activity builds a new backend, which would otherwise repeat the `get_sprite`
-    lookup and the `pwd -P` probe. Only plain data is kept, never a client or a Sprite handle: the
+    lookup. The working directory is not cached: `working_dir()` is often an activity's first call,
+    and running `pwd -P` is what reports a Sprite deleted elsewhere. Only plain data is kept, never a client or a Sprite handle: the
     SDK client wraps an `httpx.AsyncClient`, whose pooled connections belong to the event loop that
     opened them, and activities may run on other loops or threads. Keyed by credentials and API
     base URL too, as another token may not see the Sprite. Failures are never recorded, and an
@@ -175,20 +174,9 @@ class _LookupCache:
         with self._lock:
             return self._live(key) is not None
 
-    def working_dir(self, key: tuple[str, str, str], configured: str | None) -> str | None:
-        with self._lock:
-            entry = self._live(key)
-            return None if entry is None else entry.working_dirs.get(configured)
-
     def record(self, key: tuple[str, str, str]) -> None:
         with self._lock:
             self._entries[key] = _Lookup(self.clock() + _LOOKUP_TTL)
-
-    def record_working_dir(self, key: tuple[str, str, str], configured: str | None, resolved: str) -> None:
-        with self._lock:
-            # Resolving it ran a command in the Sprite, which proves the Sprite exists.
-            entry = self._live(key) or self._entries.setdefault(key, _Lookup(self.clock() + _LOOKUP_TTL))
-            entry.working_dirs[configured] = resolved
 
     def forget(self, name: str) -> None:
         """Drop what any credentials learned about the Sprite `name`."""
@@ -632,10 +620,6 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def _working_dir_unscoped(self) -> str:
         if self._resolved_working_dir is None:
             sandbox = await self._get_sandbox()
-            key = _LookupCache.key(sandbox.client, sandbox.name)
-            if (cached := _lookups.working_dir(key, self._working_dir)) is not None:
-                self._resolved_working_dir = cached
-                return cached
             result = await self.run(['pwd', '-P'], timeout=_INTERNAL_EXEC_TIMEOUT)
             printed = result.stdout.removesuffix('\n')
             if result.exit_code != 0 or not posixpath.isabs(printed):
@@ -644,7 +628,6 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}.'
                 )
             self._resolved_working_dir = printed
-            _lookups.record_working_dir(key, self._working_dir, printed)
         return self._resolved_working_dir
 
     async def run(
