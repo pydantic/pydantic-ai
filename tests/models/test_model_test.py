@@ -429,7 +429,6 @@ class AgentRunDeps:
     run_id: int
 
 
-@pytest.mark.anyio
 async def test_multiple_concurrent_tool_retries():
     class OutputModel(BaseModel):
         x: int

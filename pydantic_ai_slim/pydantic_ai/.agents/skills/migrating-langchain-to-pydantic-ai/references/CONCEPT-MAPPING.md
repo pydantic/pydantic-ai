@@ -1,6 +1,6 @@
 # LangChain and Pydantic AI Concept Mapping
 
-Use this reference to select Pydantic AI primitives. Preserve behavior rather than matching class names.
+Use this reference to select Pydantic AI primitives. Preserve behavior rather than matching class names. For `create_deep_agent` and its bundled middleware, backends, profiles, and hosts, continue with [Deep Agents Mapping](DEEP-AGENTS-MAPPING.md) after this file.
 
 ## Contents
 
@@ -143,6 +143,7 @@ Map each middleware by the behavior it owns:
 | logging/tracing | Logfire instrumentation or hooks for application metrics |
 | guardrail | input/output validation hook; keep authorization inside tools/services |
 | inject a mid-run user message | `RunContext.enqueue` or `AgentRun.enqueue` |
+| Deep Agents built-in middleware (filesystem, subagents, summarization, skills, memory, permissions, prompt caching, human-in-the-loop) | the Harness capability or application service named in [Deep Agents Mapping](DEEP-AGENTS-MAPPING.md) |
 
 Reproduce hook ordering explicitly. Combining several source middleware objects into one opaque hook makes parity harder to inspect and test.
 
@@ -231,5 +232,6 @@ Keep an existing retriever or LCEL pipeline behind a narrow tool/service interfa
 - Replacing checkpointers with an in-memory message list.
 - Keeping both observability SDKs without defining trace ownership and correlation.
 - Testing only final text while tool trajectory, approval, and side effects changed.
+- Treating a `deepagents` import as out of scope instead of mapping the harness features the slice actually uses.
 
-Primary references: [Pydantic AI agents](https://pydantic.dev/docs/ai/core-concepts/agent/), [tools](https://pydantic.dev/docs/ai/tools-toolsets/tools/), [hooks](https://pydantic.dev/docs/ai/core-concepts/hooks/), [third-party tools](https://pydantic.dev/docs/ai/tools-toolsets/third-party-tools/), [multi-agent patterns](https://pydantic.dev/docs/ai/guides/multi-agent-applications/), and [durable execution](https://pydantic.dev/docs/ai/integrations/durable_execution/overview/).
+Primary references: [Pydantic AI agents](https://pydantic.dev/docs/ai/core-concepts/agent/), [tools](https://pydantic.dev/docs/ai/tools-toolsets/tools/), [hooks](https://pydantic.dev/docs/ai/core-concepts/hooks/), [third-party tools](https://pydantic.dev/docs/ai/tools-toolsets/third-party-tools/), [multi-agent patterns](https://pydantic.dev/docs/ai/guides/multi-agent-applications/), [durable execution](https://pydantic.dev/docs/ai/integrations/durable_execution/overview/), and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/).

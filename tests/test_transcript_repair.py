@@ -45,8 +45,6 @@ from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, legacy_retry_prompt_part
 
-pytestmark = pytest.mark.anyio
-
 TS = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 

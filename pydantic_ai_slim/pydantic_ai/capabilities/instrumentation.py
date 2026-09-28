@@ -12,6 +12,7 @@ from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
 from pydantic_core import ValidationError, to_json
 
+from pydantic_ai import _usage_attribution
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
@@ -20,6 +21,8 @@ from pydantic_ai._instrumentation import (
     get_instructions,
     has_stale_message_json,
     open_model_request_span,
+    record_exception as _record_exception,
+    record_uncaught_errors as _record_uncaught_errors,
     redact_binary_content,
     safe_to_json,
     serialize_any,
@@ -37,6 +40,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage
 
 from .abstract import (
     AbstractCapability,
@@ -93,6 +97,12 @@ class Instrumentation(AbstractCapability[Any]):
     # these fields would race.
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
+    _run_usage: RunUsage = field(default_factory=RunUsage, repr=False, init=False)
+    """Usage this run recorded while its span was open, credited by `_usage_attribution`.
+
+    A nested run's `accumulate` replaces the active accumulator for the length of its own span, so
+    what a delegate records is the delegate's; this holds only what this run recorded itself.
+    """
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
     _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
@@ -172,6 +182,9 @@ class Instrumentation(AbstractCapability[Any]):
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
         inst._new_message_index = len(ctx.messages)
+        # Usage this run's span is accountable for, credited by `_usage_attribution` for as long as
+        # the span is open in `wrap_run`; see `_run_span_end_attributes`.
+        inst._run_usage = RunUsage()
         return inst
 
     # ------------------------------------------------------------------
@@ -204,15 +217,27 @@ class Instrumentation(AbstractCapability[Any]):
             'logfire.msg': f'{agent_name} run',
         }
 
+        if (workspace_ref := ctx.workspace.ref) is not None:
+            span_attributes['pydantic_ai.workspace.provider'] = workspace_ref.provider
+            span_attributes['pydantic_ai.workspace.id'] = workspace_ref.id
+
         if ctx.agent is not None:  # pragma: no branch
             rendered = ctx.agent.render_description(ctx.deps)
             if rendered is not None:
                 span_attributes['gen_ai.agent.description'] = rendered
 
-        with settings.tracer.start_as_current_span(
-            names.get_agent_run_span_name(agent_name),
-            attributes=span_attributes,
-        ) as span:
+        with (
+            settings.tracer.start_as_current_span(
+                names.get_agent_run_span_name(agent_name),
+                attributes=span_attributes,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            _record_uncaught_errors(span, include_content=settings.include_content),
+            # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
+            # the usage this run recorded — nested runs report their own on their own spans.
+            _usage_attribution.accumulate(self._run_usage),
+        ):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
@@ -235,6 +260,10 @@ class Instrumentation(AbstractCapability[Any]):
             finally:
                 _otel_detach(token)
                 if span.is_recording():
+                    # A lazy sandbox may acquire its ref only after the span starts.
+                    if (workspace_ref := ctx.workspace.ref) is not None:
+                        span.set_attribute('pydantic_ai.workspace.provider', workspace_ref.provider)
+                        span.set_attribute('pydantic_ai.workspace.id', workspace_ref.id)
                     # Get current messages and metadata from the result (which holds the up-to-date state).
                     # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
                     if result is not None:
@@ -289,7 +318,12 @@ class Instrumentation(AbstractCapability[Any]):
         if metadata is not None:
             attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
-        usage_attrs = settings.aggregated_usage_attributes(ctx.usage)
+        # What this run spent, which is what `gen_ai.aggregated_usage.*` means and what lets the
+        # agent-run spans in a trace be summed without counting a nested run twice. Not `ctx.usage`:
+        # that is the object the caller passed in, accumulated into in place, so it holds the whole
+        # conversation when usage is carried across runs and a delegate's tokens when it is shared.
+        # The per-request `chat` spans are unaffected either way.
+        usage_attrs = settings.aggregated_usage_attributes(self._run_usage)
 
         return {
             **usage_attrs,
@@ -390,22 +424,7 @@ class Instrumentation(AbstractCapability[Any]):
             if self.settings.include_content and span.is_recording():
                 retry = build_retried_tool_return(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
                 span.set_attribute(names.tool_result_attr, retry.model_response_str(wrap_if_error=False))
-                span.record_exception(error, escaped=True)
-            else:
-                # Validation errors may contain rejected arguments, so omit their message and
-                # stack trace when content capture is disabled. Execution spans keep their
-                # existing exception recording behavior. The type formatting must match what
-                # the OTel SDK's `Span.record_exception` would have produced for this error.
-                error_type = type(error)
-                type_name = (
-                    f'{error_type.__module__}.{error_type.__qualname__}'
-                    if error_type.__module__ != 'builtins'
-                    else error_type.__qualname__
-                )
-                span.add_event(
-                    'exception',
-                    attributes={'exception.type': type_name, 'exception.escaped': True},
-                )
+            _record_exception(span, error, include_content=self.settings.include_content)
             span.set_status(StatusCode.ERROR)
         raise error
 
@@ -480,7 +499,7 @@ class Instrumentation(AbstractCapability[Any]):
                 result = await action()
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
-                    span.record_exception(exc, escaped=True)
+                    _record_exception(span, exc, include_content=include_content)
                     span.set_status(StatusCode.ERROR)
                     raise
                 # Deferrals are control flow, not errors: capture the deferral name (and
@@ -495,7 +514,7 @@ class Instrumentation(AbstractCapability[Any]):
                         metadata_str = repr(redacted_metadata)
                     span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
                 if settings.version < 5:
-                    span.record_exception(exc, escaped=True)
+                    _record_exception(span, exc, include_content=include_content)
                     span.set_status(StatusCode.ERROR)
                 raise
             except ToolRetryError as e:
@@ -509,17 +528,17 @@ class Instrumentation(AbstractCapability[Any]):
                         if isinstance(retry_part, ToolReturnPart)
                         else retry_part.model_response(),
                     )
-                span.record_exception(e, escaped=True)
+                _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
             except ToolFailedError as e:
                 if handle_tool_control_flow and include_content and span.is_recording():
                     span.set_attribute(names.tool_result_attr, e.tool_failed.model_response_str(wrap_if_error=False))
-                span.record_exception(e, escaped=True)
+                _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
-                span.record_exception(e, escaped=True)
+                _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
 

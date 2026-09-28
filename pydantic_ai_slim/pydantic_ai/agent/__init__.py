@@ -26,14 +26,14 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, cast, overload
 from uuid import uuid4
 
 import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeIs, TypeVar
+from typing_extensions import Self, TypeForm, TypeIs, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -41,9 +41,12 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
+    _display,
+    _enqueue,
     _instructions,
     _output,
     _system_prompt,
+    _usage_attribution,
     _utils,
     concurrency as _concurrency,
     exceptions,
@@ -84,10 +87,12 @@ from ..capabilities.abstract import (
     _reject_class_crossing_id,  # pyright: ignore[reportPrivateUsage]
     _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
+    select_workspace,
 )
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
+from ..capabilities.wrapper import WrapperCapability
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -127,6 +132,9 @@ from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
+from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from ..workspaces.unavailable import NO_WORKSPACE
+from ..workspaces.workspace import workspace_layers
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -237,10 +245,6 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
-        run_ctx._run_capabilities_by_id = {  # pyright: ignore[reportPrivateUsage]
-            capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
-        }
-        run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
         with set_current_run_context(run_ctx):
             await run_capability.before_run(run_ctx)
             current_ctx = contextvars.copy_context()
@@ -262,6 +266,22 @@ async def _run_lifecycle_hooks(  # noqa: C901
             # it's only reached if a `wrap_run` implementation absorbed the cancellation.
             await asyncio.Future[AgentRunResult[Any]]()
         return build_result()
+
+    # Before `wrap_run`, not inside the handler it wraps: a `wrap_run` implementation may call a
+    # durable operation before it awaits the handler, and one that short-circuits never awaits it at
+    # all, so dispatch has to be installed by the time the chain is entered.
+    run_capabilities_by_id = {
+        capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
+    }
+    # Mutated in place where the run already shares one mapping by reference with every `RunContext`
+    # it builds (see `GraphAgentDeps.run_capabilities_by_id`); a realtime session has no graph to
+    # share one, so it gets this mapping directly.
+    if (existing := run_ctx._run_capabilities_by_id) is None:  # pyright: ignore[reportPrivateUsage]
+        run_ctx._run_capabilities_by_id = run_capabilities_by_id  # pyright: ignore[reportPrivateUsage]
+    else:
+        existing.clear()
+        existing.update(run_capabilities_by_id)
+    run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
     _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
@@ -342,7 +362,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
                         # Python 3.10.
                         if not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
                             # Only fires for bugs in `wrap_run` implementations.
-                            _run_error.__context__ = wrap_exc  # pragma: no cover
+                            _run_error.__context__ = wrap_exc  # pragma: lax no cover
                 # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
                 # always still pending here.
                 elif not _wrap_task.done():  # pragma: no branch
@@ -520,7 +540,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     # `__init__` keeps an overload pair purely so Pyright resolves a class-union `output_type`
     # (`Foo | Bar`) as `type[Foo | Bar]` rather than a bare `UnionType`; on a non-overloaded
     # signature Pyright rejects the union argument. The two overloads are intentionally
-    # identical, so the second one overlaps the first.
+    # identical, so the second one overlaps the first. Pyright 1.1.412 and later matches the
+    # union as a `TypeForm` instead, so this is for older Pyright versions.
     @overload
     def __init__(
         self,
@@ -529,7 +550,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: type[AgentDepsT] | TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -553,7 +574,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: type[AgentDepsT] | TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -576,7 +597,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: type[AgentDepsT] | TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -701,7 +722,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_type = output_type
         self._instrument = None
         self._metadata = metadata
-        self._deps_type = deps_type
+        # A type form such as `Literal['a', 'b']` is kept as is, the way an `output_type` is.
+        self._deps_type = cast(type[AgentDepsT], deps_type)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
@@ -784,6 +806,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             '_override_output_retries', default=None
         )
         self._override_tool_retries: ContextVar[_utils.Option[int]] = ContextVar('_override_tool_retries', default=None)
+        self._override_workspace: ContextVar[_utils.Option[WorkspaceBackend | WorkspaceRef | Literal['new']]] = (
+            ContextVar('_override_workspace', default=None)
+        )
         self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
             '_override_root_capability', default=None
         )
@@ -969,10 +994,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             all_capabilities.extend(capabilities)
 
         effective_model = model or validated_spec.model
-        if effective_model is None:
-            raise exceptions.UserError(
-                '`model` must be provided either in the spec or as a keyword argument to `from_spec()`.'
-            )
 
         agent = Agent(
             model=effective_model,
@@ -1232,6 +1253,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1257,6 +1279,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1282,6 +1305,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1345,6 +1369,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 End(data=FinalResult(output='The capital of France is Paris.')),
             ]
             '''
+            assert agent_run.result is not None
             print(agent_run.result.output)
             #> The capital of France is Paris.
         ```
@@ -1356,7 +1381,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1376,6 +1401,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1402,6 +1428,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             retries=retries,
             toolsets=toolsets,
             capabilities=capabilities,
+            workspace=workspace,
             spec=spec,
         )
         async with prepared.open() as agent_run:
@@ -1427,6 +1454,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int | AgentRetries | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
@@ -1528,7 +1556,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
 
         # The string the run's model was selected from, if any — carried through to
         # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
@@ -1548,12 +1576,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
         if model_contribution is not None:
+            selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
+                message_history, user_prompt, has_deferred_tool_results=deferred_tool_results is not None
+            )
             selection_ctx = models.ModelSelectionContext(
                 agent=self,
                 deps=deps,
                 model=default_model,
                 run_step=1,
-                messages=list(message_history) if message_history else [],
+                prompt=selection_prompt,
+                messages=selection_messages,
                 usage=usage,
             )
             model_used, model_id = await self._evaluate_model_contribution(
@@ -1608,9 +1640,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             output_retries_used=0,
             run_step=0,
-            run_id=_agent_graph.resolve_run_id(run_id, message_history),
+            run_id=_agent_graph.resolve_run_id(
+                run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
+                message_history,
+            ),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
+        historical_response = next(
+            (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
+            None,
+        )
+        historical_workspace_ref = historical_response.workspace_ref if historical_response is not None else None
 
         # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
         model_settings_override = self._override_model_settings.get()
@@ -1653,12 +1693,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instrumentation_settings = self._resolve_instrumentation_settings()
 
-        if instrumentation_settings is not None:
-            tracer = instrumentation_settings.tracer
-            instrumentation_cap: InstrumentationCap | None = InstrumentationCap(settings=instrumentation_settings)
-        else:
-            tracer = NoOpTracer()
-            instrumentation_cap = None
+        instrumentation_cap = (
+            InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
+        )
+
+        # Allocated here rather than with the graph deps below, so the context `for_run` receives
+        # shares the very mappings the run fills at setup. A capability that holds on to that
+        # context and later passes it to a durable operation then dispatches like any other caller,
+        # instead of silently running the operation inline.
+        durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] = {}
+        run_capabilities_by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
 
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`
@@ -1666,22 +1710,68 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         initial_ctx = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
+            _durable_operations=durable_operations,
+            _run_capabilities_by_id=run_capabilities_by_id,
             model=model_used,
             _model_id=model_id,
             usage=usage,
             usage_limits=usage_limits,
             prompt=user_prompt,
             messages=state.message_history,
-            tracer=tracer,
-            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
-            instrumentation_version=instrumentation_settings.version
-            if instrumentation_settings
-            else DEFAULT_INSTRUMENTATION_VERSION,
             run_step=0,
             pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
+        )
+
+        # Like `override(model=)`, the override wins over the run's own argument.
+        if (override_workspace := self._override_workspace.get()) is not None:
+            workspace = override_workspace.value
+        # The workspace is selected before `for_run`, like the bootstrap model above, so `for_run` can use
+        # it. Selecting does no I/O: a backend creates or attaches on its first operation.
+        if isinstance(workspace, AbstractCapability):
+            raise TypeError(
+                f'`{type(workspace).__name__}` is a capability: pass it in `capabilities=[...]`, '
+                'or pass a backend such as `LocalWorkspaceBackend(path)` as `workspace=`'
+            )
+        if workspace is not None and workspace != 'new' and not isinstance(workspace, (WorkspaceRef, WorkspaceBackend)):
+            raise TypeError(
+                'workspace= must be a Workspace, WorkspaceBackend, WorkspaceRef(provider=..., id=...), '
+                "or 'new'; use LocalWorkspaceBackend(path) for a str or Path"
+            )
+        requested_ref = workspace if isinstance(workspace, WorkspaceRef) else None
+        # `'new'` asks for a fresh environment, so the ref in history is not offered.
+        # A run's automatic `NO_WORKSPACE` is not an explicit refusal: a child can choose its own
+        # capability. A caller-built `UnavailableWorkspace` remains explicit.
+        # Do not inspect `.backend` on `DurableWorkspace`: workflow-side backend access is forbidden.
+        is_unattached = type(workspace) is Workspace and workspace.backend is NO_WORKSPACE
+        offered_ref = historical_workspace_ref if workspace is None or is_unattached else requested_ref
+        explicit = (
+            None
+            if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef) or is_unattached
+            else workspace
+        )
+        pre_run_root = base_capability
+        selected = None
+        if workspace is not None or any(cap._has_get_workspace for cap in (base_capability, *extra_capabilities)):  # pyright: ignore[reportPrivateUsage]
+            # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
+            _, pre_run_layer, pre_run_root = _compose_run_capabilities([base_capability], extra_capabilities)
+            if explicit is not None:
+                selected = explicit if isinstance(explicit, Workspace) else Workspace(explicit)
+            else:
+                selected = select_workspace(pre_run_root, initial_ctx, ref=offered_ref, run_layer=pre_run_layer)
+            if selected is not None:
+                initial_ctx.workspace = pre_run_root._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
+                    replace(initial_ctx, root_capability=pre_run_root), selected, explicit=explicit is not None
+                )
+            initial_ctx.root_capability = pre_run_root
+        # An explicit `Instrumentation` capability (agent- or call-level) replaces the one injected from
+        # `instrumentation_settings` (see `_resolve_run_capabilities`), so `for_run` hooks and metadata
+        # factories are shown the settings of the one that will actually instrument the run.
+        _set_run_context_instrumentation(
+            initial_ctx,
+            _run_instrumentation_settings([base_capability, *extra_capabilities], default=instrumentation_settings),
         )
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1709,6 +1799,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
+        # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
+        # contributed, so every later step's `RunContext` describes what the run's spans use.
+        instrumentation_settings = _run_instrumentation_settings([run_capability])
+        _set_run_context_instrumentation(initial_ctx, instrumentation_settings)
         capabilities_dict = resolved_caps.capabilities
         cap_instructions = resolved_caps.instructions
         cap_native_tools = resolved_caps.native_tools
@@ -1723,6 +1817,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_layers_unchanged = all(
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
         )
+
+        # A workspace capability that exists only after `for_run` (a capability function's) is asked now.
+        # One selected before `for_run` is final: `for_run` may have used it.
+        initial_ctx.root_capability = run_capability
+        if explicit is None and not model_layers_unchanged and run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
+            candidate = select_workspace(
+                run_capability, initial_ctx, ref=offered_ref, run_layer=resolved_caps.run_layer
+            )
+            if selected is None:
+                selected = candidate
+                if selected is not None:
+                    initial_ctx.workspace = run_capability._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
+                        initial_ctx, selected, explicit=False
+                    )
+            elif candidate is None or (workspace_layers(candidate), candidate.ref) != (
+                workspace_layers(selected),
+                selected.ref,
+            ):
+                raise exceptions.UserError(
+                    "A capability's `for_run` changed the workspace this run selected before `for_run`. The "
+                    'workspace is selected first so that `for_run` can use it; configure it on the capability the '
+                    'agent is built with, or pass it to the run with `workspace=`.'
+                )
+        if selected is None:
+            _raise_for_unresolved_workspace(
+                workspace,
+                history_ref=historical_workspace_ref,
+                has_resolvers=pre_run_root._has_get_workspace or run_capability._has_get_workspace,  # pyright: ignore[reportPrivateUsage]
+            )
 
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
@@ -1826,6 +1949,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
+        def display_banner(*, model: str, tools: int) -> None:
+            # Called by the graph once the run's first step has resolved the model it will actually
+            # use and the tools it will actually offer, and only when there is a banner to show;
+            # everything else is settled here and now.
+            _display.display_agent_banner(
+                name=self.name,
+                model=model,
+                # A run-level `output_type=` overrides what the agent was built with.
+                output_type=output_type_,
+                tools=tools,
+                capabilities=_registered_capability_count(bootstrap_capability),
+            )
+
         model_resources = _RunModelResources(self._entered_model_ids.copy())
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1851,9 +1987,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            workspace=initial_ctx.workspace,
+            # `'new'` asked to leave the conversation's workspace, so its ref isn't carried forward.
+            carried_workspace_ref=None if workspace == 'new' else historical_workspace_ref,
+            durable_operations=durable_operations,
+            run_capabilities_by_id=run_capabilities_by_id,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
-            tracer=tracer,
+            display_banner=display_banner,
+            tracer=initial_ctx.tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
@@ -1983,6 +2125,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
+        workspace: WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | _utils.Unset = _utils.UNSET,
     ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -2007,6 +2150,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
                 dict to override just one (e.g. `retries={'tools': 3}`).
                 When set, any per-run `retries` argument is ignored.
+            workspace: Workspace for every run in this context, in place of a per-run `workspace=` argument.
             spec: Optional agent spec providing defaults for override. Explicit params take precedence
                 over spec values. When the spec includes `capabilities`, they replace (not merge with)
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
@@ -2055,6 +2199,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 override_output_retries = resolved.output_retries
             if not _utils.is_set(override_tool_retries) and resolved.tool_retries is not None:
                 override_tool_retries = resolved.tool_retries
+
+        workspace_token = (
+            self._override_workspace.set(
+                _utils.Some(cast(WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'], workspace))
+            )
+            if _utils.is_set(workspace)
+            else None
+        )
 
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -2127,6 +2279,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         try:
             yield
         finally:
+            if workspace_token is not None:
+                self._override_workspace.reset(workspace_token)
             if name_token is not None:
                 self._override_name.reset(name_token)
             if deps_token is not None:
@@ -2246,7 +2400,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage = usage or _usage.RunUsage()
         messages = list(message_history or [])
         capability = self._effective_root_capability()
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
         default_model = (
             await self._resolve_model_selection(self._pick_raw_model(model), capability=capability, deps=deps)
             if has_default_model
@@ -2255,12 +2409,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if model is None and self._override_model.get() is None:
             contribution = capability.get_model()
             if contribution is not None:
+                selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
+                    message_history, prompt
+                )
                 selection_ctx = models.ModelSelectionContext(
                     agent=self,
                     deps=deps,
                     model=default_model,
                     run_step=1,
-                    messages=messages,
+                    prompt=selection_prompt,
+                    messages=selection_messages,
                     usage=usage,
                 )
                 selected_model, _ = await self._evaluate_model_contribution(
@@ -2490,7 +2648,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
 
         @agent.on_event(IndexRebuiltEvent)
-        async def republish(ctx: RunContext[None], event: IndexRebuiltEvent) -> None:
+        async def republish(ctx: RunContext, event: IndexRebuiltEvent) -> None:
             await ctx.emit(SearchReadyEvent(documents=event.documents))
         ```
         """
@@ -2569,7 +2727,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return ctx.deps + x
 
         @agent.tool(retries=2)
-        async def spam(ctx: RunContext[str], y: float) -> float:
+        async def spam(ctx: RunContext[int], y: float) -> float:
             return ctx.deps + y
 
         result = agent.run_sync('foobar', deps=1)
@@ -2698,19 +2856,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent, RunContext
+        from pydantic_ai import Agent
 
         agent = Agent('test')
 
-        @agent.tool
-        def foobar(ctx: RunContext[int]) -> int:
+        @agent.tool_plain
+        def foobar() -> int:
             return 123
 
-        @agent.tool(retries=2)
-        async def spam(ctx: RunContext[str]) -> float:
+        @agent.tool_plain(retries=2)
+        async def spam() -> float:
             return 3.14
 
-        result = agent.run_sync('foobar', deps=1)
+        result = agent.run_sync('foobar')
         print(result.output)
         #> {"foobar":123,"spam":3.14}
         ```
@@ -2829,6 +2987,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return toolset_decorator if func is None else toolset_decorator(func)
 
+    def _has_model(self, model: models.Model | models.KnownModelName | str | None) -> bool:
+        """Whether a run given `model` would have one to use, counting an `override(model=...)`.
+
+        What `_pick_raw_model` answers for, asked ahead of it by callers that would rather not have
+        it raise. A capability can still contribute a model when this is False.
+        """
+        return model is not None or self._override_model.get() is not None or self.model is not None
+
     def _pick_raw_model(
         self, model: models.Model | models.KnownModelName | str | None
     ) -> models.Model | models.KnownModelName | str:
@@ -2844,6 +3010,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Return the override capability when present, otherwise the configured root."""
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
+
+    def _startup_banner_details(
+        self,
+        model: models.Model | models.KnownModelName | str | None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> _StartupBannerDetails:
+        """Describe the session `_cli` is about to open, before any run has resolved anything.
+
+        Resolved the way a run resolves it rather than read off the agent as configured: an
+        `override()` in force, or instrumentation switched on globally by `Agent.instrument_all()`,
+        would otherwise have the banner describe a different session than the one about to start.
+
+        Args:
+            model: Model the session was asked to use, if not the agent's own.
+            toolsets: Toolsets the session will pass to each run, which aren't on the agent.
+        """
+        chat_model = self._pick_raw_model(model)
+        # `self.toolsets` is override-aware, so an `override(toolsets=...)` is reflected.
+        session_toolsets = [*self.toolsets, *(toolsets or [])]
+        # Only a `FunctionToolset` holds its tools synchronously; every other toolset answers
+        # `get_tools()` given a `RunContext`, and an MCP server would have to be connected to first.
+        countable = [toolset for toolset in session_toolsets if isinstance(toolset, FunctionToolset)]
+        return _StartupBannerDetails(
+            model=chat_model.model_id if isinstance(chat_model, models.Model) else chat_model,
+            # Rather than report a number that's wrong — `clai --mcp-config` would have said
+            # `tools: 0` next to a session full of MCP tools — the banner leaves the count out
+            # entirely. A run's own banner counts what the model is really offered.
+            tools=sum(len(toolset.tools) for toolset in countable) if len(countable) == len(session_toolsets) else None,
+            capabilities=_registered_capability_count(self._effective_root_capability()),
+            instrumented=(
+                isinstance(chat_model, InstrumentedModel) or self._resolve_instrumentation_settings() is not None
+            ),
+        )
 
     def _resolve_tool_retries(self, retries: int | None = None) -> int:
         """Resolve the effective tool-retry default: override > run/spec > agent default."""
@@ -3040,18 +3239,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # namesake outright -- `run(capabilities=[WebSearch(allowed_domains=[...])])` states what
         # this run may reach, and merging it into the agent's list would widen the restriction it
         # was passed to impose.
-        combined_layers = [
-            _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
-            for layer in (resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras)
-            if layer
-        ]
-        run_capability = (
-            _combine_duplicate_capabilities(
-                CombinedCapability(combined_layers) if len(combined_layers) > 1 else combined_layers[0],
-                [[layer] for layer in combined_layers],
-            )
-            if len(combined_layers) > 1
-            else combined_layers[0]
+        agent_layer, run_layer, run_capability = _compose_run_capabilities(
+            resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras
         )
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
@@ -3100,12 +3289,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # instance. Conflicting definitions sharing a `unique_id` *within* a layer are ambiguous;
         # last-wins *across* layers is the intentional override mechanism. Instrumentation
         # contributes no native tools.
-        base_native_tools = list(combined_layers[0].get_native_tools())
+        base_native_tools = list(agent_layer.get_native_tools())
         _validate_native_tool_ids(
             base_native_tools,
             source='override spec capabilities' if base_is_override else 'agent capabilities',
         )
-        extra_native_tools = list(combined_layers[1].get_native_tools()) if len(combined_layers) > 1 else []
+        extra_native_tools = list(run_layer.get_native_tools()) if run_layer is not None else []
         _validate_native_tool_ids(extra_native_tools, source='run capabilities')
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
@@ -3122,6 +3311,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             toolsets=toolsets,
             resolved_layers=resolved_layers,
+            run_layer=run_layer,
         )
 
     def _get_instructions(
@@ -3394,40 +3584,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The session-level `realtime` span and per-response `chat` spans are hand-managed by
         # `RealtimeSession`; run-lifecycle hooks have no per-exchange boundary on which to build them.
-        # Drive them from the settings that
-        # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
+        # Drive them, and the `RunContext` (as `iter` does), from the settings that will actually win:
+        # an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
-        # tool spans.
-        # The winner is *selected* here, not combined: `combine` settles duplicates *within* one
-        # layer and never runs across the agent-to-run boundary, so the session reads the
-        # configuration off the instance `_resolve_run_capabilities` would keep -- the last
-        # explicit `Instrumentation` in application order (a call-level one supersedes the
-        # agent-level one, and within a layer the guarded combine resolves to the last instance's
-        # values). Taking the first match would drive the session spans from settings the
-        # effective configuration had already turned off. Id guards apply once, where the layers
-        # actually combine.
-        instrumentation_layers = [self._effective_root_capability(), *extra_capabilities]
-        explicit_instrumentations = [
-            leaf
-            for layer in instrumentation_layers
-            for leaf in leaf_capabilities(layer)
-            if isinstance(leaf, InstrumentationCap)
-        ]
-        explicit_instrumentation = explicit_instrumentations[-1] if explicit_instrumentations else None
-        session_instrumentation_settings = (
-            explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
+        # tool spans. Resolve metadata after, and before `for_run`, so capability/toolset hooks see it
+        # (same ordering as the graph run).
+        base_capability, base_is_override = self._base_run_capability()
+        _set_run_context_instrumentation(
+            run_context,
+            _run_instrumentation_settings([base_capability, *extra_capabilities], default=instrumentation_settings),
         )
-        # Mirror `iter`'s `RunContext`: expose the resolved tracer (a `NoOpTracer` when uninstrumented)
-        # and content-tracing flag, and resolve metadata before `for_run` so capability/toolset hooks see
-        # it (same ordering as the graph run).
-        run_context.tracer = (
-            session_instrumentation_settings.tracer if session_instrumentation_settings is not None else NoOpTracer()
-        )
-        run_context.trace_include_content = (
-            session_instrumentation_settings is not None and session_instrumentation_settings.include_content
-        )
-        if session_instrumentation_settings is not None:
-            run_context.instrumentation_version = session_instrumentation_settings.version
         run_context.metadata = self._get_metadata(run_context, metadata)
 
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
@@ -3435,7 +3601,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
         # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
         # this in sync with the `iter` call site.
-        base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
             base_capability=base_capability,
@@ -3445,6 +3610,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
+        if run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
+            # Realtime does not select a workspace yet; don't suggest attaching a capability that is already here.
+            run_context.workspace = Workspace(UnavailableWorkspace('Realtime sessions do not support workspaces yet.'))
+        # Read back off the resolved tree, as `iter` does, so an `Instrumentation` only a `for_run`
+        # contributed drives the session's spans and context too.
+        session_instrumentation_settings = _run_instrumentation_settings([run_capability])
+        _set_run_context_instrumentation(run_context, session_instrumentation_settings)
         # Deferred capabilities load in a session the same way they do in a graph run: the catalog
         # renders into the connect-time instructions and the loaded instructions come back as the
         # `load_capability` tool's own result, which every provider supports. What no provider
@@ -3573,6 +3745,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         yielded = False
         async with AsyncExitStack() as session_stack:
             if lifecycle_state is not None:
+                # As for a classic run: nothing the session records is credited to an enclosing run's span.
+                session_stack.enter_context(_usage_attribution.accumulate(None))
                 assert cancellation is not None
                 # Setup-time `for_run` callbacks have the same context contract as a classic run:
                 # cancellation becomes available only once the run lifecycle has an owning task.
@@ -4138,9 +4312,26 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     ]
 
     @asynccontextmanager
-    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
+    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:  # noqa: C901
         graph_deps = self.graph_deps
         state = self.state
+
+        def refresh_workspace_ref() -> None:
+            message = next(
+                (
+                    message
+                    for message in reversed(state.message_history)
+                    if isinstance(message, _messages.ModelResponse)
+                ),
+                None,
+            )
+            # By `run_id`, not identity: a history processor may copy a prior run's response, and its
+            # ref must stay; this run's `run_id` never appears in the history it was given.
+            if message is not None and (message.run_id == state.run_id or message is graph_deps.adopted_response):
+                message.workspace_ref = graph_deps.workspace_ref
+
+        pending_message_queue = state.pending_messages
+        assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
@@ -4180,6 +4371,11 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            stack.callback(refresh_workspace_ref)
+            # This run's usage is credited to no span until one of its own is opened (by
+            # `Instrumentation.wrap_run`), so an uninstrumented run started from inside an
+            # instrumented one doesn't report its usage on the caller's span.
+            stack.enter_context(_usage_attribution.accumulate(None))
 
             # Bind the run's cancellation controller to this task and register the token BEFORE any
             # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
@@ -4188,6 +4384,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # the run is over so it can never cancel unrelated later work on this task.
             graph_deps.cancellation.bind()
             stack.callback(graph_deps.cancellation.finish)
+            # Nothing drains the queue once the graph stops, so reject later enqueues instead of
+            # stranding them. A normal finish already closed it inside `drain_at_end`.
+            stack.callback(pending_message_queue.close)
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 
@@ -4291,6 +4490,109 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
 """Infrastructure capabilities auto-injected when not already present."""
 
 
+def _run_instrumentation_settings(
+    capabilities: Sequence[AbstractCapability[Any]], *, default: InstrumentationSettings | None = None
+) -> InstrumentationSettings | None:
+    """The settings of the `Instrumentation` capability that instruments a run with these capabilities.
+
+    That's the last one in application order, or `default` when there is none. `_resolve_run_capabilities`
+    selects rather than combines across the agent-to-run boundary (`combine` only settles duplicates
+    *within* a layer), so a call-level one supersedes the agent-level one, and within a layer the guarded
+    combine keeps the last instance's values. Taking the first match would describe settings the effective
+    configuration had already turned off.
+
+    Before resolution, `default` is the `instrument=`-derived settings the run injects only when no explicit
+    capability is present. After resolution, the injected capability is part of the tree, so no default applies.
+    A wrapper around a single capability is itself a leaf, so it's unwrapped: that's the shape a capability
+    function's `Instrumentation` takes once resolved, and the wrapper delegates its hooks to it.
+    """
+    instrumentations: list[InstrumentationCap] = []
+    for capability in capabilities:
+        for leaf in leaf_capabilities(capability):
+            while isinstance(leaf, WrapperCapability):
+                leaf = leaf.wrapped
+            if isinstance(leaf, InstrumentationCap):
+                instrumentations.append(leaf)
+    return instrumentations[-1].settings if instrumentations else default
+
+
+def _compose_run_capabilities(
+    agent_layer: Sequence[AbstractCapability[AgentDepsT]], run_layer: Sequence[AbstractCapability[AgentDepsT]]
+) -> tuple[AbstractCapability[AgentDepsT], AbstractCapability[AgentDepsT] | None, AbstractCapability[AgentDepsT]]:
+    """The agent layer, the run layer (`None` if empty) and the run's root, duplicates within each layer combined.
+
+    In the root, a run capability overrides its agent-level namesake.
+    """
+
+    def combine(layer: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        return _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
+
+    agent = combine(agent_layer)
+    if not run_layer:
+        return agent, None, agent
+    run = combine(run_layer)
+    return agent, run, _combine_duplicate_capabilities(CombinedCapability([agent, run]), [[agent], [run]])
+
+
+def _raise_for_unresolved_workspace(
+    workspace: WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | None,
+    *,
+    history_ref: WorkspaceRef | None,
+    has_resolvers: bool,
+) -> None:
+    """Raise when no capability supplied the workspace the run asked for.
+
+    A ref in history is ignored by an agent with no workspace capabilities (say, one summarizing the
+    conversation), but an agent with some must not silently drop it.
+    """
+    if workspace == 'new':
+        raise exceptions.UserError(
+            "`workspace='new'` needs a capability that can create a workspace, but none returned one. "
+            "Attach one, such as `capabilities=[LocalWorkspace('.')]`."
+        )
+    if isinstance(workspace, WorkspaceRef):
+        named = f'`{workspace.provider}:{workspace.id}`'
+        if not has_resolvers:
+            raise exceptions.UserError(
+                f'Workspace {named} was passed to the run, but the agent has no workspace capability to resolve it.'
+            )
+        raise exceptions.UserError(
+            f"Workspace {named} was passed to the run, but none of the agent's workspace capabilities recognized it."
+        )
+    if workspace is None and history_ref is not None and has_resolvers:
+        raise exceptions.UserError(
+            f'The message history continues in workspace `{history_ref.provider}:{history_ref.id}`, but none of '
+            "the agent's workspace capabilities recognized it. Pass `workspace='new'` to start a fresh workspace, "
+            'or pass the workspace to continue in with `workspace=`.'
+        )
+
+
+def _set_run_context_instrumentation(ctx: RunContext[Any], settings: InstrumentationSettings | None) -> None:
+    """Point `ctx`'s tracer, content flag and instrumentation version at `settings`; uninstrumented if `None`."""
+    ctx.tracer = settings.tracer if settings is not None else NoOpTracer()
+    ctx.trace_include_content = settings is not None and settings.include_content
+    ctx.instrumentation_version = settings.version if settings is not None else DEFAULT_INSTRUMENTATION_VERSION
+
+
+def _registered_capability_count(capability: AbstractCapability[Any]) -> int:
+    """Count the capabilities the user registered, for a `pydantic_ai._display` banner.
+
+    Infrastructure capabilities are injected for every agent, so counting those would say nothing
+    about the agent the user actually wrote.
+    """
+    return sum(not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES) for leaf in leaf_capabilities(capability))
+
+
+class _StartupBannerDetails(NamedTuple):
+    """What a chat session can say about itself before any run has resolved anything."""
+
+    model: str
+    tools: int | None
+    """`None` when the session holds a toolset whose tools can't be counted without connecting."""
+    capabilities: int
+    instrumented: bool
+
+
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
     """Ensure all auto-injected infrastructure capabilities are present.
 
@@ -4319,6 +4621,11 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     """
     owners: dict[str, type[AbstractCapability[Any]]] = {}
     for cap in capabilities:
+        if cap.defer_loading is True and cap._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
+            raise exceptions.UserError(
+                f"`{type(cap).__name__}` supplies the run's workspace, which is chosen when the run starts, so it "
+                "can't be deferred. Remove `defer_loading=True`."
+            )
         if cap.defer_loading is True and cap.id is None:
             raise exceptions.UserError(
                 'Deferred capabilities must use stable explicit `id` values. '
@@ -4422,6 +4729,8 @@ class _ResolvedRunCapabilities(Generic[AgentDepsT]):
     """Each run layer after `for_run`, in order (instrumentation first when injected). The graph run
     compares the model-layer slice against its pre-resolution `model_layers` to detect whether any
     capability changed the model contribution during resolution (`model_layers_unchanged`)."""
+    run_layer: AbstractCapability[AgentDepsT] | None
+    """The run's own capabilities after `for_run`, combined, or `None` when the run passed none."""
 
 
 def _layer_model_settings(

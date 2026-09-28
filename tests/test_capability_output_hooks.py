@@ -55,9 +55,7 @@ from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 # --- Output hook tests ---

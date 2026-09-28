@@ -37,8 +37,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
-
 
 def test_genai_prices():
     usage = GenaiPricesUsage(input_tokens=100, output_tokens=50)
@@ -580,6 +578,7 @@ def test_usage_pydantic_core_serialization_subclass():
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {},
             'cost': None,
             'custom_tokens': 7,

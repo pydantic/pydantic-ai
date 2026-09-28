@@ -32,7 +32,7 @@ from typing_extensions import Self
 
 from pydantic_ai._http import create_async_httpx2_client
 from pydantic_ai.exceptions import ModelAPIError, UserError
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.openai_codex import openai_codex_model_profile
 
 from ._oauth import OAuthFlow
@@ -40,6 +40,7 @@ from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
     OpenAICompatibleProvider as _OpenAICompatibleProvider,
 )
+from .openai import OpenAIProvider
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
@@ -491,7 +492,10 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_codex_model_profile(model_name)
+        # Codex is OpenAI's own backend, so it inherits first-party flags kept out of the shared
+        # profile because compatible endpoints may not implement them. Its profile then layers
+        # only the narrower Codex wire dialect on top.
+        return merge_profile(OpenAIProvider.model_profile(model_name), openai_codex_model_profile(model_name))
 
     def __init__(
         self,

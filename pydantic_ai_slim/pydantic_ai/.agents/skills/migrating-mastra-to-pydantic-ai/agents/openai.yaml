@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate Mastra to Pydantic AI"
+  short_description: "Migrate Mastra applications safely"
+  default_prompt: "Use $migrating-mastra-to-pydantic-ai to migrate the smallest complete Mastra slice to Pydantic AI while preserving its observed contracts with proportionate tests."

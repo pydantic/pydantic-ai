@@ -1,3 +1,7 @@
+---
+description: "Handle the Pydantic AI realtime session event stream: content parts, tool activity, turn boundaries, reconnects and recoverable errors, as typed events."
+---
+
 # Events
 
 Iterating a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] yields the session's event
@@ -6,6 +10,12 @@ high-level [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
 [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] views described in
 [Audio, images, and transcripts](audio.md) are derived from this same stream, so most applications
 iterate the session for control flow and leave media to the views.
+
+If nothing is iterating the session, the session keeps the most recent 512 part delta events
+(audio, transcript, and text) and the most recent 512 structural events for a late `async for`;
+older ones are discarded. Discarding a part's start discards the rest of that part with it, so a late
+iterator never receives a delta it cannot attach to a part. A failure parked for the consumer is
+never discarded.
 
 ## Event reference
 
@@ -18,6 +28,7 @@ iterate the session for control flow and leave media to the views.
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool produced a result — a return, a failure, or a retry. |
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | An inline capability handler resolved deferred requests. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | Inline deferred results are ready for normal tool processing. |
+| [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] | Enqueued content was delivered into session history. |
 | [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] | The provider detected that the user started speaking, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
@@ -29,7 +40,7 @@ iterate the session for control flow and leave media to the views.
 
 ## Shared and realtime-only events
 
-The first seven rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members from
+The first eight rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members from
 [`pydantic_ai.messages`][pydantic_ai.messages] — the same events a
 [standard streamed run](../agent.md#streaming-all-events) yields, so event-handling code written for
 a text agent (rendering parts, logging tool calls) works on a session unchanged. The `Realtime*`
