@@ -63,8 +63,6 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

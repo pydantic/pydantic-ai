@@ -61,8 +61,6 @@ from pydantic_ai.workspaces import (
 
 from ..workspace_fakes import FakeWorkspace, InMemoryProvider, WorkspaceCapability
 
-pytestmark = pytest.mark.anyio
-
 
 class _Backend(CallableOperationBackend[dict[str, Any]]):
     def __init__(self, durability: FakeDurability) -> None:

@@ -34,7 +34,7 @@ from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
 from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT
 
-pytestmark = [pytest.mark.anyio(backends=['asyncio']), pytest.mark.modal_live]
+pytestmark = pytest.mark.modal_live
 
 
 @asynccontextmanager

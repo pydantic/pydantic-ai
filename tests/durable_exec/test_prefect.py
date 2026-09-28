@@ -117,7 +117,14 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 try:
     from prefect import flow, task
@@ -375,7 +382,6 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
 warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     pytest.mark.filterwarnings(
@@ -4425,10 +4431,17 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
         return condition
 
     condition = condition_of(TaskConfig())
-    # The same three types Temporal marks non-retryable on every activity config.
+    # The same types Temporal marks non-retryable on every activity config.
     assert await condition(None, None, _State(UserError('bad config'))) is False
     assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
     assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
+    for error in (
+        WorkspaceTimeoutError('slow'),
+        WorkspaceOutputLimitError('loud', limit=1),
+        WorkspaceReadOnlyError('read-only'),
+        WorkspaceUnavailableError('gone'),
+    ):
+        assert await condition(None, None, _State(error)) is False
     assert await condition(None, None, _State(RuntimeError('boom'))) is True
 
     def deny(task: Any, task_run: Any, state: Any) -> bool:

@@ -82,8 +82,6 @@ from pydantic_ai.usage import RequestUsage
 
 from .test_session import FakeRealtimeModel, make_tool_manager
 
-pytestmark = pytest.mark.anyio
-
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
     if any(name in kwargs for name in ('model_name', 'provider_name', 'provider_url')):

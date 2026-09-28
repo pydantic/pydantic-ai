@@ -35,8 +35,6 @@ from .._tool_calls import call_tools
 from .conftest import skip_or_fail_live_tier
 from .fake_modal import FakeModal
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
-
 
 async def test_backend_acquires_fresh_workspace_and_records_ref(fake_modal: FakeModal) -> None:
     backend = ModalSandboxBackend()

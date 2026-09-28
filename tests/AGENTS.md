@@ -2,8 +2,9 @@
 
 ## Testing philosophy
 
-The async backend defaults to asyncio. Use `uv run pytest <test-path> --anyio-backend=trio --record-mode=none`
-to run selected portable tests on Trio without duplicating the default suite. During the Trio migration,
+Every `async def` test runs via the anyio pytest plugin automatically (`anyio_mode = "auto"` in
+`pyproject.toml`); don't add `@pytest.mark.anyio`. The async backend defaults to asyncio. Use
+`uv run pytest <test-path> --anyio-backend=trio --record-mode=none` to run selected portable tests on Trio without duplicating the default suite. During the Trio migration,
 run affected concurrency tests once per backend. Keep broad Trio runs manual or periodic; do not add a
 second backend to every ordinary CI matrix. The selector does not imply that every test or integration
 already supports Trio.
@@ -28,7 +29,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 # ... other imports
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = pytest.mark.vcr
 
 
 # fixtures/helpers immediately before their test

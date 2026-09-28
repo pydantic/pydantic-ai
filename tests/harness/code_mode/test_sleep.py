@@ -15,8 +15,6 @@ from pydantic_monty import AsyncMonty
 
 from pydantic_ai_harness._monty_exec import MontyExecutor
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

@@ -104,7 +104,6 @@ else:
         ActivityDefinition = TemporalDurability = cast(Any, None)
         temporal_available = False
 
-pytestmark = pytest.mark.anyio
 
 requires_dbos = pytest.mark.skipif(not dbos_available, reason='DBOS is not installed')
 requires_prefect = pytest.mark.skipif(not prefect_available, reason='Prefect is not installed')

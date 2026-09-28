@@ -39,6 +39,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
+    FileEntry,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     SupportsCommands,
@@ -46,6 +47,7 @@ from pydantic_ai.workspaces import (
     UnavailableWorkspace,
     Workspace,
     WorkspaceBackend,
+    WorkspaceCommand,
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
@@ -64,8 +66,6 @@ from .workspace_fakes import (
     RunOnlyWorkspaceBackend,
     WorkspaceCapability,
 )
-
-pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
@@ -186,6 +186,29 @@ async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path:
     workspace = Workspace(backend if native else RunOnlyWorkspaceBackend(backend))
 
     assert await workspace.realpath(path) == os.path.realpath(root.resolve() / path)
+
+
+@pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
+async def test_realpath_of_resolve_names_the_file_a_file_method_opens(tmp_path: Path, native: bool) -> None:
+    """File methods collapse `..` as text, so `realpath(resolve(p))`, not `realpath(p)`, names the file they open."""
+    root = tmp_path / 'root'
+    (root / 'a' / 'b').mkdir(parents=True)
+    (root / 'inlink').symlink_to(root / 'a' / 'b')
+    (tmp_path / 'x').write_text('beside the root')
+    (root / 'x').write_text('inside the root')
+    backend = LocalWorkspaceBackend(root)
+    workspace = Workspace(backend if native else RunOnlyWorkspaceBackend(backend))
+    path = 'inlink/../../x'
+
+    assert await workspace.read_text(path) == 'beside the root'
+    assert await workspace.realpath(await workspace.resolve(path)) == str((tmp_path / 'x').resolve())
+    # On the raw path, `..` climbs from the link's target, as a command would.
+    assert await workspace.realpath(path) == str((root / 'x').resolve())
+
+
+async def test_run_rejects_an_empty_argv(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match='command must not be empty'):
+        await Workspace(LocalWorkspaceBackend(tmp_path)).run([])
 
 
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -421,6 +444,69 @@ async def test_backend_without_commands_or_filesystem_explains_what_to_attach() 
     assert await workspace.working_dir() == '/workspace'
     with pytest.raises(UserError, match='does not support filesystem operations'):
         await workspace.read_text('data.txt')
+
+
+async def test_backend_with_part_of_the_filesystem_protocol_names_what_it_lacks() -> None:
+    class NoExistsBackend(WorkspaceBackend):
+        @property
+        def ref(self) -> None:
+            return None
+
+        async def working_dir(self) -> str:
+            return '/workspace'
+
+        async def read_bytes(self, path: str) -> bytes:
+            raise NotImplementedError
+
+        async def write_bytes(self, path: str, data: bytes) -> None:
+            raise NotImplementedError
+
+        async def stat(self, path: str) -> FileEntry:
+            raise NotImplementedError
+
+        async def list_dir(self, path: str) -> Sequence[FileEntry]:
+            raise NotImplementedError
+
+        async def make_dir(self, path: str) -> None:
+            raise NotImplementedError
+
+        async def remove(self, path: str) -> None:
+            raise NotImplementedError
+
+    with pytest.raises(UserError, match=r'part of `SupportsFilesystem` and lacks `exists`\.$'):
+        await Workspace(NoExistsBackend()).read_text('data.txt')
+
+
+@pytest.mark.parametrize(
+    ('exit_code', 'stderr', 'match'),
+    [(255, 'ssh: connect to host x port 22: Connection refused\n', 'refused'), (127, '', 'exit code 127')],
+)
+async def test_shell_exists_raises_when_the_command_itself_fails(exit_code: int, stderr: str, match: str) -> None:
+    """Only `test`'s own "no" (exit 1) means missing; a broken shell or connection must not read as absent."""
+
+    class BrokenShellBackend(WorkspaceBackend, SupportsCommands):
+        @property
+        def ref(self) -> None:
+            return None
+
+        async def working_dir(self) -> str:
+            return '/workspace'
+
+        async def run(
+            self,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> CommandResult:
+            return CommandResult(exit_code=exit_code, stdout='', stderr=stderr)
+
+    workspace = Workspace(BrokenShellBackend())
+    with pytest.raises(WorkspaceError, match=match):
+        await workspace.exists('data.txt')
+    with pytest.raises(WorkspaceError, match=match):
+        await workspace.stat('data.txt')
 
 
 async def test_run_only_backend_writes_binary_and_odd_names_through_the_shell(tmp_path: Path) -> None:
@@ -942,8 +1028,12 @@ async def test_a_result_still_round_trips_through_json_when_a_workspace_was_used
 async def test_a_result_built_outside_a_run_explains_that_no_workspace_is_attached() -> None:
     result = AgentRunResult[str]('output')
 
-    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached') as exc_info:
         await result.workspace.run(['true'])
+    # A bare `WorkspaceRef` is refused without a capability to resolve it, so the hint names one.
+    assert 'with a capability that can reconnect to an existing environment, pass its `WorkspaceRef`' in str(
+        exc_info.value
+    )
 
 
 class ProviderWorkspaceCapability(AbstractCapability[Any]):
@@ -1033,7 +1123,10 @@ async def test_a_resolver_cannot_answer_a_ref_with_a_backend_that_would_create_a
 
     ref = WorkspaceRef(provider='fake', id='existing')
     agent = Agent(TestModel(), capabilities=[LazyResolver()])
-    with pytest.raises(UserError, match='different workspace than requested'):
+    with pytest.raises(
+        UserError,
+        match=r"`get_workspace` returned a different workspace than requested: asked for WorkspaceRef\(.*'existing'.*\), got ",
+    ):
         if source == 'explicit':
             await agent.run('go', workspace=ref)
         else:

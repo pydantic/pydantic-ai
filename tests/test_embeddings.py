@@ -44,7 +44,6 @@ from pydantic_ai.usage import RequestUsage
 from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.usefixtures('allow_model_requests'),
 ]
 

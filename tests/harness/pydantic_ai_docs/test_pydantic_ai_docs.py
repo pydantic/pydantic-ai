@@ -18,8 +18,6 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs, PydanticAIDocsToolset, PydanticAIDocsTopic
 
-pytestmark = pytest.mark.anyio
-
 
 def _run_context(workspace: Workspace | None = None) -> RunContext[None]:
     """Minimal `RunContext` for direct toolset invocations."""

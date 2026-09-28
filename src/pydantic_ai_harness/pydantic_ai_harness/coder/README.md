@@ -42,7 +42,7 @@ agent = Agent(
 agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
 ```
 
-File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, or Sprites); nothing else changes. Commands run without an allowlist, and the file tools' path limits don't apply to them.
+File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, or Sprites); the rest of the code stays the same. Commands run without an allowlist, and the file tools' path limits don't apply to them.
 
 With [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), for example:
 
@@ -52,7 +52,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
-[`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) and [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) use the same workspace.
+With `LocalWorkspace`, [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) and [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) work in the same directory. With a sandbox, the CLI keeps one sandbox for the session, but `to_web()` starts a new one for each message because the web protocol does not carry the workspace ref, so use `LocalWorkspace` when files must persist between web messages.
 
 The exported `pydantic_ai_harness.coder:coder_agent` is the same agent, model-less and named `coder`, working in the directory that is current when it is imported.
 Use it with the Pydantic AI CLI:
@@ -111,7 +111,7 @@ result = coder.run_sync('Add a --verbose flag to the CLI.')
 review = reviewer.run_sync('Review the new --verbose flag.', workspace=ReadOnlyWorkspace(result.workspace))
 ```
 
-The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#hand-the-workspace-to-another-agent) lets it read the files but refuses commands and file changes, so it gets no shell or editing tools; pass `result.workspace` itself to let it change them. With a sandbox, this is how several agents share one isolated machine. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) needs nothing extra: each delegate runs in the parent's workspace.
+The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#hand-the-workspace-to-another-agent) refuses commands and file changes, so the reviewer gets `read_file`, `list_files`, and `grep` but no shell or editing tools; pass `result.workspace` itself to let it run commands and edit files. With a sandbox, this is how several agents share one isolated machine. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) needs nothing extra: each delegate runs in the parent's workspace.
 
 ## Composition
 
@@ -239,6 +239,7 @@ This release makes the workspace the single place that decides where an agent wo
 - **Sub-agent definitions** are read from the workspace at run start, and `~/.agents/agents/` is no longer read. [`SubAgents(workspace=LocalWorkspaceBackend('/app'))`](https://pydantic.dev/docs/ai/harness/subagents/) reads them from somewhere else.
 - **[Memory's `FileStore`](https://pydantic.dev/docs/ai/harness/memory/)** keeps its files in the workspace, and receipts in `.memory-operations.json` replace its SQLite journal. `FileStore('.', workspace=LocalWorkspaceBackend('/path'))` keeps them on this machine.
 - **Capability Creation** runs only when the workspace is a writable `LocalWorkspace`.
+- **Durable runs in flight.** Adding a workspace changes what a durable run records at its start, so Temporal and DBOS runs started before the change no longer replay. Let them finish or version the deployment first; see [deploying changes](https://pydantic.dev/docs/ai/harness/durable-execution/#engine-notes) and the workspace guide's [Durable execution](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) section.
 
 When retaining `result.workspace` after a run with a provider backend that exposes `aclose()`, finish using it and call `await result.workspace.backend.aclose()` to release its client session. This closes the client, not necessarily the sandbox; follow that provider's deletion API for owned sandboxes.
 

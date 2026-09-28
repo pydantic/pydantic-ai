@@ -1730,6 +1730,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             workspace = override_workspace.value
         # The workspace is selected before `for_run`, like the bootstrap model above, so `for_run` can use
         # it. Selecting does no I/O: a backend creates or attaches on its first operation.
+        if isinstance(workspace, AbstractCapability):
+            raise TypeError(
+                f'`{type(workspace).__name__}` is a capability: pass it in `capabilities=[...]`, '
+                'or pass a backend such as `LocalWorkspaceBackend(path)` as `workspace=`'
+            )
         if workspace is not None and workspace != 'new' and not isinstance(workspace, (WorkspaceRef, WorkspaceBackend)):
             raise TypeError(
                 'workspace= must be a Workspace, WorkspaceBackend, WorkspaceRef(provider=..., id=...), '

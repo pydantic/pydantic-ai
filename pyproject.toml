@@ -224,7 +224,8 @@ google-genai = "2026-09-22T17:23:02Z"
 
 [dependency-groups]
 dev = [
-    "anyio>=4.7.0",
+    # `anyio_mode = "auto"` (pytest plugin) was added in 4.11.0.
+    "anyio>=4.11.0",
     "trio>=0.34.0",
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
@@ -454,6 +455,8 @@ strict = true
 
 [tool.pytest.ini_options]
 addopts = "-p no:cassetter"
+# Every `async def` test runs via anyio; no `@pytest.mark.anyio` needed.
+anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
 markers = [

@@ -24,8 +24,6 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend,
 
 from .fake_modal import FakeImage, FakeModal, FileInfo
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
-
 
 async def started(**settings: Any) -> ModalSandboxBackend:
     backend = ModalSandboxBackend(**settings)

@@ -56,9 +56,6 @@ class _RecordingCapability(AbstractCapability[AgentDepsT]):
         return _instructions
 
 
-pytestmark = pytest.mark.anyio
-
-
 @pytest.fixture
 def anyio_backend() -> str:
     """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""

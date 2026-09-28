@@ -23,7 +23,6 @@ from pydantic_ai.workspaces import (
 )
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='`LocalWorkspaceBackend` only supports POSIX platforms'),
 ]
 
@@ -50,6 +49,12 @@ async def test_invalid_workspace_argument_fails_before_model_call(invalid: objec
     agent = Agent(TestModel())
     with pytest.raises(TypeError, match=r'workspace=.*WorkspaceRef.*LocalWorkspaceBackend'):
         await agent.run('go', workspace=invalid)  # type: ignore[arg-type]
+
+
+async def test_a_capability_as_workspace_argument_points_to_capabilities(tmp_path: Path) -> None:
+    agent = Agent(TestModel())
+    with pytest.raises(TypeError, match=r'`LocalWorkspace` is a capability: pass it in `capabilities=\[\.\.\.\]`'):
+        await agent.run('go', workspace=LocalWorkspace(tmp_path))  # type: ignore[arg-type]
 
 
 async def test_resolver_cannot_substitute_a_different_workspace(tmp_path: Path) -> None:

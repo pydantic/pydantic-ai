@@ -36,8 +36,6 @@ from pydantic_ai_harness.ask_user import (
     check_response,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

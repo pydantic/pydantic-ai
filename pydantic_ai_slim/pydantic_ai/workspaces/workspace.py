@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 import anyio
+from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
@@ -106,7 +107,7 @@ class _ShellFilesystem(SupportsFilesystem):
     `SupportsFilesystem` when their provider has a native API: native calls avoid the shell's
     utility assumptions and the base64 transfer overhead used here to preserve arbitrary bytes.
 
-    It needs a POSIX `sh` with `test` and `printf`, plus `base64`, `cp`, `mv`, `rm`, `mkdir`,
+    It needs a POSIX `sh` with `test` and `printf`, plus `base64`, `cp`, `dd`, `mv`, `rm`, `mkdir`,
     `find` and `wc`, and `readlink` for `realpath`. A path under a directory the command cannot search reads as missing:
     `test -e` cannot tell a permission error from a missing path.
     """
@@ -294,7 +295,12 @@ class _ShellFilesystem(SupportsFilesystem):
 
     async def exists(self, path: str) -> bool:
         result = await self._backend.run(f'test -e {shlex.quote(path)}', shell=True)
-        return result.exit_code == 0
+        # `test` exits 1 for "no"; anything else (a missing shell, a dropped SSH link) is a failure, not absence.
+        if result.exit_code in (0, 1):
+            return result.exit_code == 0
+        raise WorkspaceError(
+            result.stderr.strip() or f'could not check whether {path!r} exists (exit code {result.exit_code})'
+        )
 
     async def realpath(self, path: str) -> str:
         # One round trip, resolving the way `os.path.realpath(strict=False)` does: walk the components
@@ -383,6 +389,14 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, SupportsCommands):
             # The backend may provide native filesystem methods later.
             return _ShellFilesystem(backend)
+        members = get_protocol_members(SupportsFilesystem)
+        missing = sorted(name for name in members if not hasattr(backend, name))
+        if len(missing) < len(members):
+            # A backend that meant to implement it but missed a method would otherwise get no hint which.
+            raise UserError(
+                'This workspace does not support filesystem operations: its backend implements only part of '
+                f'`SupportsFilesystem` and lacks {", ".join(f"`{name}`" for name in missing)}.'
+            )
         raise UserError(
             'This workspace does not support filesystem operations. Attach a backend that implements '
             '`SupportsFilesystem` or `SupportsCommands`.'
@@ -402,6 +416,9 @@ class Workspace(WorkspaceBackend):
         There is no default `timeout`. Raises `UserError` if the backend can't run commands.
         """
         validate_timeout(timeout)
+        if not isinstance(command, str) and not command:
+            # Checked here so every backend reports it the same way, not as its SDK's own error.
+            raise ValueError('command must not be empty')
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
@@ -459,6 +476,10 @@ class Workspace(WorkspaceBackend):
         Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath], else `readlink` in
         its shell. Without either, it only normalizes the path as text: symlinks are not followed, so a
         path check built on it can be escaped through a link.
+
+        `..` climbs from a symlink's target, as it does for commands. File methods open
+        [`resolve(path)`][pydantic_ai.workspaces.Workspace.resolve], which collapses `..` as text, so
+        `realpath(await ws.resolve(path))` names the file they open.
         """
         if not posixpath.isabs(path):
             # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.

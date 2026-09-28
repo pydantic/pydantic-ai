@@ -36,8 +36,6 @@ from pydantic_ai_harness.capability_creation import (
 )
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:
