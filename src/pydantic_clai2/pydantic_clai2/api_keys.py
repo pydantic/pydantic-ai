@@ -6,7 +6,7 @@ import re
 import sqlite3
 from collections.abc import Generator
 from contextlib import closing, contextmanager
-from typing import Protocol
+from typing import Literal, Protocol
 
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, SecretStr, TypeAdapter, ValidationError
@@ -91,14 +91,20 @@ def _load_keys() -> dict[str, SecretStr]:
         raise UserError('Stored API keys are invalid. Repair the api-keys credential bundle.') from None
 
 
-def save_key(*, name: str, value: str) -> str:
-    """Save one key without touching unrelated credentials or SQLite."""
+def save_key(*, name: str, value: str, expected: SecretStr | None | Literal['any'] = 'any') -> str:
+    """Save one key without touching unrelated credentials or SQLite.
+
+    `expected` is the value, or `None` for absent, that the user agreed to replace. If another session changed
+    the key since, nothing is saved, so a shared key is never replaced without that agreement.
+    """
     name = normalize_name(name=name)
     value = value.strip()
     if not value:
         raise ValueError('An API key is required.')
     with key_transaction():
         keys = _load_keys()
+        if expected != 'any' and keys.get(name) != expected:
+            raise ValueError(f'{name} changed in another CLAI session, so nothing was saved. Choose the key again.')
         keys[name] = SecretStr(value)
         _save_keys(keys=keys)
     path = credentials_path(account='api-keys')
@@ -120,7 +126,7 @@ class _Credential(BaseModel):
 def key_users(*, name: str) -> list[str]:
     """Find saved provider references without exposing their inline credentials."""
     users: list[str] = []
-    for account in ('vllm', 'openrouter'):
+    for account in ('vllm', 'openrouter', 'notion'):
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:

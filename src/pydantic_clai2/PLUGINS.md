@@ -314,6 +314,66 @@ wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
 to stock built-ins. See [telemetry](README.md#telemetry-and-references).
 
+## Notion: workspace tools
+
+The built-in `notion` plugin (`pydantic_clai2.notion`) starts disabled. It adds
+harness `Notion`: the tools of Notion's hosted MCP server, acting with the
+permissions of the Notion account it connects as. That includes tools that
+change pages.
+
+`/plugins enable notion` loads it and opens its settings menu. To change the
+settings later, run `/plugins configure notion` or press `C` on it in
+`/plugins`; you never need to reinstall it. The menu is the shared field editor
+`/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
+Each change is saved as soon as you make it, and the plugin loads again when the
+menu closes, so the next turn uses the new settings.
+
+| Row | Default | Does |
+|---|---|---|
+| Key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field; `R` clears the choice |
+| Sign-in | automatic | automatic uses the key when one is chosen and otherwise signs in through the browser; key only never opens a browser; browser always does |
+| Tools | read and write | read-only keeps only the tools the server marks as read-only |
+| Server instructions | forwarded | whether the Notion server's own instructions reach the agent |
+
+Notion's server has one fixed URL, and the workspace is the one the connected
+account belongs to, so there is no URL or workspace row. The settings JSON uses
+`auth` (`"key"`, `"oauth"`, or unset), `read_only`, and `include_instructions`:
+
+```text
+/plugins add notion pydantic_clai2.notion '{"auth": "key", "read_only": true}'
+```
+
+### Secrets live in `/keys`
+
+Plugin settings are plaintext SQLite, so they never hold the token, and a
+declaration that tries to is rejected. The token lives in the named keystore
+you manage with `/keys`:
+
+- A new token typed in the menu is saved in `/keys` as `NOTION_API_KEY`. If
+  that name already exists, the menu asks before replacing it, because other
+  plugins and connections may share it.
+- The plugin keeps only the key's name, in CLAI's credential store. Each run
+  looks the key up again, so replacing it in `/keys` reaches every plugin that
+  uses it. Several plugins can share one named key, the way the GitHub and
+  Copilot integrations can both use `GITHUB_TOKEN`.
+- Deleting the key makes Notion runs fail until you restore it or choose
+  another. A key Notion uses cannot be renamed.
+- `NOTION_API_KEY` is a label in `/keys`, not an environment variable; the
+  plugin does not read `NOTION_ACCESS_TOKEN` either. Notion integration tokens do
+  not work with the hosted server; use a Notion OAuth access token.
+
+With no key chosen, the first run that connects opens your browser to sign in.
+Those OAuth tokens go to the OS keyring, or CLAI's private credential file when
+there is no keyring, so later launches reuse and refresh them. `/notion logout`
+forgets the browser sign-in and the chosen key name; the key itself stays in
+`/keys`.
+
+The browser sign-in needs a browser on the machine CLAI runs on. For headless
+runs or remote machines, choose a key and set Sign-in to key only: without a
+key, CLAI warns at startup and runs fail with a message instead of waiting for a
+sign-in. The plugin emits no telemetry of its own; tool calls appear in core's
+spans.
+
 ## Where plugins live
 
 Plugins are trusted Python code. Drop-in files execute automatically at startup;
@@ -388,6 +448,8 @@ declared. It does not list every public harness capability for Space-enable:
 hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
 CLAI plugins written for them.
+The disabled `notion` built-in is one: it wraps harness `Notion` with CLAI's
+token and browser sign-in handling (see [Notion](#notion-workspace-tools)).
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -553,6 +615,7 @@ CLAI does the same thing:
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
 | `/plugins configure NAME` | open a loaded plugin's settings menu (in a CLAI session only) |
 | `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
+| `/plugins configure NAME` | open a loaded plugin's settings menu, if it registered one with `host.configure`; `enable` and `add` open it too |
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,
@@ -931,6 +994,12 @@ async def configure() -> str:
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
 
+The built-in `notion` plugin is an example: `FieldMenu` rows over its settings
+model, run with `run_flow`. To choose a secret from inside a settings menu,
+`pydantic_clai2.key_picker.pick_key` shows the saved-key list and the masked
+entry, and returns a `KeyReference` to store by name and resolve with
+`resolve_key` on each run.
+
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
@@ -1050,8 +1119,8 @@ numbers, and underscores, starting with a letter or underscore. Saving an existi
 name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
 the secret on the command line.
 
-When saved keys exist, vLLM's token prompt and OpenRouter's **Enter API key** flow
-show a searchable list of names. Choose one, enter a different key privately, or
+When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
+and the Key row of `/plugins configure notion` show a searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.
 

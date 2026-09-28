@@ -14,6 +14,7 @@ from ._command import HELP, MCPCommand
 from ._form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
 from ._runtime import MCPServers, ServerEntry, State
 from ._settings import (
+    OAUTH_TIMEOUT,
     HTTPServer,
     MCPSettings,
     RemoteServer,
@@ -24,12 +25,13 @@ from ._settings import (
     http_client,
 )
 from ._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from ._tokens import TokenStore, oauth
+from ._tokens import TokenStore, browser_sign_in, oauth
 
 __all__ = [
     'CLAUDE_MCP_FILE',
     'EXAMPLES',
     'HELP',
+    'OAUTH_TIMEOUT',
     'PROJECT_MCP_FILE',
     'PROJECT_MCP_FILES',
     'HTTPServer',
@@ -48,6 +50,7 @@ __all__ = [
     'TokenStore',
     'UserFile',
     'activate',
+    'browser_sign_in',
     'edit_form',
     'edit_in_editor',
     'http_client',
