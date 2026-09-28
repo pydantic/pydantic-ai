@@ -482,6 +482,7 @@ jobs:
       # collects it on 3.10: `tests/clai2` has 3.10-only branches that `all-extras` covers otherwise.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.10' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
+      CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -510,6 +511,10 @@ jobs:
       - name: run tests
         shell: bash
         run: |
+          extra=()
+          if [[ -n "$CLAI2_EXTRA" ]]; then
+            extra=(--extra "$CLAI2_EXTRA")
+          fi
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
@@ -517,7 +522,7 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          uv run ${{ matrix.install.command }} "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run ${{ matrix.install.command }} "${extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec ${{ matrix.install.paths }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -527,7 +532,13 @@ jobs:
       # job, which would otherwise merge hundreds of files on the critical path.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        run: uv run ${{ matrix.install.command }} coverage combine
+        shell: bash
+        run: |
+          extra=()
+          if [[ -n "$CLAI2_EXTRA" ]]; then
+            extra=(--extra "$CLAI2_EXTRA")
+          fi
+          uv run ${{ matrix.install.command }} "${extra[@]}" coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
