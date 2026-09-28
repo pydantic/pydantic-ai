@@ -99,7 +99,7 @@ the model request or re-calling the tool.
 
 Some work is not checkpointed and runs again on replay:
 
-- a tool that raises `ModelRetry`, `CallDeferred`, or `ApprovalRequired` stores no checkpoint, so the
+- a tool that raises `ModelRetry`, `ToolFailed`, `CallDeferred`, or `ApprovalRequired` stores no checkpoint, so the
   call is repeated;
 - a `DynamicToolset` (including one added with `@agent.toolset`) is not wrapped, so its listing and
   tool calls run as plain code.

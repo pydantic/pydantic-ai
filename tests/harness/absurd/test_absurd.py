@@ -372,9 +372,8 @@ class TestDurability:
         assert replayed == events
         assert counter['calls'] == 1
 
-    async def test_wrapper_written_stream_checkpoint_replays_under_capability(self, absurd: AsyncAbsurd) -> None:
-        """A `request_stream` checkpoint written by the older `AbsurdAgent` wrapper (a bare
-        `ModelResponse`) replays under the capability."""
+    async def test_bare_model_response_stream_checkpoint_replays(self, absurd: AsyncAbsurd) -> None:
+        """A `request_stream` checkpoint stored as a bare `ModelResponse`, without captured events, replays."""
         counter = {'calls': 0}
         agent = Agent(_make_model(counter), name='legacy', capabilities=[AbsurdDurability()])
         legacy_payload = _response_adapter.dump_python(

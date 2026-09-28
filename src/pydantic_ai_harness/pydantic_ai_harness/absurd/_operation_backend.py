@@ -43,11 +43,6 @@ class AbsurdOperationNamer(JournalOperationNamer):
         return super().operation_name(operation_id)
 
 
-class _UncheckpointedResult(Exception):
-    def __init__(self, payload: object) -> None:
-        self.payload = payload
-
-
 def _is_tool_return_object(value: object) -> bool:
     return is_str_dict(value) and value.get('kind') == 'tool-return'
 
@@ -66,7 +61,7 @@ _events_adapter: TypeAdapter[list[ModelResponseStreamEvent]] = TypeAdapter(list[
 
 
 async def _from_stream_checkpoint(stored: object) -> object:
-    """Read a `request_stream` checkpoint; the older `AbsurdAgent` stored a bare `ModelResponse`, whose events are rebuilt."""
+    """Read a `request_stream` checkpoint; one stored as a bare `ModelResponse` has its events rebuilt from the parts."""
     if not is_str_dict(stored) or 'response' in stored:
         return stored
     completed = CompletedStreamedResponse(
@@ -78,15 +73,10 @@ async def _from_stream_checkpoint(stored: object) -> object:
     return {'response': stored, 'events': _events_adapter.dump_python(events, mode='json')}
 
 
-def _to_checkpoint(payload: object) -> object:
+def _to_checkpoint(payload: dict[str, object]) -> object:
     """Reduce an encoded `CallToolResult` to the stored checkpoint: the raw return value."""
-    assert is_str_dict(payload)
-    kind = payload.get('kind')
-    if kind not in _RAW_RESULT_KINDS:
-        # Control flow: raising keeps it out of the checkpoint table, so the call runs again on replay.
-        raise _UncheckpointedResult(payload)
     result = payload['result']
-    if kind == 'tool_return' and _is_tool_return_object(result):
+    if payload['kind'] == 'tool_return' and _is_tool_return_object(result):
         return {_ENVELOPE_KEY: payload}
     return result
 
@@ -124,11 +114,12 @@ class AbsurdOperationBackend(CallableOperationBackend[None]):
         if not isinstance(operation_id, ToolsetCallToolId):
             return await task_ctx.step(name, body)
 
-        async def checkpointed_body() -> object:
-            return _to_checkpoint(await body())
-
-        try:
-            stored = await task_ctx.step(name, checkpointed_body)
-        except _UncheckpointedResult as uncheckpointed:
-            return uncheckpointed.payload
-        return _from_checkpoint(stored)
+        handle = await task_ctx.begin_step(name)
+        if handle.done:
+            return _from_checkpoint(handle.state)
+        payload = await body()
+        assert is_str_dict(payload)
+        if payload.get('kind') not in _RAW_RESULT_KINDS:
+            # Control flow (`ModelRetry`, `CallDeferred`, ...) is not checkpointed, so the call runs again on replay.
+            return payload
+        return _from_checkpoint(await task_ctx.complete_step(handle, _to_checkpoint(payload)))
