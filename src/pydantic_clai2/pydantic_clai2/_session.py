@@ -39,20 +39,27 @@ def _supports_local_workspace() -> bool:
 def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]]) -> bool:
     """Whether a plugin, such as a sandbox, supplies the run's workspace, so clai adds no `LocalWorkspace`.
 
-    A plugin counts when it has a leaf that overrides `get_workspace` and is loaded up front. A
-    wrapper forwards to what it wraps, a leaf of its own.
+    A plugin counts when it has a leaf that overrides `get_workspace` and is loaded up front.
     """
     leaves: list[AbstractCapability[DepsT]] = []
     for plugin in plugins:
         # A capability function's capability exists only once the run starts.
         if isinstance(plugin, AbstractCapability):
             cast('AbstractCapability[DepsT]', plugin).apply(leaves.append)
-    return any(
-        not leaf.defer_loading
-        and not isinstance(leaf, WrapperCapability)
-        and type(leaf).get_workspace is not AbstractCapability.get_workspace
-        for leaf in leaves
-    )
+    return any(not leaf.defer_loading and _overrides_get_workspace(leaf) for leaf in leaves)
+
+
+def _overrides_get_workspace(leaf: AbstractCapability[DepsT]) -> bool:
+    while isinstance(leaf, WrapperCapability):
+        if type(leaf).get_workspace is not WrapperCapability.get_workspace:
+            return True
+        wrapped: list[AbstractCapability[DepsT]] = []
+        leaf.wrapped.apply(wrapped.append)
+        if len(wrapped) != 1 or wrapped[0] is not leaf.wrapped:
+            # A wrapped tree's leaves are visited on their own; only a lone wrapped capability hides behind its wrapper.
+            return False
+        leaf = leaf.wrapped
+    return type(leaf).get_workspace is not AbstractCapability.get_workspace
 
 
 def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
