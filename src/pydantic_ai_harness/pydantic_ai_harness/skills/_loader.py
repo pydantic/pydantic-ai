@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from pydantic_ai.workspaces import Workspace, WorkspaceFileEntry
+from pydantic_ai.workspaces import FileEntry, Workspace
 from pydantic_ai_harness._workspace import workspace_path
 
 # Imported with the module rather than on first parse: a durable engine such as Temporal parses skills in
@@ -137,7 +137,7 @@ def _normalize_name(name: str) -> str:
     return unicodedata.normalize('NFKC', name)
 
 
-async def _stat(workspace: Workspace, path: str) -> WorkspaceFileEntry | None:
+async def _stat(workspace: Workspace, path: str) -> FileEntry | None:
     try:
         return await workspace.stat(path)
     except (FileNotFoundError, NotADirectoryError):
