@@ -44,22 +44,28 @@ dir=$1
 publish() {{
   printf '{{"pid": %s, "exit_code": %s}}' "$$" "$1" > "$dir/status.tmp" && mv -f "$dir/status.tmp" "$dir/status.json"
 }}
-trap : TERM
+unset __harness_stopped
+trap __harness_stopped=1 TERM
 publish null
-while [ ! -e "$dir/launch.ready" ]; do sleep 0.1 2> /dev/null || sleep 1; done
+while [ -z "$__harness_stopped" ] && [ ! -e "$dir/launch.ready" ]; do
+  sleep 0.1 2> /dev/null || [ -n "$__harness_stopped" ] || sleep 1
+done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
 fi
+[ -z "$__harness_stopped" ] || {{ publish 143; exit 143; }}
 sh -c "$3" < /dev/null >> "$out" 2>> "$err"
 publish $?
 """
 """The job's supervisor: arguments are the job directory, the log mode, the command, and the file limit.
 
-`trap : TERM` lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
+The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
 a trap with an action is reset in a child. Stopping the group therefore still records how the
 command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation leaves `exit_code` null.
+The trap also records the signal, so a job stopped before its command starts (the wrapper waits
+for `launch.ready` first) never starts it and publishes `143` instead.
 """
 
 _LAUNCHER = """if [ "$exclusive" = 1 ]; then

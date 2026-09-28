@@ -49,6 +49,7 @@ async def test_workspace_defaults_follow_platform_support(supported: bool, monke
     activate_repo_context(host)
     assert any(isinstance(capability, RepoContext) for capability in host.capabilities) is supported
 
+
 pytestmark = pytest.mark.anyio
 
 
