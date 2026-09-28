@@ -387,7 +387,8 @@ activities.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
   capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
   read-only policy, and so does a live backend that has no ref yet or a capability passed to the run
-  that changes the workspace. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
+  that changes the workspace's type or policy. Other settings of a run-level workspace capability,
+  such as a sandbox image, do not apply: every unit rebuilds the workspace from the agent's. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
   `LocalWorkspace(..., read_only=True)`.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and
   Temporal tools with `metadata={'temporal': False}`. Reach the provider's own API from a tool that
