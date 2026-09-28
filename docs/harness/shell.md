@@ -156,16 +156,16 @@ tool-call result carries the failure and limit context.
 ## Environment control
 
 A command gets the workspace's environment plus `Shell(env=...)`.
-`LocalWorkspace` passes on your `PATH` and `HOME` and nothing else; a sandbox
-has whatever its provider configures. Two fields shape what `Shell` adds:
+`LocalWorkspace` passes on your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`
+and nothing else; a sandbox has whatever its provider configures. Two fields shape what `Shell` adds:
 
 | Field | Effect |
 |---|---|
 | `env` | Variables added to every command's environment, on top of the workspace's own. |
 | `denied_env_patterns` | Glob patterns (`fnmatch`) for variable names dropped from `env`. Mirrors `denied_commands`. |
 
-`denied_env_patterns` filters `env` only, so you can build `env` from a larger
-mapping, such as the host environment, and drop sensitive names on the way in.
+`denied_env_patterns` filters `Shell(env=)` only, not `LocalWorkspace(env=)`, so
+you can build `env` from a larger mapping and drop sensitive names on the way in.
 Leaving both unset adds nothing.
 
 ```python
