@@ -390,6 +390,31 @@ class TestCoder:
         assert '"exit_code": 0' in shell_output
         assert 'made-in-sandbox' in read_output
 
+    async def test_search_tools_fall_back_to_posix_without_ripgrep(self) -> None:
+        """Validates the fake-encoded assumption that the POSIX `find`/`grep` fallback runs in E2B's template.
+
+        The default template has no `rg`, so `list_files` and `grep` search with the template's own
+        `git`, `sort`, `xargs`, `realpath` and `grep`; the fake runs that script on the host instead.
+        """
+        async with _owned(sandbox_timeout=120) as backend:
+            if (await backend.run('command -v rg', shell=True, timeout=30)).exit_code == 0:
+                pytest.skip('The default E2B template now ships `rg`, so the POSIX fallback is not exercised.')
+            facade = Workspace(backend)
+            await facade.write_text('proj/a.txt', 'needle one\nhay\n')
+            await facade.write_text('proj/sub/b.txt', 'hay\nneedle two\n')
+            await facade.write_text('proj/.hidden.txt', 'needle hidden\n')
+            await facade.write_text('proj/.gitignore', 'ignored.txt\n')
+            await facade.write_text('proj/ignored.txt', 'needle ignored\n')
+
+            listed, matched = await call_tools(
+                [Coder()],
+                [('list_files', {'path': 'proj'}), ('grep', {'pattern': 'needle', 'path': 'proj'})],
+                workspace=backend,
+            )
+
+        assert listed.splitlines() == ['proj/a.txt', 'proj/sub/b.txt']
+        assert matched.splitlines() == ['proj/a.txt:1:needle one', 'proj/sub/b.txt:2:needle two']
+
 
 class TestEnvironment:
     """What a command sees without being given anything."""
