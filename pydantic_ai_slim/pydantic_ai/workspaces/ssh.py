@@ -74,6 +74,10 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         self._env = self._checked_env(env or {})
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         self._resolved_working_dir: str | None = None
+        # No password auth, on purpose: a prompt would hang the run until it timed out, a `password`
+        # option would put secrets in agent specs, and ssh can only take one through `sshpass` or an
+        # askpass helper. `BatchMode=yes` comes first so it wins over `ssh_args`, and keys or
+        # `ssh-agent` (via `SSH_AUTH_SOCK`) authenticate instead.
         self._ssh = ['ssh', '-T', '-o', 'BatchMode=yes', *ssh_args, '--', destination]
         # A local subprocess runner: it owns timeouts, output limits and killing `ssh` on cancellation.
         self._client = LocalWorkspaceBackend(
