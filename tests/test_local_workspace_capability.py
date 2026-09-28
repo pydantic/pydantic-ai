@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +103,19 @@ async def test_env_reaches_every_command(tmp_path: Path) -> None:
     result = await agent.run('go')
 
     assert (await result.workspace.run(['sh', '-c', 'printf %s "$GREETING"'])).stdout == 'hello'
+
+
+async def test_pickled_result_leaves_the_live_workspace_behind(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path, env={'API_KEY': 'sk-secret'})])
+    result = await agent.run('go')
+
+    data = pickle.dumps(result)
+
+    assert b'sk-secret' not in data
+    restored = pickle.loads(data)
+    assert restored.output == result.output
+    assert restored.workspace.ref is None
+    assert [m.workspace_ref for m in restored.all_messages() if isinstance(m, ModelResponse)] == [result.workspace.ref]
 
 
 async def test_working_dir_expands_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
