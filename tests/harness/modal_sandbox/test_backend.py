@@ -263,6 +263,17 @@ class TestRun:
         with pytest.raises(WorkspaceUnavailableError, match="'sb-owned' is no longer running"):
             await backend.run(['x'])
 
+    async def test_a_deadline_passing_while_the_sandbox_shuts_down_is_unavailable(self, fake_modal: FakeModal) -> None:
+        # Modal keeps a terminated sandbox's command running through its shutdown grace, so the
+        # deadline fires first; the stop that follows is refused, which shows the sandbox is gone.
+        fake_modal.wait_hangs = True
+        backend = await started()
+        waiter = asyncio.create_task(backend.run(['sleep', '30'], timeout=1))
+        await anyio.wait_all_tasks_blocked()
+        await fake_modal.sandboxes[0].terminate.aio()
+        with pytest.raises(WorkspaceUnavailableError, match="'sb-owned' is no longer running"):
+            await waiter
+
     async def test_transient_conflict_stays_recoverable(self, fake_modal: FakeModal) -> None:
         backend = await started()
         fake_modal.exec_error = fake_modal.exception('ConflictError')('aborted')

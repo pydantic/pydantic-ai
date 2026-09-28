@@ -24,7 +24,7 @@ import subprocess
 import time
 import types
 from collections.abc import AsyncGenerator, Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -434,6 +434,8 @@ class FakeSandbox:
         self.poll_result: int | None = None
         self.poll_error: Exception | None = None
         self.shutting_down = False
+        # Host commands still running, so `terminate` can kill them.
+        self._host_processes: set[subprocess.Popen[bytes]] = set()
         self.terminate = _AioCallable(self._terminate)
         self.workdir: str | None = None
         self._filesystem: _FakeFilesystem | _HostFilesystem = _FakeFilesystem(self)
@@ -451,6 +453,11 @@ class FakeSandbox:
         # in-memory filesystem fails generically, as Modal's does.
         self.shutting_down = True
         self.fs_error = FakeSandboxFilesystemError('An unexpected error occurred, please contact support@modal.com')
+        # Real Modal SIGKILLs running commands only at the end of a ~30s shutdown grace, and their
+        # exec streams stay open until then; the fake's grace is zero.
+        for process in list(self._host_processes):
+            with suppress(OSError):  # it may have exited since
+                os.killpg(process.pid, signal.SIGKILL)
 
     def _host_exec(
         self,
@@ -479,6 +486,7 @@ class FakeSandbox:
             argv, cwd=cwd, env=variables, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
         )
         assert process.stdout is not None and process.stderr is not None
+        self._host_processes.add(process)
         streams = {process.stdout: bytearray(), process.stderr: bytearray()}
         active = list(streams)
         for stream in streams:
@@ -497,6 +505,7 @@ class FakeSandbox:
             if deadline is not None and now >= deadline and exited_at is None:  # pragma: lax no cover
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
+                self._host_processes.discard(process)
                 stdout, stderr = bytes(streams[process.stdout]), bytes(streams[process.stderr])
                 process.stdout.close()
                 process.stderr.close()
@@ -509,9 +518,13 @@ class FakeSandbox:
                 else:
                     active.remove(stream)
         code = process.wait()
+        self._host_processes.discard(process)
         stdout, stderr = bytes(streams[process.stdout]), bytes(streams[process.stderr])
         process.stdout.close()
         process.stderr.close()
+        # Modal reports a command killed by the sandbox's shutdown as 137, like a shell does.
+        if self.shutting_down and code == -signal.SIGKILL:
+            code = 137
         return _FakeProcess(stdout, stderr, code, None, False)
 
     def _exec(
@@ -530,10 +543,11 @@ class FakeSandbox:
             self.start_scripts.append(argv[4])
             argv = argv[8:]
         self.exec_calls.append(ExecCall(argv=argv, timeout=timeout, text=text, workdir=workdir, env=env))
-        if stopping:
-            return _FakeProcess(b'', b'', 0, None, False)
+        # Refused before the stop answers: a terminated sandbox refuses every exec.
         if self.shutting_down:
             raise FakeConflictError('Modal Sandbox is shutting down.')
+        if stopping:
+            return _FakeProcess(b'', b'', 0, None, False)
         if self._control.exec_error is not None:
             raise self._control.exec_error
         # The command wrapper runs argv through sh; answer for the actual program.

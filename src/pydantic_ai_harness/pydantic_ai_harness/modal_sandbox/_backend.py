@@ -609,6 +609,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             'rm -f "$1"; fi; rm -f "$2"'
         )
 
+        stop_errors: list[Exception] = []
+
         async def stop() -> None:
             try:
                 stopper = await sandbox.exec.aio(
@@ -624,9 +626,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     text=False,
                 )
                 await _check_stop(stopper, sandbox.object_id)
-            except Exception:
+            except Exception as error:
                 # Stop can fail when the sandbox is already gone; preserve the original
                 # cancellation/error and leave its ref available for explicit cleanup.
+                stop_errors.append(error)
                 logger.warning('Could not stop Modal command in sandbox %s', sandbox.object_id)
 
         snapshots = ['', '']
@@ -674,6 +677,13 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     stdout, stderr = captured()
                     command_error = WorkspaceTimeoutError(timed_out, stdout=stdout, stderr=stderr)
         if command_error is not None:
+            # Modal keeps a terminated sandbox's commands running through its ~30s shutdown
+            # grace, so the deadline can fire first; a stop refused then shows the sandbox is gone.
+            unavailable = _unavailable_message(sandbox.object_id)
+            if stop_errors and isinstance(
+                gone := _translate(stop_errors[0], context='', unavailable=unavailable), WorkspaceUnavailableError
+            ):
+                raise gone from command_error
             raise command_error
         if errors:
             # The process may still be running when its output or exit status cannot be read,
@@ -692,16 +702,13 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         ):
             raise WorkspaceTimeoutError(timed_out, stdout=stdout, stderr=stderr)
         if exit_code == _SIGKILL_EXIT:
-            # 137 can also be a user's SIGKILL; only a finished sandbox proves the workspace died.
+            # 137 can also be a user's SIGKILL; only a sandbox that is gone proves the workspace
+            # died. Modal kills a terminated sandbox's commands with 137 at the end of its shutdown
+            # grace while it still polls as running, so the probe also tries an exec.
             # Keep a stalled control-plane probe from delaying an otherwise valid command result.
-            try:
-                with anyio.fail_after(2):
-                    finished = await sandbox.poll.aio()
-            except Exception:
-                pass
-            else:
-                if finished is not None:
-                    raise WorkspaceUnavailableError(_unavailable_message(sandbox.object_id))
+            with anyio.move_on_after(2):
+                if (gone := await _probe(sandbox, exec_probe=True)) is not None:
+                    raise gone
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
 
@@ -800,21 +807,22 @@ async def _failure(sandbox: modal.Sandbox, error: Exception, context: str, path:
     if type(mapped) is WorkspaceError and isinstance(
         error, (modal.exception.ConflictError, modal.exception.SandboxFilesystemError)
     ):
-        return await _probe(sandbox, error) or mapped
+        return await _probe(sandbox, exec_probe=isinstance(error, modal.exception.SandboxFilesystemError)) or mapped
     return mapped
 
 
-async def _probe(sandbox: modal.Sandbox, error: Exception) -> WorkspaceUnavailableError | None:
-    """`WorkspaceUnavailableError` if `sandbox` has stopped running, else `None`."""
-    # Probing only after an error keeps the extra round trip off successful operations.
-    import modal
+async def _probe(sandbox: modal.Sandbox, *, exec_probe: bool) -> WorkspaceUnavailableError | None:
+    """`WorkspaceUnavailableError` if `sandbox` has stopped running, else `None`.
 
+    With `exec_probe`, a sandbox that polls as running is also asked to start an exec.
+    """
+    # Probing only after an error keeps the extra round trip off successful operations.
     unavailable = _unavailable_message(sandbox.object_id)
     try:
         finished = await sandbox.poll.aio()
-        if finished is None and isinstance(error, modal.exception.SandboxFilesystemError):
-            # A terminated sandbox that is still shutting down polls as running and fails
-            # filesystem calls with a generic error; only exec names the state.
+        if finished is None and exec_probe:
+            # A terminated sandbox that is still shutting down polls as running, fails filesystem
+            # calls with a generic error, and kills its commands with 137; only exec names the state.
             with anyio.fail_after(_INTERNAL_EXEC_TIMEOUT):
                 await sandbox.exec.aio('true', timeout=_INTERNAL_EXEC_TIMEOUT)
     except Exception as probe_error:
