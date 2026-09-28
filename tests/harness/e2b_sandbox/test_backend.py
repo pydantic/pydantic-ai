@@ -663,16 +663,18 @@ class TestWorkingDir:
 
 
 class TestFilesystem:
-    async def test_files_and_commands_share_user(self, fake_e2b: FakeE2B) -> None:
+    async def test_files_and_commands_share_user(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
+        fake_e2b.host_root = tmp_path
         backend = await started()
         sandbox = fake_e2b.sandboxes[0]
-        await backend.make_dir('/tmp/shared')
-        await backend.write_bytes('/tmp/shared/file', b'data')
-        await backend.read_bytes('/tmp/shared/file')
-        await backend.stat('/tmp/shared/file')
-        await backend.list_dir('/tmp/shared')
-        await backend.exists('/tmp/shared/file')
-        await backend.remove('/tmp/shared/file')
+        shared = str(tmp_path / 'shared')
+        await backend.make_dir(shared)
+        await backend.write_bytes(f'{shared}/file', b'data')
+        await backend.read_bytes(f'{shared}/file')
+        await backend.stat(f'{shared}/file')
+        await backend.list_dir(shared)
+        await backend.exists(f'{shared}/file')
+        await backend.remove(f'{shared}/file')
         await backend.run(['true'])
         assert sandbox.files.users
         assert sandbox.commands.calls
@@ -792,10 +794,31 @@ class TestFilesystem:
     async def test_remove_deletes_a_directory_tree(self, fake_e2b: FakeE2B) -> None:
         # One call covers both halves of the protocol's `remove`: E2B deletes a file or a
         # directory with everything under it.
+        def respond(command: str, timeout: float | None) -> tuple[str, str, int]:
+            # The working directory, then the removed path's parent as `Workspace.realpath` encodes it.
+            return ('/work\n', '', 0) if command == 'pwd -P' else ('4\nL3RtcA==\n', '', 0)
+
+        fake_e2b.responder = respond
         backend = await started()
         await backend.write_bytes('/tmp/pkg/nested/a.txt', b'body')
         await backend.remove('/tmp/pkg')
         assert await backend.exists('/tmp/pkg/nested/a.txt') is False
+
+    async def test_remove_refuses_the_working_dir_and_its_ancestors(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
+        # envd's remove is recursive, so `.` would take the whole working directory.
+        root = tmp_path.resolve() / 'work'
+        (root / 'child').mkdir(parents=True)
+        (root / 'link').symlink_to(root)
+        fake_e2b.host_root = root
+        workspace = Workspace(await started(working_dir=str(root)))
+        for path in ('.', 'child/..', 'child/../', str(root.parent), '/'):
+            with pytest.raises(ValueError, match='workspace root or its ancestor'):
+                await workspace.remove(path)
+        assert (root / 'child').is_dir()
+        # A link to the root is removed itself, like any other entry.
+        await workspace.remove('link')
+        await workspace.remove('child')
+        assert sorted(root.iterdir()) == []
 
     @pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
     async def test_a_missing_path_raises_the_builtin_error(self, fake_e2b: FakeE2B, operation: str) -> None:

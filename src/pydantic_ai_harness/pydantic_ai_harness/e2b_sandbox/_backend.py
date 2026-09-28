@@ -39,6 +39,7 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    Workspace,
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceRef,
@@ -382,6 +383,13 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             # reports that as `FileNotFoundError`.
             if not await sandbox.files.exists(path, user=self._user):
                 raise e2b.FileNotFoundException(path)
+            # The removal is recursive, so refuse the working directory and its ancestors, like the
+            # built-in backends. The leaf stays unresolved: removing a link removes only the link.
+            root = await self.working_dir()
+            parent = await Workspace(self).realpath(posixpath.dirname(path))
+            target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
+            if root == target or root.startswith(target.rstrip('/') + '/'):
+                raise ValueError('cannot remove the workspace root or its ancestor')
             await sandbox.files.remove(path, user=self._user)
 
     async def exists(self, path: str) -> bool:

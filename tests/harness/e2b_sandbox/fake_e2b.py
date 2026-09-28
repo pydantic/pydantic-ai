@@ -506,9 +506,8 @@ def _host_io(fn: Callable[_P, CoroutineType[object, object, _T]]) -> Callable[_P
 class _HostFilesystem(FakeFilesystem):
     """Mirrors `sandbox.files` on the host filesystem, so commands and file calls share one tree."""
 
-    async def _check(self, path: str) -> None:
-        await super()._check(path)
-        # These calls act on the developer's real disk: confine them to `host_root`, plus the
+    def _confine(self, path: str) -> None:
+        # Writes act on the developer's real disk: confine them to `host_root`, plus the
         # backend's own `/tmp` side-channel files. The parent is resolved but not the entry
         # itself, so removing a symlink still removes the link rather than its target.
         path = posixpath.normpath(path)
@@ -547,6 +546,7 @@ class _HostFilesystem(FakeFilesystem):
         self.users.append(user)
         del request_timeout
         await self._check(path)
+        self._confine(path)
         with _host_errors(path):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_bytes(data.encode() if isinstance(data, str) else data)
@@ -588,6 +588,7 @@ class _HostFilesystem(FakeFilesystem):
         self.users.append(user)
         del request_timeout
         await self._check(path)
+        self._confine(path)
         created = not Path(path).is_dir()
         Path(path).mkdir(parents=True, exist_ok=True)
         return created
@@ -597,8 +598,9 @@ class _HostFilesystem(FakeFilesystem):
         self.users.append(user)
         del request_timeout
         await self._check(path)
-        # envd's `os.RemoveAll`: recursive, and a missing path is not an error.
-        if Path(path).is_dir():
+        self._confine(path)
+        # envd's `os.RemoveAll`: recursive, a missing path is not an error, and a link goes itself.
+        if Path(path).is_dir() and not Path(path).is_symlink():
             shutil.rmtree(path)
         else:
             Path(path).unlink(missing_ok=True)
