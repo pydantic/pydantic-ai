@@ -405,7 +405,7 @@ async def test_semantic_search_rejects_bad_query(tmp_path: Path, query: str) -> 
 
 async def test_overlapping_windows_dedupe_and_excerpt_is_capped(tmp_path: Path) -> None:
     lines = [f'filler {i}' for i in range(100)]
-    lines[70] = 'the retry loop handles backoff'
+    lines[55] = 'the retry loop handles backoff'  # line 56: inside both windows (1-60 and 51-100)
     (tmp_path / 'log.txt').write_text('\n'.join(lines))
     out = await _search(tmp_path, FakeJev('retry'), 'retry with backoff')
     assert len(out.matches) == 1  # windows 1-60 and 51-100 overlap; one survives
