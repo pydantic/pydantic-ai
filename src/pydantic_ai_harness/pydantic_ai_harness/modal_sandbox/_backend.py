@@ -38,6 +38,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -80,6 +81,9 @@ _CLIENT_DEADLINE_EXIT = -1
 _SIGKILL_EXIT = 137
 
 _PARTIAL_OUTPUT_LIMIT = 65_536
+# Like the local backend: a runaway command (`yes`, `cat` on a huge log) must not exhaust this
+# process's memory, so reading stops once combined stdout and stderr pass this.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
@@ -672,8 +676,11 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         if command_error is not None:
             raise command_error
         if errors:
-            # The process may still be running when its output or exit status cannot be read.
+            # The process may still be running when its output or exit status cannot be read,
+            # or when it passed the output limit.
             await stop_shielded(stop)
+            if isinstance(errors[0], WorkspaceOutputLimitError):
+                raise errors[0]
             mapped = await _failure(sandbox, errors[0], 'Could not read the command result')
             if mapped is not None:
                 raise mapped from errors[0]
@@ -702,19 +709,30 @@ async def _collect_output(
     process: modal.container_process.ContainerProcess[bytes], snapshots: list[str], exit_event: anyio.Event
 ) -> tuple[str, str, int, float]:
     """Drain both streams and wait as one owned operation."""
+    pieces: tuple[list[str], list[str]] = ([], [])
+    received = 0
 
     async def read(reader: modal.io_streams.StreamReader[bytes], index: int) -> str:
+        nonlocal received
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
-        pieces: list[str] = []
         async for chunk in reader:
             text = decoder.decode(chunk)
-            pieces.append(text)
+            pieces[index].append(text)
             # Keep a bounded snapshot even when Modal interrupts a streaming read.
             snapshots[index] = (snapshots[index] + text)[-_PARTIAL_OUTPUT_LIMIT:]
+            received += len(chunk)
+            if received > _MAX_OUTPUT_BYTES:
+                raise WorkspaceOutputLimitError(
+                    "Modal command output exceeded the 10 MiB limit; redirect the command's output to a "
+                    'file and read part of it instead',
+                    limit=_MAX_OUTPUT_BYTES,
+                    stdout=''.join(pieces[0])[:_PARTIAL_OUTPUT_LIMIT],
+                    stderr=''.join(pieces[1])[:_PARTIAL_OUTPUT_LIMIT],
+                )
         tail = decoder.decode(b'', final=True)
-        pieces.append(tail)
+        pieces[index].append(tail)
         snapshots[index] = (snapshots[index] + tail)[-_PARTIAL_OUTPUT_LIMIT:]
-        return ''.join(pieces)
+        return ''.join(pieces[index])
 
     stdout, stderr, exit_code = '', '', 0
     exited_at = math.inf

@@ -15,6 +15,7 @@ import pytest
 from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -318,6 +319,19 @@ class TestRun:
         backend = await started()
         with pytest.raises(RuntimeError, match='stream lost'):
             await backend.run(['sleep', '30'])
+        assert any('modal-stop' in call.argv for call in fake_modal.sandboxes[0].exec_calls)
+
+    async def test_output_over_the_limit_stops_the_command(self, fake_modal: FakeModal) -> None:
+        # Neither stream passes 10 MiB alone; the limit is on their sum. The command never
+        # exits by itself, so only the limit ends it.
+        fake_modal.responder = lambda argv, timeout: (b'o' * (6 << 20), b'e' * (5 << 20), 0)
+        fake_modal.wait_hangs = True
+        backend = await started()
+        with pytest.raises(WorkspaceOutputLimitError) as exc:
+            await backend.run(['yes'])
+        assert exc.value.limit == 10 << 20
+        assert exc.value.stdout == 'o' * 65_536
+        assert exc.value.stderr == 'e' * 65_536
         assert any('modal-stop' in call.argv for call in fake_modal.sandboxes[0].exec_calls)
 
     async def test_cancel_stops_only_the_command_group(self, fake_modal: FakeModal) -> None:
