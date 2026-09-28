@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 import anyio
@@ -10,6 +9,8 @@ import anyio
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import (
+    CommandResult,
+    FileEntry,
     ReadOnlyWorkspace,
     SupportsCommands,
     SupportsFilesystem,
@@ -17,24 +18,8 @@ from pydantic_ai.workspaces import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceRef,
-    WorkspaceResult,
     WorkspaceUnavailableError,
 )
-
-
-@dataclass(frozen=True)
-class FakeWorkspaceResult:
-    exit_code: int = 0
-    stdout: str = ''
-    stderr: str = ''
-
-
-@dataclass(frozen=True)
-class FakeEntry:
-    name: str
-    path: str
-    is_dir: bool = False
-    size: int | None = None
 
 
 def _add_parent_directories(directories: set[str], path: str) -> None:
@@ -52,26 +37,26 @@ def _write(files: dict[str, bytes], directories: set[str], path: str, data: byte
     files[path] = data
 
 
-def _stat(files: dict[str, bytes], directories: set[str], path: str) -> FakeEntry:
+def _stat(files: dict[str, bytes], directories: set[str], path: str) -> FileEntry:
     if path in files:
-        return FakeEntry(name=posixpath.basename(path), path=path, size=len(files[path]))
+        return FileEntry(name=posixpath.basename(path), path=path, is_dir=False, size=len(files[path]))
     if path in directories:
-        return FakeEntry(name=posixpath.basename(path), path=path, is_dir=True)
+        return FileEntry(name=posixpath.basename(path), path=path, is_dir=True, size=None)
     raise FileNotFoundError(path)
 
 
-def _list_dir(files: dict[str, bytes], directories: set[str], path: str) -> list[FakeEntry]:
+def _list_dir(files: dict[str, bytes], directories: set[str], path: str) -> list[FileEntry]:
     if path in files:
         raise NotADirectoryError(path)
     if path not in directories:
         raise FileNotFoundError(path)
     entries = [
-        FakeEntry(name=posixpath.basename(file), path=file, size=len(data))
+        FileEntry(name=posixpath.basename(file), path=file, is_dir=False, size=len(data))
         for file, data in files.items()
         if posixpath.dirname(file) == path
     ]
     entries.extend(
-        FakeEntry(name=posixpath.basename(directory), path=directory, is_dir=True)
+        FileEntry(name=posixpath.basename(directory), path=directory, is_dir=True, size=None)
         for directory in directories
         if directory != path and posixpath.dirname(directory) == path
     )
@@ -143,10 +128,10 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> FakeWorkspaceResult:
+    ) -> CommandResult:
         await self.ensure_ready()
         self.commands.append(command)
-        return FakeWorkspaceResult(stdout='connected')
+        return CommandResult(exit_code=0, stdout='connected', stderr='')
 
     async def working_dir(self) -> str:
         await self.ensure_ready()
@@ -165,11 +150,11 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         await self.ensure_ready()
         _write(self.files, self.directories, path, data)
 
-    async def stat(self, path: str) -> FakeEntry:
+    async def stat(self, path: str) -> FileEntry:
         await self.ensure_ready()
         return _stat(self.files, self.directories, path)
 
-    async def list_dir(self, path: str) -> Sequence[FakeEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         await self.ensure_ready()
         return _list_dir(self.files, self.directories, path)
 
@@ -210,10 +195,10 @@ class FilesystemOnlyWorkspaceBackend(WorkspaceBackend, SupportsFilesystem):
     async def write_bytes(self, path: str, data: bytes) -> None:
         await self.inner.write_bytes(path, data)
 
-    async def stat(self, path: str) -> FakeEntry:
+    async def stat(self, path: str) -> FileEntry:
         return await self.inner.stat(path)
 
-    async def list_dir(self, path: str) -> Sequence[FakeEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         return await self.inner.list_dir(path)
 
     async def make_dir(self, path: str) -> None:
@@ -248,9 +233,9 @@ class RecordingWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> FakeWorkspaceResult:
+    ) -> CommandResult:
         self.commands.append(command)
-        return FakeWorkspaceResult(stdout='connected')
+        return CommandResult(exit_code=0, stdout='connected', stderr='')
 
     async def working_dir(self) -> str:
         return '/workspace'
@@ -278,7 +263,7 @@ class RunOnlyWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> WorkspaceResult:
+    ) -> CommandResult:
         self.commands.append(command)
         return await self.inner.run(command, shell=shell, env=env, timeout=timeout)
 
@@ -399,11 +384,11 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> FakeWorkspaceResult:
+    ) -> CommandResult:
         if isinstance(command, str) != shell:
             raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
         await self._files()
-        return FakeWorkspaceResult(stdout=f'ran:{" ".join(command)}')
+        return CommandResult(exit_code=0, stdout=f'ran:{" ".join(command)}', stderr='')
 
     async def working_dir(self) -> str:
         await self._files()
@@ -421,11 +406,11 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         files = await self._files()
         _write(files, self._directories(), path, data)
 
-    async def stat(self, path: str) -> FakeEntry:
+    async def stat(self, path: str) -> FileEntry:
         files = await self._files()
         return _stat(files, self._directories(), path)
 
-    async def list_dir(self, path: str) -> Sequence[FakeEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         files = await self._files()
         return _list_dir(files, self._directories(), path)
 

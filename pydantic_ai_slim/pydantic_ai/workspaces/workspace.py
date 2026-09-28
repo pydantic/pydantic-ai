@@ -14,6 +14,7 @@ import anyio
 from pydantic_ai.exceptions import UserError
 
 from .protocol import (
+    CommandResult,
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
@@ -21,10 +22,8 @@ from .protocol import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
-    WorkspaceFileEntry,
     WorkspaceOutputLimitError,
     WorkspaceRef,
-    WorkspaceResult,
     validate_timeout,
 )
 from .unavailable import UnavailableWorkspace
@@ -324,7 +323,7 @@ class _ShellFilesystem(SupportsFilesystem):
         await self._raise_for_error(result, path)
         return _decode_sized(result.stdout, path).decode()
 
-    async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
+    async def _raise_for_error(self, result: CommandResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:
             return
         if result.exit_code == _SHELL_EXIT_NOT_FOUND:
@@ -399,7 +398,7 @@ class Workspace(WorkspaceBackend):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> WorkspaceResult:
+    ) -> CommandResult:
         """Run a command in the working directory and wait for it.
 
         To start elsewhere, prefix a shell command with `cd <shlex-quoted dir> && `.
@@ -437,11 +436,11 @@ class Workspace(WorkspaceBackend):
         """Write bytes to a file, creating missing parents and replacing existing contents."""
         await self._filesystem.write_bytes(await self.resolve(path), data)
 
-    async def stat(self, path: str) -> WorkspaceFileEntry:
+    async def stat(self, path: str) -> FileEntry:
         """Return metadata for a file or directory."""
         return await self._filesystem.stat(await self.resolve(path))
 
-    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         """List the entries of a directory (non-recursive)."""
         return await self._filesystem.list_dir(await self.resolve(path))
 
