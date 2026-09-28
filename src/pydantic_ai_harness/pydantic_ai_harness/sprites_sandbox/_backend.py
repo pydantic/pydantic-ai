@@ -465,26 +465,21 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         interrupted = False
         try:
             with deadline:
-                try:
-                    await exec_command.start()
-                except (TimeoutError, InvalidMessage, InvalidHandshake) as error:
-                    # Stdin EOF gates execution: an unsuccessful handshake with no socket cannot
-                    # have started the command. Never retry after the connection is established.
-                    if exec_command.ws is not None:
-                        # An opened socket can have started the command even when start() fails.
-                        raise WorkspaceUnavailableError(
-                            'Sprites exec connection failed; command may have run'
-                        ) from error
-                    await anyio.sleep(0.1)
-                    exec_command = _ExecCommand(sandbox.command(*args, cwd=directory))
+                # Stdin EOF gates execution: a handshake that failed before the socket opened cannot
+                # have started the command, so it is retried once; an opened socket never is.
+                for attempt in (1, 2):  # pragma: no branch - every attempt breaks or raises
                     try:
                         await exec_command.start()
-                    except (TimeoutError, InvalidMessage, InvalidHandshake) as retry_error:
+                        break
+                    except (TimeoutError, InvalidMessage, InvalidHandshake) as error:
                         if exec_command.ws is not None:
                             raise WorkspaceUnavailableError(
                                 'Sprites exec connection failed; command may have run'
-                            ) from retry_error
-                        raise NetworkError(f'Sprites exec handshake failed: {retry_error}') from retry_error
+                            ) from error
+                        if attempt == 2:
+                            raise NetworkError(f'Sprites exec handshake failed: {error}') from error
+                        await anyio.sleep(0.1)
+                        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory))
                 try:
                     code = await exec_command.wait()
                 except NetworkError as error:
