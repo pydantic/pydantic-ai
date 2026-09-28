@@ -6,6 +6,7 @@ import errno
 import fnmatch
 import functools
 import hashlib
+import logging
 import os
 import posixpath
 import re
@@ -47,6 +48,8 @@ from pydantic_ai_harness.filesystem._events import (
 from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, Unreadable, run_ripgrep
 
 _P = ParamSpec('_P')
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_NAMES: tuple[str, ...] = (
     'read_file',
@@ -205,6 +208,18 @@ class _Scope:
     @lacks_ripgrep.setter
     def lacks_ripgrep(self, value: bool) -> None:
         self.bounds.lacks_ripgrep = value
+
+
+def _fall_back_from_ripgrep(scope: _Scope) -> None:
+    """Search this workspace without `rg` from now on, saying so once, since the results differ slightly."""
+    if not scope.lacks_ripgrep:
+        logger.debug(
+            '`rg` is not on the PATH of the workspace at %s; its searches use the POSIX fallback, which also '
+            'returns tracked files that .gitignore lists, skips nested .ignore files, and without git '
+            'applies no ignore files.',
+            scope.cwd,
+        )
+    scope.lacks_ripgrep = True
 
 
 def _contains(root: str, path: str) -> bool:
@@ -1404,7 +1419,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 prepare=prepare,
             )
         except RipgrepMissing:
-            scope.lacks_ripgrep = True
+            _fall_back_from_ripgrep(scope)
             results, capped, unreadable = await run_posix_search(
                 scope.workspace,
                 cwd=cwd,
@@ -1585,7 +1600,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 prepare=prepare,
             )
         except RipgrepMissing:
-            scope.lacks_ripgrep = True
+            _fall_back_from_ripgrep(scope)
 
             async def accept(record: Record) -> str | None:
                 if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
@@ -1747,7 +1762,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 prepare=prepare,
             )
         except RipgrepMissing:
-            scope.lacks_ripgrep = True
+            _fall_back_from_ripgrep(scope)
             if file_type is not None:
                 raise ValueError(_FILE_TYPE_NEEDS_RIPGREP)
 

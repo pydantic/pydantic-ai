@@ -1,5 +1,6 @@
 """Search on command-capable workspaces without ripgrep."""
 
+import logging
 import os
 import shutil
 import subprocess
@@ -312,3 +313,17 @@ async def test_posix_grep_skips_an_unreadable_file(tmp_path: Path, no_rg_path: s
             await tools.grep('a(', workspace=workspace)
     finally:
         locked.chmod(0o644)
+
+
+async def test_the_fallback_is_logged_once_per_workspace(
+    tmp_path: Path, no_rg_path: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / 'a.txt').write_text('needle\n')
+    tools = FileSystem[None](tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_path}))
+    with caplog.at_level(logging.DEBUG, logger='pydantic_ai_harness.filesystem._toolset'):
+        assert await tools.grep('needle', workspace=workspace) == 'a.txt:1:needle'
+        assert await tools.list_files(workspace=workspace) == 'a.txt'
+    (record,) = caplog.records
+    assert record.getMessage().startswith(f'`rg` is not on the PATH of the workspace at {tmp_path.resolve()}')
