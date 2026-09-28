@@ -18,13 +18,13 @@ transparent.
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[absurd]"
+uv add "pydantic-ai-harness[absurd]" "pydantic-ai-slim[openai]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[absurd]"
+pip install "pydantic-ai-harness[absurd]" "pydantic-ai-slim[openai]"
 ```
 
 Absurd stores its state in Postgres. Once per database, install the Absurd schema and create a
