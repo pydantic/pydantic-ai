@@ -70,8 +70,7 @@ class TestLiveModalSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cove
     def anyio_backend(cls) -> str:
         return 'asyncio'
 
-    # Class-scoped so the rules share one sandbox instead of starting one each; the suite runs
-    # its destroy rule last.
+    # Class-scoped so the rules share one sandbox instead of starting one each.
     @pytest.fixture(scope='class')
     @classmethod
     async def backend(cls) -> AsyncIterator[ModalSandboxBackend]:
@@ -90,6 +89,14 @@ class TestLiveModalSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cove
                 sandbox = await modal.Sandbox.from_id.aio(backend.ref.id)
                 if await sandbox.poll.aio() is None:
                     await sandbox.terminate.aio()
+
+    # Not `fresh_backend`: that would also enable the concurrent first-use rule, whose sandbox
+    # nothing terminates. The destruction rules terminate their own.
+    @pytest.fixture
+    def destructive_backend(self) -> Callable[[], WorkspaceBackend]:
+        return lambda: ModalSandboxBackend(
+            image='python:3.12-slim', sandbox_timeout=LIVE_SANDBOX_TIMEOUT, idle_timeout=LIVE_IDLE_TIMEOUT
+        )
 
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
