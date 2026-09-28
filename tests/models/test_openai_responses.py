@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import warnings
+from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -4743,6 +4744,42 @@ async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(all
     assert result.usage == snapshot(
         RunUsage(requests=1, web_searches=1, details={'web_search_requests': 1}, cost=Decimal('0.01'))
     )
+
+
+async def test_openai_responses_web_search_usage_counts_search_actions_only(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """Only `search` actions are billed web searches; `open_page` and `find_in_page` actions are not.
+
+    OpenAI's raw response carries its own billed count in `tool_usage.web_search.num_requests`, which the SDK
+    doesn't type and the adapter doesn't read. This recording has page actions alongside the searches, and that
+    count matches the `search` actions, not every `web_search_call` item.
+    """
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(WebSearchTool())],
+        model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='medium'),
+    )
+
+    result = await agent.run(
+        'Use web search step by step, one search at a time, where each search depends on the previous answer: '
+        'first find who directed the film that won Best Picture at the most recent Academy Awards; then search for '
+        "that director's birthplace, and open that director's Wikipedia page to confirm it; then search for the "
+        'current mayor of that birthplace. Give all three answers.'
+    )
+
+    actions = Counter(
+        part.args_as_dict()['type']
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolCallPart)
+    )
+    assert actions == snapshot(Counter({'search': 4, 'open_page': 2, 'find_in_page': 1}))
+    reported = vcr.interactions[0].response.body.content['tool_usage']['web_search']['num_requests']
+    assert reported == snapshot(4)
+    assert result.usage.details['web_search_requests'] == reported == actions['search']
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
