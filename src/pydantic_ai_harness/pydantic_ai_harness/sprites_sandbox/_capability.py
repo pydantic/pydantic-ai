@@ -68,7 +68,8 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         if self.defer_loading:
             # Core picks the run's workspace from the always-on capabilities only.
             raise UserError(
-                'defer_loading must be False for SpritesSandbox: a deferred capability never supplies the workspace.'
+                '`SpritesSandbox` does not support `defer_loading=True`: '
+                'the workspace is selected before deferred capabilities load.'
             )
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)

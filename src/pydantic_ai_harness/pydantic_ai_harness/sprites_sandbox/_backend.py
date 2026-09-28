@@ -100,7 +100,7 @@ try:
         TimeoutError as SpriteTimeoutError,
     )
     from sprites.websocket import WSCommand
-except ImportError as exc:  # pragma: no cover - exercised by the isolated missing-extra test
+except ImportError as exc:
     raise ImportError('Install `pydantic-ai-harness[sprites]` to use SpritesSandbox.') from exc
 
 logger = logging.getLogger(__name__)

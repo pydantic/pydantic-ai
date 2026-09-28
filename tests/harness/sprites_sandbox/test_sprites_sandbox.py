@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import json
 import signal
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -86,15 +88,28 @@ class TestSpritesSandbox:
         assert backend.ref == WorkspaceRef(provider='sprites', id=first.name)
 
     @pytest.mark.parametrize(
-        'kwargs',
+        ('kwargs', 'message'),
         [
-            {'working_dir': 'relative'},
-            {'defer_loading': True},
+            ({'working_dir': 'relative'}, "working_dir must be an absolute POSIX path or None, got 'relative'."),
+            (
+                {'defer_loading': True},
+                '`SpritesSandbox` does not support `defer_loading=True`: '
+                'the workspace is selected before deferred capabilities load.',
+            ),
         ],
     )
-    def test_invalid_configuration_fails_at_construction(self, kwargs: dict[str, object]) -> None:
-        with pytest.raises(UserError, match=f'^{next(iter(kwargs))} must be'):
+    def test_invalid_configuration_fails_at_construction(self, kwargs: dict[str, object], message: str) -> None:
+        with pytest.raises(UserError) as caught:
             SpritesSandbox[None](**kwargs)  # pyright: ignore[reportArgumentType]
+        assert str(caught.value) == message
+
+    def test_missing_sprites_extra_fails_at_import_with_install_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The package refuses to import without `sprites`, so no later call can hit a bare `ModuleNotFoundError`."""
+        monkeypatch.setitem(sys.modules, 'sprites', None)
+        for name in [name for name in sys.modules if name.startswith('pydantic_ai_harness.sprites_sandbox')]:
+            monkeypatch.delitem(sys.modules, name)
+        with pytest.raises(ImportError, match=r'^Install `pydantic-ai-harness\[sprites\]` to use SpritesSandbox\.$'):
+            importlib.import_module('pydantic_ai_harness.sprites_sandbox')
 
     async def test_cancelled_creation_still_names_the_sprite_and_a_retry_attaches(
         self, transport: SpriteTransport
