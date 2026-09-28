@@ -9,8 +9,8 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -42,11 +42,11 @@ def tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRemoteTools:
     return install_fake_remote_tools(tmp_path, monkeypatch)
 
 
-def _sandbox_args(working_dir: str, *extra: str) -> str:
+def _sandbox_args(working_dir: str, *, network: bool = False) -> str:
     return ' '.join(
         [
-            '--die-with-parent --new-session --unshare-all',
-            *extra,
+            '--die-with-parent --new-session --unshare-user-try --unshare-ipc --unshare-uts --unshare-cgroup-try',
+            *([] if network else ['--unshare-net']),
             f'--ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind {working_dir} {working_dir}',
         ]
     )
@@ -90,7 +90,7 @@ async def test_network_is_shared_only_when_asked(tools: FakeRemoteTools, tmp_pat
 
     await workspace.run(['true'])
 
-    assert tools.bwrap_calls[0].startswith(_sandbox_args(working_dir, '--share-net'))
+    assert tools.bwrap_calls[0].startswith(_sandbox_args(working_dir, network=True))
 
 
 async def test_file_methods_go_to_the_wrapped_workspace(tools: FakeRemoteTools, tmp_path: Path) -> None:
@@ -171,14 +171,14 @@ async def test_capability_wraps_the_ssh_workspace(tools: FakeRemoteTools, tmp_pa
     )
 
     @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
+    async def probe(ctx: RunContext[object]) -> str:
         return (await ctx.workspace.run(['printf', 'sandboxed'])).stdout
 
     result = await agent.run('go')
 
     assert result.output == '{"probe":"sandboxed"}'
     assert workspace_layers(result.workspace) == [BubblewrapWorkspace, SSHWorkspaceBackend]
-    assert '--share-net' in tools.bwrap_calls[0]
+    assert '--unshare-net' not in tools.bwrap_calls[0]
     continued = await agent.run('again', message_history=result.all_messages())
     assert workspace_layers(continued.workspace) == [BubblewrapWorkspace, SSHWorkspaceBackend]
 
@@ -221,3 +221,12 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
             assert (await workspace.run(['test', '-e', str(marker)])).exit_code == 1
         finally:
             marker.unlink()
+
+    async def test_a_detached_command_outlives_the_call(self, tmp_path: Path) -> None:
+        """The harness `Shell` detaches its jobs and checks on them in later calls."""
+        workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+
+        await workspace.run('setsid sh -c "sleep 1; echo alive > out" < /dev/null > /dev/null 2>&1 &', shell=True)
+        await anyio.sleep(3)
+
+        assert await workspace.read_text('out') == 'alive\n'

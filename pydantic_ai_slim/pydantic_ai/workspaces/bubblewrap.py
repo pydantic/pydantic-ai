@@ -18,7 +18,9 @@ class BubblewrapWorkspace(WrapperWorkspace):
     remote host. `bwrap` must be installed there (Linux only).
 
     Commands see the host read-only, a private `/tmp`, and no network, and can only write to the
-    working directory. File methods are not sandboxed: they go to the wrapped workspace.
+    working directory. They share the host's processes, so a detached command keeps running after
+    the call that started it, and they can signal the host user's other processes. File methods are
+    not sandboxed: they go to the wrapped workspace.
 
     Args:
         wrapped: The workspace whose host runs the sandbox.
@@ -43,8 +45,11 @@ class BubblewrapWorkspace(WrapperWorkspace):
             'bwrap',
             '--die-with-parent',
             '--new-session',
-            '--unshare-all',
-            *(['--share-net'] if self._network else []),
+            # `--unshare-all` without its PID namespace: `bwrap` ends that namespace, killing every
+            # process in it, when the command exits, so detached commands (the harness `Shell`'s jobs)
+            # would die with the call that started them, and a later call could not see or signal them.
+            *('--unshare-user-try', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try'),
+            *([] if self._network else ['--unshare-net']),
             *('--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'),
             *('--bind', working_dir, working_dir),
             *self._bwrap_args,
