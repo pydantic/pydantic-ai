@@ -610,7 +610,9 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         return self.wrapped.id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if self._lifecycle == 'enter-outside-durable' and not ctx.workspace.attached:
+        # Its units (Temporal activities) resolve tools on the registered toolset, which a per-run
+        # replacement cannot reach, so the run must list that same toolset's tools.
+        if self._lifecycle == 'enter-outside-durable':
             return self
         wrapped = await self.wrapped.for_run(ctx)
         if wrapped is self.wrapped:
@@ -622,7 +624,7 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         return replacement
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if self._lifecycle == 'enter-outside-durable' and not ctx.workspace.attached:
+        if self._lifecycle == 'enter-outside-durable':
             return self
         wrapped = await self.wrapped.for_run_step(ctx)
         if wrapped is self.wrapped:

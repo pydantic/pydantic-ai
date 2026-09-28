@@ -119,7 +119,7 @@ _reject_workspace_in_workflow: RejectWorkspaceInContainer[Any] = RejectWorkspace
 - `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
 - `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
 - `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it.
-- `workspace=` → unchanged.
+- `workspace=` → the same argument on the run methods; unlike this wrapper, the capability also accepts an attached workspace inside the workflow.
 Workflows started under `TemporalAgent` replay correctly after migrating when agent name, toolset IDs, and model registry keys are kept and `event_stream_handler=` stays on `TemporalDurability`; no draining is needed.""",
     category=PydanticAIDeprecationWarning,
 )
