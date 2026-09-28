@@ -6,6 +6,7 @@ from pathlib import Path
 
 import keyring
 import pytest
+from keyring.errors import PasswordDeleteError
 
 from pydantic_ai import models
 
@@ -85,6 +86,11 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     def set_password(service: str, account: str, value: str) -> None:
         credentials[service, account] = value
 
+    def delete_password(service: str, account: str) -> None:
+        if credentials.pop((service, account), None) is None:
+            raise PasswordDeleteError(account)
+
     monkeypatch.setattr(keyring, 'get_password', get_password)
     monkeypatch.setattr(keyring, 'set_password', set_password)
+    monkeypatch.setattr(keyring, 'delete_password', delete_password)
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')

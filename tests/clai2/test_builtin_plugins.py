@@ -28,8 +28,9 @@ CURATED = {
     'notifications',
     'mcp',
     'github',
+    'slack',
 }
-OPT_IN = {'github'}
+OPT_IN = {'github', 'slack'}
 
 
 class Menu:

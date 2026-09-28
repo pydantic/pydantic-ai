@@ -3,9 +3,7 @@
 import asyncio
 import json
 import re
-import sqlite3
-from collections.abc import Generator
-from contextlib import closing, contextmanager
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -17,7 +15,7 @@ from termflow.tui.menu import Menu
 from pydantic_ai.exceptions import UserError
 
 from ._rendering import markdown_style
-from .credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from .credential_store import credential_lock, credentials_path, load_codex_credentials, save_codex_credentials
 from .menu_worker import menu_key, run_worker
 
 
@@ -30,14 +28,18 @@ class KeyReference(BaseModel):
     name: str = Field(pattern=r'^[A-Z_][A-Z0-9_]*$')
 
 
-def resolve_key(*, token: SecretStr | KeyReference) -> str:
+KEY_CONSUMERS = {'vllm': '/add_model', 'openrouter': '/add_model', 'slack': '/plugins configure slack'}
+"""Credential-store accounts that may reference a named key, and the command that reconfigures each."""
+
+
+def resolve_key(*, token: SecretStr | KeyReference, configure: str = '/add_model') -> str:
     """Resolve at use time and fail closed when a referenced key was deleted."""
     if isinstance(token, SecretStr):
         return token.get_secret_value()
     keys = load_keys()
     if token.name not in keys:
         raise UserError(
-            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through /add_model.'
+            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through {configure}.'
         )
     return keys[token.name].get_secret_value()
 
@@ -65,7 +67,8 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     """Validate references and save atomically with respect to key renames and deletions."""
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again through /add_model.')
+            configure = KEY_CONSUMERS.get(account, '/add_model')
+            raise UserError(f'The selected API key no longer exists. Select a saved key again through {configure}.')
         save_codex_credentials(account=account, value=value)
 
 
@@ -85,17 +88,11 @@ def normalize_name(*, name: str) -> str:
     return name
 
 
-@contextmanager
-def key_transaction() -> Generator[None]:
-    """Serialize bundle access across processes; the SQLite lock file holds no secrets."""
-    path = credentials_path(account='api-keys').with_suffix('.lock')
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with closing(sqlite3.connect(path, timeout=20)) as connection, connection:
-            connection.execute('BEGIN IMMEDIATE')
-            yield
-    except sqlite3.Error:
-        raise UserError('Cannot lock API keys. Close other key editors and check the credential directory.') from None
+def key_transaction() -> AbstractContextManager[None]:
+    """Serialize bundle access across processes."""
+    return credential_lock(
+        account='api-keys', busy='Cannot lock API keys. Close other key editors and check the credential directory.'
+    )
 
 
 def load_keys() -> dict[str, SecretStr]:
@@ -152,13 +149,13 @@ class _Credential(BaseModel):
 def key_users(*, name: str) -> list[str]:
     """Find saved provider references without exposing their inline credentials."""
     users: list[str] = []
-    for account in ('vllm', 'openrouter'):
+    for account, configure in KEY_CONSUMERS.items():
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
                 credential = _Credential.model_validate_json(raw)
             except ValidationError:
-                raise UserError(f'Reconfigure the invalid {account} connection through /add_model first.') from None
+                raise UserError(f'Reconfigure the invalid {account} connection through {configure} first.') from None
             if isinstance(credential.token, KeyReference) and credential.token.name == name:
                 users.append(account)
     return users
