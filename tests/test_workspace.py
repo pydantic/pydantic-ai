@@ -47,6 +47,7 @@ from pydantic_ai.workspaces import (
     UnavailableWorkspace,
     Workspace,
     WorkspaceBackend,
+    WorkspaceCommand,
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
@@ -476,6 +477,38 @@ async def test_backend_with_part_of_the_filesystem_protocol_names_what_it_lacks(
 
     with pytest.raises(UserError, match=r'part of `SupportsFilesystem` and lacks `exists`\.$'):
         await Workspace(NoExistsBackend()).read_text('data.txt')
+
+
+@pytest.mark.parametrize(
+    ('exit_code', 'stderr', 'match'),
+    [(255, 'ssh: connect to host x port 22: Connection refused\n', 'refused'), (127, '', 'exit code 127')],
+)
+async def test_shell_exists_raises_when_the_command_itself_fails(exit_code: int, stderr: str, match: str) -> None:
+    """Only `test`'s own "no" (exit 1) means missing; a broken shell or connection must not read as absent."""
+
+    class BrokenShellBackend(WorkspaceBackend, SupportsCommands):
+        @property
+        def ref(self) -> None:
+            return None
+
+        async def working_dir(self) -> str:
+            return '/workspace'
+
+        async def run(
+            self,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> CommandResult:
+            return CommandResult(exit_code=exit_code, stdout='', stderr=stderr)
+
+    workspace = Workspace(BrokenShellBackend())
+    with pytest.raises(WorkspaceError, match=match):
+        await workspace.exists('data.txt')
+    with pytest.raises(WorkspaceError, match=match):
+        await workspace.stat('data.txt')
 
 
 async def test_run_only_backend_writes_binary_and_odd_names_through_the_shell(tmp_path: Path) -> None:

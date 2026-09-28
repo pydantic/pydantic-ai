@@ -295,7 +295,12 @@ class _ShellFilesystem(SupportsFilesystem):
 
     async def exists(self, path: str) -> bool:
         result = await self._backend.run(f'test -e {shlex.quote(path)}', shell=True)
-        return result.exit_code == 0
+        # `test` exits 1 for "no"; anything else (a missing shell, a dropped SSH link) is a failure, not absence.
+        if result.exit_code in (0, 1):
+            return result.exit_code == 0
+        raise WorkspaceError(
+            result.stderr.strip() or f'could not check whether {path!r} exists (exit code {result.exit_code})'
+        )
 
     async def realpath(self, path: str) -> str:
         # One round trip, resolving the way `os.path.realpath(strict=False)` does: walk the components
