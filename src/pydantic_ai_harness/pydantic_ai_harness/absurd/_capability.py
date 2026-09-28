@@ -1,10 +1,4 @@
-"""Durable execution for Pydantic AI agents on the Absurd engine.
-
-Absurd (`absurd-sdk`) is a Postgres-based durable-execution engine. This module
-checkpoints an agent's I/O -- model requests, MCP calls, and function tool calls
--- into Absurd steps (`ctx.step(...)`), so a worker crash mid-run resumes from
-the last completed step instead of restarting the run.
-"""
+"""Durable execution for Pydantic AI agents on the Absurd engine."""
 
 from __future__ import annotations
 
@@ -35,36 +29,19 @@ from ._operation_backend import AbsurdOperationBackend
 AbsurdParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """Tool-call execution modes usable with Absurd. A subset of `ParallelExecutionMode`.
 
-Absurd disambiguates repeated step names by encounter order (the second `ctx.step(name, ...)` for a
-given `name` records under `name#2`, the third under `name#3`, ...). A replay lines up with its
-checkpoints only if each repeated step name claims the same slot it did on the first run.
-
-The slot is claimed synchronously when `ctx.step(...)` is entered, before the step body runs. Tool
-calls are scheduled in the model's tool-call order under both parallel modes, so their step names are
-assigned in that order regardless of which call finishes first -- completion order does not move a
-tool call's slot. `'parallel'` is nonetheless excluded because it emits tool-result events (and so
-the per-event `event_stream_handler` steps) in completion order, which races and could assign one of
-those repeated step names a different slot on replay. `'parallel_ordered_events'` emits those events
-in the model's tool-call order once the whole batch completes, so every repeated step name -- tool
-calls and event-handler steps alike -- lines up on replay."""
+Absurd names a repeated step by encounter order (`name`, `name#2`, ...), claiming the slot when
+`ctx.step(...)` is entered. `'parallel'` is excluded because it emits tool-result events, and so their
+`event_stream_handler` steps, in completion order, which could give a step a different slot on replay.
+`'parallel_ordered_events'` emits them in the model's tool-call order."""
 
 
 @dataclass(init=False)
 class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by checkpointing its I/O into Absurd steps.
 
-    Attach it via `capabilities=[AbsurdDurability()]` and call `agent.run()` inside an Absurd
-    task handler: every model request, MCP call, and function tool call is wrapped in
-    `ctx.step(...)`, so a worker crash mid-run resumes from the last completed step instead of
-    restarting. A completed step is served from its checkpoint on
-    replay instead of being recomputed, so tokens are not re-spent on work that already finished.
-    A step is checkpointed after it runs, so a crash between a tool's side effect and its checkpoint
-    re-runs the tool on recovery: keep tool side effects idempotent. Outside a task the capability
-    is transparent and the run is a normal, non-durable agent run.
-
-    The capability discovers the agent's model, name, and toolsets automatically when it is bound
-    to the agent. Step results are stored in Postgres as JSON, so a checkpointed tool's return
-    value must be JSON-serializable.
+    Run the agent inside an Absurd task handler: every model request, MCP call, and function tool
+    call becomes a `ctx.step(...)`, so a retried task resumes from the last completed step. Outside
+    a task the capability is transparent.
 
     Example:
         ```python {test="skip"}
@@ -89,14 +66,11 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         durable_unit_noun='step',
         durable_container_noun='task',
         codec=JSON_CODEC,
-        # Function and MCP toolsets are checkpointed; dynamic toolsets run as-is.
         wrapped_toolset_kinds=frozenset({'function', 'mcp'}),
         toolset_lifecycles={'function': 'enter-never', 'mcp': 'enter-never'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
     )
-    # Absurd has no raise-time non-retryable exception equivalent to Lambda's `ExecutionError` or
-    # Restate's `TerminalError`. Serialization failures therefore use the base behavior: the task's
-    # `RetryStrategy`/`max_attempts` governs retries, and the task fails after those attempts are exhausted.
+    # Absurd has no non-retryable error type, so a serialization failure retries under the task's `RetryStrategy`.
 
     def __init__(
         self,
@@ -108,8 +82,6 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
     ) -> None:
         """Create an `AbsurdDurability` capability.
 
-        The agent's model, name, and toolsets are discovered automatically.
-
         Args:
             models: Optional additional models keyed by ID for runtime model switching via
                 `agent.run(model='<id>')`. The agent's primary model is always registered as
@@ -120,10 +92,8 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
                 step.
             name: Unique agent name used as the prefix for every checkpoint step. Defaults to the
                 agent's `name` when the capability is bound.
-            parallel_execution_mode: Tool-call execution mode applied to every run. Defaults to
-                `'sequential'`. `'parallel'` is excluded by type because it emits tool-result and
-                event-handler steps in completion order, which races with Absurd's encounter-order
-                step naming; see `AbsurdParallelExecutionMode` for the full invariant.
+            parallel_execution_mode: Tool-call execution mode applied to every run. `'parallel'` is
+                excluded; see `AbsurdParallelExecutionMode`.
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._parallel_execution_mode: ParallelExecutionMode = parallel_execution_mode

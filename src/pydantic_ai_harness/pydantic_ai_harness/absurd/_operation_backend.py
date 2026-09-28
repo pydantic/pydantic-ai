@@ -25,9 +25,7 @@ from ._context import current_async_task_context
 
 _ToolsetOperationId = ToolsetGetToolsId | ToolsetGetInstructionsId | ToolsetValidateToolArgumentsId | ToolsetCallToolId
 
-# A tool-call checkpoint holds the tool's raw return value, and a control-flow exception
-# (`ModelRetry`, `CallDeferred`, ...) propagates out of the step without a checkpoint. The one result
-# that has no raw form is a `ToolReturn` object, which goes under this reserved key.
+# A tool-call checkpoint holds the raw return value; a `ToolReturn` has no raw form, so it goes under this key.
 _ENVELOPE_KEY = '__pydantic_ai_harness_absurd_tool_result__'
 _RAW_RESULT_KINDS = frozenset({'tool_return', 'tool_content_result'})
 
@@ -36,13 +34,9 @@ _NO_CONFIG = RoleBasedOperationConfig[None](model=None, event=None, capability=N
 
 
 class AbsurdOperationNamer(JournalOperationNamer):
-    """Journal naming, where a toolset without an `id` drops the `__<id>` segment.
-
-    For example `agent__mcp_server.call_tool`, so such toolsets can be checkpointed too.
-    """
+    """Journal naming, where a toolset without an `id` drops the `__<id>` segment (`agent__mcp_server.call_tool`)."""
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
-        # The base passes the toolset's `id` through unchanged, so an id-less toolset arrives without one.
         if isinstance(operation_id, _ToolsetOperationId) and not operation_id.toolset_id:
             placeholder = dataclasses.replace(operation_id, toolset_id='\0')
             return super().operation_name(placeholder).replace('__\0', '', 1)
@@ -72,11 +66,7 @@ _events_adapter: TypeAdapter[list[ModelResponseStreamEvent]] = TypeAdapter(list[
 
 
 async def _from_stream_checkpoint(stored: object) -> object:
-    """Read a `request_stream` checkpoint, including one written by the older `AbsurdAgent` wrapper.
-
-    That wrapper stored a bare `ModelResponse` with no captured events, so the events are rebuilt
-    from the response parts.
-    """
+    """Read a `request_stream` checkpoint; the older `AbsurdAgent` stored a bare `ModelResponse`, whose events are rebuilt."""
     if not is_str_dict(stored) or 'response' in stored:
         return stored
     completed = CompletedStreamedResponse(

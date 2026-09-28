@@ -4,11 +4,10 @@
 Postgres-based durable-execution engine by Armin Ronacher (Python SDK `absurd-sdk`). Attach the
 capability and call `agent.run()` inside an Absurd task handler: every model request, MCP call, and
 function tool call is checkpointed into an Absurd step (`ctx.step(...)`), so if a worker crashes
-part-way through a run it resumes from the last completed step instead of restarting. A completed
-step is served from its checkpoint on replay instead of being recomputed, so tokens are not re-spent
-on work that already finished. A step is checkpointed after it runs, so a crash between a tool's side
-effect and its checkpoint re-runs the tool on recovery: keep tool side effects idempotent. Outside a
-task the capability is transparent and the run is a normal, non-durable agent run.
+part-way through a run it resumes from the last completed step, without re-spending tokens on
+finished work. A step is checkpointed after it runs, so a crash between a tool's side effect and its
+checkpoint re-runs the tool: keep tool side effects idempotent. Outside a task the capability is
+transparent.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/absurd/)
 
@@ -116,10 +115,9 @@ going at once in one task would claim each other's checkpoints.
 
 ## Constraints
 
-- The agent needs a `name` (or pass `name=` to `AbsurdDurability`); it prefixes every step.
-- The agent's `name` and a toolset's `id` are part of every step name, so they should not be
-  changed once the durable agent has been deployed to production: a rename orphans the checkpoints
-  of in-flight tasks, which then re-run those steps.
+- The agent needs a `name` (or pass `name=` to `AbsurdDurability`). It and a toolset's `id` are part
+  of every step name, so don't change them once deployed: a rename orphans the checkpoints of
+  in-flight tasks, which then re-run those steps.
 - A checkpointed tool's return value is stored in Postgres as JSON, so it must be JSON-serializable.
 - The executing toolsets are fixed when the agent is constructed. Passing a function, MCP, or
   dynamic toolset per-run via `run(toolsets=...)` inside a task raises a `UserError`, because a
@@ -132,7 +130,6 @@ going at once in one task would claim each other's checkpoints.
   before that step is checkpointed, so keep the handler's side effects idempotent.
 - The capability emits no spans of its own; core's model-request and tool spans cover the
   checkpointed work.
-- Do not use `run_sync` inside a task handler. The handler is async; use `await agent.run(...)`.
 
 ## Parallel execution
 
@@ -161,8 +158,6 @@ capability first.
 
 `AbsurdDurability` and the harness [Step Persistence](../step_persistence/) capability solve
 different problems and compose. Absurd gives crash-resume *within* a single run: a worker that dies
-mid-run picks up from the last completed step (steps are at-least-once, so keep side effects
-idempotent). Step Persistence records step events
-and continuation snapshots *across* runs, so a run can be resumed, forked, or replayed as a separate
+mid-run picks up from the last completed step. Step Persistence records step events and continuation snapshots *across* runs, so a run can be resumed, forked, or replayed as a separate
 invocation later. Use Absurd for durability against crashes during a run, and Step Persistence to
 persist and resume runs as first-class records.

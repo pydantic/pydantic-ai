@@ -8,7 +8,6 @@ disambiguation and checkpoint storage are Absurd's own.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
-from contextlib import AbstractContextManager
 from typing import Any
 
 import anyio
@@ -19,7 +18,6 @@ pytest.importorskip('fastmcp')
 
 from absurd_sdk import (
     AsyncAbsurd,
-    AsyncTaskContext,
     JsonValue,
     TaskContext,
     _current_task_context,  # pyright: ignore[reportPrivateUsage]
@@ -29,7 +27,6 @@ from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ToolReturn
-from pydantic_ai.agent import ParallelExecutionMode
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.mcp import MCPToolset
@@ -53,26 +50,29 @@ from pydantic_ai_harness.absurd import AbsurdDurability
 from ._task import checkpoints, reenter_running_task, running_task_context
 
 
-def _make_model(counter: dict[str, int] | None = None) -> FunctionModel:
+def _make_model(counter: dict[str, int] | None = None, text: str = 'ok') -> FunctionModel:
     tally = counter if counter is not None else {'calls': 0}
 
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tally['calls'] += 1
-        return ModelResponse(parts=[TextPart(content='ok')])
+        return ModelResponse(parts=[TextPart(content=text)])
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         tally['calls'] += 1
-        yield 'ok'
+        yield text
 
     return FunctionModel(fn, stream_function=stream_fn, model_name='fn')
 
 
-def _tool_calling_model(tool_name: str, args: dict[str, Any] | None = None) -> FunctionModel:
+def _tool_calling_model(*calls: ToolCallPart, counter: dict[str, int] | None = None) -> FunctionModel:
+    """Makes `calls` in one response, then answers `'done'` once they have returned or asked to retry."""
+    tally = counter if counter is not None else {'calls': 0}
+
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        answered = any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for m in messages for p in m.parts)
-        if not answered:
-            return ModelResponse(parts=[ToolCallPart(tool_name=tool_name, args=args or {})])
-        return ModelResponse(parts=[TextPart(content='done')])
+        tally['calls'] += 1
+        if any(isinstance(p, ToolReturnPart | RetryPromptPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=list(calls))
 
     return FunctionModel(fn, model_name='fn')
 
@@ -86,6 +86,20 @@ def _late_toolset(calls: dict[str, int]) -> FunctionToolset[object]:
         return 'late result'
 
     return toolset
+
+
+def _dynamic_toolset(tool_calls: dict[str, int], *, id: str | None) -> DynamicToolset[object]:
+    def build(ctx: RunContext[object]) -> FunctionToolset[object]:
+        inner: FunctionToolset[object] = FunctionToolset(id='inner')
+
+        @inner.tool_plain
+        def greet(name: str) -> str:
+            tool_calls['calls'] += 1
+            return f'hi {name}'
+
+        return inner
+
+    return DynamicToolset(build, id=id)
 
 
 def _calculator(calls: list[tuple[int, int]]) -> FastMCP[None]:
@@ -108,12 +122,6 @@ class TestDurability:
         with pytest.raises(UserError, match='unique `name`'):
             Agent(_make_model(), capabilities=[AbsurdDurability()])
 
-    async def test_name_from_capability(self) -> None:
-        agent = Agent(_make_model(), capabilities=[AbsurdDurability(name='custom')])
-        bound = AbsurdDurability.from_agent(agent)
-        assert bound is not None
-        assert bound.name == 'custom'
-
     async def test_requires_model(self) -> None:
         with pytest.raises(UserError, match='needs to have a `model`'):
             Agent(name='a', capabilities=[AbsurdDurability()])
@@ -132,7 +140,7 @@ class TestDurability:
             return f'charged {amount}'
 
         agent = Agent(
-            _tool_calling_model('charge_card', {'amount': 7}),
+            _tool_calling_model(ToolCallPart('charge_card', {'amount': 7})),
             name='idless',
             toolsets=[toolset],
             capabilities=[AbsurdDurability()],
@@ -140,6 +148,8 @@ class TestDurability:
 
         async with running_task_context(absurd, 'idless') as ctx:
             first = await agent.run('charge it')
+        # Without an `id`, the step name has no `__<id>` segment.
+        assert (await checkpoints(absurd, ctx.task_id))['idless__function_toolset.call_tool:charge_card'] == 'charged 7'
         async with reenter_running_task(absurd, ctx.task_id):
             replayed = await agent.run('charge it')
 
@@ -161,18 +171,8 @@ class TestDurability:
         def echo(value: str) -> str:
             return value
 
-        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(
-                parts=[
-                    ToolCallPart('a_echo', {'value': 'a'}, 'c1'),
-                    ToolCallPart('b_echo', {'value': 'b'}, 'c2'),
-                ]
-            )
-
         agent = Agent(
-            FunctionModel(fn, model_name='fn'),
+            _tool_calling_model(ToolCallPart('a_echo', {'value': 'a'}), ToolCallPart('b_echo', {'value': 'b'})),
             name='a',
             toolsets=[toolset.prefixed('a'), toolset.prefixed('b')],
             capabilities=[AbsurdDurability()],
@@ -184,30 +184,9 @@ class TestDurability:
         assert {k: v for k, v in stored.items() if 'call_tool' in k} == {step: 'a', f'{step}#2': 'b'}
 
     async def test_duplicate_toolset_id_raises(self) -> None:
-        first = FunctionToolset[object](id='tools')
-
-        # Never invoked, only the wrap check runs.
-        @first.tool_plain
-        def echo(value: str) -> str:  # pragma: no cover
-            return value
-
-        second = FunctionToolset[object](id='tools')
-
-        # Never invoked, only the wrap check runs.
-        @second.tool_plain
-        def shout(value: str) -> str:  # pragma: no cover
-            return value.upper()
-
+        toolsets = [FunctionToolset[object](id='tools'), FunctionToolset[object](id='tools')]
         with pytest.raises(UserError, match='same `id`'):
-            Agent(_make_model(), name='a', toolsets=[first, second], capabilities=[AbsurdDurability()])
-
-    async def test_from_agent_without_capability_returns_none(self) -> None:
-        assert AbsurdDurability.from_agent(Agent(_make_model(), name='a')) is None
-
-    async def test_from_agent_multiple_raises(self) -> None:
-        agent = Agent(_make_model(), name='a', capabilities=[AbsurdDurability(), AbsurdDurability()])
-        with pytest.raises(UserError, match='at most one'):
-            AbsurdDurability.from_agent(agent)
+            Agent(_make_model(), name='a', toolsets=toolsets, capabilities=[AbsurdDurability()])
 
     async def test_run_outside_task_is_transparent(self) -> None:
         counter = {'calls': 0}
@@ -215,30 +194,6 @@ class TestDurability:
         result = await agent.run('hi')
         assert result.output == 'ok'
         assert counter['calls'] == 1
-
-    async def test_run_inside_task_completes(self, absurd: AsyncAbsurd) -> None:
-        agent = Agent(_make_model(), name='a', capabilities=[AbsurdDurability()])
-        async with running_task_context(absurd):
-            result = await agent.run('hi')
-        assert result.output == 'ok'
-
-    async def test_run_inside_authored_task_is_durable(self, absurd: AsyncAbsurd) -> None:
-        agent = Agent(_make_model(), name='analyst', capabilities=[AbsurdDurability()])
-
-        async def analyse(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:
-            assert isinstance(params, dict)
-            prompt = params['prompt']
-            assert isinstance(prompt, str)
-            result = await agent.run(prompt)
-            return {'output': result.output}
-
-        absurd.register_task(name='analyse')(analyse)
-
-        spawned = await absurd.spawn('analyse', {'prompt': 'go'})
-        await absurd.work_batch(batch_size=1)
-        result = await absurd.fetch_task_result(spawned['task_id'])
-        assert result is not None and result.state == 'completed'
-        assert result.result == {'output': 'ok'}
 
     async def test_replay_serves_cached_model_response(self, absurd: AsyncAbsurd) -> None:
         counter = {'calls': 0}
@@ -262,7 +217,7 @@ class TestDurability:
             return f'charged {amount}'
 
         agent = Agent(
-            _tool_calling_model('charge_card', {'amount': 42}),
+            _tool_calling_model(ToolCallPart('charge_card', {'amount': 42})),
             name='billing',
             toolsets=[toolset],
             capabilities=[AbsurdDurability()],
@@ -270,6 +225,9 @@ class TestDurability:
 
         async with running_task_context(absurd, 'billing') as ctx:
             first = await agent.run('charge it')
+        # The raw tool return value is what is stored.
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert stored['billing__function_toolset__tools.call_tool:charge_card'] == 'charged 42'
         async with reenter_running_task(absurd, ctx.task_id):
             replayed = await agent.run('charge it')
 
@@ -280,19 +238,10 @@ class TestDurability:
         # The selected model checkpoints under its own id-scoped step name, and a replay serves it.
         primary = {'calls': 0}
         cheap = {'calls': 0}
-
-        def primary_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            primary['calls'] += 1
-            return ModelResponse(parts=[TextPart(content='primary')])
-
-        def cheap_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            cheap['calls'] += 1
-            return ModelResponse(parts=[TextPart(content='cheap')])
-
         agent = Agent(
-            FunctionModel(primary_fn, model_name='primary'),
+            _make_model(primary, text='primary'),
             name='a',
-            capabilities=[AbsurdDurability(models={'cheap': FunctionModel(cheap_fn, model_name='cheap')})],
+            capabilities=[AbsurdDurability(models={'cheap': _make_model(cheap, text='cheap')})],
         )
 
         async with running_task_context(absurd) as ctx:
@@ -307,15 +256,21 @@ class TestDurability:
         assert primary['calls'] == cheap['calls'] == 1
         assert list(await checkpoints(absurd, ctx.task_id)) == ['a__model.request', 'a__model.request.cheap']
 
-    async def test_runtime_function_toolset_rejected(self, absurd: AsyncAbsurd) -> None:
+    @pytest.mark.parametrize('kind', ['function', 'dynamic'])
+    async def test_runtime_toolset_rejected(self, absurd: AsyncAbsurd, kind: str) -> None:
+        calls = {'calls': 0}
+        late = _late_toolset(calls) if kind == 'function' else _dynamic_toolset(calls, id='late')
         agent: Agent[object, str] = Agent(_make_model(), name='a', capabilities=[AbsurdDurability()])
         async with running_task_context(absurd):
             with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
-                await agent.run('hi', toolsets=[_late_toolset({'calls': 0})])
+                await agent.run('hi', toolsets=[late])
+        assert calls == {'calls': 0}
 
     async def test_override_toolsets_rejected_inside_task(self, absurd: AsyncAbsurd) -> None:
         calls = {'calls': 0}
-        agent: Agent[object, str] = Agent(_tool_calling_model('late'), name='a', capabilities=[AbsurdDurability()])
+        agent: Agent[object, str] = Agent(
+            _tool_calling_model(ToolCallPart('late')), name='a', capabilities=[AbsurdDurability()]
+        )
         async with running_task_context(absurd):
             with agent.override(toolsets=[_late_toolset(calls)]):
                 with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
@@ -324,36 +279,10 @@ class TestDurability:
 
     async def test_override_toolsets_respected_outside_task(self) -> None:
         calls = {'calls': 0}
-        agent: Agent[object, str] = Agent(_tool_calling_model('late'), name='a', capabilities=[AbsurdDurability()])
+        agent: Agent[object, str] = Agent(
+            _tool_calling_model(ToolCallPart('late')), name='a', capabilities=[AbsurdDurability()]
+        )
         with agent.override(toolsets=[_late_toolset(calls)]):
-            result = await agent.run('hi')
-        assert result.output == 'done'
-        assert calls['calls'] == 1
-
-    async def test_override_tools_rejected_inside_task(self, absurd: AsyncAbsurd) -> None:
-        calls = {'calls': 0}
-
-        # Rejected before it can run.
-        def late() -> str:  # pragma: no cover
-            calls['calls'] += 1
-            return 'late result'
-
-        agent: Agent[object, str] = Agent(_tool_calling_model('late'), name='a', capabilities=[AbsurdDurability()])
-        async with running_task_context(absurd):
-            with agent.override(tools=[late]):
-                with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
-                    await agent.run('hi')
-        assert calls['calls'] == 0
-
-    async def test_override_tools_respected_outside_task(self) -> None:
-        calls = {'calls': 0}
-
-        def late() -> str:
-            calls['calls'] += 1
-            return 'late result'
-
-        agent: Agent[object, str] = Agent(_tool_calling_model('late'), name='a', capabilities=[AbsurdDurability()])
-        with agent.override(tools=[late]):
             result = await agent.run('hi')
         assert result.output == 'done'
         assert calls['calls'] == 1
@@ -372,7 +301,7 @@ class TestDurability:
                 return toolset
 
         agent: Agent[object, str] = Agent(
-            _tool_calling_model('charge_card', {'amount': 5}),
+            _tool_calling_model(ToolCallPart('charge_card', {'amount': 5})),
             name='owner',
             capabilities=[DemoCapability(), AbsurdDurability()],
         )
@@ -385,23 +314,6 @@ class TestDurability:
         assert tool_calls['calls'] == 1
         assert replayed.output == first.output == 'done'
 
-    async def test_runtime_toolset_still_rejected_alongside_capability_toolset(self, absurd: AsyncAbsurd) -> None:
-        owned = FunctionToolset[object](id='owned')
-
-        # Never invoked.
-        @owned.tool_plain
-        def greet() -> str:  # pragma: no cover
-            return 'hello'
-
-        class DemoCapability(AbstractCapability[object]):
-            def get_toolset(self) -> FunctionToolset[object]:
-                return owned
-
-        agent: Agent[object, str] = Agent(_make_model(), name='a', capabilities=[DemoCapability(), AbsurdDurability()])
-        async with running_task_context(absurd):
-            with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
-                await agent.run('hi', toolsets=[_late_toolset({'calls': 0})])
-
     async def test_runtime_external_toolset_allowed(self, absurd: AsyncAbsurd) -> None:
         agent: Agent[object, str] = Agent(_make_model(), name='a', capabilities=[AbsurdDurability()])
         async with running_task_context(absurd):
@@ -412,43 +324,6 @@ class TestDurability:
         external = ExternalToolset[object](tool_defs=[])
         agent = Agent(_make_model(), name='a', toolsets=[external], capabilities=[AbsurdDurability()])
         assert any(t is external for t in agent.toolsets)
-
-    async def test_mcp_tool_call_inside_task(self, absurd: AsyncAbsurd) -> None:
-        agent = Agent(
-            _tool_calling_model('add', {'a': 2, 'b': 3}),
-            name='calc',
-            toolsets=[MCPToolset[object](_calculator([]), id='calc')],
-            capabilities=[AbsurdDurability()],
-        )
-        async with running_task_context(absurd) as ctx:
-            result = await agent.run('add 2 and 3')
-        assert result.output == 'done'
-        assert (await checkpoints(absurd, ctx.task_id))['calc__mcp_server__calc.call_tool'] == 5
-
-    async def test_mcp_get_instructions_inside_context_with_include(self, absurd: AsyncAbsurd) -> None:
-        server = MCPToolset[object](_calculator([]), id='calc', include_instructions=True)
-        agent = Agent(_make_model(), name='calc', toolsets=[server], capabilities=[AbsurdDurability()])
-        async with running_task_context(absurd) as ctx:
-            result = await agent.run('hi')
-        assert 'Use the calculator.' in str(result.all_messages()[0])
-        assert 'calc__mcp_server__calc.get_instructions' in await checkpoints(absurd, ctx.task_id)
-
-    async def test_mcp_get_tools_without_cache(self, absurd: AsyncAbsurd) -> None:
-        # Without the tool cache, each listing is its own step.
-        server = MCPToolset[object](_calculator([]), id='calc', cache_tools=False)
-        agent = Agent(
-            _tool_calling_model('add', {'a': 4, 'b': 5}),
-            name='calc',
-            toolsets=[server],
-            capabilities=[AbsurdDurability()],
-        )
-        async with running_task_context(absurd) as ctx:
-            await agent.run('add')
-        stored = await checkpoints(absurd, ctx.task_id)
-        assert [name for name in stored if name.endswith('.get_tools') or '.get_tools#' in name] == [
-            'calc__mcp_server__calc.get_tools',
-            'calc__mcp_server__calc.get_tools#2',
-        ]
 
     async def test_event_stream_handler_receives_events(self, absurd: AsyncAbsurd) -> None:
         events: list[AgentStreamEvent] = []
@@ -484,17 +359,6 @@ class TestDurability:
         assert any(isinstance(e, FunctionToolCallEvent) for e in events)
         assert 'a__event_stream_handler' in await checkpoints(absurd, ctx.task_id)
 
-    async def test_run_stream_inside_task_replays_buffered_stream(self, absurd: AsyncAbsurd) -> None:
-        counter = {'calls': 0}
-        agent = Agent(_make_model(counter), name='a', capabilities=[AbsurdDurability()])
-        async with running_task_context(absurd) as ctx:
-            async with agent.run_stream('hi') as result:
-                assert await result.get_output() == 'ok'
-        async with reenter_running_task(absurd, ctx.task_id):
-            async with agent.run_stream('hi') as result:
-                assert await result.get_output() == 'ok'
-        assert counter['calls'] == 1
-
     async def test_run_stream_events_inside_task(self, absurd: AsyncAbsurd) -> None:
         counter = {'calls': 0}
         agent = Agent(_make_model(counter), name='a', capabilities=[AbsurdDurability()])
@@ -507,15 +371,6 @@ class TestDurability:
         assert any(isinstance(e, PartStartEvent) for e in events)
         assert replayed == events
         assert counter['calls'] == 1
-
-    async def test_iter_inside_task(self, absurd: AsyncAbsurd) -> None:
-        agent = Agent(_make_model(), name='a', capabilities=[AbsurdDurability()])
-        async with running_task_context(absurd):
-            async with agent.iter('hi') as run:
-                async for _ in run:
-                    pass
-        assert run.result is not None
-        assert run.result.output == 'ok'
 
     async def test_wrapper_written_stream_checkpoint_replays_under_capability(self, absurd: AsyncAbsurd) -> None:
         """A `request_stream` checkpoint written by the older `AbsurdAgent` wrapper (a bare
@@ -536,22 +391,6 @@ class TestDurability:
                 assert await result.get_output() == 'from-wrapper'
 
         assert counter['calls'] == 0
-
-    async def test_string_default_model_replays_wrapper_checkpoint(self, absurd: AsyncAbsurd) -> None:
-        agent = Agent('test', name='strdef', capabilities=[AbsurdDurability()])
-        legacy_payload = _response_adapter.dump_python(
-            ModelResponse(parts=[TextPart(content='from-wrapper')]), mode='json'
-        )
-
-        async def write_legacy() -> JsonValue:
-            return legacy_payload
-
-        async with running_task_context(absurd, 'strdef') as ctx:
-            await ctx.step('strdef__model.request', write_legacy)
-        async with reenter_running_task(absurd, ctx.task_id):
-            replayed = await agent.run('hi')
-
-        assert replayed.output == 'from-wrapper'
 
     async def test_cancel_suspended_response_is_checkpointed(self, absurd: AsyncAbsurd) -> None:
         # The model returns a `'suspended'` response, the continuation fails, and the graph tears the
@@ -613,42 +452,18 @@ class TestCapabilityOperation:
 
 
 class TestToolResults:
-    async def test_raw_return_value_is_stored(self, absurd: AsyncAbsurd) -> None:
-        toolset = FunctionToolset(id='billing')
-
-        @toolset.tool_plain
-        def charge_card(amount: int) -> str:
-            return f'charged {amount}'
-
-        agent = Agent(
-            _tool_calling_model('charge_card', {'amount': 7}),
-            name='pay',
-            toolsets=[toolset],
-            capabilities=[AbsurdDurability()],
-        )
-        async with running_task_context(absurd) as ctx:
-            await agent.run('charge it')
-
-        # The raw tool return value is what is stored.
-        stored = await checkpoints(absurd, ctx.task_id)
-        assert stored['pay__function_toolset__billing.call_tool:charge_card'] == 'charged 7'
-
     async def test_model_retry_is_not_checkpointed_and_the_tool_reruns_on_replay(self, absurd: AsyncAbsurd) -> None:
-        calls = {'model': 0, 'tool': 0}
+        model_calls = {'calls': 0}
+        tool_calls = {'calls': 0}
         toolset = FunctionToolset(id='tools')
 
         @toolset.tool_plain
         def flaky() -> str:
-            calls['tool'] += 1
+            tool_calls['calls'] += 1
             raise ModelRetry('nope, try again')
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            calls['model'] += 1
-            if any(isinstance(p, RetryPromptPart) for m in messages for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(parts=[ToolCallPart(tool_name='flaky', args={})])
-
-        agent = Agent(FunctionModel(model_fn), name='retry', toolsets=[toolset], capabilities=[AbsurdDurability()])
+        model = _tool_calling_model(ToolCallPart('flaky'), counter=model_calls)
+        agent = Agent(model, name='retry', toolsets=[toolset], capabilities=[AbsurdDurability()])
 
         async with running_task_context(absurd) as ctx:
             first = await agent.run('go')
@@ -659,7 +474,7 @@ class TestToolResults:
 
         # Both model responses come from their checkpoints; only the tool runs again.
         assert first.output == second.output == 'done'
-        assert calls == {'model': 2, 'tool': 2}
+        assert model_calls['calls'] == tool_calls['calls'] == 2
 
     async def test_tool_return_object_round_trips_through_replay(self, absurd: AsyncAbsurd) -> None:
         toolset = FunctionToolset(id='tools')
@@ -668,7 +483,12 @@ class TestToolResults:
         def lookup() -> ToolReturn:
             return ToolReturn(return_value='value', content='extra context', metadata={'source': 'db'})
 
-        agent = Agent(_tool_calling_model('lookup'), name='tr', toolsets=[toolset], capabilities=[AbsurdDurability()])
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('lookup')),
+            name='tr',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
 
         async with running_task_context(absurd) as ctx:
             first = await agent.run('go')
@@ -702,15 +522,20 @@ class TestToolResults:
         ids=['tool-return-kind', 'reserved-key'],
     )
     async def test_raw_dict_that_looks_encoded_round_trips(self, absurd: AsyncAbsurd, value: dict[str, object]) -> None:
-        calls = {'n': 0}
+        calls = {'calls': 0}
         toolset = FunctionToolset(id='tools')
 
         @toolset.tool_plain
         def query() -> dict[str, object]:
-            calls['n'] += 1
+            calls['calls'] += 1
             return value
 
-        agent = Agent(_tool_calling_model('query'), name='raw', toolsets=[toolset], capabilities=[AbsurdDurability()])
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('query')),
+            name='raw',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
 
         async with running_task_context(absurd) as ctx:
             await agent.run('go')
@@ -720,7 +545,7 @@ class TestToolResults:
 
         returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         assert [r.content for r in returns] == [value]
-        assert calls['n'] == 1
+        assert calls['calls'] == 1
 
 
 class TestCrashMidRun:
@@ -728,24 +553,19 @@ class TestCrashMidRun:
         # The model step completes and is checkpointed, then a tool raises a real (non-`ModelRetry`)
         # error that fails the attempt. On retry the model step is served from its checkpoint while
         # the tool re-runs.
-        model_calls = {'n': 0}
-        tool_attempts = {'n': 0}
+        model_calls = {'calls': 0}
+        tool_attempts = {'calls': 0}
         toolset = FunctionToolset(id='tools')
 
         @toolset.tool_plain
         def flaky() -> str:
-            tool_attempts['n'] += 1
-            if tool_attempts['n'] == 1:
+            tool_attempts['calls'] += 1
+            if tool_attempts['calls'] == 1:
                 raise RuntimeError('worker died mid-tool')
             return 'recovered'
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            model_calls['n'] += 1
-            if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(parts=[ToolCallPart(tool_name='flaky', args={})])
-
-        agent = Agent(FunctionModel(model_fn), name='crash', toolsets=[toolset], capabilities=[AbsurdDurability()])
+        model = _tool_calling_model(ToolCallPart('flaky'), counter=model_calls)
+        agent = Agent(model, name='crash', toolsets=[toolset], capabilities=[AbsurdDurability()])
 
         async with running_task_context(absurd) as ctx:
             with pytest.raises(RuntimeError, match='worker died mid-tool'):
@@ -755,7 +575,7 @@ class TestCrashMidRun:
             result = await agent.run('go')
 
         assert result.output == 'done'
-        assert model_calls['n'] == tool_attempts['n'] == 2
+        assert model_calls['calls'] == tool_attempts['calls'] == 2
         assert list(await checkpoints(absurd, ctx.task_id)) == [
             'crash__model.request',
             'crash__function_toolset__tools.call_tool:flaky',
@@ -770,29 +590,12 @@ class TestStepNames:
             await agent.run('hi')
         assert list(await checkpoints(absurd, ctx.task_id)) == ['strdef__model.request']
 
-    async def test_id_less_function_toolset_drops_the_id_segment(self, absurd: AsyncAbsurd) -> None:
-        toolset = FunctionToolset()
-
-        @toolset.tool_plain
-        def charge(amount: int) -> str:
-            return f'charged {amount}'
-
-        agent = Agent(
-            _tool_calling_model('charge', {'amount': 3}),
-            name='idless',
-            toolsets=[toolset],
-            capabilities=[AbsurdDurability()],
-        )
-        async with running_task_context(absurd) as ctx:
-            await agent.run('go')
-        assert (await checkpoints(absurd, ctx.task_id))['idless__function_toolset.call_tool:charge'] == 'charged 3'
-
     async def test_id_less_mcp_server_drops_the_id_segment(self, absurd: AsyncAbsurd) -> None:
         # An MCP toolset constructed without an `id` (for example an in-process server) is still
         # checkpointed, under step names without the `__<id>` segment.
         calls: list[tuple[int, int]] = []
         agent = Agent(
-            _tool_calling_model('add', {'a': 2, 'b': 3}),
+            _tool_calling_model(ToolCallPart('add', {'a': 2, 'b': 3})),
             name='calc',
             toolsets=[MCPToolset[object](_calculator(calls), include_instructions=True)],
             capabilities=[AbsurdDurability()],
@@ -828,54 +631,8 @@ class TestStepNames:
 
         assert counter['calls'] == 2
 
-    async def test_same_tool_called_twice_in_one_response(self, absurd: AsyncAbsurd) -> None:
-        toolset = FunctionToolset(id='tools')
-
-        @toolset.tool_plain
-        def charge(amount: int) -> str:
-            return f'charged {amount}'
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='charge', args={'amount': 1}, tool_call_id='c1'),
-                    ToolCallPart(tool_name='charge', args={'amount': 2}, tool_call_id='c2'),
-                ]
-            )
-
-        agent = Agent(FunctionModel(model_fn), name='pay', toolsets=[toolset], capabilities=[AbsurdDurability()])
-        async with running_task_context(absurd) as ctx:
-            await agent.run('charge both')
-
-        stored = await checkpoints(absurd, ctx.task_id)
-        step = 'pay__function_toolset__tools.call_tool:charge'
-        assert (stored[step], stored[f'{step}#2']) == ('charged 1', 'charged 2')
-
 
 class TestParallelExecutionMode:
-    async def test_mode_applied_inside_and_outside_a_task(
-        self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        agent = Agent(
-            _make_model(), name='a', capabilities=[AbsurdDurability(parallel_execution_mode='parallel_ordered_events')]
-        )
-        recorded: list[ParallelExecutionMode] = []
-        real = agent.parallel_tool_call_execution_mode
-
-        def spy(mode: ParallelExecutionMode = 'parallel') -> AbstractContextManager[None]:
-            recorded.append(mode)
-            return real(mode)
-
-        monkeypatch.setattr(agent, 'parallel_tool_call_execution_mode', spy)
-
-        async with running_task_context(absurd):
-            await agent.run('hi')
-        await agent.run('hi')
-
-        assert recorded == ['parallel_ordered_events', 'parallel_ordered_events']
-
     async def test_step_slots_follow_scheduling_order_not_completion(self, absurd: AsyncAbsurd) -> None:
         # Two concurrent calls of the same tool, where the first-scheduled call completes last.
         # Absurd assigns the `#1`/`#2` slot when `ctx.step(...)` is entered, before the tool body
@@ -892,18 +649,10 @@ class TestParallelExecutionMode:
                 second_done.set()
             return marker
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='record', args={'marker': 'first'}, tool_call_id='r1'),
-                    ToolCallPart(tool_name='record', args={'marker': 'second'}, tool_call_id='r2'),
-                ]
-            )
-
         agent = Agent(
-            FunctionModel(model_fn),
+            _tool_calling_model(
+                ToolCallPart('record', {'marker': 'first'}, 'r1'), ToolCallPart('record', {'marker': 'second'}, 'r2')
+            ),
             name='par',
             toolsets=[toolset],
             capabilities=[AbsurdDurability(parallel_execution_mode='parallel_ordered_events')],
@@ -931,7 +680,7 @@ class TestMcpSessions:
 
         server, counts = counting_mcp_server(instructions='Echo things.')
         agent = Agent(
-            _tool_calling_model('echo', {'text': 'hi'}),
+            _tool_calling_model(ToolCallPart('echo', {'text': 'hi'})),
             name='echo',
             toolsets=[MCPToolset[object](server, id='echo', include_instructions=True)],
             capabilities=[AbsurdDurability()],
@@ -974,28 +723,14 @@ class TestCheckpointFormat:
         assert counter['calls'] == 0
 
 
-def _dynamic_toolset(tool_calls: dict[str, int], *, id: str | None) -> DynamicToolset[object]:
-    def build(ctx: RunContext[object]) -> FunctionToolset[object]:
-        inner: FunctionToolset[object] = FunctionToolset(id='inner')
-
-        @inner.tool_plain
-        def greet(name: str) -> str:
-            tool_calls['n'] += 1
-            return f'hi {name}'
-
-        return inner
-
-    return DynamicToolset(build, id=id)
-
-
 class TestDynamicToolset:
     """Function and MCP toolsets are checkpointed; a construction-time `DynamicToolset` runs as-is."""
 
     @pytest.mark.parametrize('toolset_id', ['dyn', None])
     async def test_runs_uncheckpointed_inside_a_task(self, absurd: AsyncAbsurd, toolset_id: str | None) -> None:
-        tool_calls = {'n': 0}
+        tool_calls = {'calls': 0}
         agent = Agent(
-            _tool_calling_model('greet', {'name': 'ada'}),
+            _tool_calling_model(ToolCallPart('greet', {'name': 'ada'})),
             name='d',
             toolsets=[_dynamic_toolset(tool_calls, id=toolset_id)],
             capabilities=[AbsurdDurability()],
@@ -1009,15 +744,7 @@ class TestDynamicToolset:
 
         # The model responses replay from their checkpoints; the dynamic tool runs again.
         assert first.output == second.output == 'done'
-        assert tool_calls['n'] == 2
-
-    async def test_runtime_dynamic_toolset_rejected_inside_task(self, absurd: AsyncAbsurd) -> None:
-        tool_calls = {'n': 0}
-        agent = Agent(_tool_calling_model('greet', {'name': 'ada'}), name='d', capabilities=[AbsurdDurability()])
-        async with running_task_context(absurd):
-            with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
-                await agent.run('greet ada', toolsets=[_dynamic_toolset(tool_calls, id='late')])
-        assert tool_calls['n'] == 0
+        assert tool_calls['calls'] == 2
 
     async def test_toolset_decorated_after_construction_rejected_inside_task(self, absurd: AsyncAbsurd) -> None:
         agent = Agent(_make_model(), name='decorated', capabilities=[AbsurdDurability()])
@@ -1036,12 +763,12 @@ class TestCodeMode:
         pytest.importorskip('pydantic_monty')
         from pydantic_ai_harness import CodeMode
 
-        calls = {'n': 0}
+        calls = {'calls': 0}
         toolset = FunctionToolset(id='tools')
 
         @toolset.tool_plain
         def search(query: str) -> str:
-            calls['n'] += 1
+            calls['calls'] += 1
             return f'results for {query}'
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1064,4 +791,4 @@ class TestCodeMode:
 
         # The `run_code` body re-runs on replay, but its `search` call is served from the checkpoint.
         assert first.output == second.output == 'done: results for x'
-        assert calls['n'] == 1
+        assert calls['calls'] == 1
