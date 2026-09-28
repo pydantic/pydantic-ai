@@ -31,10 +31,14 @@ _ERROR_TAIL_CHARS = 2000
 _NOT_FOUND_EXIT = 127
 """Exit status of `_LAUNCHER`, with no output, when the binary is not on the workspace's PATH."""
 
-_LAUNCHER = f'command -v "$1" > /dev/null 2>&1 || exit {_NOT_FOUND_EXIT}\nexec "$@"'
+_LAUNCH_FAILURE_EXITS = (126, 127)
+"""Shell exit statuses for a command that was found but could not be launched."""
+
+_LAUNCHER = f'command -v "$1" > /dev/null 2>&1 || exit {_NOT_FOUND_EXIT}\nexec env "$@"'
 """Look the binary up in the workspace, then replace the shell with it so the workspace's timeout reaches it.
 
-A binary that is found but cannot run makes `sh` print why, with an exit status that varies by shell.
+`env` then replaces itself with the binary. If that fails, its diagnostic distinguishes
+the launch failure from a CLI exit.
 """
 
 
@@ -178,6 +182,15 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
         if exit_code == _NOT_FOUND_EXIT and not output.strip():
             raise UserError(_INSTALL_HINT)
         tail = output.strip()[-_ERROR_TAIL_CHARS:]
+        # `env` reports launch failures with status 126 or 127 and names the command in its diagnostic.
+        # Check both so the same status returned by a CLI that did start remains the CLI's own result.
+        launch_failed = exit_code in _LAUNCH_FAILURE_EXITS and any(
+            line.startswith('env:') and self._command in line for line in output.splitlines()
+        )
+        if launch_failed:
+            raise UserError(
+                f'The Macroscope CLI ({self._command!r}) could not be launched in the workspace.\n\nCLI output:\n{tail}'
+            )
         if base is not None:
             # The model's own `base` may be what failed (e.g. a ref that does not exist), so let
             # it drop or change the argument; a retry without it then surfaces a setup error.

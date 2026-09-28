@@ -205,14 +205,14 @@ class TestRunReview:
         await _toolset(command, base=None).run_macroscope_review(_ctx(tmp_path))
         assert _recorded_args(command) == ['codereview', '--raw']
 
-    async def test_exec_failure_reports_cli_output(self, tmp_path: Path) -> None:
-        # The binary exists but cannot run (bad interpreter): `sh`'s reason, which names the binary, reaches
-        # the user. The wording differs by shell (`bad interpreter` on macOS, `not found` from dash).
+    async def test_exec_failure_with_model_base_raises_user_error(self, tmp_path: Path) -> None:
+        # The binary exists but cannot run (bad interpreter): `env`'s diagnostic, which names the binary,
+        # reaches the user even when the model supplied a base.
         script = tmp_path / 'macroscope'
         script.write_text('#!/nonexistent/interpreter\n')
         script.chmod(0o755)
-        with pytest.raises(UserError, match=f'did not start(?s:.*)CLI output:\\n.*{re.escape(str(script))}'):
-            await _toolset(str(script)).run_macroscope_review(_ctx(tmp_path))
+        with pytest.raises(UserError, match=f'could not be launched(?s:.*)CLI output:\\n.*{re.escape(str(script))}'):
+            await _toolset(str(script)).run_macroscope_review(_ctx(tmp_path), base='model-ref')
 
     async def test_workspace_failure_fails_the_call(self, tmp_path: Path) -> None:
         with pytest.raises(ToolFailed, match='sandbox refused'):
