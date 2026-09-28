@@ -35,7 +35,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
 
-pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='prefect')]
+pytestmark = pytest.mark.xdist_group(name='prefect')
 
 
 @pytest.fixture(autouse=True, scope='session')

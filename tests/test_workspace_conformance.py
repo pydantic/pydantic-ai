@@ -160,7 +160,6 @@ class _RelativeRealpathBackend(FilesystemOnlyWorkspaceBackend):
         return path.lstrip('/')
 
 
-@pytest.mark.anyio
 async def test_native_realpath_rule_runs_without_commands() -> None:
     """The other `realpath` rules need `ln -s`, so a filesystem-only backend's `realpath` needs its own."""
     rule = WorkspaceBackendSuite().test_native_realpath_keeps_the_working_dir_and_missing_names

@@ -23,7 +23,6 @@ from pydantic_ai.workspaces import (
 )
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='`LocalWorkspaceBackend` only supports POSIX platforms'),
 ]
 

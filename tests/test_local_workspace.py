@@ -32,7 +32,6 @@ from pydantic_ai.workspaces import (
 )
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspaceBackend tests drive POSIX shell commands'),
 ]
 
