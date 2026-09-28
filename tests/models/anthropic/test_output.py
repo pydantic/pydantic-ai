@@ -624,7 +624,7 @@ def test_basemodel_output_falls_back_to_auto_without_forcing(
 
     Tool Output resolves to a forced choice of the output tool, which these models answer with a 400
     (`tool_choice: type "tool" and "any" are not supported for this model`). The profile's
-    `anthropic_supports_forced_tool_choice=False` makes it fall back to `auto` with the tools filtered
+    `supports_forced_tool_choice=False` makes it fall back to `auto` with the tools filtered
     to the output tool, and the model calls it anyway.
     """
     model = anthropic_model(model_name, capture=True)
