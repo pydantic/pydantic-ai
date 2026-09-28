@@ -244,7 +244,7 @@ print(ret.content)
 #> {'output': 'computed\n', 'result': 14}
 print([call.tool_name for call in ret.metadata['tool_calls'].values()])
 #> ['double', 'double']
-print([r.content for r in ret.metadata['tool_returns'].values()])
+print(sorted(r.content for r in ret.metadata['tool_returns'].values()))
 #> [4, 10]
 ```
 
