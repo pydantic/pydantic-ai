@@ -13,9 +13,11 @@ Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 """
 
 import asyncio
+import importlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,10 +26,12 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
 
+import httpx2
 import pytest
 import yaml
-from anthropic import AsyncAnthropic
+from anthropic import AsyncAnthropic, RateLimitError
 from pytest import LogCaptureFixture
+from tenacity import stop_after_attempt, wait_none
 
 # `.github/scripts/` isn't on sys.path by default — the shim package lives
 # there. The runtime equivalent is the PEP-723 launcher script
@@ -46,11 +50,25 @@ from pydantic_ai_gh_aw_shim import (
     shared,
 )
 
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model as _Model
-from pydantic_ai.models.function import AgentInfo
-from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, PrefixedToolset
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 # The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.
 GHAW_ARGV = [
@@ -366,8 +384,6 @@ async def _toolset_names(
     name list. The filtered toolset reports its tools through
     `.get_tools(ctx)`, so we drive it with a minimal RunContext.
     """
-    from pydantic_ai.usage import RunUsage
-
     toolset = shim.select_claude_code_toolset(allowed, permission_mode, task=task)
     ctx = RunContext(
         deps=None,
@@ -382,8 +398,6 @@ async def _toolset_names(
 
 
 def test_select_claude_code_toolset_no_allowlist_keeps_all():
-    import asyncio
-
     names = asyncio.run(_toolset_names(None, None, task=shim.task))
     # task=shim.task adds "Task" alongside the base callables. Order is
     # insertion order from `_BASE_TOOLS` + the appended Task entry.
@@ -391,23 +405,17 @@ def test_select_claude_code_toolset_no_allowlist_keeps_all():
 
 
 def test_select_claude_code_toolset_enforces_allowlist():
-    import asyncio
-
     names = asyncio.run(_toolset_names(frozenset({'Bash', 'Read', 'mcp__safeoutputs'}), None))
     assert names == ['Bash', 'Read']
 
 
 def test_plan_mode_withholds_mutating_tools():
-    import asyncio
-
     names = set(asyncio.run(_toolset_names(None, 'plan')))
     assert names.isdisjoint(pkg.MUTATING_TOOLS)
     assert 'Read' in names and 'Grep' in names and 'Glob' in names
 
 
 def test_plan_mode_and_allowlist_compose():
-    import asyncio
-
     names = asyncio.run(_toolset_names(frozenset({'Bash', 'Read'}), 'plan'))
     assert names == ['Read']  # Bash dropped by plan mode
 
@@ -550,8 +558,6 @@ def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, mon
     # keeps the head -- so a chunk over the char cap (common for long-lined files)
     # would lose the hint entirely. The adapter truncates on a whole-line boundary
     # and re-advertises the exact 1-based offset of the first dropped line.
-    import re
-
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'big.txt'
     # Zero-padded line ids (distinct from the harness's space-padded line numbers)
@@ -672,7 +678,6 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
     # A match set larger than the harness output cap is tail-truncated, which
     # elides the `[stdout]` header and prepends a truncation marker. The adapter
     # must still return it as matches, not as an error.
-    import importlib
 
     # `pkg.grep` is the re-exported callable; reach the module to patch its deps.
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
@@ -790,8 +795,6 @@ def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatc
     """`web_fetch_20250910` is an Anthropic-server-side tool; compat
     endpoints (MiniMax etc.) reject it with HTTP 400. The capability is
     gated by `ANTHROPIC_BASE_URL`."""
-    from pydantic_ai.capabilities import NativeTool
-
     monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
     caps = shim._anthropic_native_capabilities()  # pyright: ignore[reportPrivateUsage]
     assert len(caps) == 1 and isinstance(caps[0], NativeTool)
@@ -827,8 +830,6 @@ def test_exit_plan_mode_returns_ack():
 
 
 def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
-    import asyncio
-
     # Note: WebFetch is an Anthropic server-side capability (not in the callable list).
     names = set(asyncio.run(_toolset_names(None, 'plan')))
     assert 'MultiEdit' not in names  # mutating
@@ -854,11 +855,6 @@ def test_instructions_encourage_parallel_tool_calls():
 
 def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch: pytest.MonkeyPatch):
     """Workflow prompt rides in the system instruction; user message is RUN_TRIGGER."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-
     seen_instructions: list[str] = []
     received: list[ModelMessage] = []
     emitted: list[dict[str, object]] = []
@@ -904,8 +900,6 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch: pytest.M
 
 def _safe_outputs_toolset(sink: Path) -> AbstractToolset[object]:
     """Stand-in for gh-aw's safe-outputs MCP server, which appends each output to `GH_AW_SAFE_OUTPUTS`."""
-    from pydantic_ai.toolsets import FunctionToolset
-
     toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain
@@ -923,10 +917,6 @@ def _safe_outputs_toolset(sink: Path) -> AbstractToolset[object]:
 
 def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse], sink: Path) -> int:
     """Run the shim on a `FunctionModel` that streams each response `respond` returns."""
-    import asyncio
-
-    from pydantic_ai.messages import TextPart, ToolCallPart
-    from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
     async def _stream(messages: list[ModelMessage], info: AgentInfo):
         response = respond(messages, info)
@@ -950,8 +940,6 @@ def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
 
 
 def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    from pydantic_ai.messages import RetryPromptPart, TextPart, ToolCallPart
-
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     emitted: list[dict[str, object]] = []
@@ -976,8 +964,6 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
 
 
 def test_run_fails_when_the_model_never_emits_a_safe_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    from pydantic_ai.messages import TextPart
-
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     emitted: list[dict[str, object]] = []
@@ -995,8 +981,6 @@ def test_run_fails_when_the_model_never_emits_a_safe_output(monkeypatch: pytest.
 
 
 def test_run_succeeds_when_the_safe_output_takes_the_last_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    from pydantic_ai.messages import TextPart, ToolCallPart
-
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     monkeypatch.setattr(shim, 'run_request_limit', lambda: 20)
@@ -1023,8 +1007,6 @@ def test_run_succeeds_when_the_safe_output_takes_the_last_request(monkeypatch: p
 
 
 def test_run_warns_the_model_when_the_request_budget_is_nearly_spent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    from pydantic_ai.messages import TextPart, ToolCallPart
-
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     monkeypatch.setattr(shim, 'run_request_limit', lambda: 20)
@@ -1050,8 +1032,6 @@ def test_run_warns_the_model_when_the_request_budget_is_nearly_spent(monkeypatch
 def test_run_caps_subagents_so_the_budget_notice_still_fires(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parallel_tasks: int
 ):
-    from pydantic_ai.messages import TextPart, ToolCallPart
-
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
@@ -1089,10 +1069,6 @@ def test_run_caps_subagents_so_the_budget_notice_still_fires(
 
 
 def test_task_refuses_to_spawn_inside_the_final_tenth():
-    import asyncio
-
-    from pydantic_ai.usage import RunUsage, UsageLimits
-
     class _Ctx:
         model = None
         usage = RunUsage(requests=18)
@@ -1114,8 +1090,6 @@ def test_task_registered_via_build_claude_code_toolset():
     appended dynamically by `build_claude_code_toolset(task=...)` only for the
     parent (sub-agents pass `task=None` so they can't recurse).
     """
-    import asyncio
-
     parent_names = asyncio.run(_toolset_names(None, None, task=shim.task))
     sub_names = asyncio.run(_toolset_names(None, None, task=None))
     assert 'Task' in parent_names
@@ -1225,12 +1199,6 @@ def test_compiled_workflows_pin_retry_policy():
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
     # The Task tool spawns a sub-Agent on ctx.model with the read-only tool
     # set, runs the given prompt, and returns the sub-agent's output.
-    import asyncio
-
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-    from pydantic_ai.usage import RunUsage
-
     seen_instructions: list[str] = []
     received_messages: list[ModelMessage] = []
     received_tool_names: set[str] = set()
@@ -1343,8 +1311,6 @@ def test_compaction_thresholds_are_sane():
 
 
 def test_history_size_chars_sums_all_part_content():
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
     msgs: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hello')]),  # 5
         ModelRequest(parts=[UserPromptPart(content='x' * 20)]),  # 20
@@ -1353,10 +1319,6 @@ def test_history_size_chars_sums_all_part_content():
 
 
 def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
     # Many tiny messages — total chars stays well below the default 80k budget.
     msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(100)]
 
@@ -1370,12 +1332,6 @@ def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch
 def test_compact_history_summarises_with_fresh_usage_then_merges():
     """Summariser uses a fresh `RunUsage` (so request_limit doesn't trip on the
     parent's running total) and the parent usage absorbs its cost after."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import FunctionModel
-    from pydantic_ai.usage import RunUsage
-
     big = 'x' * 50_000
     msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
 
@@ -1406,15 +1362,6 @@ def test_trim_dedupes_superseded_reads_and_truncates_large_results():
     the LLM: superseded `Read` returns become a one-line marker, oversized
     returns are head/tail-truncated, and the last KEEP_RECENT messages are
     left untouched."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
     big = 'X' * 20_000
     # Three Read calls for the same file: only the last is current; the first
     # two should be marked superseded.
@@ -1463,15 +1410,6 @@ def test_trim_preserves_distinct_read_slices_of_same_file():
     `Read` of the same file with no slice (or a different slice). The
     dedup key is the full `(file_path, offset, limit)` tuple, so distinct
     slices stay distinct — only an exact-args re-read is superseded."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
     big = 'Y' * 20_000
     msgs: list[ModelMessage] = [
         # Slice 1 of foo.py — distinct content.
@@ -1524,15 +1462,6 @@ def test_trim_preserves_distinct_read_slices_of_same_file():
 
 def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptureFixture):
     """Trim logs once when it substitutes; silent on a no-op pass."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
     tiny_msgs: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(shim.COMPACTION_KEEP_RECENT + 5)
     ]
@@ -1561,17 +1490,6 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
 
 def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.MonkeyPatch):
     """Trim alone is enough — the LLM summariser must not fire."""
-    import asyncio
-
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
     # 13 messages: a couple of huge superseded reads, then KEEP_RECENT trivial
     # tail messages. The dedup pass should crush the size.
     big = 'Y' * 60_000
@@ -1600,11 +1518,6 @@ def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.Mon
 
 
 def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-    from pydantic_ai.models.test import TestModel
-
     # Same size-driven setup as the previous test — 13 big msgs > trigger.
     big = 'x' * 50_000
     msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
@@ -1617,8 +1530,6 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest
             raise RuntimeError('boom')
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
-
-    from pydantic_ai.usage import RunUsage
 
     class _Ctx:
         model = TestModel()
@@ -1633,11 +1544,6 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
     """A second compaction round whose summary fails (or doesn't fit) must
     keep the earlier round's `[compacted history]` block. Dropping it would
     silently forget the entire run's prior work."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-    from pydantic_ai.models.test import TestModel
-
     big = 'x' * 50_000
     prior_synthetic = ModelRequest(parts=[UserPromptPart(content='[compacted history]\nearlier summary')])
     msgs: list[ModelMessage] = [
@@ -1654,8 +1560,6 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
 
-    from pydantic_ai.usage import RunUsage
-
     class _Ctx:
         model = TestModel()
         usage = RunUsage()
@@ -1667,10 +1571,6 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
 
 
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
-
-    from pydantic_ai.models.test import TestModel
-
     class _FailingAgent:
         def __init__(self, *a: object, **k: object) -> None:
             pass
@@ -1679,8 +1579,6 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.Monke
             raise RuntimeError('downstream model exploded')
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
-
-    from pydantic_ai.usage import RunUsage
 
     class _Ctx:
         model = TestModel()
@@ -1693,12 +1591,6 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.Monke
 
 def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Sub-agents start with a fresh AGENTS.md seen-set, not the parent's."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelResponse, TextPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-    from pydantic_ai.usage import RunUsage
-
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'AGENTS.md').write_text('# parent-touched guidance', encoding='utf-8')
     (tmp_path / 'f.txt').write_text('parent file', encoding='utf-8')
@@ -1734,14 +1626,6 @@ def test_stream_events_emits_tool_use_and_tool_result_lines():
     """`_stream_events` is the live emitter that turns pydantic-ai events into
     Claude-shape stream-json on stdout — the surface gh-aw's log parser
     reads. Drive it with synthetic events and assert the wire shape."""
-    import asyncio
-
-    from pydantic_ai.messages import (
-        FunctionToolCallEvent,
-        FunctionToolResultEvent,
-        ToolCallPart,
-        ToolReturnPart,
-    )
 
     async def _events():
         yield FunctionToolCallEvent(
@@ -1777,10 +1661,6 @@ def test_stream_events_truncates_long_tool_results():
     """Result content over `MAX_LIVE_TOOL_RESULT_CHARS` is truncated for the
     stream-json view (the model's view is unaffected — this handler is
     observation-only)."""
-    import asyncio
-
-    from pydantic_ai.messages import FunctionToolResultEvent, ToolReturnPart
-
     huge = 'A' * 5000
 
     async def _events():
@@ -1802,9 +1682,6 @@ def test_stream_events_tags_retry_prompt_as_error():
     """`ToolResultEvent.part` is `ToolReturnPart | RetryPromptPart`. A retry
     means tool-call validation failed — gh-aw must see `is_error=True` so it
     doesn't read it as a successful result."""
-    import asyncio
-
-    from pydantic_ai.messages import FunctionToolResultEvent, RetryPromptPart, ToolReturnPart
 
     async def _events():
         yield FunctionToolResultEvent(
@@ -1949,8 +1826,6 @@ _RATE_LIMITED_RESPONSE = {
 
 def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
     """A real `AsyncAnthropic` whose first `rate_limited_responses` requests get a MiniMax 429."""
-    import httpx2
-    from tenacity import stop_after_attempt, wait_none
 
     def _handle(_request: httpx2.Request) -> httpx2.Response:
         calls.append(1)
@@ -1980,8 +1855,6 @@ def test_rate_limit_retry_transport_rides_out_a_429_burst():
 
 
 def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
-    from anthropic import RateLimitError
-
     calls: list[int] = []
     client = _rate_limited_client(rate_limited_responses=99, calls=calls)
     with pytest.raises(RateLimitError, match='Token Plan rate limit reached'):
@@ -2104,8 +1977,6 @@ def test_mcp_tools_use_claude_code_wire_format(tmp_path: Path):
     gh-aw's `mcp__<server>__<tool>` allow-list entry — the same name Claude
     Code uses on the wire and that Claude was trained to call. With matching
     names the allow-list filter becomes a literal containment check."""
-    from pydantic_ai.toolsets import PrefixedToolset
-
     servers = shim.build_mcp_servers(shim.Args(mcp_config=str(_mcp_cfg(tmp_path))))
     prefixed = [s for s in servers if isinstance(s, PrefixedToolset)]
     assert len(prefixed) == 2
@@ -2132,8 +2003,6 @@ def _mcp_error(message: str) -> McpError:
 
 
 def _error_hook_ctx() -> RunContext[None]:
-    from pydantic_ai.usage import RunUsage
-
     return RunContext(
         deps=None,
         model=cast(_Model[Any], None),
@@ -2152,9 +2021,6 @@ def test_mcp_protocol_error_message_recognizes_only_mcp_errors():
 
 
 def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
-    from pydantic_ai.messages import ToolCallPart
-    from pydantic_ai.tools import ToolDefinition
-
     cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
     call = ToolCallPart(tool_name='mcp__safeoutputs__submit_pull_request_review', args={}, tool_call_id='c1')
     out = asyncio.run(
@@ -2170,9 +2036,6 @@ def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
 
 
 def test_recover_mcp_tool_errors_reraises_non_mcp_errors():
-    from pydantic_ai.messages import ToolCallPart
-    from pydantic_ai.tools import ToolDefinition
-
     cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
     call = ToolCallPart(tool_name='Bash', args={}, tool_call_id='c2')
     with pytest.raises(RuntimeError, match='boom'):
@@ -2184,8 +2047,6 @@ def test_recover_mcp_tool_errors_reraises_non_mcp_errors():
 
 
 def test_mcp_allow_predicate_server_wildcard_vs_specific():
-    from pydantic_ai.tools import ToolDefinition
-
     # The model-visible tool name is Claude Code's wire form
     # `mcp__<server>__<tool>` (see `_apply_claude_mcp_prefix`), identical to
     # gh-aw's allow-list entries — so the predicate is a literal containment
@@ -2244,11 +2105,9 @@ def test_emit_result_reads_usage_attributes():
         cache_write_tokens = 5
         cache_read_tokens = 7
 
-    from pydantic_ai.usage import RunUsage as _RunUsage
-
     buf = io.StringIO()
     with redirect_stdout(buf):
-        shim.emit_result('x', usage=cast(_RunUsage, U()), session_id='s')
+        shim.emit_result('x', usage=cast(RunUsage, U()), session_id='s')
     usage = json.loads(buf.getvalue().strip())['usage']
     assert usage['input_tokens'] == 22
     assert usage['output_tokens'] == 292
