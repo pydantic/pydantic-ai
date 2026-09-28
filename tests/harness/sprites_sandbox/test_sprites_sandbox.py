@@ -69,6 +69,13 @@ class TestSpritesSandbox:
         for value in (repr(capability), str(capability), repr(backend), str(backend)):
             assert secret not in value
 
+    def test_root_package_exports_the_capability_and_backend(self) -> None:
+        import pydantic_ai_harness
+
+        assert pydantic_ai_harness.SpritesSandbox is SpritesSandbox
+        assert pydantic_ai_harness.SpritesSandboxBackend is SpritesSandboxBackend
+        assert {'SpritesSandbox', 'SpritesSandboxBackend'} <= set(pydantic_ai_harness.__all__)
+
     async def test_construction_is_lazy_and_first_use_is_shared(self, transport: SpriteTransport) -> None:
         backend = SpritesSandbox[None]().get_workspace(context(), ref=None)
         assert isinstance(backend, SpritesSandboxBackend)

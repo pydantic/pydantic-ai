@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
     from .spend import SpendLimits
+    from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .stackone import StackOne
     from .step_persistence import StepPersistence
     from .subagents import SubAgent, SubAgents
@@ -114,6 +115,8 @@ __all__ = [
     'Skills',
     'SlidingWindowCompaction',
     'SpendLimits',
+    'SpritesSandbox',
+    'SpritesSandboxBackend',
     'StackOne',
     'StepPersistence',
     'SubAgent',
@@ -167,6 +170,7 @@ _CAPABILITY_EXPORTS = {
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
     'SpendLimits': 'spend',
+    'SpritesSandbox': 'sprites_sandbox',
     'StackOne': 'stackone',
     'StepPersistence': 'step_persistence',
     'SubAgents': 'subagents',
@@ -186,6 +190,7 @@ _CONSTANT_EXPORTS = {
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'SpritesSandboxBackend': 'sprites_sandbox',
     'SubAgent': 'subagents',
 }
 
