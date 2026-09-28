@@ -11,6 +11,7 @@ import posixpath
 import re
 import sqlite3
 import threading
+import uuid
 import warnings
 from collections.abc import Callable, Iterable, Mapping
 from copy import copy
@@ -23,15 +24,19 @@ import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness._workspace import secondary_workspace, workspace_path
+from pydantic_ai_harness._workspace import secondary_workspace, supports_commands, workspace_path
 
 _VALID_SEGMENT_RE = re.compile(r'[A-Za-z0-9_.-]{1,200}')
 _OPERATIONS_NAME = '.memory-operations.json'
 _LEGACY_JOURNAL_NAME = '.memory-store.sqlite3'
 """The SQLite journal earlier `FileStore` releases kept beside the files; hidden from listings."""
-_HIDDEN_PREFIXES = (_OPERATIONS_NAME, _LEGACY_JOURNAL_NAME)
+_TEMP_PREFIX = '.memory-tmp-'
+"""Names the file a write is staged in before it replaces its target; hidden from listings."""
+_HIDDEN_PREFIXES = (_OPERATIONS_NAME, _LEGACY_JOURNAL_NAME, _TEMP_PREFIX)
+_RENAME_TIMEOUT = 30.0
+"""Deadline in seconds for the `mv` that replaces a file, and for removing a staged file after a failure."""
 _MAX_RECEIPTS = 1024
 _SQLITE_SETUP_LOCK = threading.RLock()
 _T = TypeVar('_T')
@@ -436,6 +441,39 @@ def content_version(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+async def _replace_text(workspace: Workspace, target: str, content: str) -> None:
+    """Replace the file at `target` with `content`, so a failed write leaves the old content whole.
+
+    The content is staged beside the target and moved over it with `mv`, a rename within one
+    filesystem. On failure the staged file is removed, best effort.
+    """
+    if not supports_commands(workspace):
+        # A filesystem-only workspace offers no rename, so there the write is in place, not atomic.
+        await workspace.write_text(target, content)
+        return
+    directory, name = posixpath.split(target)
+    # The target's name at the end keeps the staged file recognisable in the directory.
+    staged = posixpath.join(directory, f'{_TEMP_PREFIX}{uuid.uuid4().hex}-{name}')
+    try:
+        await workspace.write_text(staged, content)
+        try:
+            result = await workspace.run(['mv', '-f', staged, target], timeout=_RENAME_TIMEOUT)
+        except WorkspaceUnavailableError:
+            raise
+        except Exception as error:
+            raise WorkspaceError(f'Could not replace memory file {target!r}: {error}') from error
+        if result.exit_code != 0:
+            detail = result.stderr.strip() or f'`mv` exited with {result.exit_code}'
+            raise WorkspaceError(f'Could not replace memory file {target!r}: {detail}')
+    except BaseException:
+        with anyio.move_on_after(_RENAME_TIMEOUT, shield=True):
+            try:
+                await workspace.remove(staged)
+            except Exception:
+                pass  # Best effort: the staged file may not exist, and the original error matters more.
+        raise
+
+
 class FileStore:
     """Plain-Markdown memory files in a workspace directory.
 
@@ -548,7 +586,7 @@ class FileStore:
     @staticmethod
     async def _save(workspace: Workspace, operations: str, receipts: list[_Receipt]) -> None:
         kept = [asdict(receipt) for receipt in receipts[-_MAX_RECEIPTS:]]
-        await workspace.write_text(operations, json.dumps(kept))
+        await _replace_text(workspace, operations, json.dumps(kept))
 
     async def _settle(self, workspace: Workspace, root: str, receipts: list[_Receipt], path: str) -> bool:
         """Finish or drop receipts for `path` left pending by an interrupted mutation; return whether any changed.
@@ -628,7 +666,7 @@ class FileStore:
         async with self._lock:
             root = await self._root(workspace)
             target = self._target(root, path)
-            await self._confine(workspace, root, target, path)
+            real_target = await self._confine(workspace, root, target, path)
             operations = await self._operations(workspace, root)
             receipts = await self._receipts(workspace, operations)
             settled = await self._settle(workspace, root, receipts, path)
@@ -661,7 +699,8 @@ class FileStore:
             elif settled:
                 await self._save(workspace, operations, receipts)
             if content is not None:
-                await workspace.write_text(target, content)
+                # The real path: `mv` onto a symlink would replace the link rather than write through it.
+                await _replace_text(workspace, real_target, content)
             elif current is not None:
                 await workspace.remove(target)
             if receipt is not None:
