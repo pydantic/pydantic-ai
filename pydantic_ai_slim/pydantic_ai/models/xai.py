@@ -87,18 +87,6 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-@contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
-    try:
-        yield
-    except grpc.RpcError as e:
-        status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
-        details = e.details() or str(e)
-        if status_code is not None:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
-        raise ModelAPIError(model_name=model_name, message=details) from e
-
-
 _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.UNAUTHENTICATED: 401,
     grpc.StatusCode.PERMISSION_DENIED: 403,
@@ -108,6 +96,26 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.UNAVAILABLE: 503,
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
+
+
+@contextmanager
+def _map_api_errors(
+    model_name: str, *, status_map: dict[grpc.StatusCode, int] = _GRPC_STATUS_TO_HTTP
+) -> Generator[None]:
+    """Turn a gRPC error into the framework's HTTP-shaped errors.
+
+    `status_map` is a parameter because the image RPC maps one more status than chat does; it defaults
+    to the chat table so the chat call sites read unchanged.
+    """
+    try:
+        yield
+    except grpc.RpcError as e:
+        status_code = status_map.get(e.code())
+        details = e.details() or str(e)
+        if status_code is not None:
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
+        raise ModelAPIError(model_name=model_name, message=details) from e
+
 
 XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']
 """Possible xAI model names.

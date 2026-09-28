@@ -29,7 +29,7 @@ from vcr.record_mode import RecordMode
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -66,6 +66,14 @@ with suppress(ImportError):
 
 T = TypeVar('T')
 
+# Like `try_import` for a whole directory: these suites need their workspace member installed, which
+# the `--package` matrix cells for other members do not do.
+collect_ignore = [
+    directory
+    for directory, package in (('harness', 'pydantic_ai_harness'), ('clai2', 'pydantic_clai2'))
+    if importlib.util.find_spec(package) is None
+]
+
 __all__ = (
     'IsDatetime',
     'IsDecimal',
@@ -100,6 +108,10 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
+    )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
 
 
@@ -355,8 +367,10 @@ def env() -> Iterator[TestEnv]:
 
 
 @pytest.fixture(scope='session')
-def anyio_backend():
-    return 'asyncio'
+def anyio_backend(pytestconfig: pytest.Config) -> str:
+    backend = pytestconfig.getoption('--anyio-backend')
+    assert isinstance(backend, str)
+    return backend
 
 
 # Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
@@ -372,6 +386,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
     # code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    # The first-run banner asks whether the harness is installed and what version it is, to name it
+    # in the banner. That happens once per process, before the first request.
+    ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
+    ('os.listdir', 'pydantic_ai/_display.py', '_version_line'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_display.py', '_version_line'),
+    ('io.BufferedReader.read', 'pydantic_ai/_display.py', '_version_line'),
     # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
     ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
     ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
@@ -399,6 +419,14 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
     ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    # Enum member docstrings are read from source the same way, once per enum, when a schema is built.
+    ('os.stat', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('os.getcwd', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    # A local workspace built with a relative `working_dir` resolves it against the current directory
+    # once, at construction, which may happen in async code.
+    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
     # logfire resolves the current working directory while classifying user stack frames.
     ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
     # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
@@ -472,6 +500,33 @@ def blockbuster(
     bb = _configured_blockbuster(blockbuster_excluded_modules)
     with _activated_blockbuster(bb):
         yield bb
+
+
+def detach_dbos_logging() -> None:
+    """Detach the OTel `LoggingHandler` and `DBOSLogTransformer` filter `DBOS.destroy()` leaves behind.
+
+    DBOS attaches them to the root logger and every registered logger (the filter always, the handler
+    with `enable_otlp=True`) and does not detach them on destroy. Their emit path imports
+    `dbos._context`, which imports `http.server`: fatal inside the Temporal workflow sandbox when a
+    later test in the same process runs a Temporal workflow.
+    TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
+    https://github.com/dbos-inc/dbos-transact-py/issues/871
+    """
+    from dbos import _logger as dbos_logger_module
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    handler_types: tuple[type[logging.Handler], ...] = (LoggingHandler,)
+    # DBOS 2.31+ builds this one instead of the deprecated SDK handler.
+    with suppress(ImportError):
+        from opentelemetry.instrumentation.logging.handler import LoggingHandler as InstrumentationLoggingHandler
+
+        handler_types += (InstrumentationLoggingHandler,)
+
+    for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
+        for handler in [h for h in logger.handlers if isinstance(h, handler_types)]:
+            logger.removeHandler(handler)
+        for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
+            logger.removeFilter(log_filter)
 
 
 @pytest.fixture
@@ -600,6 +655,7 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
     Embedder.instrument_all(False)
+    ImageGenerator.instrument_all(False)
 
 
 try:
@@ -672,7 +728,10 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     vcr.register_matcher('path', path_matcher)
 
     def scrub_request(request: vcr_request.Request) -> vcr_request.Request | None:
-        if request.host == 'oauth2.googleapis.com' and request.path == '/token':
+        if (request.host, request.path) in {
+            ('oauth2.googleapis.com', '/token'),
+            ('auth.openai.com', '/oauth/token'),
+        }:
             return None
         request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
         return request
@@ -700,6 +759,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
 
 def pytest_addoption(parser: Any) -> None:
+    parser.addoption(
+        '--anyio-backend',
+        choices=('asyncio', 'trio'),
+        default='asyncio',
+        help='Select the async test backend without duplicating the suite (default: asyncio).',
+    )
     parser.addoption(
         '--xai-proto-include-json',
         action='store_true',
@@ -806,6 +871,9 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
+# What `httpx2.AsyncClient()` uses when no timeout is passed.
+_HTTPX_DEFAULT_TIMEOUT = 5.0
+
 
 @dataclass
 class RequestCapture:
@@ -816,6 +884,7 @@ class RequestCapture:
     hooks run inside `AsyncClient.send`, above the transport VCR patches, so they fire on replay too
     and see what is actually going out. Pass `capture.client` as a provider's `http_client` and
     snapshot a projection of `capture.body(...)` to pin the fields a test's claim rests on.
+    A provider that needs a longer deadline than httpx's default takes `capture.http_client(...)`.
     """
 
     paths: list[str] = field(default_factory=list[str])
@@ -825,6 +894,18 @@ class RequestCapture:
 
     def __post_init__(self) -> None:
         self.client = httpx2.AsyncClient(event_hooks={'request': [self._record]})
+
+    def http_client(self, *, timeout: float = _HTTPX_DEFAULT_TIMEOUT) -> httpx2.AsyncClient:
+        """`client`, with `timeout` as the read timeout, for a provider that reads it back out.
+
+        `GoogleProvider` reads the injected client's read timeout into google-genai's
+        `HttpOptions.timeout`, which becomes both the per-request httpx timeout and the
+        `X-Server-Timeout` deadline the API enforces. Gemini rejects a deadline under 10 seconds, and
+        httpx defaults to 5. The default here is httpx's own, so it leaves the client as `client` has
+        it; only a caller that needs a longer deadline passes a `timeout`.
+        """
+        self.client.timeout = timeout
+        return self.client
 
     async def _record(self, request: httpx2.Request) -> None:
         # Only the raw bytes are kept here: the hook runs on every request of every test that asks
@@ -1065,6 +1146,11 @@ def groq_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def typesafe_api_key() -> str:
+    return os.getenv('TYPESAFE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def anthropic_api_key() -> str:
     return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
 
@@ -1162,6 +1248,11 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def github_copilot_api_key() -> str:
+    return os.getenv('GITHUB_COPILOT_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')

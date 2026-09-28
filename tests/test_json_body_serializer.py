@@ -53,6 +53,75 @@ def test_filtered_headers_removed(cassette_dict_base: dict[str, Any]):
     assert 'x-test:' not in output, "Expected 'X-Test' to be filtered out."
 
 
+def test_oauth_credentials_are_scrubbed():
+    cassette: dict[str, object] = {
+        'interactions': [
+            {
+                'request': {
+                    'headers': {
+                        'Content-Type': ['application/x-www-form-urlencoded'],
+                        'Authorization': ['Bearer oauth-access'],
+                        'ChatGPT-Account-ID': ['oauth-account'],
+                    },
+                    'body': 'code=oauth-code&code_verifier=oauth-verifier&refresh_token=oauth-refresh',
+                },
+                'response': {
+                    'headers': {'Content-Type': ['application/json']},
+                    'body': {
+                        'string': '{"access_token":"oauth-access","refresh_token":"oauth-refresh","id_token":"oauth-id"}'
+                    },
+                },
+            }
+        ]
+    }
+    serialized = serialize(cassette)
+    assert 'oauth-' not in serialized
+    assert deserialize(serialized) == snapshot(
+        {
+            'interactions': [
+                {
+                    'request': {
+                        'headers': {'content-type': ['application/x-www-form-urlencoded']},
+                        'body': 'code=scrubbed&code_verifier=scrubbed&refresh_token=scrubbed',
+                    },
+                    'response': {
+                        'headers': {'content-type': ['application/json']},
+                        'body': {
+                            'string': '{"access_token": "scrubbed", "id_token": "scrubbed", "refresh_token": "scrubbed"}'
+                        },
+                    },
+                }
+            ]
+        }
+    )
+
+
+@pytest.mark.parametrize('content_type', ['application/json', 'text/event-stream', None])
+@pytest.mark.parametrize('as_bytes', [False, True])
+def test_safety_identifier_is_scrubbed(content_type: str | None, as_bytes: bool):
+    body = '{"safety_identifier":"synthetic-user-id","output":[]}'
+    if content_type != 'application/json':
+        body = f'data: {{"response":{body}}}\n\ndata: [DONE]\n\n'
+    headers: dict[str, list[str]] = {'content-length': [str(len(body))]}
+    if content_type is not None:
+        headers['content-type'] = [content_type]
+    cassette: dict[str, object] = {
+        'interactions': [
+            {
+                'response': {
+                    'headers': headers,
+                    'body': {'string': body.encode() if as_bytes else body},
+                }
+            }
+        ]
+    }
+    serialized = serialize(cassette)
+    assert 'synthetic-user-id' not in serialized
+    response = deserialize(serialized)['interactions'][0]['response']
+    assert 'scrubbed' in response['body']['string']
+    assert response['headers']['content-length'] == [str(len(response['body']['string'].encode()))]
+
+
 def test_headers_are_lowercased(cassette_dict_base: dict[str, Any]):
     """
     Ensure that the remaining headers are written in all-lowercase form.

@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with DBOS, checkpointing model requests and MCP calls to Postgres or SQLite so a workflow resumes from its last completed step."
+---
+
 # Durable Execution with DBOS
 
 [DBOS](https://www.dbos.dev/) is a lightweight [durable execution](https://docs.dbos.dev/architecture) library natively integrated with Pydantic AI.
@@ -155,7 +159,16 @@ Each [`MCPToolset`][pydantic_ai.mcp.MCPToolset] must have a unique [`id`][pydant
 MCP tools perform I/O and always run in their DBOS step. Setting a tool's `metadata={'dbos': False}`
 is rejected instead of running the MCP call inline in workflow code.
 
-[`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]s, including those contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], are wrapped too and require a stable `id`. Tool discovery, argument validation, and calls run as `{name}__dynamic_toolset__{id}.get_tools`, `{name}__dynamic_toolset__{id}.validate_args`, and `{name}__dynamic_toolset__{id}.call_tool` steps. A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in the `validate_args` step, which re-resolves the toolset like `call_tool`; a tool without one schedules no validation step. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. The dynamic toolset is resolved and entered independently inside each step, so its I/O — including MCP communication — is checkpointed. For a `DynamicCapability`, DBOS reuses the capability resolved for the run inside those steps. The capability factory itself runs in workflow code and re-runs when a workflow recovers, so like all workflow code it must be deterministic given the run's `deps`: construct the toolset in the factory and leave its I/O to the steps.
+An MCP server is connected once per workflow rather than once per step: the first step that needs it
+connects it — inside a step, so DBOS retries a failed connection like any other step failure — and the
+workflow holds the session until the run ends. Tool discovery still runs its `get_tools` step, and
+whether it runs is decided by the run's own recorded history rather than by what a warm process
+happens to hold, so the step sequence stays the same on recovery; the server's own
+[`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] then answers those steps from the session the
+run is already holding, without another round trip. Concurrent runs in one process share a server's session, as they do outside a
+workflow, and it is closed once the last of them ends.
+
+[`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]s, including those contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], are wrapped too and require a stable `id`. Tool discovery, argument validation, and calls run as `{name}__dynamic_toolset__{id}.get_tools`, `{name}__dynamic_toolset__{id}.validate_args`, and `{name}__dynamic_toolset__{id}.call_tool` steps. A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in the `validate_args` step, which re-resolves the toolset like `call_tool`; a tool without one schedules no validation step. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. All of the dynamic toolset's I/O — including MCP communication — happens inside those steps, so it is checkpointed. When the factory is built with `per_run_step=False`, the run resolves the toolset once and each step reuses it, entering it the first time a step needs it and leaving it entered for the rest of the run. Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is entered — so connecting happens inside a step, where it is retried like any other step failure. The factory itself runs in workflow code and re-runs whenever that replays, so like the capability factory below it must be deterministic given the run's `deps`: build the toolset in the factory and leave its I/O to the steps. This is the lifecycle a non-durable run gives the toolset, so a toolset's own caching — such as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] on an `MCPToolset` the factory returns — works as it does outside a workflow, instead of being discarded between steps. A `per_run_step=True` factory is re-resolved inside each step, as it asks to be. For a `DynamicCapability`, DBOS reuses the capability resolved for the run inside those steps. The capability factory itself runs in workflow code and re-runs when a workflow recovers, so like all workflow code it must be deterministic given the run's `deps`: construct the toolset in the factory and leave its I/O to the steps.
 
 A toolset contributed by a [capability](../capabilities/overview.md) — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or a locally-running [`MCP`][pydantic_ai.capabilities.MCP] server — derives its `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. An `MCP` resolves its `id` in precedence order: an explicit `id=`, then a `native=MCPServerTool(...)` id, then a slug derived from the server URL's host and path. A bare non-URL local client (e.g. `MCP(local=Path(...))`) with none of these stays id-less and must be given an explicit `id` to be used here.
 
@@ -171,6 +184,17 @@ All other agents and toolsets are supported.
 
 By default, DBOS checkpoints workflow inputs/outputs and step outputs into a database using [`pickle`](https://docs.python.org/3/library/pickle.html). But you can optionally supply a [custom serializer](https://docs.dbos.dev/python/reference/contexts#custom-serialization) through DBOS configuration. This means you need to make sure the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] / [`Agent.run_sync()`][pydantic_ai.agent.Agent.run_sync], and tool outputs can be serialized.
 You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQL and SQLite support up to 1 GB per field, but large objects may impact performance.
+
+### Workspaces
+
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies).
+
+DBOS stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
+Keep secrets in the workspace capability's `env=` instead of passing them to workspace calls;
+calls from function tools run in the workflow too, so their arguments are stored as well. Protect stored history with an appropriate payload codec.
+
+Adding a workspace to an agent changes its workflows' steps, so let in-flight workflows finish or
+deploy the change as a new application version; DBOS can't recover a workflow started before it.
 
 ### Model Selection at Runtime
 
@@ -214,6 +238,7 @@ Under DBOS, tools are executed in parallel by default to minimize latency. To gu
 It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
 
 If you prefer strict ordering, you can configure the agent to run tools sequentially by setting `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability].
+A run with a [workspace](../workspace.md) always runs its tool calls sequentially.
 
 ### Toolsets at Runtime
 

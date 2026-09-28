@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
+    LocalWorkspace,
     NativeTool,
     PrefixTools,
     RaiseContentFilterError,
@@ -44,13 +45,16 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    BinaryImage,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
@@ -69,13 +73,14 @@ from .capability_models import (
     noop_greet as _noop_greet,
     registered_capability_context as _registered_capability_context,
 )
-from .conftest import iter_message_parts, remove_schema_descriptions
+from .conftest import IsStr, iter_message_parts, remove_schema_descriptions, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 
 def test_capability_top_level_export() -> None:
@@ -90,6 +95,7 @@ def test_capability_types() -> None:
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'Instrumentation': Instrumentation,
+            'LocalWorkspace': LocalWorkspace,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
@@ -105,10 +111,34 @@ def test_capability_types() -> None:
 
 def test_instrumentation_default_settings() -> None:
     """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
-    from pydantic_ai.models.instrumented import InstrumentationSettings
-
     instr = Instrumentation()
     assert isinstance(instr.settings, InstrumentationSettings)
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_removes_binary_content_from_nested_lists(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    def image_list() -> list[BinaryImage]:
+        return [BinaryImage(data=b'secret', media_type='image/png')]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='image_list', args={})])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        tools=[image_list],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+    )
+    await agent.run('Generate images')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(span for span in spans if span['name'] == 'execute_tool image_list')
+    assert tool_span['attributes']['gen_ai.tool.call.result'] == snapshot(
+        [{'media_type': 'image/png', 'vendor_metadata': None, 'kind': 'binary', 'identifier': IsStr()}]
+    )
 
 
 def test_instrumentation_spec_covers_every_serializable_setting() -> None:
@@ -172,7 +202,7 @@ def test_agent_from_spec_basic():
 def test_agent_from_spec_no_capabilities():
     """Test Agent.from_spec with no capabilities."""
     agent = Agent.from_spec({'model': 'test'})
-    assert agent.model is not None
+    assert isinstance(agent.model, TestModel)
 
 
 def test_agent_from_spec_image_generation():
@@ -185,6 +215,107 @@ def test_agent_from_spec_image_generation():
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     cap = next(c for c in children if isinstance(c, ImageGeneration))
     assert cap.local is False
+
+
+def test_agent_from_spec_deprecated_fallback_model_key():
+    """A spec written against the old key keeps loading, and warns at the loading line.
+
+    The deprecated name stays in `ImageGeneration.__init__` and `XSearch.__init__` for exactly
+    this: the published schema forbids extra keys, so removing it would fail such a spec outright
+    rather than deprecate it. `from_spec` reaches the capability through several pydantic-ai
+    frames, so the notice has to be attributed past them to be filterable by the user's module.
+    """
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+    ) as record:
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [
+                    {'ImageGeneration': {'fallback_model': 'openai-responses:gpt-5.4'}},
+                    {'XSearch': {'fallback_model': 'xai:grok-4.3'}},
+                ],
+            }
+        )
+    assert [warning.filename for warning in record] == [__file__, __file__]
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    image_gen = next(c for c in children if isinstance(c, ImageGeneration))
+    x_search = next(c for c in children if isinstance(c, XSearch))
+    assert image_gen.fallback_subagent_model == 'openai-responses:gpt-5.4'
+    assert x_search.fallback_subagent_model == 'xai:grok-4.3'
+
+
+def test_agent_from_spec_fallback_subagent_model_key():
+    """The current key configures the same subagent from a spec."""
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'ImageGeneration': {'fallback_subagent_model': 'openai-responses:gpt-5.4'}},
+                {'XSearch': {'fallback_subagent_model': 'xai:grok-4.3'}},
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    image_gen = next(c for c in children if isinstance(c, ImageGeneration))
+    x_search = next(c for c in children if isinstance(c, XSearch))
+    assert image_gen.fallback_subagent_model == 'openai-responses:gpt-5.4'
+    assert x_search.fallback_subagent_model == 'xai:grok-4.3'
+    assert image_gen.get_toolset() is not None
+    assert x_search.get_toolset() is not None
+
+
+@pytest.mark.parametrize('name, model', [('ImageGeneration', 'openai-responses:gpt-5.4'), ('XSearch', 'xai:grok-4.3')])
+def test_agent_from_spec_rejects_both_fallback_model_keys(name: str, model: str):
+    """A spec carrying both spellings is refused rather than silently picking one.
+
+    `_spec.load_from_registry` wraps every capability-constructor error, so the refusal the
+    constructor raises as a `UserError` reaches the caller as a `ValueError` naming the capability,
+    with the `UserError` as its cause. Direct construction raises the `UserError` itself, which
+    `tests/test_capability_image_generation.py` and `tests/test_capability_native_or_local.py` pin.
+    """
+    with pytest.raises(ValueError, match=f'Failed to instantiate capability {name!r}') as exc_info:
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{name: {'fallback_model': model, 'fallback_subagent_model': model}}],
+            }
+        )
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, UserError)
+    assert str(cause).startswith(f'{name}: cannot specify both `fallback_model` and `fallback_subagent_model`')
+
+
+def test_agent_from_spec_direct_image_generation():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'ImageGeneration': {
+                        'native': False,
+                        'fallback_image_model': 'openai:gpt-image-1.5',
+                        'dimensions': [1280, 720],
+                    }
+                }
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.dimensions == (1280, 720)
+    assert isinstance(cap.dimensions, tuple)
+    assert cap.get_toolset() is not None
+
+
+def test_agent_from_spec_rejects_invalid_image_dimensions_length():
+    with pytest.raises(ValueError, match='`dimensions` must contain exactly two integers'):
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{'ImageGeneration': {'local': False, 'dimensions': [1280]}}],
+            }
+        )
 
 
 def test_agent_from_spec_web_fetch():
@@ -489,8 +620,9 @@ def test_agent_from_spec_metadata_override():
 
 
 def test_agent_from_spec_model_override():
-    agent = Agent.from_spec({'model': 'test'}, model='test')
-    assert agent.model is not None
+    model = TestModel(model_name='override')
+    agent = Agent.from_spec({'model': 'test'}, model=model)
+    assert agent.model is model
 
 
 def test_agent_from_spec_capabilities_merged():
@@ -531,6 +663,7 @@ def test_model_json_schema_with_capabilities():
                                         'claude-fable-5',
                                         'claude-mythos-5-1',
                                         'claude-mythos-5',
+                                        'claude-opus-5-5',
                                         'claude-opus-5',
                                         'claude-opus-4-8',
                                         'claude-opus-4-7',
@@ -707,6 +840,7 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-opus-4-7',
                         'anthropic:claude-opus-4-8',
                         'anthropic:claude-opus-5',
+                        'anthropic:claude-opus-5-5',
                         'anthropic:claude-sonnet-4-5',
                         'anthropic:claude-sonnet-4-5-20250929',
                         'anthropic:claude-sonnet-4-6',
@@ -758,10 +892,16 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.anthropic.claude-opus-4-7',
                         'bedrock:global.anthropic.claude-opus-4-8',
                         'bedrock:global.anthropic.claude-opus-5',
+                        'bedrock:global.anthropic.claude-opus-5-5',
                         'bedrock:global.anthropic.claude-sonnet-5',
+                        'bedrock:global.openai.gpt-5.6-luna',
+                        'bedrock:global.openai.gpt-5.6-sol',
+                        'bedrock:global.openai.gpt-5.6-terra',
                         'bedrock:google.gemma-3-12b-it',
                         'bedrock:google.gemma-3-27b-it',
                         'bedrock:google.gemma-3-4b-it',
+                        'bedrock:in.openai.gpt-5.6-luna',
+                        'bedrock:in.openai.gpt-5.6-terra',
                         'bedrock:meta.llama3-1-405b-instruct-v1:0',
                         'bedrock:meta.llama3-1-70b-instruct-v1:0',
                         'bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -815,6 +955,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-opus-4-7',
                         'bedrock:us.anthropic.claude-opus-4-8',
                         'bedrock:us.anthropic.claude-opus-5',
+                        'bedrock:us.anthropic.claude-opus-5-5',
                         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-6',
@@ -829,6 +970,9 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
                         'bedrock:us.mistral.pixtral-large-2502-v1:0',
+                        'bedrock:us.openai.gpt-5.6-luna',
+                        'bedrock:us.openai.gpt-5.6-sol',
+                        'bedrock:us.openai.gpt-5.6-terra',
                         'bedrock:us.writer.palmyra-x4-v1:0',
                         'bedrock:us.writer.palmyra-x5-v1:0',
                         'bedrock:zai.glm-4.7',
@@ -872,6 +1016,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-opus-4-7',
                         'gateway/anthropic:claude-opus-4-8',
                         'gateway/anthropic:claude-opus-5',
+                        'gateway/anthropic:claude-opus-5-5',
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
@@ -891,7 +1036,11 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.anthropic.claude-opus-4-7',
                         'gateway/bedrock:global.anthropic.claude-opus-4-8',
                         'gateway/bedrock:global.anthropic.claude-opus-5',
+                        'gateway/bedrock:global.anthropic.claude-opus-5-5',
                         'gateway/bedrock:global.anthropic.claude-sonnet-5',
+                        'gateway/bedrock:global.openai.gpt-5.6-luna',
+                        'gateway/bedrock:global.openai.gpt-5.6-sol',
+                        'gateway/bedrock:global.openai.gpt-5.6-terra',
                         'gateway/bedrock:google.gemma-3-12b-it',
                         'gateway/bedrock:google.gemma-3-27b-it',
                         'gateway/bedrock:google.gemma-3-4b-it',
@@ -926,6 +1075,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:us.anthropic.claude-opus-4-7',
                         'gateway/bedrock:us.anthropic.claude-opus-4-8',
                         'gateway/bedrock:us.anthropic.claude-opus-5',
+                        'gateway/bedrock:us.anthropic.claude-opus-5-5',
                         'gateway/bedrock:us.anthropic.claude-sonnet-5',
                         'gateway/bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'gateway/bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
@@ -971,6 +1121,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-3.5-turbo',
                         'gateway/openai:gpt-3.5-turbo-0125',
                         'gateway/openai:gpt-3.5-turbo-1106',
+                        'gateway/openai:gpt-audio-mini',
+                        'gateway/openai:gpt-audio-mini-2025-12-15',
                         'gateway/openai:gpt-4',
                         'gateway/openai:gpt-4-0613',
                         'gateway/openai:gpt-4-turbo',
@@ -1017,8 +1169,11 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.6-sol',
                         'gateway/openai:gpt-5.6-terra',
                         'gateway/openai:gpt-6-astra',
+                        'gateway/openai:gpt-6-luna',
+                        'gateway/openai:gpt-6-sol',
                         'gateway/openai:gpt-daybreak-blue-latest',
                         'gateway/openai:gpt-daybreak-red-latest',
+                        'gateway/openai:gpt-rosalind-research',
                         'gateway/openai:o1',
                         'gateway/openai:o1-2024-12-17',
                         'gateway/openai:o1-pro',
@@ -1145,6 +1300,8 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-3.5-turbo-0301',
                         'openai-chat:gpt-3.5-turbo-1106',
                         'openai-chat:gpt-3.5-turbo-16k',
+                        'openai-chat:gpt-audio-mini',
+                        'openai-chat:gpt-audio-mini-2025-12-15',
                         'openai-chat:gpt-4',
                         'openai-chat:gpt-4-0314',
                         'openai-chat:gpt-4-0613',
@@ -1206,8 +1363,11 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5.6-sol',
                         'openai-chat:gpt-5.6-terra',
                         'openai-chat:gpt-6-astra',
+                        'openai-chat:gpt-6-luna',
+                        'openai-chat:gpt-6-sol',
                         'openai-chat:gpt-daybreak-blue-latest',
                         'openai-chat:gpt-daybreak-red-latest',
+                        'openai-chat:gpt-rosalind-research',
                         'openai-chat:o1',
                         'openai-chat:o1-2024-12-17',
                         'openai-chat:o1-pro',
@@ -1230,6 +1390,8 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-3.5-turbo-0125',
                         'openai:gpt-3.5-turbo-0301',
                         'openai:gpt-3.5-turbo-1106',
+                        'openai:gpt-audio-mini',
+                        'openai:gpt-audio-mini-2025-12-15',
                         'openai:gpt-4',
                         'openai:gpt-4-0314',
                         'openai:gpt-4-0613',
@@ -1287,8 +1449,11 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5.6-sol',
                         'openai:gpt-5.6-terra',
                         'openai:gpt-6-astra',
+                        'openai:gpt-6-luna',
+                        'openai:gpt-6-sol',
                         'openai:gpt-daybreak-blue-latest',
                         'openai:gpt-daybreak-red-latest',
+                        'openai:gpt-rosalind-research',
                         'openai:o1',
                         'openai:o1-2024-12-17',
                         'openai:o1-pro',
@@ -1338,6 +1503,8 @@ def test_model_json_schema_with_capabilities():
                         'snowflake:openai-gpt-5.4',
                         'snowflake:openai-gpt-5.5',
                         'snowflake:snowflake-llama-3.3-70b',
+                        'typesafe:jev-latest',
+                        'typesafe:jev-preview',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',
@@ -1672,6 +1839,18 @@ def test_model_json_schema_with_capabilities():
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
+                'short_spec_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'LocalWorkspace': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Localworkspace',
+                        }
+                    },
+                    'required': ['LocalWorkspace'],
+                    'title': 'short_spec_LocalWorkspace',
+                    'type': 'object',
+                },
                 'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1742,6 +1921,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'Instrumentation': {'$ref': '#/$defs/spec_params_Instrumentation'}},
                     'required': ['Instrumentation'],
                     'title': 'spec_Instrumentation',
+                    'type': 'object',
+                },
+                'spec_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {'LocalWorkspace': {'$ref': '#/$defs/spec_params_LocalWorkspace'}},
+                    'required': ['LocalWorkspace'],
+                    'title': 'spec_LocalWorkspace',
                     'type': 'object',
                 },
                 'spec_Thinking': {
@@ -1854,6 +2040,26 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_Instrumentation',
                     'type': 'object',
                 },
+                'spec_params_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'working_dir': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Working Dir',
+                        },
+                        'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                        'env': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Env',
+                        },
+                    },
+                    'required': ['working_dir'],
+                    'title': 'spec_params_LocalWorkspace',
+                    'type': 'object',
+                },
                 'spec_params_Thinking': {
                     'additionalProperties': False,
                     'properties': {
@@ -1878,10 +2084,21 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'$ref': '#/$defs/ImageGenerationTool'}, {'type': 'boolean'}],
                             'title': 'Native',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Subagent Model',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
+                        },
+                        'fallback_image_model': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Image Model',
                         },
                         'action': {
                             'anyOf': [{'enum': ['generate', 'edit', 'auto'], 'type': 'string'}, {'type': 'null'}],
@@ -1932,10 +2149,43 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Size',
                         },
+                        'dimensions': {
+                            'anyOf': [
+                                {
+                                    'maxItems': 2,
+                                    'minItems': 2,
+                                    'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Dimensions',
+                        },
                         'aspect_ratio': {
                             'anyOf': [
                                 {
-                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'enum': [
+                                        '1:1',
+                                        '1:2',
+                                        '1:4',
+                                        '1:8',
+                                        '2:1',
+                                        '2:3',
+                                        '3:2',
+                                        '3:4',
+                                        '4:1',
+                                        '4:3',
+                                        '4:5',
+                                        '5:4',
+                                        '8:1',
+                                        '9:16',
+                                        '9:19.5',
+                                        '9:20',
+                                        '16:9',
+                                        '19.5:9',
+                                        '20:9',
+                                        '21:9',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'null'},
@@ -2007,6 +2257,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'const': 'Instrumentation', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Instrumentation'},
+                                {'$ref': '#/$defs/short_spec_LocalWorkspace'},
+                                {'$ref': '#/$defs/spec_LocalWorkspace'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
@@ -2131,6 +2383,10 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'native': {'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}], 'title': 'Native'},
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Subagent Model',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
@@ -2228,6 +2484,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'const': 'Instrumentation', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Instrumentation'},
+                            {'$ref': '#/$defs/short_spec_LocalWorkspace'},
+                            {'$ref': '#/$defs/spec_LocalWorkspace'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
@@ -2644,10 +2902,32 @@ def test_to_file_with_path_schema_path(tmp_path: str):
 # --- from_spec error cases ---
 
 
-def test_from_spec_no_model_raises():
-    """from_spec() without model raises UserError."""
-    with pytest.raises(UserError, match='`model` must be provided'):
-        Agent.from_spec({'instructions': 'hello'})
+def test_from_spec_without_model_defers_error_until_run():
+    """from_spec() without a model defers the UserError until run time."""
+    agent = Agent.from_spec({'instructions': 'hello'})
+    assert agent.model is None
+
+    with pytest.raises(UserError, match='`model` must either be set on the agent or included when calling it'):
+        agent.run_sync('hello')
+
+
+def test_from_spec_without_model_runs_with_model_argument():
+    """A model omitted from the spec can be supplied when running the agent."""
+    agent = Agent.from_spec({'instructions': 'hello'})
+
+    result = agent.run_sync('hello', model=TestModel(custom_output_text='runtime model'))
+
+    assert result.output == 'runtime model'
+
+
+def test_from_file_without_model(tmp_path: Path):
+    """from_file() constructs an agent from a spec that names no model."""
+    spec_path = tmp_path / 'agent.yaml'
+    spec_path.write_text('instructions: hello\n', encoding='utf-8')
+
+    agent = Agent.from_file(spec_path)
+
+    assert agent.model is None
 
 
 # --- run() with spec: additional merge scenarios ---
@@ -3371,8 +3651,8 @@ async def test_one_off_capabilities_carry_a_stable_default_id() -> None:
     them without the user naming something they never constructed."""
     assert WebSearch(local=_bare_local).id == 'web_search'
     assert WebFetch(local=_bare_local).id == 'web_fetch'
-    assert ImageGeneration(fallback_model='openai-responses:gpt-5.4').id == 'image_generation'
-    assert XSearch(fallback_model='xai:grok-4.3').id == 'x_search'
+    assert ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4').id == 'image_generation'
+    assert XSearch(fallback_subagent_model='xai:grok-4.3').id == 'x_search'
     assert Thinking().id == 'thinking'
     assert Instrumentation().id == 'instrumentation'
     assert ReinjectSystemPrompt().id == 'reinject_system_prompt'

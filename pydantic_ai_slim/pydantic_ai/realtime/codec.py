@@ -69,6 +69,13 @@ class ToolResult:
 
 
 @dataclass
+class TextContext:
+    """A text item added to the conversation as context, without asking the model to respond (like an image)."""
+
+    text: str
+
+
+@dataclass
 class CommitAudio:
     """Commit the buffered input audio as a user turn (manual turn-taking / push-to-talk).
 
@@ -123,12 +130,13 @@ completes — neither is accepted by `send()`.
 
 RealtimeInput = TypeAliasType(
     'RealtimeInput',
-    'str | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
+    'str | TextContext | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
 )
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send].
 
 The connection-level counterpart of [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput],
-already normalized: a `str` is a complete text turn, a
+already normalized: a `str` is a complete text turn that solicits a response,
+[`TextContext`][pydantic_ai.realtime.codec.TextContext] is text added without soliciting a response, a
 [`BinaryAudio`][pydantic_ai.messages.BinaryAudio] carries a raw mono PCM16 chunk at the model's
 [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 (`media_type='audio/pcm'`), and a [`BinaryImage`][pydantic_ai.messages.BinaryImage] an image frame.
@@ -150,6 +158,12 @@ class AudioDelta:
     _: KW_ONLY
     item_id: str | None = None
     """Provider item ID for the spoken output this chunk belongs to, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -169,6 +183,12 @@ class OutputTranscript:
     an audio transcript becomes a [`SpeechPart`][pydantic_ai.messages.SpeechPart]."""
     item_id: str | None = None
     """Provider item ID for the spoken output, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -221,6 +241,12 @@ class ToolCall:
     uses this signal to keep all calls and their usage on the same `ModelResponse`."""
     item_id: str | None = None
     """Provider conversation-item ID for this call, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -261,6 +287,17 @@ class ResponseDone:
     provider_details: dict[str, Any] | None = None
     """Raw provider terminal status details retained on the finalized response, when available."""
 
+    more_expected: bool = False
+    """Whether the provider said this response is *not* the last of the exchange.
+
+    The session works out for itself that a response calling a tool will be followed by another, but a
+    model that reasons in the background can finish a response, keep working, and speak again with no
+    tool call in between: `gemini-3.8-live-extended-thinking` speaks a filler ("Let me check those
+    flights"), ends the turn, and only then issues the tool call. Left unsaid, that filler would
+    synthesize a [`RealtimeTurnCompleteEvent`][pydantic_ai.messages.RealtimeTurnCompleteEvent] claiming
+    the exchange was over while the model was still working on it.
+    """
+
     event_kind: Literal['response_done'] = 'response_done'
     """Event type identifier, used as a discriminator."""
 
@@ -281,6 +318,10 @@ class SessionUsage:
     finish_reason: FinishReason | None = None
     """Normalized completion reason for the response this usage belongs to, when available."""
 
+    provider_details: dict[str, Any] | None = None
+    """Provider-specific details about how this usage was incurred, merged into the response's
+    `ModelResponse.provider_details`. Only applies to response-scoped usage."""
+
     response_scoped: bool = True
     """Whether this usage belongs to a specific model response.
 
@@ -288,6 +329,15 @@ class SessionUsage:
     `ModelResponse.usage`. `False` is run-level only, e.g. input audio transcription usage,
     which is billed on a separate model/meter and is accumulated into the run's `RunUsage`
     but attributed to no `ModelResponse`.
+    """
+
+    context_window_used: float | None = None
+    """The fraction of the model's context window in use, when the provider reports it.
+
+    A snapshot rather than an amount to accumulate: the session keeps the latest reported value and
+    exposes it as [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
+    It can go down after the provider compacts or truncates the conversation. `None`, the default,
+    means this report says nothing about the context window.
     """
 
     event_kind: Literal['session_usage'] = 'session_usage'
@@ -330,6 +380,28 @@ class ConversationItemCreated:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class InputRejected:
+    """The provider refused part of an input this connection was sent, so it had no effect.
+
+    Yielded just ahead of the [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]
+    that explains the refusal, and only when the provider's error identifies the frame it refused (the
+    OpenAI protocol echoes the client `event_id`). A connection that can't tell which input an error was
+    about yields the error alone. The session uses it to take back what it assumed the input did: a
+    refused request for a response releases the reply
+    [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would otherwise wait for
+    forever, and refused content is removed from history.
+    """
+
+    input_index: int
+    """Zero-based position of the refused input among every [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send] call made on this connection, including calls that raised."""
+    _: KW_ONLY
+    refused: Literal['content', 'response']
+    """What was refused: `'content'` when the input never joined the conversation, `'response'` when the response it asked for will never come."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 RealtimeCodecEvent = TypeAliasType(
     'RealtimeCodecEvent',
     AudioDelta
@@ -348,6 +420,7 @@ RealtimeCodecEvent = TypeAliasType(
     | RealtimeSessionReconnectEvent
     | ConversationCreated
     | ConversationItemCreated
+    | InputRejected
     | PartStartEvent
     | PartEndEvent
     | RealtimeSessionErrorEvent,
@@ -481,11 +554,13 @@ __all__ = (
     'ResponseDone',
     'ConversationCreated',
     'ConversationItemCreated',
+    'InputRejected',
     'SessionUsage',
     # Turn-control verbs a connection accepts.
     'CommitAudio',
     'ClearAudio',
     'CreateResponse',
+    'TextContext',
     'CancelResponse',
     'TruncateOutput',
     # Model-profile helpers for provider implementations.

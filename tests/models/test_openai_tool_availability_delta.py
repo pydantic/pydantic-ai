@@ -29,7 +29,7 @@ from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ..cassette_utils import single_request_body
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 def refund_tool() -> ToolDefinition:

@@ -1,3 +1,7 @@
+---
+description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, or any OpenAI-compatible API such as DeepSeek, Azure, vLLM or LiteLLM."
+---
+
 # OpenAI
 
 ## Install
@@ -12,6 +16,9 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 To use OpenAI models with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
+!!! tip
+    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI.
+
 ## Environment variable
 
 Once you have the API key, you can set it as an environment variable:
@@ -25,11 +32,12 @@ The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mod
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.6-sol')
+agent = Agent('openai:gpt-6-sol')
 ...
 ```
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
+For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together.
 
 Or initialise the model directly with just the model name:
 
@@ -37,7 +45,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-5.6-sol')
+model = OpenAIResponsesModel('gpt-6-sol')
 agent = Agent(model)
 ...
 ```
@@ -102,6 +110,35 @@ agent = Agent(model)
 ...
 ```
 
+## Image generation
+
+Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with an `openai:` image model for direct generation and
+reference-image editing. This uses OpenAI's Images API rather than a conversational Responses model:
+
+```python {title="openai_image_generation.py"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.images.openai import OpenAIImageGenerationSettings
+
+generator = ImageGenerator(
+    'openai:gpt-image-2',
+    settings=OpenAIImageGenerationSettings(
+        dimensions=(1280, 720),
+        openai_quality='low',
+        openai_output_format='jpeg',
+    ),
+)
+```
+
+OpenAI accepts [`BinaryImage`][pydantic_ai.messages.BinaryImage] and
+[`ImageUrl`][pydantic_ai.messages.ImageUrl] reference inputs. Its image-edit endpoint requires file content and does not
+accept an [`UploadedFile`][pydantic_ai.messages.UploadedFile] provider file ID. Transparent-background support varies
+by model and requires PNG or WebP output. Provider-specific settings are forwarded to OpenAI so newly supported values
+are not blocked by stale client-side checks. See the [image-generation guide](../image-generation.md) for generation,
+editing, geometry, and normalized settings.
+
+GPT Image models require a verified organization on a paid usage tier: on an unverified organization every request fails
+with a rate-limit error before anything generates. Complex prompts can take up to two minutes to process.
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
@@ -124,9 +161,11 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
+OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`.
+
 ### Prompt caching
 
-GPT-5.6 and later models (including GPT-6 Astra) support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
+GPT-5.6 and GPT-6 models support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -164,7 +203,7 @@ settings = OpenAIResponsesModelSettings(
 agent = Agent(model, model_settings=settings)
 
 result = agent.run_sync('Your prompt here')
-moderation = result.response.provider_details.get('moderation')
+moderation = (result.response.provider_details or {}).get('moderation')
 ```
 
 When the response includes moderation results, they are stored under the `'moderation'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], with `input` and `output` entries each carrying the flagged status, per-category flags, and category scores.
@@ -177,7 +216,7 @@ The features below are specific to the Responses API and only available on [`Ope
 
 ### Reasoning mode
 
-Models that support it (currently the GPT-5.6 family and GPT-6 Astra) can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../capabilities/thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
+The GPT-5.6 and GPT-6 families can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../capabilities/thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
 
 Configure the mode with [`openai_reasoning_mode`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_mode]; there is no separate `pro` model to select:
 
@@ -211,7 +250,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-`auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 Astra families); on other models it is ignored.
+`auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 families); on other models it is ignored.
 
 ### Native tools
 
@@ -236,7 +275,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 model_settings = OpenAIResponsesModelSettings(
     openai_native_tools=[
         ComputerToolParam(
-            type='computer_use',
+            type='computer',
         )
     ],
 )
@@ -285,9 +324,9 @@ model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
-model_settings = OpenAIResponsesModelSettings(
-    openai_previous_response_id=result.all_messages()[-1].provider_response_id
-)
+response_id = result.response.provider_response_id
+assert response_id is not None
+model_settings = OpenAIResponsesModelSettings(openai_previous_response_id=response_id)
 result = agent.run_sync('What is the secret code?', model_settings=model_settings)
 print(result.output)
 #> 1234
@@ -472,7 +511,11 @@ Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI o
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.
 Before getting started, check the [installation and configuration](#install) instructions above.
 
-To use another OpenAI-compatible API, you can set the `OPENAI_BASE_URL` and `OPENAI_API_KEY` environment variables, or make use of the `base_url` and `api_key` arguments from [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
+Use the provider class for the service you are calling when one is available, such as [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider], [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] for a [LiteLLM proxy](#litellm), or [`VLLMProvider`][pydantic_ai.providers.vllm.VLLMProvider] for a [local or remote vLLM server](#vllm).
+These providers configure authentication and select [model profiles](#model-profile) that account for the service's model names and API behavior.
+You can also use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("openrouter:openai/gpt-5.6-sol")`, or pass the provider name to `OpenAIChatModel(provider=...)`.
+
+If the service has no dedicated provider, you can use [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with a custom `base_url` and `api_key`, or the `OPENAI_BASE_URL` and `OPENAI_API_KEY` environment variables:
 
 ```python
 from pydantic_ai import Agent
@@ -489,14 +532,19 @@ agent = Agent(model)
 ...
 ```
 
-Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
-When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-v4-flash")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of instantiating the provider class explicitly.
+!!! note "A custom URL does not change model profile selection"
+
+    `OpenAIProvider` still selects a profile using OpenAI model names, even with a custom `base_url`.
+    It does not infer the service from the URL or resolve gateway IDs such as `groq/qwen/qwen3-32b` to another provider's profile.
+    An incorrect profile can cause settings such as `thinking` to be ignored or apply the wrong restrictions to sampling and tool schemas.
+    For a service without a dedicated provider, configure the [model profile](#model-profile) or define a [custom provider](#custom-openai-compatible-provider) to match both the model and the gateway's API behavior.
 
 ### Model Profile
 
 Sometimes, the provider or model you're using will have slightly different requirements than OpenAI's API or models, like having different restrictions on JSON schemas for tool definitions, or not supporting tool definitions to be marked as strict.
 
 When using an alternative provider class provided by Pydantic AI, an appropriate model profile is typically selected automatically based on the model name.
+For a custom endpoint, profile selection and request translation must agree: a model supporting reasoning does not mean its API accepts OpenAI's `reasoning_effort` values.
 If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIChatModel`):
 
 ```py
@@ -519,6 +567,67 @@ model = OpenAIChatModel(
 )
 agent = Agent(model)
 ```
+
+#### Custom providers for gateways {#custom-openai-compatible-provider}
+
+If your gateway routes requests to multiple providers, subclass [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] and override [`model_profile()`][pydantic_ai.providers.Provider.model_profile] to resolve its model IDs.
+This selects a profile for every model using that provider, so you do not need to pass `profile=` on each model.
+Only normalize the name for profile lookup; the model ID sent to the gateway stays unchanged.
+
+Like the built-in providers, use helpers from [`pydantic_ai.profiles`](../api/profiles.md) to select the underlying model's profile, then apply any gateway-specific overrides.
+For example, this gateway uses `openrouter/<provider>/<model>` for OpenRouter routes and `<provider>/<model>` for its other routes:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import ModelProfile, merge_profile
+from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    openai_model_profile,
+)
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+class GatewayProvider(OpenAIProvider):
+    @property
+    def name(self) -> str:
+        return 'my-gateway'
+
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile:
+        provider_to_profile = {
+            'openai': openai_model_profile,
+            'groq': groq_model_profile,
+            'moonshotai': moonshotai_model_profile,
+        }
+        provider_name, _, model_name = model_name.removeprefix('openrouter/').partition('/')
+        profile = None
+        if profile_func := provider_to_profile.get(provider_name):
+            profile = profile_func(model_name)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+        )
+
+
+provider = GatewayProvider(
+    base_url='https://gateway.example/v1',
+    api_key='your-gateway-api-key',
+)
+model = OpenAIChatModel('openrouter/openai/gpt-5.6-sol', provider=provider)
+agent = Agent(model)
+```
+
+Extend the mapping and normalization rules for the models and aliases your gateway serves.
+The OpenAI JSON schema transformer is a fallback; a model-family helper can supply its own transformer.
+The returned profile replaces `OpenAIProvider`'s profile selection; Pydantic AI merges it with [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] automatically.
+Add gateway-specific overrides as a final argument to [`merge_profile()`][pydantic_ai.profiles.merge_profile], after the model-family profile.
+
+Profile selection does not switch the model class: `OpenAIChatModel` still constructs an OpenAI Chat Completions request.
+Set capability flags according to what your gateway accepts; the model-family helpers cannot account for its request translation or API restrictions.
 
 #### Detect incomplete streamed responses
 
@@ -843,7 +952,7 @@ agent = Agent(model)
 !!! warning "GitHub Models has been retired"
     GitHub Models was [retired on July 30, 2026](https://docs.github.com/en/github-models) — the playground, model catalog, and inference API are no longer available. [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider] is therefore deprecated and will be removed in v3.
 
-    For model access going forward, GitHub recommends [Azure AI Foundry](https://ai.azure.com/) or [GitHub Copilot](https://docs.github.com/en/copilot).
+    For model access going forward, GitHub recommends [Azure AI Foundry](https://ai.azure.com/) or [GitHub Copilot](https://docs.github.com/en/copilot), which Pydantic AI supports through [`GitHubCopilotModel`](github-copilot.md).
 
 ### Perplexity
 
@@ -1149,7 +1258,8 @@ agent = Agent(model)
 
 [Atlas Cloud](https://www.atlascloud.ai/) is an OpenAI-compatible API gateway that provides access to 300+ models from a single endpoint, including DeepSeek, Qwen, Claude, GPT, and Gemini.
 
-Atlas Cloud doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] by setting the `base_url` and `api_key`:
+Atlas Cloud doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] by setting the `base_url` and `api_key`.
+For its non-OpenAI model IDs, configure the [model profile](#model-profile) or a [custom provider](#custom-openai-compatible-provider) for the model and gateway behavior:
 
 ```python
 from pydantic_ai import Agent

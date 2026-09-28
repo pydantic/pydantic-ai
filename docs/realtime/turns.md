@@ -1,3 +1,7 @@
+---
+description: "Control turn-taking in Pydantic AI realtime voice agents: voice activity detection (VAD), barge-in when the user talks over the model, and push-to-talk."
+---
+
 # Turns and interruptions
 
 Realtime providers normally use voice activity detection (VAD) to decide when the user starts and
@@ -26,6 +30,46 @@ Their accepted values, defaults, and limitations are documented on the
 [OpenAI](openai.md#settings), [Azure OpenAI](azure.md#settings),
 [Google Gemini](gemini.md#settings), and [xAI](xai.md#settings) pages.
 
+## Text turns
+
+Sending a string creates a complete user turn and asks the model to reply:
+
+```python
+from pydantic_ai import BinaryImage
+from pydantic_ai.realtime import RealtimeSession
+
+
+async def send_turns(session: RealtimeSession, image: BinaryImage) -> None:
+    await session.send('Greet the visitor.')
+
+    # Add context for a later voice or text turn without asking for a reply.
+    await session.send('The visitor is called Ada.', respond=False)
+
+    # Show an image and ask for a reply in one operation.
+    await session.send(image, respond=True)
+```
+
+Images are context-only by default. Asking for a response to an image requires a model that supports
+manual turn control.
+
+Do not call `create_response()` after `send('...')`: the text turn already asks for a response, so
+the pair asks twice and can make the model say the same thing twice.
+
+When a reply is already in flight, OpenAI-protocol providers queue the text turn and answer it next,
+as does Gemini 2.5. Gemini 3.1 instead interrupts the reply in flight, emits a
+[`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent], records
+the partial reply as interrupted, and answers the new text turn.
+
+## Muting the microphone
+
+With server VAD, muting must preserve the audio stream. Simply stopping audio frames can leave the
+provider's current speech segment open indefinitely, so keep sending zero-valued PCM16 frames at the
+normal cadence while muted. If you use [manual turn control](#push-to-talk), stop sending instead and
+call [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio] to discard the partial input.
+
+Server VAD recognizes speech, not arbitrary signal energy. A pure tone may never start a speech
+segment, so use recorded speech rather than tones when testing turn detection.
+
 ## Barge-in
 
 With server-side turn detection, providers interrupt the model when they detect new user speech.
@@ -38,16 +82,25 @@ chunk to the device before pulling the next — the session can handle that half
 `handle_barge_in=True` when opening the session:
 
 ```python
+import asyncio
+from collections.abc import AsyncIterator
+
 from pydantic_ai import Agent
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 
 
+async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+    async for chunk in chunks:
+        ...  # write the chunk to your speaker, waiting until the device consumed it
+
+
 async def main():
     realtime = agent.realtime('openai:gpt-realtime')
     async with realtime.session(handle_barge_in=True) as session:
-        async for chunk in session.stream_audio():
-            ...  # write the chunk to your speaker, waiting until the device consumed it
+        playback = asyncio.create_task(play_audio(session.stream_audio()))
+        ...  # stream the microphone and handle events; barge-in is handled for you
+    await playback  # the audio view ends once the session has closed
 ```
 
 When the user speaks over the model, the session discards the buffered audio the user will never
@@ -81,16 +134,17 @@ flush-attribute-truncate-cancel treatment as `handle_barge_in=True`:
 
 ```python
 import asyncio
+from collections.abc import AsyncIterator
 
 from pydantic_ai.realtime import RealtimeInputSpeechStartEvent, RealtimeSession
 
 
 async def conversation(session: RealtimeSession) -> None:
-    async def play_audio() -> None:
-        async for chunk in session.stream_audio():
+    async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+        async for chunk in chunks:
             ...  # write the chunk to your speaker, waiting until the device consumed it
 
-    playback = asyncio.create_task(play_audio())
+    playback = asyncio.create_task(play_audio(session.stream_audio()))
     async for event in session:
         if isinstance(event, RealtimeInputSpeechStartEvent):
             await session.interrupt(played_bytes=session.played_audio_bytes)
@@ -102,11 +156,12 @@ count actual device consumption yourself and pass that. This handler covers the 
 report speech onset; on Gemini, which interrupts itself and leaves only the local flush to do,
 prefer `handle_barge_in=True`, which performs that flush for you.
 
-Interrupting while the provider has a speech segment open sends only the truncation on the models
-whose own turn detection cancels the response being spoken over (OpenAI and Azure OpenAI by
-default, and xAI): a second, client-side cancel racing the provider's can be applied to the *next*
-response and silence the reply to the barge-in. An interruption you raise outside a speech segment
-— a stop button, a tool cutting the model off — still cancels, since nothing else is stopping it.
+Interrupting between the provider's speech onset and the start of its next response sends only the
+truncation on the models whose own turn detection cancels the response being spoken over (OpenAI
+and Azure OpenAI by default, and xAI): a second, client-side cancel racing the provider's can be
+applied to the *next* response and silence the reply to the barge-in. This holds for every form of
+`interrupt()`. An interruption you raise outside that window — a stop button, a tool cutting the
+model off — still cancels, since nothing else is stopping it.
 
 Finally, when playback doesn't drain a single session-long `stream_audio()` iterator — several
 consumers, a playback layer that buffers ahead of the device, or a transport where the session
@@ -129,9 +184,9 @@ async def handle_events(session: RealtimeSession, speaker: Speaker):
     async for event in session:
         if isinstance(event, RealtimeInputSpeechStartEvent) and speaker.has_unplayed_audio():
             speaker.flush()
-            if session.profile['supports_output_truncation']:
+            if session.profile.get('supports_output_truncation', False):
                 await session.interrupt(played_ms=speaker.played_ms())
-            elif session.profile['supports_interruption']:
+            elif session.profile.get('supports_interruption', False):
                 await session.interrupt()
 ```
 
@@ -162,7 +217,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import RealtimeSession
+from pydantic_ai.messages import PartEndEvent, SpeechPart
 
 agent = Agent(instructions='You are a welcoming museum guide.')
 
@@ -172,20 +227,17 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
         ...  # Write the PCM16 chunk to your speaker or audio output stream.
 
 
-async def wait_for_assistant_speech(session: RealtimeSession) -> None:
-    async for part in session.stream_transcripts():
-        if part.speaker == 'assistant':
-            return
-
-
 async def main():
     async with agent.realtime('openai:gpt-realtime').session() as session:
         playback = asyncio.create_task(play_audio(session.stream_audio()))
-        greeted = asyncio.create_task(wait_for_assistant_speech(session))
         await session.send('Greet the visitor.')
-        await greeted
-        ...  # wait for the speaker to drain, then open the microphone and start sending audio
-        await playback
+        async for event in session:
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                if event.part.speaker == 'assistant':
+                    break
+        await session.wait_for_playback()
+        ...  # open the microphone and start sending audio
+    await playback  # the audio view ends once the session has closed
 ```
 
 With manual turn control, [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]
@@ -194,8 +246,9 @@ held until that response completes and is dropped if the user barges in, so retu
 `create_response()` does not mean speech has started.
 
 Server VAD enables `interrupt_response` by default, so any detected speech cancels a greeting in flight. This
-includes speaker echo and microphone transients while the audio path opens; keeping the microphone
-closed until the greeting has played avoids that race.
+includes speaker echo and microphone transients while the audio path opens. Until the greeting has
+played, mute microphone capture while continuing to send digital-silence frames as described in
+[Muting the microphone](#muting-the-microphone).
 
 ## Push-to-talk
 

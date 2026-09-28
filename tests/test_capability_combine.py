@@ -21,6 +21,7 @@ from inline_snapshot import snapshot
 
 import pydantic_ai.capabilities as capabilities_package
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
@@ -28,6 +29,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     ImageGeneration,
     Instrumentation,
+    LocalWorkspace,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
@@ -57,8 +59,6 @@ from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool,
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass
@@ -132,6 +132,11 @@ _FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
 _SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
 
 
+def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
+    # One environment: the later workspace replaces the earlier whole, so the first one's `env` never leaks.
+    assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
+
+
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -160,16 +165,16 @@ COMBINE_POLICY: dict[str, Policy] = {
     'XSearch': Combines(
         'one X search configuration',
         lambda: (
-            XSearch(fallback_model='xai:grok-4.3', allowed_x_handles=['a']),
-            XSearch(fallback_model='xai:grok-4.3', allowed_x_handles=['b']),
+            XSearch(fallback_subagent_model='xai:grok-4.3', allowed_x_handles=['a']),
+            XSearch(fallback_subagent_model='xai:grok-4.3', allowed_x_handles=['b']),
         ),
         _check_x_search,
     ),
     'ImageGeneration': Combines(
         'one image generation configuration',
         lambda: (
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', quality='low'),
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', quality='high'),
+            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='low'),
+            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='high'),
         ),
         _check_image_generation,
     ),
@@ -190,6 +195,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'carries no configuration at all, so two are interchangeable',
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
+    ),
+    'LocalWorkspace': Combines(
+        'the later configuration replaces the earlier one whole',
+        lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
+        _check_local_workspace,
     ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
@@ -582,24 +592,6 @@ def test_generic_alias_metadata_is_not_capability_configuration() -> None:
     assert getattr(merged, '__orig_class__', None) is ReinjectSystemPrompt[Any]
 
 
-def test_durable_operation_bindings_are_not_capability_configuration() -> None:
-    """Bindings added when a capability is reused by durable agents are runtime bookkeeping.
-
-    Reached through the same rule as any other cached state rather than by being named in the
-    merge: they are a `cached_property`, so the merge finds them on the class, and the merged
-    capability starts without them so the next engine to bind creates its own.
-    """
-
-    first = ReinjectSystemPrompt(replace_existing=False)
-    assert first._durable_operation_bindings is not None  # pyright: ignore[reportPrivateUsage]
-
-    merged = ReinjectSystemPrompt.combine([first, ReinjectSystemPrompt(replace_existing=True)])
-
-    assert isinstance(merged, ReinjectSystemPrompt)
-    assert merged.replace_existing is True
-    assert '_durable_operation_bindings' not in vars(merged), "the last instance's bindings do not ride along"
-
-
 def test_a_cached_property_is_recomputed_against_the_merged_fields() -> None:
     """Derived state declared as a `cached_property` is dropped from the copy, not carried over.
 
@@ -823,21 +815,28 @@ def test_a_chain_of_wrappers_walks_its_subtree_once_per_level() -> None:
     assert len(seen) == 8
 
 
-@pytest.mark.parametrize('capability_type', [ImageGeneration, XSearch])
+@pytest.mark.parametrize(
+    ('capability_type', 'message'),
+    [
+        (ImageGeneration, 'cannot specify more than one of `local`, `fallback_subagent_model`'),
+        (XSearch, 'cannot specify both `fallback_subagent_model` and `local`'),
+    ],
+)
 def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
-    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]],
+    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]], message: str
 ) -> None:
-    """`fallback_model` and `local` are alternatives, and merging two instances must not pair them.
+    """`fallback_subagent_model` and `local` are alternatives, and merging two instances must not pair them.
 
     Each states one half of a combination `__init__` refuses, so the merged capability would carry
-    both -- and the local tool would take effect while `fallback_model` was silently ignored. The
+    both -- and the local tool would take effect while `fallback_subagent_model` was silently ignored. The
     invariant lives in `__post_init__`, which `combine` re-runs, rather than in `__init__`, which
-    it cannot.
+    it cannot. `ImageGeneration` has a third alternative, `fallback_image_model`, so it words the
+    same refusal as a list.
     """
-    with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+    with pytest.raises(UserError, match=message):
         capability_type.combine(
             [
-                capability_type(fallback_model=TestModel()),
+                capability_type(fallback_subagent_model=TestModel()),
                 capability_type(local=_a_local_tool),
             ]
         )
@@ -846,6 +845,47 @@ def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
 def _a_local_tool(prompt: str) -> str:  # pragma: no cover
     """A local fallback."""
     return 'x'
+
+
+def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
+    """`fallback_subagent_model` is a scalar, so two differing values take the later one.
+
+    `COMBINE_POLICY` only pins the field where both sides agree, so this covers the differing
+    case through the general scalar rule.
+    """
+
+    merged = XSearch.combine(
+        [
+            XSearch(fallback_subagent_model='xai:grok-4.1'),
+            XSearch(fallback_subagent_model='xai:grok-4.3'),
+        ]
+    )
+
+    assert isinstance(merged, XSearch)
+    assert merged.fallback_subagent_model == 'xai:grok-4.3', 'the later value, like any scalar'
+    local = merged.local
+    assert isinstance(local, Tool)
+    # The subagent tool is rebuilt from the merged field, so it carries its own copy of the model.
+    assert cast('Any', local).function.__self__.model == 'xai:grok-4.3'
+
+
+def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
+    """A value set through the deprecated `fallback_model` setter is configuration the merge keeps.
+
+    The setter writes `fallback_subagent_model` itself, so the rebuild guards see a declared field
+    rather than undeclared state -- the merge keeps the alias-set value and no refusal fires.
+    """
+
+    first = XSearch(allowed_x_handles=['a'])
+    second = XSearch(allowed_x_handles=['b'])
+    with pytest.warns(PydanticAIDeprecationWarning, match='`fallback_model` is deprecated'):
+        second.fallback_model = 'xai:grok-4.3'  # pyright: ignore[reportDeprecated]
+
+    merged = XSearch.combine([first, second])
+
+    assert isinstance(merged, XSearch)
+    assert merged.fallback_subagent_model == 'xai:grok-4.3'
+    assert merged.allowed_x_handles == ['a', 'b']
 
 
 def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
@@ -1225,6 +1265,11 @@ async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() 
         assert resolution.instrumentation_settings is not None
         assert resolution.instrumentation_settings.include_content is False, 'the session-level one wins'
         assert resolution.run_context.trace_include_content is False
+
+    workspace_agent = Agent(TestModel(), capabilities=[LocalWorkspace('/tmp')])
+    async with workspace_agent._resolve_realtime_session(_StubRealtimeModel()) as resolution:  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(Exception, match='Realtime sessions do not support workspaces yet'):
+            await resolution.run_context.workspace.working_dir()
 
 
 async def test_two_capabilities_on_one_agent_merge_rather_than_override() -> None:

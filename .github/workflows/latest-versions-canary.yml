@@ -283,3 +283,6 @@ jobs:
       # than drop flake. That self-skip is also why this job needs none of `ci.yml`'s
       # out-of-band HF cache warming.
       - run: uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup
+        env:
+          # The docs examples are type-checked against the locked dependencies, in `ci.yml`.
+          TYPECHECK_EXAMPLES: false
