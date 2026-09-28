@@ -41,8 +41,6 @@ from ._inline_snapshot import snapshot
 from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
-pytestmark = pytest.mark.anyio
-
 
 async def test_await_maybe():
     async def _coro() -> int:
@@ -178,7 +176,6 @@ def test_check_object_json_schema():
 
 
 @pytest.mark.parametrize('peek_first', [True, False])
-@pytest.mark.anyio
 async def test_peekable_async_stream(peek_first: bool):
     async_stream = MockAsyncStream(iter([1, 2, 3]))
     peekable_async_stream: PeekableAsyncStream[int, MockAsyncStream[int]] = PeekableAsyncStream(async_stream)
@@ -253,7 +250,6 @@ async def test_peekable_async_stream_aclose_cancels_in_flight_pull(peek_pull: bo
     assert not pull.cancelled()
 
 
-@pytest.mark.anyio
 async def test_peekable_async_stream_aclose_cancels_all_in_flight_pulls():
     pull_started = anyio.Event()
     source_closed = anyio.Event()

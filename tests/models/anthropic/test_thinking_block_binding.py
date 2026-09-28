@@ -76,7 +76,6 @@ if not anthropic_imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 

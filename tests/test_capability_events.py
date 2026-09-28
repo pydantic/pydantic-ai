@@ -31,8 +31,6 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 FILE_SYSTEM_EVENTS = 'test_file_system'
 
 

@@ -67,7 +67,6 @@ with try_import() as cohere_available:
     from pydantic_ai.providers.cohere import CohereProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
