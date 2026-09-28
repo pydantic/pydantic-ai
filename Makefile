@@ -90,6 +90,10 @@ testcov: ## Run tests with coverage and generate an HTML report
 	@echo "building coverage html"
 	@uv run coverage html
 
+.PHONY: integration-absurd
+integration-absurd: ## Run the harness Absurd tests (`docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16`, or set ABSURD_TEST_DATABASE_URL)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/absurd
+
 .PHONY: integration-localstack
 integration-localstack: ## Run the harness LocalStack tests (needs Docker and LOCALSTACK_AUTH_TOKEN)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/localstack

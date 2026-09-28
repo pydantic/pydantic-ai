@@ -307,6 +307,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
     ),
+    'AbsurdDurability': Rejected(
+        'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
+        'itself up, before any id is consulted'
+    ),
     # -- No default `id`, but two never coexist anyway: their tool names collide. --
     'FileSystem': Collides(
         'its toolset registers `read_file` and friends under fixed names',
