@@ -176,7 +176,7 @@ def test_defer_loading_is_refused() -> None:
 
 
 @pytest.mark.parametrize(
-    ('legacy', 'guidance'),
+    ('removed_arguments', 'guidance'),
     [
         ({'sandbox_id': 'sb-1'}, "workspace=WorkspaceRef(provider='modal', id=sandbox_id)"),
         ({'session': object()}, 'ModalSandboxBackend(sandbox=<modal.Sandbox>)'),
@@ -188,13 +188,13 @@ def test_defer_loading_is_refused() -> None:
         ({'instructions': ''}, "belongs in the agent's `instructions`"),
     ],
 )
-def test_previous_constructor_arguments_warn_with_guidance(legacy: dict[str, Any], guidance: str) -> None:
+def test_previous_constructor_arguments_warn_with_guidance(removed_arguments: dict[str, Any], guidance: str) -> None:
     # The previous `ModalSandbox` bundled its own tools; each of its arguments still constructs, and
     # the warning points at where that setting lives now.
     with pytest.warns(HarnessDeprecationWarning) as record:
-        ModalSandbox(**legacy)
+        ModalSandbox(**removed_arguments)
     message = str(record[0].message)
-    (name,) = legacy
+    (name,) = removed_arguments
     assert message.startswith(f'`ModalSandbox({name}=...)` is deprecated')
     assert 'add `Shell()` and/or `FileSystem()`' in message
     assert f'- `{name}`: ' in message
@@ -236,8 +236,8 @@ def test_previous_sandbox_id_still_attaches_when_the_run_has_no_ref() -> None:
 def test_previous_sandbox_id_survives_merging_with_a_same_id_capability() -> None:
     # Two capabilities under one `id` merge field by field; the one only `sandbox_id=` states must survive.
     with pytest.warns(HarnessDeprecationWarning):
-        legacy = ModalSandbox(id='sandbox', sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
-    merged = ModalSandbox.combine([legacy, ModalSandbox(id='sandbox')])
+        attached = ModalSandbox(id='sandbox', sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
+    merged = ModalSandbox.combine([attached, ModalSandbox(id='sandbox')])
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     backend = merged.get_workspace(ctx, ref=None)
     assert isinstance(backend, ModalSandboxBackend)

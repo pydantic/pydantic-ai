@@ -31,7 +31,7 @@ UPGRADE_DOCS_URL = 'https://pydantic.dev/docs/ai/harness/modal-sandbox/#upgradin
 # capability only supplies `ctx.workspace`. Each maps to the guidance for moving off it. They are
 # accepted and ignored with a deprecation warning, except `sandbox_id`, which still attaches:
 # ignoring it would run the agent in a new sandbox instead of the one the user named.
-_LEGACY_ARGUMENTS: Mapping[str, str] = {
+_REMOVED_ARGUMENTS: Mapping[str, str] = {
     'sandbox_id': (
         'still attaches to that sandbox for now, but will be removed. Attach per run instead: '
         "`agent.run(..., workspace=WorkspaceRef(provider='modal', id=sandbox_id))`. "
@@ -115,8 +115,8 @@ def _no_workspace_tools_message(agent_name: str | None, *, attached: bool) -> st
     )
 
 
-def _legacy_argument_message(names: list[str]) -> str:
-    moves = '\n'.join(f'- `{name}`: {_LEGACY_ARGUMENTS[name]}' for name in names)
+def _removed_arguments_message(names: list[str]) -> str:
+    moves = '\n'.join(f'- `{name}`: {_REMOVED_ARGUMENTS[name]}' for name in names)
     listed = ', '.join(f'{name}=...' for name in names)
     # `sandbox_id` still attaches, so only say 'ignored' when it is not among them, and the
     # sandbox it names is the user's own, never one the previous `ModalSandbox` terminated.
@@ -182,7 +182,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     _warned_no_tools: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this instance has already warned that the run has no workspace tools."""
 
-    _legacy_ref: WorkspaceRef | None = field(default=None, init=False, repr=False)
+    _sandbox_id_ref: WorkspaceRef | None = field(default=None, init=False, repr=False)
     """The sandbox the deprecated `sandbox_id=` names, attached when the run has no ref of its own."""
 
     def __init__(
@@ -200,18 +200,18 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         warn_if_no_tools: bool = True,
         workdir: str | None = None,
-        **legacy: Never,
+        **removed_arguments: Never,
     ) -> None:
         # Hand-written, with the same parameters a dataclass would generate, so the previous
-        # `ModalSandbox` arguments reach a message that says where each one went. `**legacy: Never`
+        # `ModalSandbox` arguments reach a message that says where each one went. `**removed_arguments: Never`
         # keeps the static signature closed.
-        unknown = [argument for argument in legacy if argument not in _LEGACY_ARGUMENTS]
+        unknown = [argument for argument in removed_arguments if argument not in _REMOVED_ARGUMENTS]
         if unknown:
             raise TypeError(f'ModalSandbox.__init__() got an unexpected keyword argument {unknown[0]!r}')
         # An explicit `None` (say, from a config file) sets nothing, so there is nothing to move off.
-        passed = [argument for argument, value in legacy.items() if value is not None]
+        passed = [argument for argument, value in removed_arguments.items() if value is not None]
         if passed:
-            warnings.warn(_legacy_argument_message(passed), HarnessDeprecationWarning, stacklevel=2)
+            warnings.warn(_removed_arguments_message(passed), HarnessDeprecationWarning, stacklevel=2)
         if workdir is not None:
             if working_dir is not None:
                 raise UserError('Pass `working_dir` only; `workdir` is its deprecated name.')
@@ -242,12 +242,12 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.env = env
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
-        # `legacy` is typed `Never` to close the signature; its values are whatever the caller passed.
-        sandbox_id = cast('str | None', legacy.get('sandbox_id'))
+        # `removed_arguments` is typed `Never` to close the signature; its values are whatever the caller passed.
+        sandbox_id = cast('str | None', removed_arguments.get('sandbox_id'))
         if sandbox_id == '':
             # Treating it as absent would silently create and bill a new sandbox.
             raise UserError('`sandbox_id` must name a Modal sandbox, got an empty string.')
-        self._legacy_ref = WorkspaceRef(provider='modal', id=sandbox_id) if sandbox_id is not None else None
+        self._sandbox_id_ref = WorkspaceRef(provider='modal', id=sandbox_id) if sandbox_id is not None else None
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
@@ -270,7 +270,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         if ref is not None and ref.provider != 'modal':
             return None
         return ModalSandboxBackend(
-            ref=ref or self._legacy_ref,
+            ref=ref or self._sandbox_id_ref,
             image=self.image,
             app_name=self.app_name,
             create_app_if_missing=self.create_app_if_missing,
@@ -296,7 +296,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             self._warned_no_tools = True
             agent_name = ctx.agent.name if ctx.agent is not None else None
             warnings.warn(
-                _no_workspace_tools_message(agent_name, attached=self._legacy_ref is not None),
+                _no_workspace_tools_message(agent_name, attached=self._sandbox_id_ref is not None),
                 ModalSandboxNoToolsWarning,
                 stacklevel=2,
             )
