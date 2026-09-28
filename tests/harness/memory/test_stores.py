@@ -952,7 +952,7 @@ class _TruncatingBackend(LocalWorkspaceBackend):
         if os.path.basename(path).startswith('.memory-tmp-'):
             await super().write_bytes(path, data[: len(data) // 2])
             raise OSError('simulated full disk')
-        await super().write_bytes(path, data)
+        await super().write_bytes(path, data)  # pragma: no cover -- the store writes only staged files here
 
 
 class _FailingRenameBackend(LocalWorkspaceBackend):
@@ -1040,7 +1040,7 @@ class _FilesystemOnly:
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        return None
+        return None  # pragma: no cover -- part of the protocol, unused here
 
     async def working_dir(self) -> str:
         return await self._local.working_dir()
@@ -1052,16 +1052,16 @@ class _FilesystemOnly:
         await self._local.write_bytes(path, data)
 
     async def stat(self, path: str) -> FileEntry:
-        return await self._local.stat(path)
+        return await self._local.stat(path)  # pragma: no cover -- part of the protocol, unused here
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         return await self._local.list_dir(path)  # pragma: no cover -- no listing here
 
     async def make_dir(self, path: str) -> None:
-        await self._local.make_dir(path)
+        await self._local.make_dir(path)  # pragma: no cover -- part of the protocol, unused here
 
     async def remove(self, path: str) -> None:
         await self._local.remove(path)  # pragma: no cover -- nothing is removed here
 
     async def exists(self, path: str) -> bool:
-        return await self._local.exists(path)
+        return await self._local.exists(path)  # pragma: no cover -- part of the protocol, unused here
