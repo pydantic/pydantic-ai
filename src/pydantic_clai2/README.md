@@ -492,6 +492,20 @@ the model-aware request and thinking controls described below. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/add_model NAME` sets the model without the menu.
 
+CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
+missing from the Python CLAI runs on fails right away, naming the install command, instead
+of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+
+```bash
+pip install "pydantic-clai2[typesafe]"
+```
+
+From a pydantic-ai checkout, run CLAI with the extra instead:
+
+```bash
+uv run --package pydantic-clai2 --extra typesafe clai2
+```
+
 ### Model settings and custom parameters
 
 `/model_settings` opens a searchable list of added models. Enter configures a

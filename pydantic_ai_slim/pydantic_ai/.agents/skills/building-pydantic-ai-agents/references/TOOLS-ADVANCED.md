@@ -28,9 +28,13 @@ messages = result.all_messages()
 assert isinstance(result.output, DeferredToolRequests)
 results = DeferredToolResults()
 for call in result.output.approvals:
-    results.approvals[call.tool_call_id] = ToolDenied('Deleting files is not allowed')
+    # Your decision logic (ask a human, check a policy); here an exact-match allowlist
+    allowed = call.args_as_dict()['path'] in {'tmp/cache.txt'}
+    # True approves; ToolDenied(message) denies and tells the model why
+    results.approvals[call.tool_call_id] = allowed or ToolDenied('That file may not be deleted')
 
-result = agent.run_sync('Continue', message_history=messages, deferred_tool_results=results)
+# Resume from the history plus the decisions; no new prompt is needed
+result = agent.run_sync(message_history=messages, deferred_tool_results=results)
 print(result.output)
 ```
 
