@@ -341,6 +341,14 @@ async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) 
                 await operation('fifo')
 
 
+async def test_local_write_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
+    os.mkfifo(tmp_path / 'fifo')
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+    with anyio.fail_after(30):
+        with pytest.raises(OSError, match='not a regular file'):
+            await workspace.write_bytes('fifo', b'data')
+
+
 async def test_shell_realpath_leaves_a_symlink_loop_unresolved(tmp_path: Path) -> None:
     (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
@@ -1127,8 +1135,8 @@ async def test_a_workspace_capability_cannot_be_deferred(tmp_path: Path) -> None
     with pytest.raises(UserError, match=f'`WrapperCapability` {message}'):
         Agent(TestModel(), capabilities=[WrapperCapability(LocalWorkspace(tmp_path), defer_loading=True, id='ws')])
 
-    with pytest.raises(UserError, match='workspace is chosen at run setup'):
-        LocalWorkspace(tmp_path, defer_loading=True)
+    with pytest.raises(UserError, match=f'`LocalWorkspace` {message}'):
+        Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path, defer_loading=True)])
 
 
 async def test_wrapper_composes_workspace_policy_over_combined_capability() -> None:

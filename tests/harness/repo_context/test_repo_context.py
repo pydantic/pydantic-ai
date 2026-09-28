@@ -355,6 +355,18 @@ class TestScanAssets:
         assert len(claude.skills) == 1
         assert claude.skills == ['.claude/skills/foo/SKILL.md']
 
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_skill_walk_lists_symlink_cycles_once(self, tmp_path: Path, workspace: Workspace) -> None:
+        skills = tmp_path / '.claude' / 'skills'
+        _write(skills / 'a' / 'SKILL.md', 's')
+        # Three links to `.` would take thousands of listings (and report duplicates) without deduplication.
+        for index in range(3):
+            (skills / f'loop{index}').symlink_to('.')
+
+        inventory = await scan_assets(workspace, tmp_path, ('.claude',))
+
+        assert inventory.roots[0].skills == ['.claude/skills/a/SKILL.md']
+
 
 class TestNestedTraversal:
     @pytest.mark.parametrize(('nested_inject', 'includes_body'), [('pointer', False), ('contents', True)])

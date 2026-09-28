@@ -116,12 +116,18 @@ async def test_background_result_survives_temporal_history_replay(client: Client
     global _tool_calls
     _tool_calls = 0
     workflow_id = 'test_background_tools_temporal_replay'
+    # `debug_mode=True` disables Temporal's 2-second workflow-task deadlock detector (and nothing
+    # else here, since an explicit sandboxed runner is passed). Under `coverage`'s `sys.monitoring`
+    # core on Python 3.14, the first activation pays for lazily parsing every traced source file,
+    # which can exceed 2 seconds on a busy CI runner and fail the run with a spurious
+    # `_DeadlockError` (TMPRL1101). The test asserts replay determinism, not timing.
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[BackgroundToolsWorkflow],
         plugins=[AgentPlugin(_agent)],
         workflow_runner=_workflow_runner(),
+        debug_mode=True,
     ):
         output = await client.execute_workflow(
             BackgroundToolsWorkflow.run,
@@ -138,6 +144,7 @@ async def test_background_result_survives_temporal_history_replay(client: Client
         workflows=[BackgroundToolsWorkflow],
         plugins=[PydanticAIPlugin()],
         workflow_runner=_workflow_runner(),
+        debug_mode=True,
     ).replay_workflow(history)
 
     assert replay.replay_failure is None

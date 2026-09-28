@@ -48,16 +48,17 @@ async def run_posix_search(
         validate_posix_pattern(pattern)
     # Git applies nested .gitignore files, but --exclude-from=.ignore only reads the
     # search-root .ignore; nested .ignore rules need rg. Without git, find ignores neither.
+    # --exclude-standard keeps tracked files, and even untracked dotfiles; like rg without
+    # --hidden, skip every path with a dot-prefixed component before it is grepped.
+    pathspec = shlex.quote(target) + ('' if include_hidden else " ':(exclude,glob)**/.*' ':(exclude,glob)**/.*/**'")
     enumeration = (
         'if [ -f .ignore ]; then extra=--exclude-from=.ignore; else extra=; fi; '
         'if command -v git >/dev/null 2>&1; then '
         'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then '
-        'git ls-files -co --exclude-standard $extra -z -- '
-        + shlex.quote(target)
-        + '; else tmp=$(mktemp -d) || exit 2; '
+        'git ls-files -co --exclude-standard $extra -z -- ' + pathspec + '; else tmp=$(mktemp -d) || exit 2; '
         'git init --bare -q "$tmp" || exit 2; '
         'GIT_DIR="$tmp" GIT_WORK_TREE="$PWD" git ls-files -o --exclude-standard '
-        '-z $extra -- ' + shlex.quote(target) + '; status=$?; rm -rf -- "$tmp"; [ "$status" -eq 0 ]; fi; '
+        '-z $extra -- ' + pathspec + '; status=$?; rm -rf -- "$tmp"; [ "$status" -eq 0 ]; fi; '
         'else find '
         + shlex.quote(target)
         + (" ! -path . -name '.*' -prune -o " if not include_hidden else ' ')
@@ -80,9 +81,11 @@ async def run_posix_search(
         # Grep's 1 means no matches, while 2 (including an invalid ERE or a read error)
         # must not be turned into a plausible empty result by xargs or the output pipe.
         processing = (
-            "xargs -0 sh -c 'tmp=$(mktemp) || exit 2; pattern=$1; shift; for file do "
-            + canonical
-            + f'grep {flags} -e "$pattern" -- "$file" > "$tmp"; code=$?; '
+            "xargs -0 sh -c 'tmp=$(mktemp) || exit 2; "
+            # When head closes the pipe at the cap, remove the temp file, then die of SIGPIPE
+            # again so xargs still reports the signal that marks the output as cut.
+            'trap "rm -f -- \\"\\$tmp\\"; trap - PIPE; kill -PIPE \\$\\$" PIPE; '
+            'pattern=$1; shift; for file do ' + canonical + f'grep {flags} -e "$pattern" -- "$file" > "$tmp"; code=$?; '
             'if [ "$code" -gt 1 ]; then rm -f -- "$tmp"; exit "$code"; fi; '
             # With -n, every output line is numbered except the `--` between context groups.
             'while IFS= read -r line; do [ "$line" = -- ] && continue; '
@@ -144,7 +147,8 @@ def _parse_records(output: str, *, listing: bool) -> tuple[list[Record], bool]:
             text = output[real_end + 1 : line_end]
             start = line_end + 1
         if start - end > _MAX_RECORD_BYTES:
+            # Drop only the oversized record; later records are still complete.
             incomplete = True
-            break
+            continue
         records.append(Record(path=path, text=text, real_path=real_path))
     return records, incomplete or start < len(output)
