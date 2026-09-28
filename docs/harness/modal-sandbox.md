@@ -36,7 +36,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in the sandbox, not on your machine. With `Coder`, `RepoContext` creates the sandbox when the run starts, even without a tool call. Use `Coder(repo_context=False)` for lazy creation. It keeps running, and billing, after the run ends; see [Clean up](#clean-up).
 
-A new sandbox lives for up to 24 hours, Modal's maximum; pass `ModalSandbox(sandbox_timeout=3600)` to end it sooner. Commands start in `/root` on the default image, otherwise in the image's own working directory. A first use may take several minutes while Modal builds or pulls an image. If Modal cannot start the sandbox, for example because the image does not exist, the first tool call raises an error that says why.
+A new sandbox lives for up to 24 hours, Modal's maximum; pass `ModalSandbox(sandbox_timeout=3600)` to end it sooner. Commands start in `/root` on the default image, otherwise in the image's own working directory. A first use may take several minutes while Modal builds or pulls an image. If Modal cannot start the sandbox, for example because the image does not exist, its first use raises an error that says why; with `Coder`, that is at run start.
 
 `/root` is the home directory, which holds dotfiles and caches. Pass a project directory, such as `ModalSandbox(working_dir='/root/project')`, so the project is not the home directory; it is created for you on a new sandbox.
 
@@ -308,7 +308,7 @@ Removing a capability while workflows using it are still running changes their r
 
 ## Telemetry
 
-`ModalSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command and file operation runs inside the tool call span that asked for it. Creating a sandbox logs its ID at `INFO` on the `pydantic_ai_harness.modal_sandbox._backend` logger (`Created Modal sandbox <id>`).
+`ModalSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox logs its ID at `INFO` on the `pydantic_ai_harness.modal_sandbox._backend` logger (`Created Modal sandbox <id>`).
 
 ## API reference
 
