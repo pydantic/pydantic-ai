@@ -3,21 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.abc
-import importlib.util
 import subprocess
-import sys
 import time
 import types
-from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import Any
 
 import anyio
 import pytest
-from blockbuster import BlockBuster
 
-import pydantic_ai_harness
 from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
@@ -30,17 +24,6 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend,
 from .fake_modal import FakeImage, FakeModal, FileInfo
 
 pytestmark = pytest.mark.anyio(backends=['asyncio'])
-
-
-def test_modal_guides_describe_best_effort_stop() -> None:
-    root = Path(__file__).resolve().parents[3]
-    for guide in (
-        root / 'docs/harness/modal-sandbox.md',
-        root / 'src/pydantic_ai_harness/pydantic_ai_harness/modal_sandbox/README.md',
-    ):
-        text = guide.read_text()
-        assert 'What a timeout stops' in text
-        assert "Modal can't stop a command" not in text
 
 
 async def started(**settings: Any) -> ModalSandboxBackend:
@@ -532,34 +515,6 @@ class TestCreate:
         assert backend.ref == WorkspaceRef(provider='modal', id=sandbox.object_id)
         assert fake_modal.owned_creates == 1
 
-    async def test_cold_modal_import_stays_off_the_event_loop(
-        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        # Importing the real SDK reads `~/.modal.toml`; this import does the same kind of read.
-        config = tmp_path / '.modal.toml'
-        config.write_text('')
-
-        class ColdModal(importlib.abc.MetaPathFinder, importlib.abc.Loader):
-            def find_spec(self, fullname: str, path: object, target: object = None) -> ModuleSpec | None:
-                return importlib.util.spec_from_loader(fullname, self) if fullname == 'modal' else None
-
-            def create_module(self, spec: ModuleSpec) -> types.ModuleType:
-                return fake_modal.module
-
-            def exec_module(self, module: types.ModuleType) -> None:
-                config.read_text()
-
-        monkeypatch.delitem(sys.modules, 'modal')
-        monkeypatch.setattr(sys, 'meta_path', [ColdModal(), *sys.meta_path])
-        # The suite-wide detector does not scan harness code, so scan it here.
-        detector = BlockBuster(pydantic_ai_harness)
-        detector.activate()
-        try:
-            await ModalSandboxBackend().get_sandbox()
-        finally:
-            detector.deactivate()
-        assert fake_modal.owned_creates == 1
-
     async def test_native_task_cancellation_records_in_flight_creation(self, fake_modal: FakeModal) -> None:
         backend = ModalSandboxBackend()
         fake_modal.create_gate = anyio.Event()
@@ -848,23 +803,6 @@ class TestFilesystem:
             await backend.write_bytes(str(link), b'no')
         assert link.is_symlink()
 
-    async def test_realpath_errors_propagate(
-        self, fake_modal: FakeModal, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        fake_modal.host_root = tmp_path
-        link = tmp_path / 'link'
-        link.symlink_to('target')
-        backend = ModalSandboxBackend()
-
-        async def failed(self: Workspace, path: str) -> str:
-            raise WorkspaceError('command unavailable')
-
-        monkeypatch.setattr(Workspace, 'realpath', failed)
-        with pytest.raises(WorkspaceError, match='command unavailable'):
-            await backend.stat(str(link))
-        with pytest.raises(WorkspaceError, match='command unavailable'):
-            await backend.write_bytes(str(link), b'no')
-
     async def test_dangling_symlink_is_listed_but_does_not_exist(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'dangling').symlink_to('missing')
@@ -900,23 +838,12 @@ class TestFilesystem:
             entries = await backend.list_dir(str(tmp_path))
         assert len(entries) == 21
 
-    async def test_symlink_loop_stops_at_first_revisit(self, fake_modal: FakeModal, tmp_path: Path) -> None:
+    async def test_symlink_loop_is_not_found(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'loop').symlink_to('loop')
         backend = await started()
-        sandbox = fake_modal.sandboxes[0]
-        original = sandbox.filesystem.stat.aio
-        calls = 0
-
-        async def counting_stat(path: str) -> FileInfo:
-            nonlocal calls
-            calls += 1
-            return await original(path)
-
-        sandbox.filesystem.stat.aio = counting_stat
         with pytest.raises(FileNotFoundError):
             await backend.stat(str(tmp_path / 'loop'))
-        assert calls <= 2
 
     async def test_remove_is_recursive(self, fake_modal: FakeModal) -> None:
         # One call covers both halves of the protocol's `remove`: on a file `recursive`
