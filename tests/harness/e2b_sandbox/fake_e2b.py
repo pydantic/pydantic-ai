@@ -676,6 +676,8 @@ class FakeAsyncSandboxFactory:
         return sandbox
 
     async def kill(self, id: str) -> bool:
+        if self._control.kill_error is not None:
+            raise self._control.kill_error
         existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
         return await existing.kill() if existing is not None else False
 
@@ -710,6 +712,8 @@ class FakeE2B:
     wait_error: Exception | None = None
     command_hangs: bool = False
     kill_command_error: Exception | None = None
+    # Raised by the `AsyncSandbox.kill(id)` class method that `destroy` uses.
+    kill_error: Exception | None = None
     fs_error: Exception | None = None
     read_error: Exception | None = None
     is_running_error: Exception | None = None

@@ -617,8 +617,15 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
 
 async def kill_sandbox(sandbox_id: str) -> None:
-    """Kill a sandbox by ID without connecting: connecting would resume a paused sandbox and bill it."""
-    await e2b.AsyncSandbox.kill(sandbox_id)
+    """Kill a sandbox by ID without connecting: connecting would resume a paused sandbox and bill it.
+
+    A sandbox that is already gone returns quietly (E2B's kill answers `False`); rejected
+    credentials raise `WorkspaceUnavailableError`, like any other operation.
+    """
+    try:
+        await e2b.AsyncSandbox.kill(sandbox_id)
+    except e2b.AuthenticationException as error:
+        raise WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}') from error
 
 
 async def _is_running(sandbox: e2b.AsyncSandbox) -> bool:

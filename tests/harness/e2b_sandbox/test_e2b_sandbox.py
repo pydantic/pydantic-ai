@@ -10,7 +10,7 @@ from typing import Any
 
 import anyio
 import pytest
-from e2b.exceptions import SandboxException
+from e2b.exceptions import AuthenticationException, SandboxException
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -19,7 +19,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceError, WorkspaceReadOnlyError, WorkspaceRef
+from pydantic_ai.workspaces import (
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceError,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+    WorkspaceUnavailableError,
+)
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
@@ -52,6 +59,21 @@ async def test_destroy_ref_without_attaching(fake_e2b: FakeE2B) -> None:
     await provider.destroy(backend.ref)
     assert fake_e2b.sandboxes[0].killed
     assert not fake_e2b.connect_calls
+
+
+async def test_destroy_is_idempotent_and_maps_rejected_credentials(fake_e2b: FakeE2B) -> None:
+    provider = E2BSandbox()
+    fake_e2b.new_sandbox('sbx-gone')
+    ref = WorkspaceRef(provider='e2b', id='sbx-gone')
+    await provider.destroy(ref)
+    await provider.destroy(ref)
+    await provider.destroy(WorkspaceRef(provider='e2b', id='never-existed'))
+    fake_e2b.kill_error = AuthenticationException('invalid API key sensitive-credential-value')
+    with pytest.raises(WorkspaceUnavailableError) as exc:
+        await provider.destroy(ref)
+    assert str(exc.value) == (
+        'Credentials rejected. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+    )
 
 
 def test_capability_uses_workspace_contract() -> None:
