@@ -50,7 +50,6 @@ from pydantic_ai_harness.planning._toolset import (
 from tests.harness._recording_durability import RecordingDurability
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
 ]
 

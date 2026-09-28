@@ -249,7 +249,6 @@ def test_connection_map_event_override_matches_module() -> None:
     ) == OutputTranscript(text='hi', is_final=False, response_id='response')
 
 
-@pytest.mark.anyio
 async def test_connection_send_tool_result_image_raises_with_nothing_sent() -> None:
     """Grok Voice has no image input, so an image attached to a tool result raises before any frame
     goes out — instead of the shared codec's follow-up user message — rather than degrading silently."""
@@ -502,7 +501,6 @@ def test_xai_connection_restores_in_flight_state_on_reconnect() -> None:
     assert conn.reconnect_restores_in_flight_state is True
 
 
-@pytest.mark.anyio
 async def test_reconnect_does_not_re_solicit_an_unstarted_response() -> None:
     # xAI inherits the OpenAI `_attempt_reconnect`, but because it resumes in-flight state server-side
     # a response solicited before the drop is resumed by the server — re-soliciting it would duplicate
@@ -529,7 +527,6 @@ async def test_reconnect_does_not_re_solicit_an_unstarted_response() -> None:
     assert not any(json.loads(s).get('type') == 'response.create' for s in replacement.sent)
 
 
-@pytest.mark.anyio
 async def test_response_done_maps_xai_usage_extras() -> None:
     done = json.dumps(
         {
@@ -664,7 +661,6 @@ def _conversation_created(conversation_id: str = 'conversation-1') -> str:
     return json.dumps({'type': 'conversation.created', 'conversation': {'id': conversation_id}})
 
 
-@pytest.mark.anyio
 async def test_connect_captures_substituted_server_model(monkeypatch: pytest.MonkeyPatch) -> None:
     # xAI accepts any model slug — even a retired or misspelled one — and silently substitutes its
     # current default, reporting the actually-served model only in `session.created`. Capturing it is
@@ -676,7 +672,6 @@ async def test_connect_captures_substituted_server_model(monkeypatch: pytest.Mon
         assert conn.model_name == 'grok-voice-latest'
 
 
-@pytest.mark.anyio
 async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """The URL, bearer auth, and `session.update` frame are derived from the xAI provider."""
     # A cumulative `.updated` partial ahead of a real transcript proves the xAI codec is wired in:
@@ -711,7 +706,6 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     assert update['session']['voice'] == 'eve'
 
 
-@pytest.mark.anyio
 async def test_connect_url_encodes_model_name(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     fake_connect = FakeConnect(ws)
@@ -723,7 +717,6 @@ async def test_connect_url_encodes_model_name(monkeypatch: pytest.MonkeyPatch) -
     assert fake_connect.url == ('wss://api.x.ai/v1/realtime?model=voice%26conversation_id%3Dstolen%23fragment')
 
 
-@pytest.mark.anyio
 async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch) -> None:
     # xAI shares the OpenAI-protocol handshake, so a rejected config surfaces as a `ModelAPIError`
     # carrying the provider's message (not a raw protocol error), same as the OpenAI provider.
@@ -737,7 +730,6 @@ async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch)
     assert exc_info.value.model_name == 'grok-voice-latest'
 
 
-@pytest.mark.anyio
 async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
     """An active span propagates `traceparent` into the handshake headers (see the OpenAI provider test)."""
     pytest.importorskip('opentelemetry.sdk')
@@ -758,7 +750,6 @@ async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.
     assert 'traceparent' in fake_connect.headers
 
 
-@pytest.mark.anyio
 async def test_agent_realtime_session_rejects_native_tools() -> None:
     # xAI Grok Voice supports no native tools, so a native tool with no local fallback fails up front,
     # before dialing — via the same native ↔ local-tool swap the classic agent-run path applies, so the
@@ -772,7 +763,6 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
             pass  # pragma: no cover
 
 
-@pytest.mark.anyio
 async def test_connect_seeds_message_history_as_output_text(monkeypatch: pytest.MonkeyPatch) -> None:
     """Seeded assistant turns are sent as `output_text` items (as xAI, like OpenAI, expects)."""
     ws = FakeWebSocket([_created(), _updated()])
@@ -807,7 +797,6 @@ async def test_connect_seeds_message_history_as_output_text(monkeypatch: pytest.
     ]
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('image_kind', ['url', 'binary'])
 async def test_connect_rejects_seeded_image(monkeypatch: pytest.MonkeyPatch, image_kind: str) -> None:
     ws = FakeWebSocket([_created(), _updated()])
@@ -824,7 +813,6 @@ async def test_connect_rejects_seeded_image(monkeypatch: pytest.MonkeyPatch, ima
             pass  # pragma: no cover
 
 
-@pytest.mark.anyio
 async def test_connect_rejects_seeded_audio(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
@@ -837,7 +825,6 @@ async def test_connect_rejects_seeded_audio(monkeypatch: pytest.MonkeyPatch) -> 
             pass  # pragma: no cover
 
 
-@pytest.mark.anyio
 async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     """A reconnect through `connect()`'s own dial closes the dropped socket before opening the next."""
     transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
@@ -865,7 +852,6 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     assert json.loads(good.sent[0])['session']['resumption'] == {'enabled': True}
 
 
-@pytest.mark.anyio
 async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -942,7 +928,6 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     ]
 
 
-@pytest.mark.anyio
 async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: pytest.MonkeyPatch) -> None:
     """A failed reconnect through `connect()`'s dial leaves nothing to close on teardown.
 
@@ -990,7 +975,6 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
     assert connect.closed == ['dropped']
 
 
-@pytest.mark.anyio
 async def test_reconnect_handshake_error_is_retryable() -> None:
     conn = XaiRealtimeConnection.__new__(XaiRealtimeConnection)
 
@@ -1002,7 +986,6 @@ async def test_reconnect_handshake_error_is_retryable() -> None:
     assert await conn._attempt_reconnect() is False  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
     """If the very first connection fails to open, there is nothing to close on teardown."""
 
@@ -1022,7 +1005,6 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
             pass  # pragma: no cover
 
 
-@pytest.mark.anyio
 async def test_connect_rejects_conversation_created_without_id(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), json.dumps({'type': 'conversation.created', 'conversation': {}})])
     monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
@@ -1035,7 +1017,6 @@ async def test_connect_rejects_conversation_created_without_id(monkeypatch: pyte
 # --- provider / auth resolution ------------------------------------------------------------------
 
 
-@pytest.mark.anyio
 async def test_provider_str_resolves_key_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """The default `provider='xai'` reads `XAI_API_KEY`, which becomes the WebSocket bearer token."""
     monkeypatch.setenv('XAI_API_KEY', 'env-key')
@@ -1062,7 +1043,6 @@ def test_non_xai_provider_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
         XaiRealtimeModel('grok-voice-latest', provider=cast('Any', OpenAIProvider(api_key='x')))
 
 
-@pytest.mark.anyio
 async def test_reconnect_reports_the_newly_served_model(monkeypatch: pytest.MonkeyPatch) -> None:
     # xAI substitutes its current default for any slug, so a re-dial can land on a different model than
     # the one that started the session. `model_name` reads the latest `session.created` through the

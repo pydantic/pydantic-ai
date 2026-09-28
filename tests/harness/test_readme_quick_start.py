@@ -49,8 +49,6 @@ from pydantic_ai_harness import CodeMode
 
 from .conftest import IsDatetime, IsPartialDict, IsStr
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

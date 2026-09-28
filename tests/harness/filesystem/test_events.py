@@ -38,8 +38,6 @@ from pydantic_ai_harness.filesystem import (
     SearchKind,
 )
 
-pytestmark = pytest.mark.anyio
-
 # Mode bits do not bind root, and Windows has no write-only mode.
 needs_mode_bits = pytest.mark.skipif(
     os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0, reason='POSIX mode bits must apply to this process.'

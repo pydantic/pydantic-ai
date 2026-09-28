@@ -22,7 +22,6 @@ with try_import() as anthropic_imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
 ]
 
 _THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'

@@ -29,8 +29,6 @@ from pydantic_ai_harness.repo_context._loader import (
     render_context_files,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:
@@ -451,7 +449,6 @@ class TestForRunAndMisc:
         assert RepoContext.get_serialization_name() == 'RepoContext'
 
 
-@pytest.mark.anyio
 async def test_disabled_nested_traversal_ignores_filesystem_event(tmp_path: Path) -> None:
     _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
     _write(tmp_path / 'sub' / 'one.py', 'one')

@@ -382,7 +382,6 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
 warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     pytest.mark.filterwarnings(

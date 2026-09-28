@@ -13,8 +13,6 @@ from pydantic_clai2.commands import set_completions
 from pydantic_clai2.credential_store import credentials_path, save_codex_credentials
 from tests.clai2.menu_script import make_context
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

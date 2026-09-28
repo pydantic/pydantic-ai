@@ -20,7 +20,6 @@ from pydantic_ai_harness.planning import (
 from pydantic_ai_harness.planning._store import validate_table_name
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
 ]
 

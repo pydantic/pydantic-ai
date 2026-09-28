@@ -134,8 +134,6 @@ with try_import() as typesafe_available:
     from pydantic_ai.models.typesafe import TypeSafeModel
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
-pytestmark = pytest.mark.anyio
-
 
 HAND_MAINTAINED = frozenset({'tool_choice', 'thinking'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""

@@ -50,7 +50,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.xai import XaiRealtimeModel
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 

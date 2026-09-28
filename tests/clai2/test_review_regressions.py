@@ -22,8 +22,6 @@ from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.test_plugin_loader import Harness
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

@@ -58,7 +58,7 @@ with try_import() as google_imports:
 
 from pydantic_ai.models import Model
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # A distinctive marker so the recursive wire search can't match an unrelated `description`.
 SENTINEL_DESCRIPTION = 'pyai-ref-sibling-sentinel: primary mailing address'
