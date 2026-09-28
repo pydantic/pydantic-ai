@@ -80,9 +80,11 @@ async def run_posix_search(
         # Grep's 1 means no matches, while 2 (including an invalid ERE or a read error)
         # must not be turned into a plausible empty result by xargs or the output pipe.
         processing = (
-            "xargs -0 sh -c 'tmp=$(mktemp) || exit 2; pattern=$1; shift; for file do "
-            + canonical
-            + f'grep {flags} -e "$pattern" -- "$file" > "$tmp"; code=$?; '
+            "xargs -0 sh -c 'tmp=$(mktemp) || exit 2; "
+            # When head closes the pipe at the cap, remove the temp file, then die of SIGPIPE
+            # again so xargs still reports the signal that marks the output as cut.
+            'trap "rm -f -- \\"\\$tmp\\"; trap - PIPE; kill -PIPE \\$\\$" PIPE; '
+            'pattern=$1; shift; for file do ' + canonical + f'grep {flags} -e "$pattern" -- "$file" > "$tmp"; code=$?; '
             'if [ "$code" -gt 1 ]; then rm -f -- "$tmp"; exit "$code"; fi; '
             # With -n, every output line is numbered except the `--` between context groups.
             'while IFS= read -r line; do [ "$line" = -- ] && continue; '
@@ -144,7 +146,8 @@ def _parse_records(output: str, *, listing: bool) -> tuple[list[Record], bool]:
             text = output[real_end + 1 : line_end]
             start = line_end + 1
         if start - end > _MAX_RECORD_BYTES:
+            # Drop only the oversized record; later records are still complete.
             incomplete = True
-            break
+            continue
         records.append(Record(path=path, text=text, real_path=real_path))
     return records, incomplete or start < len(output)

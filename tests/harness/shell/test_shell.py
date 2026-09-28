@@ -1628,7 +1628,15 @@ class _RecordingKill(LocalWorkspaceBackend):
 
 
 class _NeverReady(LocalWorkspaceBackend):
-    """A local backend whose launcher never tells the wrapper to start the command."""
+    """A local backend whose launcher never tells the wrapper to start the command.
+
+    With `launcher_alive`, the wrapper is handed a PID that outlives the launcher (this process),
+    so it keeps waiting; otherwise the launcher exits like one cancelled before `launch.ready`.
+    """
+
+    def __init__(self, working_dir: str | Path, *, launcher_alive: bool = True) -> None:
+        super().__init__(working_dir)
+        self.launcher_alive = launcher_alive
 
     async def run(
         self,
@@ -1640,6 +1648,8 @@ class _NeverReady(LocalWorkspaceBackend):
     ) -> CommandResult:
         if isinstance(command, str):
             command = command.replace(': > "$dir/launch.ready"\n', '')
+            if self.launcher_alive:
+                command = command.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
@@ -1681,6 +1691,19 @@ class TestSignalling:
         (Path(job.directory) / 'stop').touch()
         (Path(job.directory) / 'launch.ready').touch()
         with anyio.fail_after(30):
+            while (status := await job.status())[0]:
+                await anyio.sleep(0.05)  # pragma: lax no cover
+        assert status == (False, 143)
+        assert Path(job.output_path).read_text(encoding='utf-8') == ''
+        await job.cleanup()
+
+    async def test_a_launcher_gone_before_start_never_starts_the_command(self, shell_dir: Path) -> None:
+        # A launch cancelled before `launch.ready` must not leave its detached wrapper waiting forever.
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_NeverReady(shell_dir, launcher_alive=False)))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'echo started'))
+        job = await _job(ts, ctx, command_id)
+        with anyio.fail_after(30):  # hang guard only
             while (status := await job.status())[0]:
                 await anyio.sleep(0.05)  # pragma: lax no cover
         assert status == (False, 143)

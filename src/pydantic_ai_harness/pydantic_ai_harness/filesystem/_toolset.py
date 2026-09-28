@@ -567,7 +567,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if not _contains(root, cwd):
                 raise UserError(
                     f'The working directory {cwd!r} is outside root_dir {root!r}. '
-                    'Set `root_dir` to a directory that contains it, or leave it unset to use the working directory.'
+                    f'To work in {root!r}, attach the workspace there, such as `LocalWorkspace({root!r})` on this '
+                    'machine; otherwise set `root_dir` to a directory that contains the working directory.'
                 )
         has_patterns = bool(self._allowed_patterns or self._denied_patterns or self._read_only_patterns)
         bounds = _Bounds(root=root, cwd=cwd, checks_realpath=root != '/' or has_patterns)
@@ -1343,6 +1344,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 scope.workspace,
                 cwd=cwd,
                 target=target,
+                explicit_file=not entry.is_dir,
                 pattern=pattern,
                 include_hidden=include_hidden,
                 limit=self._max_search_results,

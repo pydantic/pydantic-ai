@@ -1,5 +1,6 @@
 """Search on command-capable workspaces without ripgrep."""
 
+import shutil
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -192,14 +193,45 @@ async def test_posix_grep_explicit_ignored_file(tmp_path: Path, no_rg_path: str)
     assert await tools.grep('needle', path='ignored.txt', workspace=backend) == 'ignored.txt:1:needle'
 
 
-async def test_posix_output_cap_reports_truncation(tmp_path: Path, no_rg_path: str) -> None:
-    (tmp_path / 'many.txt').write_text(('needle ' + 'X' * 100 + '\n') * 85000)
+async def test_posix_search_files_explicit_file(tmp_path: Path, no_rg_path: str, no_rg_git_path: str) -> None:
+    (tmp_path / '.gitignore').write_text('ignored.txt\n')
+    (tmp_path / 'ignored.txt').write_text('needle\n')
+    (tmp_path / '-notes.txt').write_text('needle\n')
+    subprocess.run(['git', '-C', str(tmp_path), 'init', '-q'], check=True)
+    tools = FileSystem[None](root_dir=tmp_path).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
     backend = CountingBackend(tmp_path, no_rg_path)
-    tools = FileSystem[None](root_dir=tmp_path, max_search_results=200000, tools=['grep']).get_toolset()
+    # A named file is searched even when ignored, as `grep` does, and its name never reaches `find`.
+    assert await tools.search_files('needle', path='ignored.txt', workspace=backend) == 'ignored.txt:1:needle'
+    no_git = CountingBackend(tmp_path, no_rg_git_path)
+    assert await tools.search_files('needle', path='-notes.txt', workspace=no_git) == '-notes.txt:1:needle'
+
+
+async def test_posix_oversized_line_keeps_later_matches(tmp_path: Path, no_rg_git_path: str) -> None:
+    (tmp_path / 'a.txt').write_text('needle' + 'x' * (1 << 20) + '\n')
+    (tmp_path / 'b.txt').write_text('needle\n')
+    backend = CountingBackend(tmp_path, no_rg_git_path)
+    tools = FileSystem[None](root_dir=tmp_path, tools=['grep']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    assert await tools.grep('needle', workspace=backend) == 'b.txt:1:needle\n[... truncated at 1000 lines]'
+
+
+async def test_posix_output_cap_reports_truncation(tmp_path: Path) -> None:
+    bin_dir, scratch, root = tmp_path / 'bin', tmp_path / 'scratch', tmp_path / 'ws'
+    path = tools_path(bin_dir, exclude=frozenset({'rg', 'mktemp'}))
+    # Put the search's temp files in a known directory: BSD mktemp ignores TMPDIR here.
+    (bin_dir / 'mktemp').write_text(f'#!/bin/sh\nexec {shutil.which("mktemp")} "$@" {scratch}/tmp.XXXXXX\n')
+    (bin_dir / 'mktemp').chmod(0o755)
+    scratch.mkdir()
+    root.mkdir()
+    (root / 'many.txt').write_text(('needle ' + 'X' * 100 + '\n') * 85000)
+    backend = CountingBackend(root, path)
+    tools = FileSystem[None](root_dir=root, max_search_results=200000, tools=['grep']).get_toolset()
     assert isinstance(tools, FileSystemToolset)
     result = await tools.grep('needle', workspace=backend)
     assert result.startswith('many.txt:1:needle')
     assert 'truncated' in result
+    assert list(scratch.iterdir()) == []  # the capped search removed its temp files
 
 
 async def test_no_rg_rejects_unsupported_regex(tmp_path: Path, no_rg_path: str) -> None:
