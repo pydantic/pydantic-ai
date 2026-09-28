@@ -27,17 +27,20 @@ def find_skill_examples() -> Iterable[ParameterSet]:
     # Lint them to catch stale Python snippets without running model/file-system examples.
     # Genuinely illustrative fragments (e.g. sandbox-side code the model would generate)
     # opt out with a `lint="skip"` fence directive.
-    root_dir = Path(__file__).parent.parent
+    root_dir = Path(__file__).parents[2]
     os.chdir(root_dir)
 
     # `find_examples` yields paths relative to the cwd we just set, so use them as-is.
-    for ex in find_examples('pydantic_ai_harness/.agents'):
+    for ex in find_examples('src/pydantic_ai_harness/pydantic_ai_harness/.agents'):
         yield pytest.param(ex, id=f'{ex.path}:{ex.start_line}')
 
 
 def test_migration_skill_examples_are_executable():
-    root_dir = Path(__file__).parent.parent
-    skill_dir = root_dir / 'pydantic_ai_harness/.agents/skills/migrating-deep-agents-to-pydantic-ai-harness'
+    root_dir = Path(__file__).parents[2]
+    skill_dir = (
+        root_dir
+        / 'src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/migrating-deep-agents-to-pydantic-ai-harness'
+    )
     examples = list(find_examples(skill_dir))
     fence_count = 0
 
@@ -61,7 +64,7 @@ def test_migration_skill_examples_are_executable():
         assert not prefix.get('test', '').startswith('skip')
 
 
-@pytest.mark.parametrize('example', find_skill_examples())
+@pytest.mark.parametrize('example', list(find_skill_examples()))
 def test_skill_examples(example: CodeExample, eval_example: EvalExample):
     # Lint every snippet to catch stale imports/syntax, and additionally execute the ones
     # that need no live model, network, or external file -- those exercise the real

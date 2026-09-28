@@ -11,11 +11,6 @@ from pydantic_clai2 import api_keys, openrouter, vllm
 from pydantic_clai2.credential_store import load_codex_credentials
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('provider', ['vllm', 'openrouter'])
 async def test_reference_lifecycle(provider: str) -> None:
     reference = api_keys.KeyReference(name='SHARED')

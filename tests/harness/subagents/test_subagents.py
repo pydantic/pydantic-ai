@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -29,7 +29,15 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.subagents import SubAgent, SubAgents, SubAgentToolset
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    UnavailableWorkspace,
+    Workspace,
+    WorkspaceReadOnlyError,
+    WorkspaceUnavailableError,
+)
+from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
 
 @dataclass
@@ -48,13 +56,26 @@ class _RecordingCapability(AbstractCapability[AgentDepsT]):
         return _instructions
 
 
-pytestmark = pytest.mark.anyio
+async def test_workspace_free_temporal_delegate() -> None:
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal import TemporalRunContext
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
+    toolset = SubAgentToolset[object](
+        agents={'worker': SubAgent(Agent[object, str](TestModel(custom_output_text='worker'), name='worker'))},
+        forward_usage=False,
+        inherit_tools=False,
+        shared_capabilities=[],
+        event_stream_handler=None,
+        tool_name='delegate_task',
+        tool_retries=None,
+        contain_errors=False,
+        call_counts={},
+        models={'test': ModelOption(TestModel(custom_output_text='worker'))},
+    )
+    result = await toolset.delegate_task(
+        TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello', model='test'
+    )
+    assert result == 'worker'
 
 
 def _delegate_then_finish(agent_name: str, *, retries_before: int = 0) -> FunctionModel:
@@ -224,6 +245,54 @@ class TestDelegation:
             if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
         ]
         assert returns == ['WORKER RESULT']
+
+    async def test_delegate_inherits_parent_workspace(self, tmp_path: Path) -> None:
+        facade = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(working_dir=tmp_path)))
+        worker: Agent[object, str] = Agent(TestModel(call_tools=['workspace_details']), name='worker')
+
+        @worker.tool
+        async def workspace_details(ctx: RunContext[object]) -> str:
+            assert ctx.workspace is facade
+            working_dir = await ctx.workspace.working_dir()
+            with pytest.raises(WorkspaceReadOnlyError):
+                await ctx.workspace.run(['echo', 'blocked'])
+            return working_dir
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'), capabilities=[SubAgents(agents=[SubAgent(worker)])]
+        )
+        result = await parent.run('go', workspace=facade)
+
+        assert str(tmp_path) in _delegate_returns(result)[0]
+
+    async def test_delegate_uses_own_workspace_without_parent_workspace(self, tmp_path: Path) -> None:
+        worker: Agent[object, str] = Agent(
+            TestModel(call_tools=['workspace_working_dir']), name='worker', capabilities=[LocalWorkspace(tmp_path)]
+        )
+
+        @worker.tool
+        async def workspace_working_dir(ctx: RunContext[object]) -> str:
+            return await ctx.workspace.working_dir()
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'), capabilities=[SubAgents(agents=[SubAgent(worker)])]
+        )
+        result = await parent.run('go')
+        assert str(tmp_path) in _delegate_returns(result)[0]
+
+    async def test_unavailable_parent_workspace_is_forwarded(self) -> None:
+        worker: Agent[object, str] = Agent(TestModel(call_tools=['workspace_working_dir']), name='worker')
+
+        @worker.tool
+        async def workspace_working_dir(ctx: RunContext[object]) -> str:
+            return await ctx.workspace.working_dir()
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'), capabilities=[SubAgents(agents=[SubAgent(worker)])]
+        )
+
+        with pytest.raises(WorkspaceUnavailableError, match='workspace disabled by policy'):
+            await parent.run('go', workspace=UnavailableWorkspace('workspace disabled by policy'))
 
     async def test_delegates_via_name_override(self) -> None:
         worker = Agent(TestModel(custom_output_text='WORKER RESULT'), name='internal')
@@ -974,11 +1043,15 @@ class TestIncludeSelf:
         with pytest.raises(ValueError, match="Sub-agent name 'self' is taken by the running agent"):
             SubAgents(agents=[SubAgent(Agent(TestModel(), name='self'))], include_self=True)
 
-    def test_disk_agent_named_self_is_shadowed(self, tmp_path: Path) -> None:
-        (tmp_path / 'self.md').write_text('---\nname: self\n---\n\nBody.\n', encoding='utf-8')
+    async def test_disk_agent_named_self_is_shadowed(self, tmp_path: Path) -> None:
+        (tmp_path / '.agents' / 'agents').mkdir(parents=True)
+        (tmp_path / '.agents' / 'agents' / 'self.md').write_text('---\nname: self\n---\n\nBody.\n', encoding='utf-8')
+        agent = Agent(TestModel(call_tools=[]), capabilities=[SubAgents(include_self=True)])
         with pytest.warns(UserWarning, match="Disk sub-agent 'self' is shadowed"):
-            capability = SubAgents[None](include_self=True, agent_folders=[tmp_path])
-        assert capability._by_name == {}  # pyright: ignore[reportPrivateUsage]
+            result = await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest) and request.instructions is not None
+        assert request.instructions.count('- self') == 1
 
     def test_max_depth_counts_the_top_level_run(self) -> None:
         with pytest.raises(ValueError, match='must be at least 1; got 0'):

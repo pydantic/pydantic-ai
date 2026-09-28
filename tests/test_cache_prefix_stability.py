@@ -51,7 +51,7 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 def _post_bodies(vcr: Cassette) -> list[bytes | str]:

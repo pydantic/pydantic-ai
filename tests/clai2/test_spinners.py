@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
-from menu_script import Script, make_context, pick
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
@@ -40,6 +39,7 @@ from pydantic_clai2.spinners import (
     make_spinner,
     user_spinners_path,
 )
+from tests.clai2.menu_script import Script, make_context, pick
 
 PromptT = TypeVar('PromptT')
 CODE_PUPPY_BUILTINS = (
@@ -63,11 +63,6 @@ CODE_PUPPY_BUILTINS = (
     'fistBump',
     'aesthetic',
 )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def catalogue(tmp_path: Path, *, selected: str = DEFAULT_SPINNER, registered: tuple[Spinner, ...] = ()) -> Spinners:

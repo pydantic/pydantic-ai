@@ -177,20 +177,11 @@ constraint-dependencies = [
     "torch>=2.13.0",
     "transformers>=5.5.0",
 ]
-# `pydantic-ai-harness[browser-use]` pins provider SDKs below the floors `pydantic-ai-slim` declares, so
-# they only resolve together under an override: browser-use then runs against newer SDKs than it pins.
-# An override replaces every requirement on the package it names, so each line repeats the workspace's
-# own floor; move it whenever that floor moves. If one can no longer be overridden without breaking
-# browser-use, the extra yields, not the floor.
-override-dependencies = [
-    "anthropic>=1.8.0",
-    "google-auth>=2.56.0",
-    "google-genai>=2.25.0",
-    # browser-use pins `groq==1.0.0`, but `pydantic_ai.models.groq` is written against the 0.x SDK
-    # (1.0 replaced the `NotGiven` sentinel with `Omit`); keep the workspace on the 0.x line.
-    "groq>=0.25.0,<1",
-    "openai>=3.19.0",
-]
+# `browser-use` pins every one of its dependencies exactly (anyio, openai, anthropic, groq, pillow, ...),
+# so resolving `pydantic-ai-harness[browser-use]` here would hold the whole workspace to those versions.
+# The extra stays in the published metadata; this lock leaves it out, and the `harness browser-use`
+# CI job installs it on its own to run and type-check `BrowserUse` against the versions users get.
+exclude-dependencies = ["browser-use"]
 build-constraint-dependencies = [
     # hatchling 1.32.0 (2026-08-11) bumped its default core metadata version to 2.5,
     # which the pinned gh-action-pypi-publish validator rejects as "not a valid
@@ -203,8 +194,9 @@ build-constraint-dependencies = [
 
 [tool.uv.exclude-newer-package]
 # These are our own packages, not worth defending from supply chain attacks on them.
-# `listentome` is maintained by a Pydantic team member and counts as one of ours.
+# `listentome` and `cassetter` are maintained by a Pydantic team member and count as ours.
 listentome = false
+cassetter = false
 pydantic = false
 pydantic-core = false
 pydantic-extra-types = false
@@ -233,7 +225,8 @@ google-genai = "2026-09-22T17:23:02Z"
 
 [dependency-groups]
 dev = [
-    "anyio>=4.7.0",
+    # `anyio_mode = "auto"` (pytest plugin) was added in 4.11.0.
+    "anyio>=4.11.0",
     "trio>=0.34.0",
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
@@ -281,7 +274,7 @@ dev = [
     "redis>=8.1.0",
     # `pydantic-clai2` records `httpx2` traffic with cassetter's context manager; its pytest plugin
     # stays disabled (`-p no:cassetter`) so `pytest-recording` keeps owning the `vcr` fixture.
-    "cassetter>=0.11.0",
+    "cassetter>=0.12.0",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -346,6 +339,8 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/sandbox_live_changes.py",
+    ".github/scripts/test_sandbox_live_changes.py",
 ]
 
 [tool.ruff.lint]
@@ -410,6 +405,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_sandbox_live_changes.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
@@ -447,6 +443,9 @@ executionEnvironments = [
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
+    # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.
+    "src/pydantic_ai_harness/pydantic_ai_harness/browser_use",
+    "tests/harness/browser_use",
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
@@ -457,11 +456,22 @@ strict = true
 
 [tool.pytest.ini_options]
 addopts = "-p no:cassetter"
+# Every `async def` test runs via anyio; no `@pytest.mark.anyio` needed.
+anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
-markers = ["modal_live: runs against a real Modal control plane; needs credentials"]
+markers = [
+    "modal_live: runs against a real Modal control plane; needs credentials",
+    "e2b_live: runs against a real E2B sandbox; needs credentials",
+]
 filterwarnings = [
     "error",
+    # anyio 4.14+ intentionally leaves a task's coroutine unawaited when the task is cancelled natively
+    # (`asyncio.wait_for`, `Task.cancel()`, Temporal evicting a workflow) before its first step, and the
+    # garbage collector then warns in whatever test is running.
+    # TODO: Replace native cancellation in harness code (e.g. `asyncio.wait_for` in `SubAgents`) with
+    # anyio cancel scopes, which only cancel started tasks: https://github.com/pydantic/pydantic-ai/issues/8824
+    "ignore:coroutine '.*' was never awaited:RuntimeWarning",
     # Experimental harness capabilities warn on import by design; tests assert it where it matters.
     # Matched by message: the warning class lives in a package some install cells do not have.
     "ignore:`pydantic_ai_harness\\.experimental\\.[a-z_.]+` is experimental:UserWarning",
@@ -535,6 +545,7 @@ omit = [
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
+    "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

@@ -12,18 +12,13 @@ from urllib.parse import parse_qs, urlparse
 import anyio
 import httpx
 import pytest
-from menu_script import make_context
 from pydantic import SecretStr, TypeAdapter
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import make_context
 
 
 @pytest.mark.parametrize('text', ['code', 'http://127.0.0.1:123/callback?code=code', '/callback?code=code'])
@@ -68,7 +63,7 @@ async def test_login(mode: str) -> None:
             if mode == 'eof':
                 raise EOFError
             await asyncio.Future[None]()
-            raise AssertionError('unreachable')
+            raise AssertionError('unreachable')  # pragma: no cover
         finally:
             prompt_closed.set()
 
@@ -233,7 +228,7 @@ async def test_cancel_before_browser_returns() -> None:
         return True
 
     async def unexpected_prompt(message: str) -> str:
-        raise AssertionError('Cancelled before opening the prompt')
+        raise AssertionError('Cancelled before opening the prompt')  # pragma: no cover
 
     auth = OpenRouterAuth(console=Console(file=StringIO()), open_browser=browser, read_line=unexpected_prompt)
     login = asyncio.create_task(auth.login())
@@ -261,7 +256,7 @@ async def test_callback_clients_during_exchange(monkeypatch: pytest.MonkeyPatch)
 
     async def prompt(message: str) -> str:
         await asyncio.Future[None]()
-        raise AssertionError('unreachable')
+        raise AssertionError('unreachable')  # pragma: no cover
 
     async def exchange(request: httpx.Request) -> httpx.Response:
         exchange_started.set()

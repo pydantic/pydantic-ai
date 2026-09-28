@@ -12,18 +12,13 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.plugin_loader import PluginError, PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -435,7 +430,9 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     entry = harness.loader.entries()[0]
     assert entry.builtin and entry.state == 'enabled, loaded'
     model = TestModel(call_tools=[])
-    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run('hi')
+    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+        'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
     assert model.last_model_request_parameters is not None
     parts = model.last_model_request_parameters.instruction_parts or []
     assert sum('Answer in haiku.' in part.content for part in parts) == 1
@@ -447,7 +444,9 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     knobs = ['add', 'repo_context', 'pydantic_clai2.repo_context', '{"inventory_tool": true, "walk_up": true}']
     assert await harness.loader.command(knobs) == 'Replaced built-in repo_context.'
     model = TestModel(call_tools=[])
-    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run('hi')
+    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+        'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
     assert model.last_model_request_parameters is not None
     assert [tool.name for tool in model.last_model_request_parameters.function_tools] == ['inventory_agent_context']
     assert (await harness.loader.command(['remove', 'repo_context'])).startswith('repo_context is built in')

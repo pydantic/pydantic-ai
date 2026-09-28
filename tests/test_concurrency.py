@@ -21,8 +21,6 @@ if TYPE_CHECKING:
 
 logfire_installed = importlib.util.find_spec('logfire') is not None
 
-pytestmark = pytest.mark.anyio
-
 
 class AsyncBarrier:
     """A simple asyncio.Barrier-like implementation compatible with Python 3.10 using anyio."""

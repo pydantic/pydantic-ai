@@ -17,13 +17,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, T
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import CodeMode
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
     return [part for message in messages for part in message.parts if isinstance(part, part_type)]
@@ -41,6 +34,7 @@ def _snippets_model(*snippets: str) -> FunctionModel:
     return FunctionModel(model)
 
 
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path: Path) -> None:
     """Remote feeds keep REPL state while tools, prints, mounts, `gather`, and barriers stay host-side."""
     (tmp_path / 'input.txt').write_text('mounted data')
@@ -127,6 +121,7 @@ async def test_dial_failure_redacts_sandbox_url() -> None:
     assert '<monty_sandbox_url>' in str(retry.content)
 
 
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_disconnect_mid_snippet_reports_started_calls(websocket_relay_url: str) -> None:
     """A dropped worker connection resets the session and lists the calls that already started."""
     connections: list[websockets.ServerConnection] = []

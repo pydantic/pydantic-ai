@@ -51,7 +51,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
 

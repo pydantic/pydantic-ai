@@ -33,11 +33,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.speculation import Speculation, SpeculationCounters
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def plain(row: str) -> str:
     return Text.from_ansi(row).plain
 
@@ -118,7 +113,7 @@ class TestSandboxCallOrder:
             if isinstance(event, FunctionToolCallEvent):
                 seen.append(event.part.tool_name)
                 return 'drawn by plugin'
-            return None
+            return None  # pragma: lax no cover
 
         output = io.StringIO()
         renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, renderers=[plugin])

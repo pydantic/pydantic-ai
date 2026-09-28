@@ -121,7 +121,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -5746,6 +5745,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )

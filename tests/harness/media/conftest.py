@@ -42,7 +42,7 @@ SANITIZED_ENDPOINT = f'https://{SANITIZED_HOST}'
 SANITIZED_REGION = 'auto'
 
 
-def _real_account_host_pattern() -> re.Pattern[str] | None:  # pragma: no cover
+def _real_account_host_pattern() -> re.Pattern[str] | None:  # pragma: lax no cover
     """Build a regex that matches the real R2 host so we can scrub it."""
     endpoint = os.environ.get('S3_ENDPOINT')
     if not endpoint:
@@ -53,14 +53,14 @@ def _real_account_host_pattern() -> re.Pattern[str] | None:  # pragma: no cover
     return re.compile(re.escape(match.group(1)))
 
 
-def _real_bucket_pattern() -> re.Pattern[str] | None:  # pragma: no cover
+def _real_bucket_pattern() -> re.Pattern[str] | None:  # pragma: lax no cover
     bucket = os.environ.get('S3_BUCKET_NAME')
     if not bucket:
         return None
     return re.compile(r'/' + re.escape(bucket) + r'/')
 
 
-def _rewrite_request(request: VcrRequest) -> VcrRequest:  # pragma: no cover
+def _rewrite_request(request: VcrRequest) -> VcrRequest:  # pragma: lax no cover
     """Strip account-id, bucket name, and credentials from recorded request."""
     host_pat = _real_account_host_pattern()
     if host_pat is not None:
@@ -92,7 +92,7 @@ _DROP_RESPONSE_HEADERS = frozenset(
 )
 
 
-def _rewrite_response(response: dict[str, Any]) -> dict[str, Any]:  # pragma: no cover
+def _rewrite_response(response: dict[str, Any]) -> dict[str, Any]:  # pragma: lax no cover
     """Sanitise the response: drop noisy / identifying headers and any error body.
 
     For non-2xx responses (typically the gzipped XML R2/AWS error envelope,
@@ -156,12 +156,6 @@ def vcr_config() -> dict[str, Any]:
         'before_record_response': _rewrite_response,
         'match_on': ['method', 'scheme', 'host', 'path', 'body'],
     }
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Restrict the S3 cassette tests to asyncio — we don't need trio cassettes."""
-    return 'asyncio'
 
 
 @pytest.fixture

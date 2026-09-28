@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness.capability_creation._store import CapabilityStore
 from pydantic_ai_harness.capability_creation._toolset import CapabilityCreationToolset
@@ -46,21 +47,28 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     from pathlib import Path
 
     from pydantic_ai import Agent
+    from pydantic_ai.capabilities import LocalWorkspace
     from pydantic_ai_harness.capability_creation import CapabilityCreation
 
     creation = CapabilityCreation(directory=Path('.authored'))
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[creation])
+    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[LocalWorkspace('.'), creation])
 
     # Loop: each iteration injects whatever the agent has authored so far.
     result = await agent.run('build a logging capability', capabilities=creation.store.load_active())
     ```
 
-    This executes authored Python in-process -- the same trust boundary an agent
-    that already runs shell commands and edits files operates under.
+    Authoring imports model-written Python into the agent's own process, on this
+    machine. So a run refuses to start unless its workspace is this machine
+    (`LocalWorkspace`) and writable: next to a sandbox, the model's code would
+    escape the sandbox, and a read-only workspace promises the model changes
+    nothing.
     """
 
     directory: Path
-    """Directory holding the authored `<name>.py` files and the `manifest.json` index."""
+    """Directory holding the authored `<name>.py` files and the `manifest.json` index.
+
+    A path on the machine running the agent, relative to the process's current directory, not a workspace path.
+    """
 
     guidance: str | None = None
     """Static system-prompt guidance on authoring. Cache-stable. Leave `None` for the
@@ -70,6 +78,16 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     def store(self) -> CapabilityStore:
         """The disk-backed store. Call `store.load_active()` to inject authored capabilities into the next run."""
         return CapabilityStore(self.directory)
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Refuse the run unless its workspace is this machine and writable."""
+        workspace = ctx.workspace
+        if workspace.ref is None or workspace.ref.provider != 'local' or workspace.read_only:
+            raise UserError(
+                '`CapabilityCreation` imports model-written Python into the agent process, so it only runs when '
+                "the run's workspace is this machine and writable. Attach a writable `LocalWorkspace('.')`, not "
+                'a sandbox or a read-only workspace.'
+            )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static, cache-stable guidance on the authoring tools."""

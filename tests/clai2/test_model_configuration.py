@@ -4,7 +4,6 @@ from pathlib import Path
 
 import httpx2 as httpx
 import pytest
-from menu_script import Script, make_context, pick, typed
 from pydantic import JsonValue, TypeAdapter
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
@@ -21,11 +20,7 @@ from pydantic_clai2.field_menu import FieldMenu
 from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command, run_model_settings
 from pydantic_clai2.model_options import model_options, validate_model_options
 from pydantic_clai2.model_settings import ModelSettingsForm, model_defaults, model_settings_from_json
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
 @pytest.mark.parametrize(

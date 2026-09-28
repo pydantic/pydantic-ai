@@ -20,6 +20,7 @@ from typing import Any
 from uuid import uuid4
 
 import acp
+import anyio
 import pytest
 from acp import RequestError, schema
 from pydantic import BaseModel
@@ -50,6 +51,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 from pydantic_ai_harness.experimental.acp import (
@@ -86,8 +88,6 @@ from tests.harness.experimental.acp._acp_clients import (
     RecordingClient,
     RecordingClientBase,
 )
-
-pytestmark = pytest.mark.anyio
 
 # A decider maps a permission request (the tool call) to the option_id the client "clicks",
 # or to None to signal a cancelled permission outcome (the user dismissed the dialog).
@@ -498,6 +498,26 @@ class TestSessionConfig:
         await adapter.prompt(prompt=[acp.text_block('go')], session_id=session.session_id)
 
         assert 'extra_tool' in {title for _id, title, _status in client.tool_starts()}
+
+    async def test_session_sandbox_is_attached_to_the_run(self, tmp_path: Path) -> None:
+        agent: Agent[object, str] = Agent(TestModel(call_tools=['sandbox_working_dir']))
+
+        @agent.tool
+        async def sandbox_working_dir(ctx: RunContext[object]) -> str:
+            return await ctx.workspace.working_dir()
+
+        client = FakeClient()
+        backend = LocalWorkspaceBackend(working_dir=tmp_path)
+        adapter = PydanticAIACPAgent(
+            agent, session_config=lambda _session: AcpSessionConfig(deps=None, workspace=backend)
+        )
+        adapter.on_connect(client)
+        await adapter.initialize(protocol_version=1)
+        session = await adapter.new_session(cwd='.')
+        await adapter.prompt(prompt=[acp.text_block('where')], session_id=session.session_id)
+
+        [(_id, _status, raw_output)] = client.tool_completions()
+        assert raw_output == str(tmp_path)
 
     async def test_without_factory_falls_back_to_constructor_deps(self) -> None:
         adapter = PydanticAIACPAgent(_workspace_agent(), deps=_Workspace(cwd='/fixed'))
@@ -1492,11 +1512,12 @@ class TestCancellation:
         session_id = await _start(adapter, client)
 
         prompt_task = asyncio.ensure_future(adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id))
-        # One tick suffices: prompt() sets active_turn before its first suspension point (an
-        # uncontended lock acquire does not yield).
-        await asyncio.sleep(0)
-        turn = adapter._sessions[session_id].active_turn  # pyright: ignore[reportPrivateUsage]
-        assert turn is not None, 'the prompt never started its turn'
+        # prompt() sets active_turn once it holds the session lock; acquiring it is a checkpoint.
+        session = adapter._sessions[session_id]  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(5):
+            while session.active_turn is None:
+                await asyncio.sleep(0)
+        turn = session.active_turn
         # Tear the prompt handler down in the same tick the dismissed dialog ends the turn: the
         # turn's internal rollback signal must not escape (or replace) the handler's cancellation.
         turn.add_done_callback(lambda _turn: prompt_task.cancel())
@@ -2095,10 +2116,10 @@ class TestDefaultCodingPresenter:
     def test_handler_names_match_the_filesystem_and_shell_tools(self) -> None:
         # Recognition couples to tool names, so a rename in those capabilities would silently
         # degrade rich rendering to generic JSON. This fails loudly instead.
-        filesystem = FileSystem[None](root_dir='.').get_toolset()
+        filesystem = FileSystem[None]().get_toolset()
         assert isinstance(filesystem, FileSystemToolset)
         fs_tools = set(filesystem.tools)
-        shell_tools = set(Shell[None](cwd='.').get_toolset().tools)
+        shell_tools = set(Shell[None]().get_toolset().tools)
         assert set(_HANDLERS) <= fs_tools | shell_tools
 
     def test_edit_file_yields_edit_kind_location_and_diff(self) -> None:
@@ -2389,7 +2410,11 @@ class TestWorkspaceRooting:
         agent = Agent(_calls_tool_each_turn(write))  # the agent itself has no filesystem tools
 
         def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-            return AcpSessionConfig(deps=None, capabilities=[FileSystem[None](root_dir=session.cwd)])
+            return AcpSessionConfig(
+                deps=None,
+                capabilities=[FileSystem[None](root_dir=session.cwd)],
+                workspace=LocalWorkspaceBackend(session.cwd),
+            )
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, session_config=session_config)
         client = FakeClient()
@@ -2422,7 +2447,11 @@ class TestWorkspaceRooting:
             seen.append(event)
 
         def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-            return AcpSessionConfig(deps=None, capabilities=[FileSystem[None](root_dir=session.cwd), hooks])
+            return AcpSessionConfig(
+                deps=None,
+                capabilities=[FileSystem[None](root_dir=session.cwd), hooks],
+                workspace=LocalWorkspaceBackend(session.cwd),
+            )
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, session_config=session_config)
         client = FakeClient()

@@ -18,11 +18,6 @@ OPEN = f'\x1b]8;;{URL}\x1b\\'
 CLOSE = '\x1b]8;;\x1b\\'
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('terminal', [False, True])
 @pytest.mark.parametrize('thinking', [False, True])
 async def test_markdown_link_labels(*, terminal: bool, thinking: bool) -> None:
@@ -63,7 +58,7 @@ async def test_abort_mid_label_does_not_leave_a_hyperlink() -> None:
 
     class Output(io.StringIO):
         def write(self, text: str) -> int:
-            if '\x1b]8;;https://' in text:
+            if '\x1b]8;;https://' in text:  # pragma: no branch
                 started.set()
             return super().write(text)
 

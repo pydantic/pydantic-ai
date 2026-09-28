@@ -139,7 +139,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1053,6 +1052,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )

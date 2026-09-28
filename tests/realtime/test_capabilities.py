@@ -62,8 +62,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
-pytestmark = pytest.mark.anyio
-
 
 class _Connection(RealtimeConnection):
     """Replays a fixed list of events (a lone `ResponseDone` by default) so the session drains."""

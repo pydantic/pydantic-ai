@@ -37,7 +37,7 @@ with try_import() as google_imports:
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 @dataclass(frozen=True)

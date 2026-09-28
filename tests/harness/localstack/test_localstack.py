@@ -385,7 +385,6 @@ class TestLocalStackCapability:
     def test_instructions_can_be_disabled(self) -> None:
         assert LocalStack(include_instructions=False).get_instructions() is None
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
@@ -461,7 +460,6 @@ class TestContainerManagement:
                 pass
         assert 'stop managed-xyz' in log.read_text()
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration_manages_container(self, tmp_path: Path) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover

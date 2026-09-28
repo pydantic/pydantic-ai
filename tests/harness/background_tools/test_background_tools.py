@@ -52,13 +52,6 @@ from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _ack_seen(messages: list[ModelMessage]) -> bool:
     """True if any tool return in the history is a background-execution ack."""
@@ -576,7 +569,7 @@ class TestBackgroundTools:
             await second_started.wait()
             ctx.cancel()
             await asyncio.sleep(0)
-            return 'discarded'  # pragma: no cover -- cancellation is delivered at the await
+            return 'discarded'  # pragma: lax no cover -- cancellation is delivered at the await
 
         @agent.tool_plain(metadata={'background': True})
         async def first() -> str:

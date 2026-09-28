@@ -45,15 +45,8 @@ if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
 ]
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
 
 
 def _ctx(

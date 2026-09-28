@@ -62,7 +62,6 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 
 class TestOrdinal:
-    @pytest.mark.anyio
     async def test_agent_runs_with_ordinal_tools(self) -> None:
         server = FastMCP('ordinal-fake')
 
@@ -78,7 +77,6 @@ class TestOrdinal:
         result = await agent.run('List my workspaces')
         assert 'acme' in result.output
 
-    @pytest.mark.anyio
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
         server = FastMCP('ordinal-fake', instructions='Ordinal instructions.')
@@ -153,14 +151,12 @@ class TestOrdinal:
 
 
 class TestPerRunAuth:
-    @pytest.mark.anyio
     async def test_each_run_connects_with_its_own_credential(self) -> None:
         capability = Ordinal[str | None](auth=per_user_token)
         [alice] = await connections_for(capability, 'alice-token')
         [bob] = await connections_for(capability, 'bob-token')
         assert (bearer(alice), bearer(bob)) == ('Bearer alice-token', 'Bearer bob-token')
 
-    @pytest.mark.anyio
     @pytest.mark.parametrize('missing', [None, ''])
     async def test_no_credential_means_no_tools(self, missing: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
         # The environment token is set to show a function never falls back to it.
@@ -168,7 +164,6 @@ class TestPerRunAuth:
         capability = Ordinal[str | None](auth=per_user_token)
         assert await connections_for(capability, missing) == []
 
-    @pytest.mark.anyio
     async def test_function_returning_oauth_raises(self) -> None:
         capability = Ordinal[str | None](auth=per_user_token)
         with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):

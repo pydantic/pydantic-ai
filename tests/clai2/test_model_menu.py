@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-from menu_script import Script, make_context, pick, typed
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
@@ -21,11 +20,7 @@ from pydantic_clai2.model_menu import ModelMenu, ModelSettingsSource, open_add_m
 from pydantic_clai2.model_picker import ModelPickerAction, build_model_picker, model_command, model_completions
 from pydantic_clai2.model_settings import ModelSettingsForm, model_settings_from_json
 from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
 def test_catalog_merges_sources_and_only_lists_runnable_providers() -> None:

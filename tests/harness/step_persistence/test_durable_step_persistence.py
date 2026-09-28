@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import detach_dbos_logging
+
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -19,10 +21,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, InMemoryStepStore, StepEvent, StepPersistence
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+pytestmark = [pytest.mark.xdist_group(name='harness-dbos')]
 
 
 @pytest.fixture
@@ -38,6 +37,7 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
+        detach_dbos_logging()
 
 
 _store = InMemoryStepStore()
@@ -76,7 +76,6 @@ def test_agent_constructs_with_default_id() -> None:
     )
 
 
-@pytest.mark.anyio
 async def test_derive_run_id_requires_context_run_id() -> None:
     ctx = RunContext[None](
         deps=None,
@@ -94,7 +93,6 @@ async def test_derive_run_id_requires_context_run_id() -> None:
         await StepPersistence[None]().before_run(ctx)
 
 
-@pytest.mark.anyio
 async def test_store_suppresses_keyed_replays_without_collapsing_snapshot_states() -> None:
     store = InMemoryStepStore()
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
@@ -121,7 +119,6 @@ async def test_store_suppresses_keyed_replays_without_collapsing_snapshot_states
     assert len(await store.list_events(run_id='run')) == 3
 
 
-@pytest.mark.anyio
 async def test_same_step_complete_snapshots_keep_newer_history_and_suppress_replays() -> None:
     store = InMemoryStepStore()
     older_messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('v1')])]
@@ -142,7 +139,6 @@ async def test_same_step_complete_snapshots_keep_newer_history_and_suppress_repl
     assert await store.latest_snapshot(run_id='run') == newer
 
 
-@pytest.mark.anyio
 async def test_pruned_snapshot_key_remains_suppressed() -> None:
     store = InMemoryStepStore(max_snapshots_per_run=1)
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
@@ -156,7 +152,6 @@ async def test_pruned_snapshot_key_remains_suppressed() -> None:
     assert await store.latest_snapshot(run_id='run') == newer
 
 
-@pytest.mark.anyio
 async def test_opaque_and_invalid_snapshot_keys_use_retained_record_suppression() -> None:
     store = InMemoryStepStore()
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
@@ -168,7 +163,6 @@ async def test_opaque_and_invalid_snapshot_keys_use_retained_record_suppression(
     assert len(await store.list_snapshots(run_id='run')) == 3
 
 
-@pytest.mark.anyio
 async def test_dbos_replay_reuses_run_and_journaled_writes(dbos: DBOS) -> None:
     workflow_id = str(uuid.uuid4())
 

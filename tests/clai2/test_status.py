@@ -17,11 +17,6 @@ from pydantic_clai2.status import Status, StatusLine
 from pydantic_clai2.theme import MUTED, WARNING, sgr
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def test_estimate_includes_tool_argument_deltas() -> None:
     status = Status(model='test')
     status.observe(PartStartEvent(index=0, part=TextPart(content='abcd')))

@@ -4,17 +4,12 @@ from pathlib import Path
 
 import httpx
 import pytest
-from menu_script import make_context
 from pydantic import SecretStr
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import openrouter
 from pydantic_clai2.model_menu import open_add_model_menu
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import make_context
 
 
 @pytest.mark.parametrize('token', ['test-secret'])
@@ -54,7 +49,7 @@ async def test_connect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome:
         async def prompt_async(self, label: str, *, is_password: bool = False) -> str:
             if outcome == 'eof':
                 raise EOFError
-            if 'API key' in label:
+            if 'API key' in label:  # pragma: no branch
                 assert is_password
             return next(values)
 
