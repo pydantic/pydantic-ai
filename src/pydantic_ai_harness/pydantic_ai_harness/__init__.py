@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
     from .memory import Memory
-    from .modal_sandbox import ModalSandbox
+    from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
     from .planning import Planning
     from .posthog import PostHog
@@ -98,6 +98,7 @@ __all__ = [
     'ManagedPrompt',
     'Memory',
     'ModalSandbox',
+    'ModalSandboxBackend',
     'Ordinal',
     'OutputBlocked',
     'OutputGuardrail',
@@ -189,6 +190,7 @@ _CAPABILITY_EXPORTS = {
 _CONSTANT_EXPORTS = {
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
+    'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SubAgent': 'subagents',
