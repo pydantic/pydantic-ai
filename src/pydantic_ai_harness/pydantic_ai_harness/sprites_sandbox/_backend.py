@@ -65,8 +65,10 @@ from typing import TypeVar
 import anyio
 import anyio.to_thread
 import httpx
+import sniffio
 from websockets.exceptions import InvalidHandshake, InvalidMessage
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -116,6 +118,11 @@ _AUTH_MESSAGE = (
 )
 
 
+def _require_asyncio() -> None:
+    if sniffio.current_async_library() != 'asyncio':
+        raise UserError('Sprites needs the asyncio event loop: the Sprites SDK runs its calls on asyncio tasks.')
+
+
 async def _new_client() -> AsyncSpritesClient:
     """An `AsyncSpritesClient` for `SPRITE_TOKEN`, built off the event loop.
 
@@ -134,7 +141,11 @@ async def destroy_sprite(client: AsyncSpritesClient | None, name: str) -> None:
     A Sprite that no longer exists returns quietly; rejected credentials raise
     `WorkspaceUnavailableError`, like any other operation. Without `client`, one is opened from
     `SPRITE_TOKEN` and closed afterwards.
+
+    Raises:
+        UserError: The event loop is not asyncio.
     """
+    _require_asyncio()
     try:
         if client is not None:
             await client.destroy_sprite(name)
@@ -363,6 +374,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         The lock serializes concurrent first uses -- two callers each creating a Sprite
         would leave the loser billed and unreferenced. Attaching by `ref` to a Sprite that
         no longer exists raises `WorkspaceUnavailableError`; it does not create a replacement.
+
+        Raises:
+            UserError: The event loop is not asyncio.
         """
         return await self._get_sandbox(fetched=True)
 
@@ -372,6 +386,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         An unfetched handle is safe for the backend's own calls: a deleted Sprite still fails the
         command or file call itself, as `WorkspaceUnavailableError`.
         """
+        # Every operation acquires the Sprite first, so this one check covers them all.
+        _require_asyncio()
         async with self._lock:
             sandbox = await self._acquire(fetched=fetched)
             if self._working_dir_pending:
@@ -477,7 +493,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         calls this for the backend it supplied when each run ends. A close that fails or times out
         is logged, not raised.
         """
-        if not self._owns_client:
+        # Under another event loop every operation refused before opening a client: nothing to close.
+        if not self._owns_client or sniffio.current_async_library() != 'asyncio':
             return
 
         async def close() -> None:
@@ -500,7 +517,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise
         finally:
             self._operations -= 1
-            if self._operations == 0 and self._close_after_operation and self._owns_client:
+            # Without a client (none opened yet, or every operation refused under another event loop)
+            # there is nothing to close.
+            if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
                 # Detached before any await, so an operation starting meanwhile opens its own client.
                 client, self._client, self._sandbox = self._client, None, None
                 await _run_to_completion(lambda: _close_client(client))

@@ -153,6 +153,8 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder
 | `env` | Environment variables every command gets. Nothing from your machine's environment reaches the Sprite. |
 | `client` | A `sprites.AsyncSpritesClient` to share across runs on one event loop, or to set its base URL or timeout. You close it; `SpritesSandbox` never does. |
 
+Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
+
 ## Durable execution
 
 If the exec socket drops after connection but before an exit status arrives, the command may have run. This raises a non-retryable workspace error rather than replaying a potentially non-idempotent command. Connection failures before the socket opens remain retryable.

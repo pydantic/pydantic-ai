@@ -917,3 +917,24 @@ def test_live_tier_gate(monkeypatch: pytest.MonkeyPatch, env: dict[str, str], ou
     else:
         with pytest.raises(pytest.skip.Exception if outcome == 'skip' else pytest.fail.Exception):
             live_token()
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_trio_is_refused_before_any_sprites_call(transport: SpriteTransport) -> None:
+    """The Sprites SDK runs its calls on asyncio tasks, so Trio gets a clear `UserError` instead."""
+    message = r'^Sprites needs the asyncio event loop: the Sprites SDK runs its calls on asyncio tasks\.$'
+    backend = SpritesSandbox[None]().get_workspace(context(), ref=None)
+    assert isinstance(backend, SpritesSandboxBackend)
+    with pytest.raises(UserError, match=message):
+        await backend.run(['true'])
+    with pytest.raises(UserError, match=message):
+        await backend.read_bytes('/file')
+    with pytest.raises(UserError, match=message):
+        await backend.write_bytes('/file', b'')
+    with pytest.raises(UserError, match=message):
+        await backend.get_sandbox()
+    with pytest.raises(UserError, match=message):
+        await SpritesSandbox[None]().destroy(WorkspaceRef(provider='sprites', id='target'))
+    await backend.aclose()
+    assert transport.clients == []
+    assert transport.created == []
