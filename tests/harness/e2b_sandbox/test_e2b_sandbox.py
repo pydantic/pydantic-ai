@@ -96,6 +96,12 @@ async def test_foreign_reference_is_rejected(fake_e2b: FakeE2B) -> None:
     assert not fake_e2b.sandboxes
 
 
+@pytest.mark.parametrize('env', [{'PORT': 3000}, {1: 'one'}, {'TOKEN': None}])
+def test_non_string_env_fails_at_construction(env: dict[object, object]) -> None:
+    with pytest.raises(TypeError, match='env keys and values must be strings'):
+        E2BSandboxBackend(env=env)  # pyright: ignore[reportArgumentType]
+
+
 @pytest.mark.parametrize(
     ('settings', 'message'),
     [

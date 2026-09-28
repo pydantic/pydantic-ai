@@ -208,6 +208,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
+        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
+            raise TypeError('env keys and values must be strings')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
         self._sandbox = sandbox
         self._user = 'user'
