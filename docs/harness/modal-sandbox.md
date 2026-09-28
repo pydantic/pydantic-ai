@@ -38,6 +38,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 A new sandbox lives for up to 24 hours, Modal's maximum; pass `ModalSandbox(sandbox_timeout=3600)` to end it sooner. Commands start in `/root` on the default image, otherwise in the image's own working directory. A first use may take several minutes while Modal builds or pulls an image. If Modal cannot start the sandbox, for example because the image does not exist, the first tool call raises an error that says why.
 
+`/root` is the home directory, which holds dotfiles and caches. Pass a project directory, such as `ModalSandbox(working_dir='/root/project')`, so the project is not the home directory; it is created for you on a new sandbox.
+
 ## Continue in the same sandbox
 
 ```python {names="defined"}
