@@ -9,14 +9,17 @@ adds what only Prefect has.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.durable_exec._workspace import WorkspaceCall
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import WorkspaceTimeoutError
 
 from ..workspace_fakes import InMemoryProvider
 from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents, tool_runs
@@ -27,7 +30,7 @@ try:
     from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
-    from pydantic_ai.durable_exec.prefect import PrefectDurability
+    from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
@@ -163,3 +166,31 @@ async def test_prefect_repeated_identical_reads_are_not_served_from_cache() -> N
 
     assert await read_twice() == ('one', 'two')
     assert _workspace_tasks() == ['ensure', 'write_bytes', 'read_bytes', 'write_bytes', 'read_bytes']
+
+
+async def test_prefect_tool_workspace_timeout_is_not_retried_by_task_engine(tmp_path: Path) -> None:
+    """Re-running a timed-out command could repeat side effects it already completed."""
+    starts = 0
+
+    async def slow_command(ctx: RunContext) -> str:
+        nonlocal starts
+        starts += 1
+        return (await ctx.workspace.run(['sleep', '30'], timeout=0.05)).stdout
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_workspace_timeout',
+        tools=[slow_command],
+        capabilities=[
+            LocalWorkspace(tmp_path),
+            PrefectDurability(tool_task_config=TaskConfig(retries=2, retry_delay_seconds=0)),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('run')).output
+
+    with pytest.raises(WorkspaceTimeoutError):
+        await run_agent()
+    assert starts == 1
