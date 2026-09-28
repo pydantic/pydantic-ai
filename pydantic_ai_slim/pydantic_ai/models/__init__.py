@@ -656,6 +656,35 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             'thinking_enabled_by_default', False
         )
 
+    def _forced_tool_choice_disables_thinking(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether forcing a tool call would stop this request from thinking.
+
+        See [`forced_tool_choice_disables_thinking`][pydantic_ai.profiles.ModelProfile.forced_tool_choice_disables_thinking].
+        """
+        return self.profile.get('forced_tool_choice_disables_thinking', False) and self._request_thinks(
+            model_settings, model_request_parameters
+        )
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        """The output mode for a structured `output_type` that doesn't pick one.
+
+        Tool Output forces a call to the output tool on every request that can't end with text, so where that
+        would stop the model from thinking, Native Output is used instead if the model supports it.
+        """
+        mode = self.profile.get('default_structured_output_mode', 'tool')
+        if (
+            mode == 'tool'
+            and model_request_parameters.output_tools
+            and self.profile.get('supports_json_schema_output', False)
+            and self._forced_tool_choice_disables_thinking(model_settings, model_request_parameters)
+        ):
+            return 'native'
+        return mode
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -694,7 +723,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
+        params = params.with_default_output_mode(self._default_structured_output_mode(model_settings, params))
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':

@@ -187,7 +187,8 @@ async def test_audio_in_server_vad_turn(
         supports_webrtc=False,
         # Inherited from the OpenAI realtime profile, which Azure delegates to wholesale: Voice Live
         # serves the same models, and they keep talking while a tool call is outstanding.
-        supports_async_tool_calls=True,
+        async_tool_call_mode='always',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         # Voice Live's session config takes `modalities: ['text']`, so text output is supported.
         supports_text_output=True,
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions

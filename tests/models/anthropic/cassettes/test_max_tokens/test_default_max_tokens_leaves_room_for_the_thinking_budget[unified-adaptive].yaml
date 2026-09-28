@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "442"
+      - "239"
       content-type:
       - application/json
       host:
@@ -23,28 +23,14 @@ interactions:
         messages:
         - role: user
           content:
-          - text: Give me information about Tokyo
+          - text: What is 17 * 23? Answer with just the number.
             type: text
-        model: claude-sonnet-5-5
+        model: claude-sonnet-4-6
+        output_config:
+          effort: high
         stream: false
-        tool_choice:
-          type: auto
-        tools:
-        - name: final_result
-          description: Information about a city.
-          input_schema:
-            properties:
-              city:
-                type: string
-              country:
-                type: string
-              population:
-                type: integer
-            required:
-            - city
-            - country
-            - population
-            type: object
+        thinking:
+          type: adaptive
   response:
     status: 200
     headers:
@@ -57,7 +43,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-7dd7cddcc17190991f47cce2a76df568-cf02a8b29fe7494b-01
+      - 00-1f22eebabf1035a5117393fbbf53b0ce-eb4db56f993b29f9-01
       transfer-encoding:
       - chunked
       vary:
@@ -65,35 +51,32 @@ interactions:
     body:
       type: json
       content:
-        model: claude-sonnet-5-5
-        id: msg_011CfWLR4kqFtG8NWEGeTaNv
+        model: claude-sonnet-4-6
+        id: msg_011CfWdhFhLHV7CAeshkyP4s
         type: message
         role: assistant
         content:
-        - type: tool_use
-          id: toolu_01EYxHyLstWgW5niEcHo95RQ
-          name: final_result
-          input:
-            city: Tokyo
-            country: Japan
-            population: 13960000
-          caller:
-            type: direct
+        - type: thinking
+          thinking: 17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391
+          signature: >-
+            EqECCpIBCBIYAipAwT5MSk7YPcegqcWEpdv3oNhFHUYOuc3oJZz4QeU7Pd9DJiuuDiaxWxL1vyQYwmZlSpwq4IBQO5kjwlyfP6mYzTIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBz9br1QYSDKGj9nijBrDeKsWqLRoMNXwioIQwn9EFT8LlIjAsB+vZ35V2SjerdaasYKw47CeU2wJyhEOYywFMw32F38l4SFIqJlGduvQg4cTeawkqPBd0aUs5Rl93qfvPZ/L3qQixtlSYEp6mHy3N8IttUYhD2aSMlDX5xroZ30OmmaiX8W520ACD75oradradRgB
+        - type: text
+          text: "391"
         container: null
-        stop_reason: tool_use
+        stop_reason: end_turn
         stop_sequence: null
         stop_details: null
         usage:
-          input_tokens: 402
+          input_tokens: 22
           cache_creation_input_tokens: 0
           cache_read_input_tokens: 0
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
-          output_tokens: 97
+          output_tokens: 52
           output_tokens_details:
-            thinking_tokens: 0
+            thinking_tokens: 46
           service_tier: standard
           inference_geo: global
         diagnostics: null
-  recorded_at: 2026-09-28T18:47:15.997821+00:00
+  recorded_at: 2026-09-28T22:33:52.040117+00:00
