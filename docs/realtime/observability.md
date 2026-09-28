@@ -61,13 +61,13 @@ tool result. With server-side VAD, the provider can begin a response without a c
 limit is checked at the first response event. On a model whose profile reports
 `responses_are_requests=False` (OpenAI GPT-Live), requests are the delegated backend's responses
 instead, counted and checked as each one's usage arrives: see
-[GPT-Live usage](openai-live.md#usage-is-measured-in-seconds). Breaches raise
+[GPT-Live usage](openai.md#usage-is-measured-in-seconds). Breaches raise
 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from iteration, or when the
 session context exits if only an audio or transcript view is consumed.
 
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
-[OpenAI GPT-Live](openai-live.md#usage-is-measured-in-seconds),
+[OpenAI GPT-Live](openai.md#usage-is-measured-in-seconds),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
 [Google Gemini](gemini.md#feature-support-and-limitations), and
 [xAI](xai.md#feature-support-and-limitations) pages. GPT-Live is the one that reports no tokens for
