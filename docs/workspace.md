@@ -206,10 +206,15 @@ agent = Agent(
 ```
 
 `working_dir` defaults to the login directory, and a relative one starts there. The directory must
-already exist. Commands get the remote login environment plus `env=`. `ssh` runs with
-`BatchMode=yes`, so a host that wants a password fails instead of waiting for one; pass extra
-options with `ssh_args=`, such as `ssh_args=['-i', key_path]`. For a single run, pass
+already exist. Commands get the remote login environment plus `env=`. For a single run, pass
 `workspace=SSHWorkspaceBackend('dev@build-box')`.
+
+Logging in needs a key; passwords aren't supported. `ssh` runs with `BatchMode=yes`, so a host that
+asks for a password or a key passphrase fails right away instead of hanging the run, and
+`ssh_args=` can't turn prompts back on. Use a key without a passphrase, such as
+`ssh_args=['-i', key_path]` or `IdentityFile` in your SSH configuration, or load a key that has one
+into `ssh-agent` with `ssh-add`. Set the user in the destination (`dev@build-box`), with `User` in
+your SSH configuration, or with `ssh_args=['-l', 'dev']`.
 
 Every operation opens an SSH connection, and file operations run as shell commands on the host, so
 the host needs a POSIX `sh` and the usual file utilities. Turn on connection sharing in your SSH
