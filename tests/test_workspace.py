@@ -965,8 +965,12 @@ async def test_a_result_still_round_trips_through_json_when_a_workspace_was_used
 async def test_a_result_built_outside_a_run_explains_that_no_workspace_is_attached() -> None:
     result = AgentRunResult[str]('output')
 
-    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached') as exc_info:
         await result.workspace.run(['true'])
+    # A bare `WorkspaceRef` is refused without a capability to resolve it, so the hint names one.
+    assert 'with a capability that can reconnect to an existing environment, pass its `WorkspaceRef`' in str(
+        exc_info.value
+    )
 
 
 class ProviderWorkspaceCapability(AbstractCapability[Any]):
