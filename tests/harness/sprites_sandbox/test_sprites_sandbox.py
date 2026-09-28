@@ -134,8 +134,34 @@ class TestSpritesSandbox:
         assert 'target' not in transport.names
         assert transport.execs == []
         assert transport.close_calls == 1
-        with pytest.raises(ValueError, match='provider'):
+        with pytest.raises(ValueError, match=r"^unsupported workspace provider 'other'; expected 'sprites'$"):
             await provider.destroy(WorkspaceRef(provider='other', id='target'))
+
+    async def test_destroy_is_idempotent_and_maps_rejected_credentials(self, transport: SpriteTransport) -> None:
+        provider = SpritesSandbox[None]()
+        transport.names.add('gone')
+        ref = WorkspaceRef(provider='sprites', id='gone')
+        await provider.destroy(ref)
+        await provider.destroy(ref)
+        await provider.destroy(WorkspaceRef(provider='sprites', id='never-existed'))
+        transport.destroy_error = AuthenticationError('credential expired: secret-sprite-token-123')
+        with pytest.raises(WorkspaceUnavailableError) as caught:
+            await provider.destroy(ref)
+        assert str(caught.value) == (
+            'Credential expired. Sprites rejected the credentials. '
+            'Set SPRITE_TOKEN, or pass a configured `AsyncSpritesClient` as `client=`.'
+        )
+        transport.destroy_error = SpriteError('Failed destroy sprite (status 503): busy')
+        with pytest.raises(SpriteError):
+            await provider.destroy(ref)
+
+    async def test_destroy_without_a_token_is_unavailable(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv('SPRITE_TOKEN')
+        with pytest.raises(WorkspaceUnavailableError, match='SPRITE_TOKEN'):
+            await SpritesSandbox[None]().destroy(WorkspaceRef(provider='sprites', id='target'))
+        assert transport.clients == []
 
     async def test_native_handle_conflict_and_identity(self, transport: SpriteTransport) -> None:
         seed = SpritesSandboxBackend()

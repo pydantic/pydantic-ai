@@ -171,6 +171,7 @@ class SpriteTransport:
         self.get_error_once: Exception | None = None
         self.create_error: Exception | None = None
         self.create_error_after_commit: Exception | None = None
+        self.destroy_error: Exception | None = None
         self.close_error: Exception | None = None
         self.close_calls = 0
         self.close_started = asyncio.Event()
@@ -248,6 +249,11 @@ class SpriteTransport:
         return AsyncSprite(name, client)
 
     async def destroy(self, client: AsyncSpritesClient, name: str) -> None:
+        if self.destroy_error is not None:
+            raise self.destroy_error
+        # The API answers 404 for a Sprite that no longer exists, which the SDK raises as `NotFoundError`.
+        if name not in self.names:
+            raise NotFoundError(f"Resource not found for destroy sprite '{name}'")
         self.names.discard(name)
 
     async def close(self, client: AsyncSpritesClient) -> None:

@@ -116,12 +116,35 @@ _AUTH_MESSAGE = (
 )
 
 
-async def new_client(token: str) -> AsyncSpritesClient:
-    """An `AsyncSpritesClient`, built off the event loop.
+async def _new_client() -> AsyncSpritesClient:
+    """An `AsyncSpritesClient` for `SPRITE_TOKEN`, built off the event loop.
 
-    The client computes its headers on first construction, reading `/proc` on Linux.
+    The SDK reads no environment variable, so the token is read here. The client computes its
+    headers on first construction, reading `/proc` on Linux.
     """
+    token = os.getenv('SPRITE_TOKEN')
+    if not token:
+        raise WorkspaceUnavailableError(_AUTH_MESSAGE)
     return await anyio.to_thread.run_sync(lambda: AsyncSpritesClient(token=token))
+
+
+async def destroy_sprite(client: AsyncSpritesClient | None, name: str) -> None:
+    """Delete a Sprite by name without attaching or waking it.
+
+    A Sprite that no longer exists returns quietly; rejected credentials raise
+    `WorkspaceUnavailableError`, like any other operation. Without `client`, one is opened from
+    `SPRITE_TOKEN` and closed afterwards.
+    """
+    try:
+        if client is not None:
+            await client.destroy_sprite(name)
+        else:
+            async with await _new_client() as owned:
+                await owned.destroy_sprite(name)
+    except NotFoundError:
+        return
+    except AuthenticationError as error:
+        raise WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}') from error
 
 
 async def _cleanup_call(call: Callable[[], Awaitable[object]], *, timeout: float) -> Exception | None:
@@ -382,11 +405,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
         client = self._client
         if client is None:
-            # The SDK reads no environment variable, so the token comes from `SPRITE_TOKEN` here.
-            token = os.getenv('SPRITE_TOKEN')
-            if not token:
-                raise WorkspaceUnavailableError(_AUTH_MESSAGE)
-            client = await new_client(token)
+            client = await _new_client()
             self._client = client
 
         ref = self._ref
