@@ -103,7 +103,7 @@ A background child that inherits stdout or stderr can keep `run()` waiting for t
 
 On a command deadline or cancellation, the backend sends TERM then KILL to the command's foreground process group, including children that have not detached into a separate session. Custom templates and attached sandboxes are probed once for `setsid` (util-linux); without it, only the command leader is stopped, so child processes may continue. Custom templates also need `/bin/bash` and `/bin/sh`. Intentionally detached background jobs are not stopped. It does not destroy the shared sandbox. Stop is best effort: if E2B cannot be reached, or a start won registration but does not respond to the stop request, work may still be running. A cancelled start that arrives after stop is fenced before user code runs. Retain the sandbox ref to inspect or kill it explicitly.
 
-A command whose combined output passes 10 MiB is stopped the same way and raises `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`, as the local backend does. Redirect large output to a file instead.
+A command whose combined output passes 10 MiB is stopped the same way and raises `WorkspaceOutputLimitError`, with the first 65,536 characters of each stream in `stdout` and `stderr`. Redirect large output to a file instead.
 
 A command killed by a signal may return `exit_code=-1` in E2B; the SDK does not identify the signal, so this is not converted to `128+signal`.
 
@@ -283,7 +283,7 @@ Removing a capability while workflows using it are still running changes their r
 
 ## Telemetry
 
-`E2BSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command and file operation runs inside the tool call span that asked for it. Creating a sandbox also logs `Created E2B sandbox <id>` at INFO on the `pydantic_ai_harness.e2b_sandbox._backend` logger, so the id is on record even if the run ends before it is stored.
+`E2BSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox also logs `Created E2B sandbox <id>` at INFO on the `pydantic_ai_harness.e2b_sandbox._backend` logger, so the id is on record even if the run ends before it is stored.
 
 ## API reference
 
