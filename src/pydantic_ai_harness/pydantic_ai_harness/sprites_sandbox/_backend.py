@@ -480,29 +480,26 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        _capture_stderr: bool = True,
-        _check_working_dir: bool = True,
     ) -> CommandResult:
         async with self._operation():
-            return await self._run(
-                command,
-                shell=shell,
-                env=env,
-                timeout=timeout,
-                _capture_stderr=_capture_stderr,
-                _check_working_dir=_check_working_dir,
-            )
+            return await self._run(command, shell=shell, env=env, timeout=timeout)
 
     async def _run(
         self,
         command: WorkspaceCommand,
         *,
-        shell: bool,
-        env: Mapping[str, str] | None,
-        timeout: float | None,
-        _capture_stderr: bool,
-        _check_working_dir: bool,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        capture_stderr: bool = True,
+        check_working_dir: bool = True,
     ) -> CommandResult:
+        """`run` inside an operation, with the switches the backend's own commands need.
+
+        `capture_stderr=False` skips reading a stopped command's stderr capture back, and
+        `check_working_dir=False` skips the `working_dir` check: both are for the backend's own
+        commands, which must not recurse into another capture read or check.
+        """
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
         directory = self._working_dir
@@ -516,9 +513,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # the working-directory check.
         sandbox = await self._get_sandbox()
         deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
-        if directory is not None and _check_working_dir:
+        if directory is not None and check_working_dir:
             # Sprites exec silently ignores a nonexistent `dir`; reject it before running user work.
-            check = await self.run(['test', '-d', directory], timeout=timeout, _check_working_dir=False)
+            check = await self._run(['test', '-d', directory], timeout=timeout, check_working_dir=False)
             if check.exit_code != 0:
                 raise FileNotFoundError(directory)
         exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
@@ -551,7 +548,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 await _close_command(exec_command)
                 partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
                 # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
-                stderr = await self._collect_stderr(capture) if _capture_stderr else ''
+                stderr = await self._collect_stderr(capture) if capture_stderr else ''
                 raise WorkspaceTimeoutError(
                     f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
                 )
@@ -559,7 +556,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             # On a timeout or a cancellation, closing the socket is what ends the command in the Sprite.
             if not interrupted:
                 await _close_command(exec_command)
-                if _capture_stderr:
+                if capture_stderr:
                     # Removes the capture file, as far as the shielded grace allows.
                     await stop_shielded(lambda: self._read_capture(capture))
             if isinstance(error, Exception) and (mapped := _map_error(error, sandbox.name)) is not None:
@@ -584,11 +581,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # Bounded to avoid moving an unbounded stderr capture through the exec URL/output buffer.
         # A fresh exec takes a live round trip of about two seconds (observed 2026-09-28), so the
         # read gets the internal command bound, not a sub-second one.
-        result = await self.run(
+        result = await self._run(
             ['sh', '-c', 'head -c 65536 -- "$1"; rm -f -- "$1"', 'sh', path],
             timeout=_INTERNAL_EXEC_TIMEOUT,
-            _capture_stderr=False,
-            _check_working_dir=False,
+            capture_stderr=False,
+            check_working_dir=False,
         )
         return result.stdout
 

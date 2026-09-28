@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import signal
 from collections.abc import AsyncIterator
@@ -32,6 +33,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    SupportsCommands,
     Workspace,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -840,6 +842,9 @@ class TestSpritesSandbox:
     async def test_invalid_timeout(self, transport: SpriteTransport, timeout: float) -> None:
         with pytest.raises(ValueError, match='timeout'):
             await SpritesSandboxBackend().run(['true'], timeout=timeout)
+
+    def test_run_signature_matches_the_protocol(self) -> None:
+        assert inspect.signature(SpritesSandboxBackend.run) == inspect.signature(SupportsCommands.run)
 
     def test_relative_working_dir_is_rejected(self) -> None:
         with pytest.raises(ValueError, match='absolute'):
