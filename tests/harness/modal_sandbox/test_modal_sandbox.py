@@ -225,6 +225,17 @@ def test_previous_sandbox_id_still_attaches_when_the_run_has_no_ref() -> None:
     assert backend.ref == WorkspaceRef(provider='modal', id='sb-2')
 
 
+def test_previous_sandbox_id_survives_merging_with_a_same_id_capability() -> None:
+    # Two capabilities under one `id` merge field by field; the one only `sandbox_id=` states must survive.
+    with pytest.warns(HarnessDeprecationWarning):
+        legacy = ModalSandbox(id='sandbox', sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
+    merged = ModalSandbox.combine([legacy, ModalSandbox(id='sandbox')])
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    backend = merged.get_workspace(ctx, ref=None)
+    assert isinstance(backend, ModalSandboxBackend)
+    assert backend.ref == WorkspaceRef(provider='modal', id='sb-1')
+
+
 def test_an_unknown_argument_is_still_a_type_error() -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument 'imag'"):
         ModalSandbox(imag='python:3.13-slim')  # pyright: ignore[reportArgumentType]

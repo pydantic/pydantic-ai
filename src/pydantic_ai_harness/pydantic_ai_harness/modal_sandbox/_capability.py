@@ -162,7 +162,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     _warned_no_tools: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this instance has already warned that the run has no workspace tools."""
 
-    _legacy_ref: WorkspaceRef | None = field(default=None, init=False, repr=False, compare=False)
+    _legacy_ref: WorkspaceRef | None = field(default=None, init=False, repr=False)
     """The sandbox the deprecated `sandbox_id=` names, attached when the run has no ref of its own."""
 
     def __init__(
