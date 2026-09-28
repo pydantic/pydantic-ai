@@ -40,7 +40,8 @@ NO_WORKSPACE = UnavailableWorkspace(
     "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('.')]` to the agent, or pass "
     "`workspace=LocalWorkspaceBackend('.')` to the run method, to use the local machine (unsafe: commands and "
     'file operations run with the full permissions of this process); attach another capability that supplies a '
-    'workspace through its `get_workspace` hook; or pass a `WorkspaceRef` to connect to an existing environment. '
+    'workspace through its `get_workspace` hook; or, with a capability that can reconnect to an existing '
+    'environment, pass its `WorkspaceRef`. '
     'See https://pydantic.dev/docs/ai/workspace/ for details.'
 )
 """The backend of a run with no workspace. Unlike an `UnavailableWorkspace` a caller passes, it is not a choice:

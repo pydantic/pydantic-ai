@@ -39,7 +39,7 @@ with try_import() as mistral_imports:
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # Per-provider skip mark, keyed by a case's `provider`. A case naming a provider missing from this
 # map fails loudly at collection (KeyError) rather than silently skipping on the wrong SDK's presence.

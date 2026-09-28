@@ -29,7 +29,6 @@ from tests.harness.conftest import skip_temporal_sandbox_on_314
 pytestmark = skip_temporal_sandbox_on_314
 
 
-@pytest.mark.anyio
 async def test_completed_run_removes_cwd_state(tmp_path: Path) -> None:
     (tmp_path / 'a').mkdir()
     agent = _agent(tmp_path, 'a')
@@ -75,7 +74,6 @@ def anyio_backend() -> str:
     return 'asyncio'
 
 
-@pytest.mark.anyio
 async def test_concurrent_temporal_workflows_keep_separate_cwd(tmp_path: Path) -> None:
     for key in ('a', 'b'):
         (tmp_path / key).mkdir()

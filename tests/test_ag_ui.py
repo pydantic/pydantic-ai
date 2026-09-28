@@ -169,7 +169,6 @@ with try_import() as interrupts_imports_successful:
 
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
 ]
 

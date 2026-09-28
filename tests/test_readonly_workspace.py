@@ -18,8 +18,6 @@ from pydantic_ai.workspaces import (
 
 from .workspace_fakes import FakeWorkspace, RunOnlyWorkspaceBackend
 
-pytestmark = pytest.mark.anyio
-
 
 async def test_read_only_probe_tracks_policy_through_stacked_wrappers() -> None:
     workspace = Workspace(FakeWorkspace('read-only-probe'))

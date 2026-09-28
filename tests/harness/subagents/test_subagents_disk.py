@@ -28,8 +28,6 @@ from pydantic_ai_harness.subagents import (
 )
 from pydantic_ai_harness.subagents._disk import ParsedAgent, parse_agent_markdown
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

@@ -28,8 +28,6 @@ from pydantic_ai_harness.warn_on_cache_busts import (
     WarnOnCacheBusts,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

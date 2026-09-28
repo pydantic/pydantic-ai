@@ -60,8 +60,6 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class Anonymous:

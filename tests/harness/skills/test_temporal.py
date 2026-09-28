@@ -30,8 +30,6 @@ from pydantic_ai.messages import LoadCapabilityReturnPart, ModelMessage, ModelRe
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.skills import Skills
 
-pytestmark = pytest.mark.anyio
-
 TEMPORAL_PORT = 7257  # avoid conflict with the other Temporal suites
 TASK_QUEUE = 'pydantic-ai-harness-skills-queue'
 BASE_ACTIVITY_CONFIG = ActivityConfig(

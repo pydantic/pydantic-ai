@@ -156,7 +156,7 @@ async def main():
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
-8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], `UnsupportedEventLoopError`, and [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] as `workflow_failure_exception_types`.
+8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), and the workspace errors `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` and `WorkspaceUnavailableError`, while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], `UnsupportedEventLoopError`, and [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] as `workflow_failure_exception_types`.
 9. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
 10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
@@ -709,6 +709,8 @@ On top of the automatic retries for request failures that Temporal will perform,
 When using Temporal, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, for example by setting `max_retries=0` on a [custom `OpenAIProvider` API client](../models/openai.md#custom-openai-client).
 
 You can customize Temporal's retry policy using [activity configuration](#activity-configuration).
+
+An exception a tool raises reaches workflow code as Temporal's `ActivityError`, with the original exception's class name in `cause.type`.
 
 ## Observability with Logfire
 

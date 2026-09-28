@@ -30,7 +30,7 @@ from pydantic_ai_harness.shell import (
 
 from .._tool_calls import call_tool, call_tools
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands and process groups')]
+pytestmark = [pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands and process groups')]
 
 
 @pytest.fixture

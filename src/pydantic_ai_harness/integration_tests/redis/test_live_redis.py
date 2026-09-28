@@ -59,8 +59,6 @@ from redis.exceptions import RedisError, ResponseError
 
 from pydantic_ai_harness.spend import RedisSpendStore, SpendEntry, Spent
 
-pytestmark = pytest.mark.anyio
-
 _NANOS = Decimal(10) ** 9
 """Billionths of a dollar to the dollar, which is how the store keeps money."""
 

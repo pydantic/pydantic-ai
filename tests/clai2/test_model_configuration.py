@@ -22,8 +22,6 @@ from pydantic_clai2.model_options import model_options, validate_model_options
 from pydantic_clai2.model_settings import ModelSettingsForm, model_defaults, model_settings_from_json
 from tests.clai2.menu_script import Script, make_context, pick, typed
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

@@ -21,8 +21,6 @@ from pydantic_clai2.screen import Screen
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.status import Status, StatusLine
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

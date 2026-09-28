@@ -73,7 +73,6 @@ def anyio_backend() -> str:
     return 'asyncio'
 
 
-@pytest.mark.anyio
 async def test_temporal_history_replays_veto_and_background_job_once(tmp_path: Path) -> None:
     _vetoes.clear()
     workflow_id = uuid4().hex

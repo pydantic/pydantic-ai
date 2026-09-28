@@ -25,8 +25,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.skills import Skills
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

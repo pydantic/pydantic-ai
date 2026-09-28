@@ -15,7 +15,14 @@ from contextlib import asynccontextmanager, suppress
 import anyio
 import pytest
 
-from .protocol import SupportsCommands, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
+from .protocol import (
+    SupportsCommands,
+    SupportsRealpath,
+    WorkspaceBackend,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 from .workspace import Workspace
 
 __all__ = ('WorkspaceBackendSuite',)
@@ -462,6 +469,15 @@ class WorkspaceBackendSuite:
             await workspace.write_bytes(link, b'new')
             assert await workspace.read_bytes(target) == b'new'
             assert await workspace.realpath(link) == target
+
+    async def test_native_realpath_keeps_the_working_dir_and_missing_names(self, backend: WorkspaceBackend) -> None:
+        """Checked without commands, so a filesystem-only backend's `realpath` is covered too."""
+        if not isinstance(backend, SupportsRealpath):
+            pytest.skip('backend does not implement SupportsRealpath')
+        working_dir = await backend.working_dir()
+        assert await backend.realpath(working_dir) == working_dir
+        missing = posixpath.join(working_dir, f'.pydantic-ai-conformance-missing-{uuid.uuid4().hex}')
+        assert await backend.realpath(missing) == missing
 
     async def test_a_backend_attached_by_ref_reaches_the_same_environment(
         self, backend: WorkspaceBackend, attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None

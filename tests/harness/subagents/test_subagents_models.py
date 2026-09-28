@@ -16,8 +16,6 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

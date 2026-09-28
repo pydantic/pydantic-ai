@@ -27,7 +27,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
 
-pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='dbos')]
+pytestmark = pytest.mark.xdist_group(name='dbos')
 
 
 @pytest.fixture(scope='module')

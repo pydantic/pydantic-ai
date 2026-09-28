@@ -21,8 +21,6 @@ from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 from .._recording_durability import RecordingDurability
 from .._tool_calls import call_tool
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class _ToolLog(AbstractCapability[object]):

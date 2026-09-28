@@ -35,8 +35,6 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
-pytestmark = pytest.mark.anyio
-
 TEMPORAL_PORT = 7259  # avoid conflict with the other Temporal suites
 TASK_QUEUE = 'pydantic-ai-harness-coder-queue'
 ACTIVITY_CONFIG = ActivityConfig(

@@ -19,8 +19,6 @@ from pydantic_clai2.config import PluginSettings, resolve_settings
 from pydantic_clai2.project_settings import PROJECT_FILE, ProjectSettings, find_project_file, load_project_settings
 from pydantic_clai2.settings_store import SettingsStore
 
-pytestmark = pytest.mark.anyio
-
 
 def write(directory: Path, content: dict[str, JsonValue]) -> Path:
     path = directory / PROJECT_FILE
