@@ -43,7 +43,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
+from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend, _backend
 
 from .conftest import live_token
 from .fake_sprites import SpriteTransport
@@ -238,12 +238,12 @@ class TestSpritesSandbox:
         await backend.write_bytes(note, b'hi')
         assert await backend.read_bytes(note) == b'hi'
         assert (await backend.run(['true'])).exit_code == 0
-        # Each operation closed its own client, but only the first one looked the Sprite up.
-        assert (len(transport.clients), transport.close_calls, transport.gets) == (4, 3, 1)
+        # Each operation closed its own client, and none looked up the Sprite this process just created.
+        assert (len(transport.clients), transport.close_calls, transport.gets) == (4, 3, 0)
 
         # The public handle is always a fetched one.
         assert (await backend.get_sandbox()).name == native.name
-        assert transport.gets == 2
+        assert transport.gets == 1
 
         await native.delete()
         with pytest.raises(WorkspaceUnavailableError):
@@ -251,7 +251,72 @@ class TestSpritesSandbox:
         # A Sprite reported unavailable is looked up again before the next operation.
         with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
             await backend.exists(note)
-        assert transport.gets == 3
+        assert transport.gets == 2
+
+    async def test_backends_for_one_sprite_share_its_lookup_and_working_directory(
+        self, transport: SpriteTransport
+    ) -> None:
+        transport.names.add('shared')
+        ref = WorkspaceRef(provider='sprites', id='shared')
+        capability = SpritesSandbox[None](working_dir=str(transport.root))
+        # What two Temporal activities do: each builds its own backend from the ref.
+        for _ in range(2):
+            backend = capability.get_workspace(context(), ref=ref)
+            assert isinstance(backend, SpritesSandboxBackend)
+            assert await backend.working_dir() == str(transport.root.resolve())
+            assert (await backend.run(['true'])).exit_code == 0
+        # One lookup and one `pwd -P`, then each backend's own command.
+        assert (transport.gets, len(transport.execs)) == (1, 3)
+        # Other credentials may not see the Sprite, so they look it up themselves.
+        other = SpritesSandboxBackend(client=transport.client('other-token'), ref=ref)
+        assert (await other.run(['true'])).exit_code == 0
+        assert transport.gets == 2
+
+    @pytest.mark.parametrize('end', ['destroyed', 'unavailable'])
+    async def test_a_sprite_destroyed_or_unavailable_is_looked_up_again(
+        self, transport: SpriteTransport, end: str
+    ) -> None:
+        transport.names.add('ending')
+        ref = WorkspaceRef(provider='sprites', id='ending')
+        capability = SpritesSandbox[None]()
+        backend = capability.get_workspace(context(), ref=ref)
+        assert isinstance(backend, SpritesSandboxBackend)
+        await backend.run(['true'])
+        assert transport.gets == 1
+        if end == 'destroyed':
+            await capability.destroy(ref)
+        else:
+            transport.names.discard('ending')
+            # Found gone by an operation of a backend that trusted the cache.
+            with pytest.raises(WorkspaceUnavailableError):
+                await capability.backend(ref).run(['true'])
+            assert transport.gets == 1
+        # Recreated under the same name, as only a fresh lookup would notice.
+        transport.names.add('ending')
+        await capability.backend(ref).run(['true'])
+        assert transport.gets == 2
+
+    async def test_an_expired_lookup_is_repeated(self, transport: SpriteTransport) -> None:
+        now = [0.0]
+        _backend._lookups.clock = lambda: now[0]  # pyright: ignore[reportPrivateUsage]
+        transport.names.add('aging')
+        ref = WorkspaceRef(provider='sprites', id='aging')
+        await SpritesSandboxBackend(ref=ref).working_dir()
+        now[0] = 59.0
+        await SpritesSandboxBackend(ref=ref).working_dir()
+        assert (transport.gets, len(transport.execs)) == (1, 1)
+        now[0] = 61.0
+        await SpritesSandboxBackend(ref=ref).working_dir()
+        assert (transport.gets, len(transport.execs)) == (2, 2)
+
+    async def test_a_failed_lookup_is_not_cached(self, transport: SpriteTransport) -> None:
+        transport.names.add('flaky')
+        ref = WorkspaceRef(provider='sprites', id='flaky')
+        transport.get_error_once = NetworkError('reset')
+        with pytest.raises(NetworkError):
+            await SpritesSandboxBackend(ref=ref).run(['true'])
+        await SpritesSandboxBackend(ref=ref).run(['true'])
+        assert transport.gets == 2
 
     async def test_an_operation_during_the_last_close_opens_its_own_client(self, transport: SpriteTransport) -> None:
         backend = SpritesSandbox[None]().get_workspace(context(), ref=None)

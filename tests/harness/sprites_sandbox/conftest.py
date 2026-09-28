@@ -22,6 +22,8 @@ if TYPE_CHECKING or _HAS_SPRITES:  # pragma: no branch - installed and slim jobs
     from sprites.async_filesystem import AsyncSpritePath
     from sprites.types import FileStat
 
+    from pydantic_ai_harness.sprites_sandbox._backend import _LookupCache  # pyright: ignore[reportPrivateUsage]
+
     from .fake_sprites import SpriteTransport
 
 
@@ -56,6 +58,8 @@ if _HAS_SPRITES:  # pragma: no branch - the fixture requires the SDK-backed fake
         # Handshake retries back off for seconds against the live service; the fake fails at once.
         monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._HANDSHAKE_RETRY_DELAYS', (0.0, 0.0))
         monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend.AsyncSpritesClient', transport.client)
+        # A fresh lookup cache, so no test attaches through another test's Sprite.
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._lookups', _LookupCache())
         # `WSCommand` opens the exec WebSocket through the `connect` it imports from `websockets`.
         monkeypatch.setattr('sprites.websocket.connect', transport.connect)
 

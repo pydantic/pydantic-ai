@@ -54,14 +54,18 @@ from __future__ import annotations
 
 # Native task cancellation can interrupt an AnyIO shield; the completion task below must stay independent.
 import asyncio
+import hashlib
 import logging
 import math
 import os
 import posixpath
 import re
+import threading
+import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import TypeVar
 
 import anyio
@@ -127,6 +131,75 @@ _MISSING_TOKEN_MESSAGE = (
 )
 
 
+# Seconds a successful lookup is trusted by later backends in this process.
+_LOOKUP_TTL = 60.0
+
+
+@dataclass
+class _Lookup:
+    expires_at: float
+    # Configured `working_dir` (`None` for the Sprite's default) to its `pwd -P` resolution.
+    working_dirs: dict[str | None, str] = field(default_factory=dict[str | None, str])
+
+
+class _LookupCache:
+    """What backends in this process recently learned about a Sprite: that it exists, and its resolved working directories.
+
+    Under Temporal each activity builds a new backend, which would otherwise repeat the `get_sprite`
+    lookup and the `pwd -P` probe. Only plain data is kept, never a client or a Sprite handle: the
+    SDK client wraps an `httpx.AsyncClient`, whose pooled connections belong to the event loop that
+    opened them, and activities may run on other loops or threads. Keyed by credentials and API
+    base URL too, as another token may not see the Sprite. Failures are never recorded, and an
+    entry is dropped once an operation finds the Sprite unavailable or it is destroyed.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self.clock = clock
+        self._entries: dict[tuple[str, str, str], _Lookup] = {}
+        # Backends on other threads' event loops share the cache.
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def key(client: AsyncSpritesClient, name: str) -> tuple[str, str, str]:
+        # A digest, so the process-wide cache holds no token.
+        return hashlib.sha256(client.token.encode()).hexdigest(), client.base_url, name
+
+    def _live(self, key: tuple[str, str, str]) -> _Lookup | None:
+        entry = self._entries.get(key)
+        if entry is not None and entry.expires_at <= self.clock():
+            del self._entries[key]
+            return None
+        return entry
+
+    def exists(self, key: tuple[str, str, str]) -> bool:
+        with self._lock:
+            return self._live(key) is not None
+
+    def working_dir(self, key: tuple[str, str, str], configured: str | None) -> str | None:
+        with self._lock:
+            entry = self._live(key)
+            return None if entry is None else entry.working_dirs.get(configured)
+
+    def record(self, key: tuple[str, str, str]) -> None:
+        with self._lock:
+            self._entries[key] = _Lookup(self.clock() + _LOOKUP_TTL)
+
+    def record_working_dir(self, key: tuple[str, str, str], configured: str | None, resolved: str) -> None:
+        with self._lock:
+            # Resolving it ran a command in the Sprite, which proves the Sprite exists.
+            entry = self._live(key) or self._entries.setdefault(key, _Lookup(self.clock() + _LOOKUP_TTL))
+            entry.working_dirs[configured] = resolved
+
+    def forget(self, name: str) -> None:
+        """Drop what any credentials learned about the Sprite `name`."""
+        with self._lock:
+            for key in [key for key in self._entries if key[2] == name]:
+                del self._entries[key]
+
+
+_lookups = _LookupCache()
+
+
 def _require_asyncio() -> None:
     if sniffio.current_async_library() != 'asyncio':
         raise UserError('Sprites needs the asyncio event loop: the Sprites SDK runs its calls on asyncio tasks.')
@@ -165,6 +238,9 @@ async def destroy_sprite(client: AsyncSpritesClient | None, name: str) -> None:
         return
     except AuthenticationError as error:
         raise WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}') from error
+    finally:
+        # Even a failed delete may have gone through, so no later backend skips its lookup.
+        _lookups.forget(name)
 
 
 async def _cleanup_call(call: Callable[[], Awaitable[object]], *, timeout: float) -> Exception | None:
@@ -436,8 +512,13 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._client = client
 
         ref = self._ref
-        if not fetched and ref is not None and ref.id == self._attached_name:
+        if (
+            not fetched
+            and ref is not None
+            and (ref.id == self._attached_name or _lookups.exists(_LookupCache.key(client, ref.id)))
+        ):
             self._sandbox = sandbox = client.sprite(ref.id)
+            self._attached_name = ref.id
             self._unfetched = True
             return sandbox
 
@@ -473,6 +554,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 self._uncertain_create = False
                 self._attached_name = sandbox.name
                 self._unfetched = False
+                _lookups.record(_LookupCache.key(client, sandbox.name))
                 return sandbox
             # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
             # control plane is a transport failure, which propagates for a retry;
@@ -494,6 +576,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         except SpriteError as error:
             if (mapped := _map_error(error, None if ref is None else ref.id)) is None:
                 raise
+            if ref is not None:
+                # A lookup `get_sandbox()` made outside an operation also clears what later backends trust.
+                _lookups.forget(ref.id)
             raise mapped from error
 
     async def aclose(self) -> None:
@@ -523,8 +608,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         try:
             yield
         except WorkspaceUnavailableError:
-            # The Sprite may be gone or the credentials revoked: the next operation looks it up again.
+            # The Sprite may be gone or the credentials revoked: the next operation, and the next
+            # backend, look it up again.
             self._attached_name = None
+            if self._ref is not None:
+                _lookups.forget(self._ref.id)
             raise
         finally:
             self._operations -= 1
@@ -541,15 +629,20 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     async def _working_dir_unscoped(self) -> str:
         if self._resolved_working_dir is None:
+            sandbox = await self._get_sandbox()
+            key = _LookupCache.key(sandbox.client, sandbox.name)
+            if (cached := _lookups.working_dir(key, self._working_dir)) is not None:
+                self._resolved_working_dir = cached
+                return cached
             result = await self.run(['pwd', '-P'], timeout=_INTERNAL_EXEC_TIMEOUT)
             printed = result.stdout.removesuffix('\n')
             if result.exit_code != 0 or not posixpath.isabs(printed):
-                sandbox = await self._get_sandbox()
                 raise WorkspaceError(
                     f'Could not determine the working directory of Sprite {sandbox.name!r}: '
                     f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}.'
                 )
             self._resolved_working_dir = printed
+            _lookups.record_working_dir(key, self._working_dir, printed)
         return self._resolved_working_dir
 
     async def run(
