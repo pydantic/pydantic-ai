@@ -28,6 +28,7 @@ from e2b.exceptions import (
 from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -465,6 +466,16 @@ class TestRun:
         with pytest.raises(WorkspaceTimeoutError) as exc:
             await backend.run(['sleep', '99'], timeout=0.05)
         assert (exc.value.stdout, exc.value.stderr) == ('partial', 'oops')
+        assert len(fake_e2b.sandboxes[0].commands.group_stops) == 1
+
+    async def test_output_over_the_limit_stops_the_command(self, fake_e2b: FakeE2B) -> None:
+        # Like the local backend: past 10 MiB the command is stopped instead of growing this process.
+        flood = 'x' * (10 * 1024 * 1024 + 1)
+        fake_e2b.responder = lambda command, timeout: (flood, 'oops', 0) if command == 'yes' else ('', '', 0)
+        backend = await started()
+        with pytest.raises(WorkspaceOutputLimitError) as exc:
+            await backend.run(['yes'])
+        assert (exc.value.limit, len(exc.value.stdout), exc.value.stderr) == (10 * 1024 * 1024, 64 * 1024, 'oops')
         assert len(fake_e2b.sandboxes[0].commands.group_stops) == 1
 
     async def test_cancel_during_start_stops_group_without_handle(

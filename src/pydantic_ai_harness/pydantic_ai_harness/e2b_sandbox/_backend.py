@@ -42,6 +42,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -89,6 +90,10 @@ _UPLOAD_MIN_BYTES_PER_SECOND = 256 * 1024
 # switched off (0 is the SDK's "no limit") and the deadline is enforced client-side instead,
 # with a kill at expiry. See `E2BSandboxBackend.run`.
 _SDK_STREAM_UNBOUNDED = 0
+
+# The local backend's cap and preview: the SDK's handle keeps all of a command's output in memory.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_OUTPUT_PREVIEW_CHARS = 64 * 1024
 
 
 def _path_error(error: Exception, path: str) -> OSError | None:
@@ -534,8 +539,19 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             except Exception:
                 pass  # A failed control-plane stop must not mask the original failure.
 
+        # Counted as the SDK receives it, so `yes` or a large `cat` stops at the cap instead of
+        # growing this process; the SDK calls these from its own event-pump task.
+        output_bytes = 0
+        overflow = anyio.CancelScope()
+
+        def count(chunk: str) -> None:
+            nonlocal output_bytes
+            output_bytes += len(chunk.encode())
+            if output_bytes > _MAX_OUTPUT_BYTES:
+                overflow.cancel()
+
         try:
-            with anyio.move_on_after(timeout):
+            with anyio.move_on_after(timeout), overflow:
                 # A lost start ACK must not hide a launched command from the side-channel stop.
                 handle = await sandbox.commands.run(
                     launch,
@@ -545,6 +561,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     cwd=self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
                     user=self._user,
+                    on_stdout=count,
+                    on_stderr=count,
                 )
                 assert handle is not None
                 try:
@@ -552,6 +570,16 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 except e2b.CommandExitException as exited:
                     # A nonzero exit is a completed result; the SDK's exception carries it.
                     result = exited
+            if output_bytes > _MAX_OUTPUT_BYTES:
+                # The SDK builds the handle before its pump delivers any output, so one exists here.
+                assert handle is not None
+                # Raised inside the `try`, so the stop below kills the command like on a timeout.
+                raise WorkspaceOutputLimitError(
+                    'E2B command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
+                    limit=_MAX_OUTPUT_BYTES,
+                    stdout=handle.stdout[:_OUTPUT_PREVIEW_CHARS],
+                    stderr=handle.stderr[:_OUTPUT_PREVIEW_CHARS],
+                )
             if result is None:
                 assert timeout is not None
                 raise WorkspaceTimeoutError(

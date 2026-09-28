@@ -180,6 +180,8 @@ class FakeCommands:
         user: str | None = None,
         cwd: str | None = None,
         timeout: float | None = 60,
+        on_stdout: Callable[[str], object] | None = None,
+        on_stderr: Callable[[str], object] | None = None,
     ) -> FakeCommandHandle:
         # Closed signature on purpose: the real `run` rejects unknown kwargs, so the fake must
         # too, or a bad kwarg in the backend would only fail in production.
@@ -209,6 +211,10 @@ class FakeCommands:
             stderr=stderr,
             exit_code=exit_code,
         )
+        # The SDK's event pump hands output to the callbacks as it arrives, before `wait()` returns.
+        for callback, output in ((on_stdout, stdout), (on_stderr, stderr)):
+            if callback is not None and output:
+                callback(output)
         self.handles.append(handle)
         return handle
 
@@ -431,7 +437,11 @@ class _HostCommands(FakeCommands):
         user: str | None = None,
         cwd: str | None = None,
         timeout: float | None = 60,
+        on_stdout: Callable[[str], object] | None = None,
+        on_stderr: Callable[[str], object] | None = None,
     ) -> FakeCommandHandle:
+        # Host output is not streamed to the callbacks; the output cap is tested on the in-memory fake.
+        del on_stdout, on_stderr
         await anyio.lowlevel.checkpoint()
         self._sandbox.check_alive()
         self.calls.append(FakeCommandCall(cmd, background is True, cwd, envs, timeout, user))
