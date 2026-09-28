@@ -1125,7 +1125,10 @@ async def test_a_resolver_cannot_answer_a_ref_with_a_backend_that_would_create_a
 
     ref = WorkspaceRef(provider='fake', id='existing')
     agent = Agent(TestModel(), capabilities=[LazyResolver()])
-    with pytest.raises(UserError, match='different workspace than requested'):
+    with pytest.raises(
+        UserError,
+        match=r"`get_workspace` returned a different workspace than requested: asked for WorkspaceRef\(.*'existing'.*\), got ",
+    ):
         if source == 'explicit':
             await agent.run('go', workspace=ref)
         else:

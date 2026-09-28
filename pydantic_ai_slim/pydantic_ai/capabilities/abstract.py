@@ -1384,7 +1384,10 @@ def select_workspace(
     if ref is not None and selected is not None and selected.ref != ref:
         # A resolver must not replace an expired or unauthorized environment with a fresh one; a backend
         # without a ref would create one on first use.
-        raise UserError(f'Workspace resolver returned a different workspace than requested: {ref!r}')
+        raise UserError(
+            "A workspace capability's `get_workspace` returned a different workspace than requested: "
+            f'asked for {ref!r}, got {selected.ref!r}'
+        )
     return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
 
 
