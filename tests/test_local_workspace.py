@@ -190,7 +190,7 @@ async def test_a_program_that_cannot_run_is_a_result_like_in_sh(tmp_path: Path):
 async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
-    with pytest.raises(WorkspaceTimeoutError, match='was killed') as exc_info:
+    with pytest.raises(WorkspaceTimeoutError, match='after 2s and was killed') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child, so the timeout applies to
         # a command that has not completed rather than to a descendant holding a pipe open.
         await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=2)
@@ -384,6 +384,26 @@ async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.Monke
         with pytest.raises(WorkspaceTimeoutError):
             await workspace.run(['sh', '-c', 'sleep 3600'], timeout=0.05)
     assert entered.is_set()
+
+
+async def test_stalled_reap_without_a_timeout_is_not_a_command_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    workspace = LocalWorkspaceBackend(tmp_path)
+    real_close = workspace._close  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(local_module, '_REAP_GRACE', 0.05)
+    calls = 0
+
+    async def stalled_close(process: anyio.abc.Process) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:  # stall only the first close; the cleanup close reaps for real
+            await anyio.sleep_forever()
+        await real_close(process)
+
+    monkeypatch.setattr(workspace, '_close', stalled_close)
+    with anyio.fail_after(30):
+        with pytest.raises(TimeoutError, match='grace period') as exc_info:
+            await workspace.run(['true'])
+    assert not isinstance(exc_info.value, WorkspaceTimeoutError)
 
 
 async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

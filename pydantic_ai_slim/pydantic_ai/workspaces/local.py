@@ -362,7 +362,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 and absolute_deadline is not None
                 and anyio.current_time() >= absolute_deadline
             ):
-                raise WorkspaceTimeoutError(f'command timed out after {timeout} seconds during startup') from error
+                raise WorkspaceTimeoutError(f'command timed out after {timeout:g}s during startup') from error
             raise
         running_process = process
         assert running_process is not None
@@ -377,18 +377,19 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             await _shielded(self._close(running_process), anyio.current_time() + _REAP_GRACE)
         except BaseException as error:
             denial = await self._terminate(running_process)
-            if isinstance(error, TimeoutError):
+            # Without a command timeout, a `TimeoutError` is only a stalled reap's grace period.
+            if isinstance(error, TimeoutError) and timeout is not None:
                 stdout = stdout_buffer.decode('utf-8', errors='replace')
                 stderr = stderr_buffer.decode('utf-8', errors='replace')
                 if denial is not None:
                     raise WorkspaceTimeoutError(
-                        f'command timed out after {timeout} seconds; killing its process group was '
+                        f'command timed out after {timeout:g}s; killing its process group was '
                         'denied, so only the direct child was killed and grandchildren may survive',
                         stdout=stdout,
                         stderr=stderr,
                     ) from denial
                 raise WorkspaceTimeoutError(
-                    f'command timed out after {timeout} seconds and was killed',
+                    f'command timed out after {timeout:g}s and was killed',
                     stdout=stdout,
                     stderr=stderr,
                 ) from error
