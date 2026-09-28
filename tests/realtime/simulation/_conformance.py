@@ -14,13 +14,40 @@ would get wrong if an adapter broke it:
 - `codec.duplicate_terminal`: a response's `ResponseDone` arrives twice (the second would close
   whatever response the session is assembling next);
 - `codec.event_after_fatal`: anything follows a non-recoverable `RealtimeSessionErrorEvent`.
+
+A connection on the second version of the lifecycle contract (`_lifecycle.py`) is also held to the rules
+its lifecycle events promise, checked on its lifecycle stream (`LifecycleChecker(lifecycle=True)`):
+
+- `lifecycle.duplicate_start` / `lifecycle.end_without_start` / `lifecycle.duplicate_end`: a response
+  isn't bracketed by exactly one `ResponseStarted` and one `ResponseEnded`;
+- `lifecycle.content_outside_response`: content, usage, or a terminal for a response that isn't between
+  its start and its end;
+- `lifecycle.unknown_answer`: a response answers an input the connection was never sent;
+- `lifecycle.input_settled_twice`: an input is answered, refused, or lost more than once;
+- `lifecycle.input_added_twice`: an input joins the conversation twice;
+- `lifecycle.turn_started_twice` / `lifecycle.turn_end_without_start`: a spoken turn isn't bracketed by
+  one start and one end (or discard);
+- `lifecycle.unended_at_close` / `lifecycle.turn_unended_at_close`: the stream ended with a response or
+  a spoken turn still open.
 """
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from pydantic_ai.messages import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
+from pydantic_ai.realtime._lifecycle import (
+    InputAdded,
+    InputLost,
+    LifecycleEvent,
+    ResponseEnded,
+    ResponseRequestRefused,
+    ResponseStarted,
+    UserTurnDiscarded,
+    UserTurnEnded,
+    UserTurnStarted,
+)
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     OutputTranscript,
@@ -41,15 +68,28 @@ class ConformanceIssue:
 
 @dataclass
 class LifecycleChecker:
-    """Feed it a connection's codec events in order; it collects every contract violation."""
+    """Feed it a connection's events in order; it collects every contract violation.
 
+    With `lifecycle`, it is fed a connection's lifecycle stream, and holds it to the lifecycle rules too.
+    """
+
+    lifecycle: bool = False
+    inputs_sent: Callable[[], int] | None = None
+    """How many inputs the connection has been sent so far, for `lifecycle.unknown_answer`."""
     issues: list[ConformanceIssue] = field(default_factory=list[ConformanceIssue])
     events: int = 0
     _tool_calls: set[str] = field(default_factory=set[str])
     _ended: set[str] = field(default_factory=set[str])
     _fatal: bool = False
+    _started: set[str] = field(default_factory=set[str])
+    _open: set[str] = field(default_factory=set[str])
+    _responses_ended: set[str] = field(default_factory=set[str])
+    _settled_inputs: set[int] = field(default_factory=set[int])
+    _added_inputs: set[int] = field(default_factory=set[int])
+    _turns: set[str] = field(default_factory=set[str])
+    _open_turns: set[str] = field(default_factory=set[str])
 
-    def feed(self, event: RealtimeCodecEvent) -> list[ConformanceIssue]:
+    def feed(self, event: RealtimeCodecEvent | LifecycleEvent) -> list[ConformanceIssue]:
         position = self.events
         self.events += 1
         found: list[ConformanceIssue] = []
@@ -57,6 +97,27 @@ class LifecycleChecker:
         def issue(code: str, detail: str) -> None:
             found.append(ConformanceIssue(code, detail, position))
 
+        if isinstance(
+            event,
+            ResponseStarted
+            | ResponseEnded
+            | UserTurnStarted
+            | UserTurnEnded
+            | UserTurnDiscarded
+            | InputAdded
+            | InputLost
+            | ResponseRequestRefused,
+        ):
+            self._feed_lifecycle(event, issue)
+            self.issues.extend(found)
+            return found
+        if self.lifecycle:
+            # The codec rules are checked on the codec stream; this one carries the same events, minus stale ones.
+            response_id = event.provider_response_id if isinstance(event, ResponseDone) else _content_response_id(event)
+            if response_id is not None and response_id not in self._open:
+                issue('lifecycle.content_outside_response', f'{type(event).__name__} for {response_id!r} outside it')
+            self.issues.extend(found)
+            return found
         if self._fatal:
             issue('codec.event_after_fatal', f'{type(event).__name__} after a non-recoverable error')
         if isinstance(event, RealtimeSessionReconnectEvent):
@@ -79,6 +140,57 @@ class LifecycleChecker:
             self._ended.add(event.provider_response_id)
         if isinstance(event, RealtimeSessionErrorEvent) and not event.recoverable:
             self._fatal = True
+        self.issues.extend(found)
+        return found
+
+    def _feed_lifecycle(self, event: LifecycleEvent, issue: Callable[[str, str], None]) -> None:
+        if isinstance(event, ResponseStarted):
+            if event.response_id in self._started:
+                issue('lifecycle.duplicate_start', f'{event.response_id!r} started twice')
+            self._started.add(event.response_id)
+            self._open.add(event.response_id)
+            sent = self.inputs_sent() if self.inputs_sent is not None else 0
+            if unknown := [input_id for input_id in event.answers if input_id >= sent]:
+                issue('lifecycle.unknown_answer', f'{event.response_id!r} answers inputs never sent: {unknown}')
+            self._settle(event.answers, issue)
+        elif isinstance(event, ResponseEnded):
+            if event.response_id in self._responses_ended:
+                issue('lifecycle.duplicate_end', f'{event.response_id!r} ended twice')
+            elif event.response_id not in self._open:
+                issue('lifecycle.end_without_start', f'{event.response_id!r} ended without starting')
+            self._open.discard(event.response_id)
+            self._responses_ended.add(event.response_id)
+        elif isinstance(event, UserTurnStarted):
+            if event.turn_id in self._turns:
+                issue('lifecycle.turn_started_twice', f'spoken turn {event.turn_id!r} started twice')
+            self._turns.add(event.turn_id)
+            self._open_turns.add(event.turn_id)
+        elif isinstance(event, UserTurnEnded | UserTurnDiscarded):
+            if event.turn_id not in self._open_turns:
+                issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} ended without starting')
+            self._open_turns.discard(event.turn_id)
+        elif isinstance(event, InputAdded):
+            if event.input_id in self._added_inputs:
+                issue('lifecycle.input_added_twice', f'input {event.input_id} joined the conversation twice')
+            self._added_inputs.add(event.input_id)
+        else:
+            self._settle(event.input_ids, issue)
+
+    def _settle(self, input_ids: tuple[int, ...], issue: Callable[[str, str], None]) -> None:
+        if twice := [input_id for input_id in input_ids if input_id in self._settled_inputs]:
+            issue('lifecycle.input_settled_twice', f'inputs settled a second time: {twice}')
+        self._settled_inputs.update(input_ids)
+
+    def finish(self) -> list[ConformanceIssue]:
+        """The stream ended: nothing may still be open."""
+        found = [
+            ConformanceIssue('lifecycle.unended_at_close', f'{response_id!r} never ended', self.events)
+            for response_id in sorted(self._open)
+        ]
+        found += [
+            ConformanceIssue('lifecycle.turn_unended_at_close', f'spoken turn {turn_id!r} never ended', self.events)
+            for turn_id in sorted(self._open_turns)
+        ]
         self.issues.extend(found)
         return found
 

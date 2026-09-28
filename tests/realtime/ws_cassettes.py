@@ -400,6 +400,11 @@ class ReplayWebSocket:
             # Recorded before OpenAI-protocol client frames carried an `event_id` (the id a refusal
             # echoes, see `client_event_id`); the rest of the frame is still pinned.
             actual.pop('event_id', None)
+        if actual.get('type') == 'response.create' and 'response' not in expected:
+            # Recorded before a `response.create` carried the `metadata` naming the inputs it answers (see
+            # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
+            if (response := actual.get('response')) is not None and set(response) == {'metadata'}:
+                del actual['response']
         assert actual == expected, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
             f'expected={expected!r}\nactual={actual!r}'

@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Generator, Sequence
+from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -14,7 +14,9 @@ from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.xai import XaiProvider
 from pydantic_ai.realtime import RealtimeModel
+from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.azure import AzureRealtimeModel
+from pydantic_ai.realtime.codec import RealtimeCodecEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 from pydantic_ai.realtime.settings import RealtimeModelSettings
 from pydantic_ai.realtime.xai import XaiRealtimeModel
@@ -71,12 +73,25 @@ class OpenAISimulation(Simulation):
         assert isinstance(connection, OpenAIRealtimeConnection)
         request_response = connection._request_response  # pyright: ignore[reportPrivateUsage]
 
-        async def counted(input_indexes: Sequence[int]) -> None:
+        async def counted(input_indexes: Sequence[int], *, answers: Sequence[int] | None = None) -> None:
             if connection._response_active:  # pyright: ignore[reportPrivateUsage]
                 self.deferred_requests += len(input_indexes)
-            await request_response(input_indexes)
+            await request_response(input_indexes, answers=answers)
 
         connection._request_response = counted  # pyright: ignore[reportPrivateUsage]
+
+        # The session reads the codec stream; the lifecycle stream the same frames make is checked on the side.
+        all_events = connection._all_events  # pyright: ignore[reportPrivateUsage]
+        observe = self.checker.observe_lifecycle_stream(lambda: connection._inputs_received)  # pyright: ignore[reportPrivateUsage]
+
+        async def observed() -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
+            async for event, stale in all_events():
+                if not stale:
+                    observe(event)
+                yield event, stale
+            observe(None)
+
+        connection._all_events = observed  # pyright: ignore[reportPrivateUsage]
 
     def build_model(self) -> RealtimeModel:
         if self.openai.dialect == 'azure':

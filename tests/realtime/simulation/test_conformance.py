@@ -20,7 +20,7 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai.realtime.codec import AudioDelta, RealtimeCodecEvent, ResponseDone, ToolCall, ToolCallCancelled
 
-    from ._cassette_replay import replay_codec_events, websocket_cassettes
+    from ._cassette_replay import replay_codec_events, replay_lifecycle_events, websocket_cassettes
     from ._conformance import LifecycleChecker
 
 pytestmark = [
@@ -40,6 +40,12 @@ async def test_cassette_obeys_the_codec_lifecycle(recording: Path) -> None:
         checker = LifecycleChecker()
         for event in events:
             checker.feed(event)
+        assert checker.issues == []
+    for events in await replay_lifecycle_events(recording):
+        checker = LifecycleChecker(lifecycle=True)
+        for event in events:
+            checker.feed(event)
+        checker.finish()
         assert checker.issues == []
 
 

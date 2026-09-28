@@ -76,6 +76,7 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
 )
+from ._lifecycle import LifecycleEvent
 from ._utils import inject_trace_context, resolve_advertised_tools
 from .codec import (
     ConversationCreated,
@@ -344,14 +345,14 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return map_event(data)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        async for event in super().__aiter__():
-            yield event
+    async def _all_events(self) -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
+        async for event, stale in super()._all_events():
+            yield event, stale
             if isinstance(event, RealtimeSessionReconnectEvent):
                 replayed_items = self._replayed_items[:]
                 self._replayed_items.clear()
                 for replayed_item in replayed_items:
-                    yield replayed_item
+                    yield replayed_item, False
 
 
 @dataclass(init=False)
