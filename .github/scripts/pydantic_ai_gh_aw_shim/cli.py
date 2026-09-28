@@ -87,6 +87,7 @@ from . import (
     READ_ONLY_SUBAGENT_TOOLS,
     build_claude_code_toolset,
 )
+from ._backends import local_workspace
 from .shared import logger, reset_context_state
 
 # Type aliases for the public surface — the shim runs `None`-deps agents
@@ -880,6 +881,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         instructions=[INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt],
         toolsets=[sub_toolset],
         capabilities=[
+            local_workspace(),
             *_anthropic_native_capabilities(),
             ProcessEventStream(_stream_events),
         ],
@@ -951,6 +953,8 @@ async def run(
         instructions=[INSTRUCTIONS, prompt],
         toolsets=[claude_code_toolset, *mcp_servers],
         capabilities=[
+            # The Claude tools act on `ctx.workspace`: the checkout at `$GITHUB_WORKSPACE`.
+            local_workspace(),
             _RecoverMCPToolErrors(),
             *_anthropic_native_capabilities(),
             ProcessHistory(_compact_history),
