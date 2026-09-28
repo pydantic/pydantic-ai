@@ -381,6 +381,42 @@ class _AudioTap:
         self.progress.set()
 
 
+@dataclass(eq=False)
+class _ToolBatch:
+    """The tool calls one model response made, which the model answers with a single reply.
+
+    Gemini answers a tool-call frame once it has every result, and the OpenAI-protocol connection asks
+    for one response once every call of the calling response has its output, so the session counts one
+    reply per tool-calling response, not one per result. The reply is counted when the last result is
+    about to go out (a provider may start answering the moment it arrives), or, when every result went
+    out before the calling response was complete, once it is.
+    """
+
+    calls: set[str] = field(default_factory=set[str])
+    """Every call in the batch."""
+    running: set[str] = field(default_factory=set[str])
+    """Calls still executing."""
+    sending: int = 0
+    """Results on their way to the wire."""
+    closed: bool = False
+    """Whether the response making the calls has been finalized, so no further call can join."""
+    counted: bool = False
+    """Whether the reply that answers the batch has been counted."""
+    abandoned: bool = False
+    """Whether no reply will come: the provider cancelled one of the calls (a barge-in abandons the
+    turn) or lost the conversation they were made in, a tool raised, or a result failed to send."""
+
+    @property
+    def reply_due(self) -> bool:
+        """Every result is out or on its way and no call can still join, so the reply is still to count."""
+        return self.closed and not self.running and not self.counted and not self.abandoned
+
+    @property
+    def settled(self) -> bool:
+        """No call can still join, run, or put a result on the wire."""
+        return self.closed and not self.running and not self.sending
+
+
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
 # `SessionUsage`, which `_handle_pump_event` peels off first (they drive tool execution and usage
 # accounting before delegating). Splitting the union lets `_translate_event` end in `assert_never`, so
@@ -917,6 +953,12 @@ class RealtimeSession:
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
+        # The batch the response being assembled is adding tool calls to, closed when that response is
+        # finalized; the batch of every call whose batch hasn't settled; and batches just closed, which
+        # the pump checks for a reply still to count. See `_ToolBatch`.
+        self._open_tool_batch: _ToolBatch | None = None
+        self._tool_call_batches: dict[str, _ToolBatch] = {}
+        self._closed_tool_batches: list[_ToolBatch] = []
         # Set while a response the provider said isn't the last of its exchange is held open for the
         # tool call it was stalling for; the finish reason it will be recorded with if something else
         # arrives first. See `_handle_turn_complete`.
@@ -1331,8 +1373,9 @@ class RealtimeSession:
         tool-calling turn, that is the answer that follows the tool results, not the response that
         called them. Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
-        over; it also returns if the session closes, or if the provider refuses the request for the
-        reply (reported as a [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
+        over; it also returns if the session closes, fails (a tool raised, or a usage limit tripped) so
+        the reply can no longer come, or the provider refuses the request for the reply (reported as a
+        [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
         unlike that loop it can run while something else is iterating the session, so a caller that
@@ -2076,6 +2119,12 @@ class RealtimeSession:
         """Park a background failure for iteration or close, ending receive-only views if nobody is iterating."""
         self._parked_errors.append(error)
         self._queue_put(error)
+        if not self._response_limit_checked or any(isinstance(part, ToolCallPart) for part in self._response_parts):
+            # A tool that raised, or a usage limit tripped by the request its result would make, stops
+            # the model from getting that result, so the exchange waiting on it is over: a caller in
+            # `wait_for_reply()` is done waiting for it. Only that exchange: a reply already requested
+            # for something else stays owed, and one already streaming ends its exchange itself.
+            self._release_exchange()
         if not self._iterator_active and self._pump_task is not None:
             self._receive_ending = True
             self._pump_task.cancel()
@@ -2310,6 +2359,7 @@ class RealtimeSession:
             requests = int(self._responses_are_requests)
             self.usage.requests += requests  # usage-attribution: the session owns its spans; `wrap_run` opens none
             self._tool_run_step += 1
+            self._close_tool_batch()
             for part in parts:
                 if isinstance(part, ToolCallPart):
                     self._tool_calls_awaiting_usage.discard(part.tool_call_id)
@@ -2954,6 +3004,16 @@ class RealtimeSession:
         # it), so a `commit_audio()` from here on commits nothing until more audio is sent.
         self._audio_uncommitted = False
 
+        # Tool batches go with the conversation the provider lost: the running calls are cancelled below,
+        # and no reply is counted for results it may never have received, even from a tool that swallows
+        # its cancellation and returns anyway. Marked before the in-flight response is settled, which
+        # would otherwise close its batch and count one.
+        for batch in {*self._tool_call_batches.values(), *self._closed_tool_batches}:
+            batch.abandoned = True
+            # No call can join it any more, so it retires once its running calls are cancelled below.
+            batch.closed = True
+        self._closed_tool_batches.clear()
+        self._open_tool_batch = None
         if self._response_in_flight:
             events.extend(self._finalize_assistant_part())
             self._finalize_response(interrupted=True)
@@ -3219,18 +3279,69 @@ class RealtimeSession:
         return result_part, user_content
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
-        self._reserve_response_request()
+        result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
+        if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is None:
+            # A connection that answers each result (or a call dispatched outside the pump): the result is
+            # a reply of its own, as it always has been.
+            self._reserve_response_request()
+            try:
+                await self._send_frame(result)
+            except BaseException:
+                self._release_response_reservation()
+                raise
+            return
+        batch.running.discard(call_part.tool_call_id)
+        if batch.reply_due:
+            # The last result: counted before it goes out, since a provider may answer on its arrival.
+            self._count_tool_batch_reply(batch)
+        elif not batch.abandoned:
+            # Not known to be the last, so nothing is counted yet, but the reply it may complete is
+            # checked against `request_limit` before the result goes out: once out, the connection asks
+            # for that reply as soon as the calling response is done, before the session can refuse it.
+            self._check_request_limit()
+        batch.sending += 1
         try:
-            await self._send_frame(
-                ToolResult(
-                    tool_call_id=call_part.tool_call_id,
-                    output=output,
-                    content=wire_content or None,
-                )
-            )
+            await self._send_frame(result)
         except BaseException:
-            self._release_response_reservation()
+            # A provider missing one of the batch's results won't answer it.
+            batch.abandoned = True
+            if batch.counted:
+                batch.counted = False
+                self._release_response_reservation()
             raise
+        finally:
+            batch.sending -= 1
+            self._retire_tool_batch_if_settled(batch)
+
+    def _count_tool_batch_reply(self, batch: _ToolBatch) -> None:
+        batch.counted = True
+        self._reserve_response_request()
+
+    def _retire_tool_batch_if_settled(self, batch: _ToolBatch) -> None:
+        """Forget a batch whose calls can no longer run or send, so nothing else can reach it."""
+        if batch.settled:
+            for call_id in batch.calls:
+                self._tool_call_batches.pop(call_id, None)
+
+    def _close_tool_batch(self) -> None:
+        """Close the batch of the response just finalized: its calls are all in, so its reply may be due."""
+        if (batch := self._open_tool_batch) is None:
+            return
+        self._open_tool_batch = None
+        batch.closed = True
+        self._closed_tool_batches.append(batch)
+
+    def _count_closed_tool_batch_replies(self) -> None:
+        """Count the reply of closed batches whose results all went out before they closed.
+
+        Run by the pump once the event that closed them is fully handled: after that event's usage-limit
+        checks, so a response over its limit doesn't count the next one.
+        """
+        while self._closed_tool_batches:
+            batch = self._closed_tool_batches.pop(0)
+            self._retire_tool_batch_if_settled(batch)
+            if batch.reply_due:
+                self._count_tool_batch_reply(batch)
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -3302,13 +3413,17 @@ class RealtimeSession:
         between: those solicited but not yet started, and the one in flight. Without them, sends
         issued back-to-back would each see the same count and oversubscribe the budget.
         """
+        self._check_request_limit()
+        self._pending_response_requests += 1
+
+    def _check_request_limit(self) -> None:
+        """Check `request_limit` against one more response than those finalized, reserved and in flight."""
         if self._usage_limits is not None and self._responses_are_requests:
             in_flight = 1 if self._response_limit_checked else 0
             projected = dataclasses.replace(
                 self.usage, requests=self.usage.requests + self._pending_response_requests + in_flight
             )
             self._usage_limits.check_before_request(projected)
-        self._pending_response_requests += 1
 
     def _begin_response(self) -> None:
         """Take the reservation for the response that's starting, or make the check now if it has none.
@@ -3325,6 +3440,10 @@ class RealtimeSession:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
         self._response_active = True
+        # A response that is starting is not the one whose terminal is still to come. Gemini finalizes a
+        # tool-call response through its usage with no terminal following, and a stale flag would read
+        # the next response's terminal as that one's.
+        self._response_finalized_before_terminal = False
 
     def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
@@ -3374,6 +3493,7 @@ class RealtimeSession:
             raise UsageLimitExceeded(
                 f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
             )
+        self._count_closed_tool_batch_replies()
         if self._asap_drain_ready:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')
@@ -3403,8 +3523,16 @@ class RealtimeSession:
                 reserved_budget=reserved_budget,
             )
         except asyncio.CancelledError:
+            if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is not None:
+                batch.running.discard(call_part.tool_call_id)
+                self._retire_tool_batch_if_settled(batch)
             raise
         except BaseException as e:
+            if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is not None:
+                # Its result will never go out, so the batch won't be answered.
+                batch.running.discard(call_part.tool_call_id)
+                batch.abandoned = True
+                self._retire_tool_batch_if_settled(batch)
             self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
@@ -3486,6 +3614,15 @@ class RealtimeSession:
         if reserves_budget:
             self._check_tool_call_limit()
             self._tool_calls_in_flight += 1
+        # Joined before the call is folded into the response below, which finalizes a response whose
+        # usage doesn't follow and so closes the batch with this call in it.
+        if self._connection._answers_tool_calls_per_response:  # pyright: ignore[reportPrivateUsage]
+            batch = self._open_tool_batch
+            if batch is None:
+                batch = self._open_tool_batch = _ToolBatch()
+            batch.calls.add(event.tool_call_id)
+            batch.running.add(event.tool_call_id)
+            self._tool_call_batches[event.tool_call_id] = batch
         # Captured at dispatch so every call from one response runs at the step in effect when the
         # response produced them, the way a graph run's whole batch shares the step advanced before
         # its request. Read at execution time instead, a call held behind a `sequential` barrier
@@ -3577,6 +3714,13 @@ class RealtimeSession:
             return False
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:
+                if (batch := self._tool_call_batches.get(tool_call_id)) is not None:
+                    # A cancelled call means the model abandoned the turn (usually a barge-in): its
+                    # siblings' results still go out, but no reply is counted for them, since the
+                    # interruption starts the next one.
+                    batch.abandoned = True
+                    batch.running.discard(tool_call_id)
+                    self._retire_tool_batch_if_settled(batch)
                 if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
                     continue
                 task, call_part = pending
@@ -3607,6 +3751,7 @@ class RealtimeSession:
                 # barge-in rather than racing the session to handle it.
                 await self._auto_barge_in(out)
             self._queue_put(out)
+        self._count_closed_tool_batch_replies()
         if isinstance(event, ResponseDone):
             await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
@@ -3617,8 +3762,14 @@ class RealtimeSession:
         token = otel_context.attach(context) if context is not None else None
         try:
             async for event in self._connection:
+                if merged := self._connection._take_merged_response_requests():  # pyright: ignore[reportPrivateUsage]
+                    # Requests the connection answered with a response it was already asking for: none of
+                    # them gets one of its own.
+                    self._pending_response_requests = max(0, self._pending_response_requests - merged)
+                    self._exchange_progress.set()
                 if await self._handle_pump_event(event):
                     return  # a usage limit tripped: stop reading the upstream
+                self._count_closed_tool_batch_replies()
         except Exception as e:
             self._pump_error = e
         finally:
