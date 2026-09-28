@@ -908,6 +908,11 @@ class TestSpritesSandbox:
     def test_run_signature_matches_the_protocol(self) -> None:
         assert inspect.signature(SpritesSandboxBackend.run) == inspect.signature(SupportsCommands.run)
 
+    @pytest.mark.parametrize('env', [{'PORT': 3000}, {1: 'one'}, {'TOKEN': None}])
+    def test_non_string_env_fails_at_construction(self, env: dict[object, object]) -> None:
+        with pytest.raises(TypeError, match=r'^env keys and values must be strings$'):
+            SpritesSandboxBackend(env=env)  # pyright: ignore[reportArgumentType]
+
     def test_relative_working_dir_is_rejected(self) -> None:
         with pytest.raises(ValueError, match='absolute'):
             SpritesSandboxBackend(working_dir='relative')

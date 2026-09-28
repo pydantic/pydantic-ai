@@ -337,6 +337,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'sprites'")
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
+        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
+            raise TypeError('env keys and values must be strings')
         self._sandbox = sandbox
         self._ref = ref if sandbox is None else WorkspaceRef(provider='sprites', id=sandbox.name)
         self._new_sprite_name = f'pydantic-ai-{uuid.uuid4().hex}'
