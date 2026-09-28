@@ -13,6 +13,7 @@ from typing import Generic
 
 from anyio import CancelScope, fail_after
 from anyio.lowlevel import checkpoint
+from pydantic import ValidationError
 from rich.console import Console
 
 from pydantic_ai import AgentStreamEvent
@@ -386,10 +387,23 @@ class PluginLoader(Generic[DepsT]):
             existing = next((entry for entry in self.entries() if rest and entry.name == rest[0]), None)
             if existing is not None and not existing.shipped:
                 raise ValueError(f'Plugin {rest[0]} already exists; remove its declaration before replacing it.')
+            loaded = existing is not None and existing.host is not None
             if existing is not None:
                 await self.unload(rest[0])
+            previous = next((plugin for plugin in self._store.plugins() if plugin.id == rest[0]), None)
             plugins_command(self._store, args)
-            await self.load(rest[0])
+            try:
+                await self.load(rest[0])
+            except PluginError as exc:
+                if isinstance(exc.error, ValidationError):
+                    # Settings are plaintext, so settings the plugin rejects, perhaps a pasted secret, are not kept.
+                    if previous is None:
+                        self._store.delete_plugin(rest[0])
+                    else:
+                        self._store.save_plugin(previous)
+                    if loaded:
+                        await self.load(rest[0])
+                raise
             if existing is None:
                 return await self._configure_new(rest[0], f'Added and loaded {rest[0]}.')
             kind = 'project' if existing.project else 'built-in'

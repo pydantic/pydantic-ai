@@ -201,7 +201,8 @@ Output-validation and HTTP transport retry budgets are unchanged.
 ## Credentials
 
 CLAI's `/login openai-codex`, `/login github-copilot`, and the vllm and openrouter connections store tokens
-in the configured keyring backend, not plugin settings. Large token bundles use
+in the configured keyring backend, not plugin settings. Plugins that need an API key, such as
+[`posthog`](#posthog-posthog-analytics-signed-in-for-clai), keep it in `/keys` and save only its name. Large token bundles use
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
 backend exists, credentials go to a per-account `0600` file under the user's CLAI config
 directory instead. None of this changes plugin APIs. See
@@ -387,7 +388,7 @@ order plugin instructions, renderers, and status segments are consulted in.
 declared. It does not list every public harness capability for Space-enable:
 hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
-CLAI plugins written for them.
+CLAI plugins written for them, like [`posthog`](#posthog-posthog-analytics-signed-in-for-clai) below.
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -507,6 +508,65 @@ The request and its response are also emitted as `AskUserRequestedEvent` and
 `AskUserAnsweredEvent`, so a plugin that only wants to watch (log the question,
 show a "waiting for you" state) registers `@host.on(EventClass)` or
 `@host.render(EventClass)` without being the answerer.
+
+### `posthog`: PostHog analytics, signed in for CLAI
+
+`posthog` (`pydantic_clai2.posthog`) connects the agent to PostHog's hosted MCP
+server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
+`/plugins enable posthog` loads it and opens its settings menu. To change the
+settings later, run `/plugins configure posthog` or press `C` on it in
+`/plugins`. You never need to reinstall it.
+
+The menu is the shared field editor that `/set` uses: type to filter, Enter to
+edit a row, `R` to reset one, **Save & close** or Esc to leave. Each change is
+saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
+new settings.
+
+| Row | Default | Does |
+|---|---|---|
+| API key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field |
+| Sign-in | API key from `/keys` | or browser sign-in, with tokens kept in the keyring |
+| Region | US cloud | US (`mcp.posthog.com`), EU (`mcp-eu.posthog.com`), or a typed `https://` URL for a PostHog MCP server you run (`http://` only for localhost) |
+| Tools | read-only | read-only, or read and write (for example editing feature flags) |
+| Feature groups | every group | a searchable list of PostHog's feature groups; Enter toggles one and saves it |
+| Server mode | server default | one `posthog` tool driven by commands, or one tool per operation |
+| Project ID | not set | pin every request to one project (`x-posthog-project-id`) |
+| Organization ID | not set | pin every request to one organization (`x-posthog-organization-id`) |
+| Server instructions | forwarded | whether the PostHog server's own instructions reach the agent |
+
+The key's own scopes, organizations, and projects still limit what any of these
+settings can reach. Some PostHog tools use an LLM on PostHog's side and need AI
+data processing enabled for your organization.
+
+Secrets are managed in `/keys`, never in plugin settings (plugin settings are
+plaintext SQLite, and a declaration that tries to hold a key is rejected: `/plugins add` keeps
+no settings that fail validation, and the error does not echo them). A new
+key typed in the menu is saved in `/keys` as `POSTHOG_PERSONAL_API_KEY`, the name
+harness `PostHog` documents. It is a label only: CLAI does not read or export the
+environment variable. If a key of that name exists, the menu asks before
+replacing it. CLAI remembers only the key's name, in the credential store beside
+the vllm and openrouter connections. Create the key with PostHog's "MCP Server"
+preset.
+
+One named key can serve several plugins and connections: pick the same `/keys`
+entry for each, the way GitHub integrations can all use one `GITHUB_TOKEN`. The
+name is looked up on every request, so replacing the key in `/keys` reaches the
+next turn of everything that names it. `/keys` refuses to rename a key while
+PostHog uses it. Until a key is chosen, or if the chosen key is deleted, the
+plugin still loads with a warning and keeps its menu, and each run fails with an
+error naming the fix instead of connecting without the key.
+
+With browser sign-in, the first prompt that uses PostHog opens the browser. The
+tokens go to the keyring (the `mcp-posthog_plugin` entry under `pydantic-clai2`),
+the same storage `/mcp` uses for OAuth servers, so the sign-in lasts across turns
+and launches. Pick the EU region if your account is on the EU instance.
+
+`/posthog` shows the key or sign-in in use; `/posthog logout` forgets the browser
+sign-in. The plugin always builds its own connection instead of passing `auth` to
+`PostHog`: harness `PostHog`'s key path connects only to the US endpoint, and
+`auth='oauth'` keeps browser tokens in memory, so it would sign in on every turn
+with a 5-second connect timeout. The plugin emits no telemetry of its own; tool
+calls appear in core's spans.
 
 ## Managing plugins
 
@@ -919,8 +979,10 @@ show afterwards. CLAI opens it when the plugin is turned on (Space in
 `/plugins`, `/plugins enable`, or `/plugins add`), on `C` in `/plugins`, and on
 `/plugins configure NAME`. Save each change with `host.save_settings(model)` as
 the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
-and save only a key's name. When the saved settings changed, CLAI loads the
-plugin again afterwards, so `activate` builds from them.
+and save only a key's name: let the user pick one with
+`prompt_api_key(prompt=..., label=...)` and remember only a `KeyReference` to
+it. When the saved settings changed, CLAI loads the plugin again afterwards, so
+`activate` builds from them.
 
 Build the menu with the shared field editor (`FieldMenu` and `run_flow` from
 `pydantic_clai2.field_menu`, run through `run_worker` from
@@ -936,6 +998,8 @@ async def configure() -> str:
     messages = await run_worker(lambda: run_flow(FieldMenu(NotifySource(host))))
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
+
+The built-in [`posthog`](#posthog-posthog-analytics-signed-in-for-clai) plugin is a complete example.
 
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
