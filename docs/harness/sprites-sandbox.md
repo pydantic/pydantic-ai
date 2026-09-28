@@ -180,6 +180,8 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder(), hooks])
 ```
 
+Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists until deleted. So a run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the Sprite behind. Its id is logged at INFO as `Created Sprite <id>` when it is created; delete it with `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites', id=...))`.
+
 ## Configuration
 
 | Option | What it does |
