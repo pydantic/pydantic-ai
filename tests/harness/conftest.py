@@ -38,10 +38,13 @@ __all__ = ('IsDatetime', 'IsInstance', 'IsNow', 'IsPartialDict', 'IsStr', 'agent
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def anyio_backend() -> str:
     """The harness suite is asyncio-only: capabilities lean on `asyncio.create_task`, Temporal, Monty and
-    other asyncio-native pieces, so `--anyio-backend=trio` does not apply here."""
+    other asyncio-native pieces, so `--anyio-backend=trio` does not apply here.
+
+    Session-scoped like the root override so module-scoped async fixtures (`temporal_env`, Modal `session`)
+    can depend on it."""
     return 'asyncio'
 
 
