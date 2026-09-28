@@ -29,7 +29,7 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.35.0"
+  version: "0.52.0"
   display-name: Pydantic AI
   description: Pydantic AI CLI (pai) running the pydantic-ai-harness coder agent with MCP tool support
   mcp: true
@@ -87,15 +87,32 @@ engine:
       // module instead: `Coder()` supplies six filesystem and shell tools,
       // repository context and context management.
       //
+      // `Coder` acts on the run's workspace, and `LocalWorkspace(".")` makes that
+      // the checkout: the launcher runs with the checkout as its working
+      // directory. A local workspace hands commands only `PATH`, `HOME` and the
+      // locale variables, so `env` passes the step's environment on, minus the
+      // provider credential variables `Coder`'s shell has always withheld. The
+      // AWF sandbox is the isolation boundary.
+      //
       // The gateway's MCP servers are deliberately not part of the module.
       // `pai --mcp-config` reads the same Claude-shaped config file through the
       // same `pydantic_ai.mcp.load_mcp_toolsets`, `${VAR}` expansion included, so
       // routing them through the CLI is what lets a `PAI_AGENT` agent receive
       // them on identical terms.
-      const AGENT_MODULE = `from pydantic_ai import Agent
-      from pydantic_ai_harness import Coder
+      const AGENT_MODULE = `import os
+      from fnmatch import fnmatchcase
 
-      agent = Agent(name="coder", capabilities=[Coder()])
+      from pydantic_ai import Agent
+      from pydantic_ai.capabilities import LocalWorkspace
+      from pydantic_ai_harness import Coder
+      from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
+
+      env = {
+          name: value
+          for name, value in os.environ.items()
+          if not any(fnmatchcase(name, pattern) for pattern in LLM_API_KEY_ENV_PATTERNS)
+      }
+      agent = Agent(name="coder", capabilities=[LocalWorkspace(".", env=env), Coder()])
       `;
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
@@ -553,8 +570,10 @@ engine:
 ```
 
 The agent is a `pydantic_ai.Agent` composed from the harness `Coder`
-capability: six filesystem and shell tools, repository context and context
-management. Shell commands are unrestricted inside the sandbox. `pai -a` accepts
+capability -- six filesystem and shell tools, repository context and context
+management -- working in a `LocalWorkspace` on the checkout. Shell commands are
+unrestricted inside the sandbox and get the step's environment, minus provider
+credential variables such as `OPENAI_*` and `ANTHROPIC_*`. `pai -a` accepts
 a single target and its JSON agent-spec format cannot name harness capabilities,
 so the harness script writes that composition as `gh_aw_agent.py` in a private
 directory it creates inside the sandbox, puts that directory on `PYTHONPATH`, and
