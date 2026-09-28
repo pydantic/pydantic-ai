@@ -137,9 +137,7 @@ async def test_cancel_kills_term_ignoring_child() -> None:
                 await task
             with anyio.fail_after(30):
                 while (await backend.run(['python', '-c', alive], timeout=15)).stdout.strip() != 'False':
-                    await anyio.sleep(
-                        0.1
-                    )  # pragma: lax no cover - the child is often already reaped on the first check
+                    await anyio.sleep(0.1)
         finally:
             if not task.done():
                 task.cancel()
