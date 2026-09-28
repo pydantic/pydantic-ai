@@ -532,6 +532,8 @@ class _HostFilesystem(FakeFilesystem):
         del request_timeout
         await self._check(path)
         self._confine(path)
+        # Writing follows a final symlink, so its target must be inside the host root too.
+        self._confine(os.path.realpath(path))
         with _host_errors(path):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_bytes(data.encode() if isinstance(data, str) else data)
