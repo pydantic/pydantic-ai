@@ -6,8 +6,6 @@ Most use a fake `bwrap` that records its arguments, so they run anywhere; the la
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 from pathlib import Path
 
 import anyio
@@ -29,7 +27,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
 
-from .fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
+from .fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
 
 pytestmark = [
     pytest.mark.anyio,
@@ -203,13 +201,7 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
         await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere')))
 
 
-_BWRAP_WORKS = (
-    shutil.which('bwrap') is not None
-    and subprocess.run(['bwrap', '--ro-bind', '/', '/', '--unshare-all', 'true'], capture_output=True).returncode == 0
-)
-
-
-@pytest.mark.skipif(not _BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
+@pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
 class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
     async def test_commands_write_only_to_the_working_dir(self, tmp_path: Path) -> None:
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'work')))

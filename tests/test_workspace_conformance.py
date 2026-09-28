@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import posixpath
 import shutil
-from collections.abc import Awaitable, Callable
+import tempfile
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 
 import anyio.to_thread
@@ -21,7 +22,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 
-from .fake_remote_tools import install_fake_remote_tools
+from .fake_remote_tools import BWRAP_WORKS, install_fake_remote_tools
 from .workspace_fakes import (
     FakeWorkspace,
     FilesystemOnlyWorkspaceBackend,
@@ -112,6 +113,27 @@ class TestBubblewrapAroundSSH(TestSSHWorkspaceBackend):
     @pytest.fixture
     def backend(self, tmp_path: Path) -> WorkspaceBackend:
         return BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('box', working_dir=str(tmp_path))))
+
+
+@pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
+class TestRealBubblewrap(TestLocalWorkspaceBackend):  # pragma: no cover - CI hosts may not have bubblewrap
+    """The same rules hold with every command in a real bubblewrap sandbox."""
+
+    @pytest.fixture
+    def backend(self, tmp_path: Path) -> WorkspaceBackend:
+        return BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+
+    @pytest.fixture
+    def destructive_backend(self) -> Iterator[Callable[[], WorkspaceBackend]]:
+        # Not under `/tmp`: the sandbox mounts a private `/tmp`, and the directory `bwrap` makes there for the
+        # bind mount outlives the host deleting the real one, so a command inside never sees it go.
+        path = Path(tempfile.mkdtemp(prefix='fresh-bwrap-ws-', dir='/var/tmp'))
+        yield lambda: BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(path)))
+        shutil.rmtree(path, ignore_errors=True)
+
+    @pytest.fixture
+    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
+        return lambda ref: BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(ref.id)))
 
 
 class _StrictLoopBackend(LocalWorkspaceBackend):

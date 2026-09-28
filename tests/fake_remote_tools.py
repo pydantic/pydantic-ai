@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
+
+BWRAP_WORKS = (
+    shutil.which('bwrap') is not None
+    and subprocess.run(['bwrap', '--ro-bind', '/', '/', '--unshare-all', 'true'], capture_output=True).returncode == 0
+)
+"""Whether this machine has a working `bwrap` (Linux with user namespaces), for the tests that need the real one."""
 
 # Runs the remote command on this machine, starting in `$HOME` like a login. `unreachable` and `dropped` fail on
 # purpose, `chatty` prints a login banner first, and `slow` takes 30 seconds to log in.

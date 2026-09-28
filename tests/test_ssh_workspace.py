@@ -182,6 +182,15 @@ async def test_a_timeout_is_raised_about_on_time(tools: FakeRemoteTools) -> None
     assert anyio.current_time() - started < 1.45
 
 
+async def test_the_capability_attaches_by_ref_only_to_its_own_host(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    capability = SSHWorkspace('box', working_dir=str(tmp_path))
+    backend = capability.backend(WorkspaceRef(provider='ssh', id=f'box:{tmp_path}'))
+
+    assert (await backend.run(['pwd'])).stdout == f'{tmp_path.resolve()}\n'
+    with pytest.raises(ValueError, match='is not this SSH workspace'):
+        capability.backend(WorkspaceRef(provider='ssh', id='elsewhere:/srv'))
+
+
 async def test_invalid_configuration_fails_at_construction(tools: FakeRemoteTools) -> None:
     with pytest.raises(ValueError, match='destination must be a host'):
         SSHWorkspaceBackend('-oProxyCommand=evil')

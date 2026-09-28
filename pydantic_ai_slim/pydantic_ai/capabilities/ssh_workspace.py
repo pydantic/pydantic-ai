@@ -48,10 +48,22 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         # Surface an invalid destination, `env` or platform where the capability is written, not on the first run.
-        self._backend()
+        self._configured()
 
-    def _backend(self) -> SSHWorkspaceBackend:
+    def _configured(self) -> SSHWorkspaceBackend:
         return SSHWorkspaceBackend(self.destination, working_dir=self.working_dir, env=self.env, ssh_args=self.ssh_args)
+
+    def backend(self, ref: WorkspaceRef) -> SSHWorkspaceBackend:
+        """Attach to this capability's host and working directory by ref, without connecting.
+
+        Raises:
+            ValueError: If `ref` is for another host or working directory; this capability never redirects
+                commands to a host it wasn't configured with.
+        """
+        backend = self._configured()
+        if ref != backend.ref:
+            raise ValueError(f'workspace {ref.provider}:{ref.id} is not this SSH workspace ({backend.ref.id})')
+        return backend
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -59,7 +71,7 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
         return capabilities[-1]
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        backend = self._backend()
+        backend = self._configured()
         if ref is not None and ref != backend.ref:
             return None
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
