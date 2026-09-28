@@ -222,6 +222,16 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Image Generation](image-generation.md)
 
+!!! tip "See your first run in Logfire"
+    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire), which has a [free tier](https://pydantic.dev/pricing/). Run `logfire auth` and `logfire projects new` once first; the [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
+
+    ```python
+    import logfire
+
+    logfire.configure()
+    logfire.instrument_pydantic_ai()
+    ```
+
 !!! tip "No API key yet?"
     You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, the [Pydantic AI Gateway](gateway.md) gives you one key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, or see [Models and Providers](models/overview.md) to pick a provider and set its own API key.
 

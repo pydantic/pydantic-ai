@@ -90,6 +90,10 @@ Read [Build Multi-Step Workflows with Graphs](./ORCHESTRATION-AND-INTEGRATIONS.m
 
 Read [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior).
 
+## Create a Basic Agent
+
+Read [Create a Basic Agent](./AGENTS-CORE.md#create-a-basic-agent). The starter includes `logfire.configure()` and `logfire.instrument_pydantic_ai()`, so the first run is already traced in Logfire.
+
 ## Set Up Observability with Logfire
 
 Read [Set Up Observability and Model Access](../SKILL.md#set-up-observability-and-model-access), then [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior).

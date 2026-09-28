@@ -211,6 +211,15 @@ That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation
 
 **Build this →** [Image Generation](https://pydantic.dev/docs/ai/guides/image-generation/)
 
+**See your first run in Logfire.** Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai), which has a [free tier](https://pydantic.dev/pricing/). Run `logfire auth` and `logfire projects new` once first; the [Logfire guide](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire) has the details, and [any OpenTelemetry backend](https://pydantic.dev/docs/ai/integrations/logfire/#using-opentelemetry) works instead.
+
+```python
+import logfire
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+```
+
 ## Why Pydantic AI
 
 - **Any model, one Python API.** [Virtually every model and provider](https://pydantic.dev/docs/ai/models/overview/) (OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more), swappable with a string, or through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/): one key for all of them, with failover and cost monitoring built in. No flagship feature is locked to one vendor.

@@ -4,8 +4,15 @@ Read this file when the user needs the core `Agent` workflow: creating agents, c
 
 ## Create a Basic Agent
 
+Include Logfire instrumentation in new applications from the start, so every run is visible; see [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) for credentials and other OpenTelemetry backends.
+
 ```python
+import logfire
+
 from pydantic_ai import Agent
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
