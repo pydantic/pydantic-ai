@@ -412,57 +412,7 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under DBOS, Temporal and Prefect durable execution. Under Temporal,
-file changes ask `FileChangeRequestEvent` listeners for approval in the workflow before
-workspace mutations run as durable activities. `FileReadEvent`, `DirectoryListedEvent`,
-and `FilesSearchedEvent` from read-only tools running in activities do not reach workflow
-listeners live; file-change requests and write notifications run in the workflow.
-On replay, approval listeners run again; make external listener effects idempotent
-([pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971)).
-
-For example, a Temporal worker can approve file changes in its workflow while the
-workspace operations run durably:
-
-```python
-import asyncio
-
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
-from temporalio import workflow
-from temporalio.client import Client
-from temporalio.worker import Worker
-
-agent = Agent(
-    'openai:gpt-5.2',
-    name='file_worker',
-    capabilities=[LocalWorkspace('.'), FileSystem(), TemporalDurability()],
-)
-
-@agent.on_event(FileChangeRequestEvent)
-async def approve(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
-    if event.path == 'protected.txt':
-        event.cancel('This file is protected.')
-
-@workflow.defn
-class FileWorkflow(PydanticAIWorkflow):
-    __pydantic_ai_agents__ = [agent]
-
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        return (await agent.run(prompt)).output
-
-async def main() -> None:
-    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
-    async with Worker(client, task_queue='files', workflows=[FileWorkflow]):
-        await asyncio.Event().wait()
-
-if __name__ == '__main__':
-    asyncio.run(main())
-```
-
-Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
+`FileSystem` works under Temporal, DBOS, and Prefect. [Durable execution](durable-execution.md) shows an example for each engine and which file events Temporal delivers live.
 
 ## Further reading
 

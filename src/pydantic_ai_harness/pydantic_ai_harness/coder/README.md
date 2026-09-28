@@ -197,14 +197,7 @@ capabilities emit.
 
 ## Durable execution
 
-`Coder` works under DBOS, Temporal and Prefect durable execution. Under Temporal,
-`FileChangeRequestEvent` listeners can refuse file changes before the durable workspace mutation.
-Read/search events from tools running in activities are not forwarded live to workflow
-listeners; file-change requests and write notifications run in the workflow.
-On replay, the workflow invokes file-change approval listeners again; make external listener effects idempotent
-([pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971)).
-
-Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
+`Coder` works under Temporal, DBOS, and Prefect. [Durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/) shows an example for each engine and what works on each.
 
 ## Upgrading
 
