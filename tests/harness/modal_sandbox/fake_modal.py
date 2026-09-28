@@ -473,12 +473,7 @@ class FakeSandbox:
         if self.shutting_down:
             raise FakeConflictError('Modal Sandbox is shutting down.')
         assert self._control.host_root is not None
-        # The sandbox's home is the host root, so a command that starts in `~` stays inside it.
-        variables = {
-            **os.environ,
-            'HOME': str(self._control.host_root),
-            **{key: value for key, value in (env or {}).items() if value is not None},
-        }
+        variables = {**os.environ, **{key: value for key, value in (env or {}).items() if value is not None}}
         cwd = workdir or self.workdir or str(self._control.host_root)
         process = subprocess.Popen(
             argv, cwd=cwd, env=variables, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
@@ -650,7 +645,9 @@ class FakeModal:
             control.owned_creates += 1
             suffix = '' if control.owned_creates == 1 else f'-{control.owned_creates}'
             workspace = FakeSandbox(control, f'sb-owned{suffix}', name=name)
-            workspace.workdir = workdir
+            # In host mode the host root stands in for the default image's `/root`.
+            host_home = workdir == '/root' and control.host_root is not None
+            workspace.workdir = str(control.host_root) if host_home else workdir
             control.sandboxes.append(workspace)
             return workspace
 

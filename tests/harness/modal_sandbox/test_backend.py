@@ -492,22 +492,14 @@ class TestWorkingDir:
         workspace = Workspace(backend)
         assert await workspace.read_text('marker.txt') == 'marker'
 
-    async def test_without_working_dir_commands_and_relative_paths_start_in_home(
-        self, fake_modal: FakeModal, tmp_path: Path
+    async def test_without_working_dir_the_default_image_starts_in_root_and_others_in_their_own(
+        self, fake_modal: FakeModal
     ) -> None:
-        # The image's own directory (`/` on Modal's default image) differs from the user's home,
-        # so only the `cd ~` in the wrapper puts a command, and so relative paths, in `~`.
-        home, image_dir = tmp_path / 'home', tmp_path / 'image'
-        home.mkdir()
-        image_dir.mkdir()
-        fake_modal.host_root = home.resolve()
-        backend = await started()
-        fake_modal.sandboxes[0].workdir = str(image_dir)
-        workspace = Workspace(backend)
-        assert (await backend.run('pwd -P', shell=True)).stdout == f'{home.resolve()}\n'
-        await workspace.write_text('note.txt', 'hi')
-        assert (home / 'note.txt').read_text() == 'hi'
-        assert (await backend.run('cat note.txt', shell=True)).stdout == 'hi'
+        # The default image has no WORKDIR, so it would start in `/`; a custom image keeps its WORKDIR.
+        await started()
+        assert fake_modal.create_kwargs[-1]['workdir'] == '/root'
+        await started(image='ubuntu:22.04')
+        assert fake_modal.create_kwargs[-1]['workdir'] is None
 
     async def test_configured_working_dir_is_where_commands_start(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         home, project = tmp_path / 'home', tmp_path / 'project'

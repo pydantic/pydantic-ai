@@ -203,7 +203,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             sandbox; `None` (the default) never terminates it for being idle.
         working_dir: Absolute directory commands start in and relative paths resolve against,
             applied to every command, including in an attached sandbox. `None` (the default) is
-            the image user's home directory, or the image's working directory when it has none.
+            `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
     """
 
@@ -424,7 +424,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     app=app,
                     image=built,
                     name=name,
-                    workdir=self._working_dir,
+                    # The default image has no WORKDIR (`/`); start in its user's home, as a login shell would.
+                    workdir=self._working_dir or ('/root' if self._image is None else None),
                     env=variables,
                     timeout=self._sandbox_timeout,
                     idle_timeout=self._idle_timeout,
@@ -581,10 +582,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         start_script = (
             'test ! -e "$1" || { rm -f "$1"; exit 143; }; pid_file=$2; echo $$ > "$pid_file"; '
             'if test -e "$1"; then rm -f "$pid_file" "$1"; exit 143; fi; '
-            'shift 2; '
-            # Without a configured directory, start in the image user's home, as a shell login would.
-            + ('cd ~ 2>/dev/null; ' if workdir is None else '')
-            + '"$@" </dev/null; status=$?; rm -f "$pid_file"; exit "$status"'
+            'shift 2; "$@" </dev/null; status=$?; rm -f "$pid_file"; exit "$status"'
         )
         wrapped = [
             *(['setsid', '-w'] if isolated else []),
