@@ -33,7 +33,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       is_fork: ${{ steps.pr-info.outputs.is_fork }}
-      pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
       pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
       pr_base_sha: ${{ steps.pr-info.outputs.pr_base_sha }}
       pr_author_permission: ${{ steps.pr-info.outputs.pr_author_permission }}
@@ -44,7 +43,6 @@ jobs:
         run: |
           PR_NUMBER=${{ github.event.pull_request.number || github.event.issue.number }}
           PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
-          echo "pr_head_repo=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> $GITHUB_OUTPUT
           echo "pr_head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> $GITHUB_OUTPUT
           echo "pr_base_sha=$(echo "$PR_DATA" | jq -r '.base.sha')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
@@ -107,11 +105,12 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - name: Checkout fork repository
+      # Check out this repository, same as the job above. claude-code-action
+      # fetches the PR head itself (via `refs/pull/<n>/head`, which works for
+      # forks) and switches to it before starting Claude.
+      - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: ${{ needs.get-pr-info.outputs.pr_head_repo }}
-          ref: ${{ needs.get-pr-info.outputs.pr_head_sha }}
           fetch-depth: 1
           persist-credentials: false
 
