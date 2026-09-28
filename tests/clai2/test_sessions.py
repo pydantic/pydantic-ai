@@ -413,3 +413,27 @@ async def test_a_plugin_that_supplies_the_workspace_replaces_the_session_directo
     )
     await session.prompt('go')
     assert working_dirs == [str(sandbox.resolve())]
+
+
+async def test_a_group_plugin_that_supplies_the_workspace_replaces_the_session_directory(tmp_path: Path) -> None:
+    working_dirs: list[str] = []
+    sandbox = tmp_path / 'sandbox'
+    sandbox.mkdir()
+
+    class Probe(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            working_dirs.append(await ctx.workspace.working_dir())
+
+    class SandboxGroup(CombinedCapability[None]):
+        # The group supplies the workspace itself, not through any of its members.
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return LocalWorkspaceBackend(sandbox)
+
+    session = Session(
+        Agent(TestModel(custom_output_text='answer'), deps_type=type(None)),
+        deps=None,
+        workspace=tmp_path,
+        plugins=[SandboxGroup([Probe()])],
+    )
+    await session.prompt('go')
+    assert working_dirs == [str(sandbox.resolve())]

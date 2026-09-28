@@ -17,6 +17,7 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
+    CombinedCapability,
     DynamicCapability,
     LocalWorkspace,
     WrapperCapability,
@@ -52,7 +53,14 @@ def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]]) -> bool:
     for plugin in plugins:
         # A capability function's capability exists only once the run starts.
         if isinstance(plugin, AbstractCapability):
-            cast('AbstractCapability[DepsT]', plugin).apply(leaves.append)
+            capability = cast('AbstractCapability[DepsT]', plugin)
+            # `apply` visits a group's members, not a group subclass that supplies the workspace itself.
+            if (
+                isinstance(capability, CombinedCapability)
+                and type(capability).get_workspace is not CombinedCapability.get_workspace
+            ):
+                return True
+            capability.apply(leaves.append)
     return any(not leaf.defer_loading and _overrides_get_workspace(leaf) for leaf in leaves)
 
 
