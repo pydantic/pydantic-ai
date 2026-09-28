@@ -171,8 +171,9 @@ you pass only sets where commands start. The directory must already exist. Use i
 trusted work, and a sandbox for code you don't trust.
 
 Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, so they find
-host tools and configuration and use your locale. No other host variables reach them. Pass other variables
-with `env=`:
+host tools and configuration and use your locale. They don't inherit the rest of the agent process's
+environment: pass what they need with `env=`, never the whole `os.environ`, which would hand your API
+keys to the commands the model runs:
 
 ```python
 from pydantic_ai import Agent
@@ -183,10 +184,6 @@ agent = Agent(
     capabilities=[LocalWorkspace('.', env={'UV_OFFLINE': '1'})],
 )
 ```
-
-!!! warning
-    Don't pass `os.environ` itself: that hands the model's commands every secret in the process,
-    LLM API keys included.
 
 ## Using the workspace in tools
 
@@ -389,6 +386,15 @@ activities.
   runs as an activity or task.
 - Inside a workflow or flow, the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers
   refuse a workspace; use the durability capability instead.
+- On Temporal, `LocalWorkspace` calls run in activities on whichever worker picks them up, so every
+  worker needs the directory at the same absolute path, on storage they share.
+
+!!! warning "Adding a workspace with runs in flight"
+    Adding a workspace to an agent changes what its runs record, so runs started before the change no
+    longer match their history: Temporal replay fails with a nondeterminism error, and DBOS can't
+    recover the workflow. Let in-flight runs finish first, or deploy the change separately: with
+    Temporal worker versioning or a new task queue, or a new DBOS application version. On Prefect,
+    let running flows finish before you deploy.
 
 The engine guides cover the rest, such as matching capabilities across Temporal workers.
 

@@ -193,6 +193,9 @@ DBOS stores workflow-side workspace call arguments (commands, `env=`, file conte
 Keep secrets in the workspace capability's `env=` or use them inside a tool instead of passing
 secrets as workflow-side arguments. Protect stored history with an appropriate payload codec.
 
+Adding a workspace to an agent changes its workflows' steps, so let in-flight workflows finish or
+deploy the change as a new application version; DBOS can't recover a workflow started before it.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the step boundary, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance: pre-register it by passing a `models` dict to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and reference it by key (or pass the registered instance), or pass a model-name string and build the instance inside the step with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials. Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default.

@@ -36,7 +36,10 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     """Whether to wrap the workspace in a [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace]."""
 
     env: Mapping[str, str] | None = None
-    """Environment variables for every command, on top of `PATH` and `HOME`; don't pass `os.environ` (secrets)."""
+    """Environment variables for every command, on top of `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`.
+
+    Nothing else from this process's environment reaches commands; don't pass `os.environ` (secrets).
+    """
 
     id: str | None = 'local_workspace'
     """Fixed, so a later `LocalWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
