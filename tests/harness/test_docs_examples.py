@@ -64,6 +64,19 @@ def test_blocks_run_their_agents_through_the_tools_and_hand_every_workspace_to_c
     ]
 
 
+def test_e2b_install_covers_the_quick_start_model() -> None:
+    root = Path(__file__).parents[2]
+    for path in (
+        root / 'docs/harness/e2b-sandbox.md',
+        root / 'src/pydantic_ai_harness/pydantic_ai_harness/e2b_sandbox/README.md',
+    ):
+        page = path.read_text()
+        install = page.split('## Install\n', 1)[1].split('\n## ', 1)[0]
+        assert "Agent('anthropic:" in page.split('## Quick start\n', 1)[1]
+        assert '"pydantic-ai-harness[e2b,anthropic]"' in install
+        assert 'ANTHROPIC_API_KEY' in install
+
+
 def test_e2b_durable_example_is_module_level_and_runnable() -> None:
     root = Path(__file__).parents[2]
     for path in (

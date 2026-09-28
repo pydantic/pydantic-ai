@@ -14,10 +14,10 @@ Run your agent's commands and file edits in an isolated [E2B](https://e2b.dev) c
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[e2b]"
+pip/uv-add "pydantic-ai-harness[e2b,anthropic]"
 ```
 
-Then set `E2B_API_KEY` to your E2B API key.
+Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples' Anthropic model.
 
 ## Quick start
 
