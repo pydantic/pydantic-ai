@@ -1983,7 +1983,7 @@ async def test_a_retry_keeps_the_prompt_as_the_text(
     setup: Callable[[], tuple[InMemoryDecisionModel, Agent[None, Any]]],
     expected: Any,
 ):
-    """A retry is a step taken for the prompt, like a tool call: the prompt stays the text, and the retry goes in `done`."""
+    """A retry is a step taken for the prompt: the prompt stays the text, and the retry goes in `done`."""
     model, agent = setup()
     await agent.run('I was charged twice this month.')
     assert model.requests[1].state == expected

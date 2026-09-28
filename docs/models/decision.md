@@ -242,7 +242,7 @@ Every input to the agent ends up in one of two places: the state, which is judge
 |---|---|
 | the run's prompt | the whole state when there is no history, otherwise its `text` |
 | the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
-| the tool calls and results since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
+| the tool calls, their results and retry prompts since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
