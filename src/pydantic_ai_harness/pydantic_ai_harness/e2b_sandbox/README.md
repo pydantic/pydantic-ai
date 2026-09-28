@@ -126,6 +126,41 @@ The ref holds no credentials, so the process that reattaches needs `E2B_API_KEY`
 
 Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
+## Prepare a sandbox before the run
+
+To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
+
+```python {names="defined"}
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+
+
+async def main() -> None:
+    backend = E2BSandboxBackend(working_dir='/home/user/project')
+    workspace = Workspace(backend)
+    await workspace.write_text('calc.py', 'def add(a, b):\n    return a - b\n')
+    await workspace.run(['pip', 'install', 'pytest'], timeout=300)
+    ref = backend.ref  # set once the sandbox exists
+    assert ref is not None
+    try:
+        result = await agent.run('Fix the bug in calc.py.', workspace=backend)
+        print(result.output)
+    finally:
+        await E2BSandbox().destroy(ref)
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+Read `backend.ref` before the run: a failed run returns no result to take it from.
+
 ## Preview a dev server
 
 With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, connect with `e2b.AsyncSandbox.connect(ref.id)` and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then `kill_sandbox(ref)` as below. Do not leave a public preview running longer than necessary.
