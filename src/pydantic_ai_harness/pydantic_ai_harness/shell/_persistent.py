@@ -139,24 +139,24 @@ async def run_persistent_command(
                     interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
             await output.drain()
         await output.finish()
+
+        # Handles last: `ShellToolset.call_tool` keeps the tail of an over-long
+        # result, and the PID and paths are what the model must not lose.
+        result = ''
+        if mode == 'foreground':
+            result = await _output_tail(job)
+            if result and not result.endswith('\n'):
+                result += '\n'
+        result += (
+            f'PID: {job.pid} (supervisor; use `{job.stop_command}` to stop the whole process tree)\n'
+            f'Output: {job.output_path}\nStatus: {job.status_path}'
+        )
+        if (status := await job.status_text()) is not None:
+            result += f'\n{status}'
     except BaseException:
         # A cancelled or failed call cannot hand back its handles, so nothing is left running.
         with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
             await job.kill()
             await job.cleanup()
         raise
-
-    # Handles last: `ShellToolset.call_tool` keeps the tail of an over-long
-    # result, and the PID and paths are what the model must not lose.
-    result = ''
-    if mode == 'foreground':
-        result = await _output_tail(job)
-        if result and not result.endswith('\n'):
-            result += '\n'
-    result += (
-        f'PID: {job.pid} (supervisor; use `{job.stop_command}` to stop the whole process tree)\n'
-        f'Output: {job.output_path}\nStatus: {job.status_path}'
-    )
-    if (status := await job.status_text()) is not None:
-        result += f'\n{status}'
     return result

@@ -30,6 +30,7 @@ from pydantic_ai_harness.shell import (
     CommandStartedEvent,
     Shell,
 )
+from pydantic_ai_harness.shell._jobs import Job
 
 from .._tool_calls import call_tool, call_tools
 
@@ -371,6 +372,36 @@ class TestLifecycle:
         result = await shell(tmp_path, {'command': f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'})
         assert '"exit_code": 0' in result
         assert status.with_name('output.log').read_text() == 'completed\n'
+
+    @pytest.mark.parametrize('mode', ['foreground', 'background'])
+    async def test_failed_result_read_terminates_process(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+    ) -> None:
+        # The log scan is the last read before the result is built. The next read fails, so
+        # the handles never reach the model; later reads, including `Job.kill`'s, succeed.
+        jobs: list[Job] = []
+        failed: list[Job] = []
+
+        async def arm(job: Job) -> int | None:
+            jobs.append(job)
+            return None
+
+        def fail_once(original: Any) -> Any:
+            async def read(self: Job, *args: Any) -> Any:
+                if jobs and not failed:
+                    failed.append(self)
+                    raise RuntimeError('result read failed')
+                return await original(self, *args)
+
+            return read
+
+        monkeypatch.setattr('pydantic_ai_harness.shell._persistent._count_lines', arm)
+        monkeypatch.setattr(Job, 'size', fail_once(Job.size))
+        monkeypatch.setattr(Job, 'status_text', fail_once(Job.status_text))
+        with pytest.raises(RuntimeError, match='result read failed'):
+            await shell(tmp_path, {'command': 'sleep 60', 'mode': mode, 'timeout': 0.01})
+        await wait_for_exit(jobs[0].pid)
+        assert not Path(jobs[0].directory).exists()
 
     @pytest.mark.parametrize('command', ['sleep 60', 'true'])
     async def test_cancelled_finalization_terminates_process(
