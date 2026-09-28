@@ -234,6 +234,19 @@ async def test_posix_output_cap_reports_truncation(tmp_path: Path) -> None:
     assert list(scratch.iterdir()) == []  # the capped search removed its temp files
 
 
+async def test_posix_git_search_skips_tracked_hidden_paths(tmp_path: Path, no_rg_path: str) -> None:
+    # Enough matches in a tracked dot directory to fill the output cap if they were grepped.
+    (tmp_path / '.cache').mkdir()
+    (tmp_path / '.cache' / 'big.txt').write_text('needle\n' * 85000)
+    (tmp_path / 'visible.txt').write_text('needle\n')
+    subprocess.run(['git', '-C', str(tmp_path), 'init', '-q'], check=True)
+    subprocess.run(['git', '-C', str(tmp_path), 'add', '.cache'], check=True)
+    backend = CountingBackend(tmp_path, no_rg_path)
+    tools = FileSystem[None](root_dir=tmp_path, tools=['grep']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    assert await tools.grep('needle', workspace=backend) == 'visible.txt:1:needle'
+
+
 async def test_no_rg_rejects_unsupported_regex(tmp_path: Path, no_rg_path: str) -> None:
     (tmp_path / 'file.txt').write_text('needle\n')
     backend = CountingBackend(tmp_path, no_rg_path)

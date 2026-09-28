@@ -48,16 +48,17 @@ async def run_posix_search(
         validate_posix_pattern(pattern)
     # Git applies nested .gitignore files, but --exclude-from=.ignore only reads the
     # search-root .ignore; nested .ignore rules need rg. Without git, find ignores neither.
+    # --exclude-standard keeps tracked files, and even untracked dotfiles; like rg without
+    # --hidden, skip every path with a dot-prefixed component before it is grepped.
+    pathspec = shlex.quote(target) + ('' if include_hidden else " ':(exclude,glob)**/.*' ':(exclude,glob)**/.*/**'")
     enumeration = (
         'if [ -f .ignore ]; then extra=--exclude-from=.ignore; else extra=; fi; '
         'if command -v git >/dev/null 2>&1; then '
         'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then '
-        'git ls-files -co --exclude-standard $extra -z -- '
-        + shlex.quote(target)
-        + '; else tmp=$(mktemp -d) || exit 2; '
+        'git ls-files -co --exclude-standard $extra -z -- ' + pathspec + '; else tmp=$(mktemp -d) || exit 2; '
         'git init --bare -q "$tmp" || exit 2; '
         'GIT_DIR="$tmp" GIT_WORK_TREE="$PWD" git ls-files -o --exclude-standard '
-        '-z $extra -- ' + shlex.quote(target) + '; status=$?; rm -rf -- "$tmp"; [ "$status" -eq 0 ]; fi; '
+        '-z $extra -- ' + pathspec + '; status=$?; rm -rf -- "$tmp"; [ "$status" -eq 0 ]; fi; '
         'else find '
         + shlex.quote(target)
         + (" ! -path . -name '.*' -prune -o " if not include_hidden else ' ')
