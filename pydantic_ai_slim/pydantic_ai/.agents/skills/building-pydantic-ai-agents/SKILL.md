@@ -228,6 +228,10 @@ boundary, when generation and tool work are complete. This is not always the end
 on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
+After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
+`session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
+device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
+full buffer, or emitted before the view subscribed; it requires exactly one audio view.
 
 ```python {test="skip"}
 import anyio
@@ -285,20 +289,38 @@ Key facts for building realtime agents:
 - **A string sent with `session.send()` solicits a response**: use `respond=False` to add passive
   text context. Images are context-only by default; use `respond=True` to ask for a response to an
   image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
+  A string sent during a reply queues on OpenAI/Azure/xAI and Gemini 2.5, but interrupts the active
+  reply on Gemini 3.1. On OpenAI GPT-Live a string is never a user turn at all: it is context the model
+  relays or answers (even with `respond=False`, which only doesn't *request* speech), it only lands
+  while audio is flowing, and text over 500 tokens raises `UserError`. Gemini speech models reject text output before connect; the Vertex
+  `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
-  are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
-  and xAI cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
+  stay attached to the user turn they describe even when they arrive after its response, and a turn
+  started while the model is still answering (barge-in) is recorded after that answer. A reported
+  speech segment whose transcript never arrives remains represented by retained audio or a content-less
+  `SpeechPart` when the session closes. Transcripts are what carry over; OpenAI and Azure can also
+  replay retained transcript-less *user* audio, Gemini,
+  xAI, and OpenAI GPT-Live (which seeds from text only) cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
   history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
   oldest evicted first) record.
+- **Usage and cost**: each recorded `ModelResponse` carries its response usage, while `session.usage`
+  is cumulative; priced models get a `genai-prices` cost and enforce `UsageLimits.cost_limit`.
+- **Context window**: `session.context_window_used` (and `ctx.context_window_used` in a session's tools)
+  is the fraction in use: reported by OpenAI GPT-Live, computed from the latest response's tokens on
+  OpenAI/Azure/Gemini, and `None` on xAI. It can drop after server-side compaction or truncation, which
+  no provider announces; tune it with `openai_truncation` (OpenAI Realtime and Azure, not GPT-Live) or
+  `google_context_compression` (Gemini).
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a
   `RealtimeModelProfile`, the realtime counterpart to `ModelProfile`) reports
   `supports_manual_turn_control`, `supports_interruption`, `supports_image_input`,
-  `supports_output_truncation`, and `supports_session_seeding`. OpenAI and Azure OpenAI support all of these; Gemini
-  Live lacks `supports_manual_turn_control`, `supports_interruption`, and `supports_output_truncation`
-  (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+  `supports_output_truncation`, and `supports_session_seeding`. OpenAI Realtime and Azure OpenAI
+  support all of these; OpenAI GPT-Live supports only `supports_session_seeding` (from text) and
+  `supports_image_input` with `image_input_requires_response` (an image goes to its backend, sent with
+  `respond=True`), since it owns turn-taking; Gemini Live lacks `supports_manual_turn_control`,
+  `supports_interruption`, and `supports_output_truncation` (automatic VAD only). Calling an unsupported method raises `UserError` up front.
 - **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
   silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
   `google_vad` only for finer provider-specific control; when present, they fully override the shared
@@ -312,21 +334,41 @@ Key facts for building realtime agents:
   down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
   gets the same treatment on your own signal. A playback layer that buffers ahead of the device
   makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
+- **Mute with server VAD**: keep sending zero-valued PCM16 frames at the normal cadence. Sending
+  nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
+  Under manual turn control, stop sending and call `clear_audio()` instead.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
-  `google_async_tool_calls=True` on a native-audio model). An unhandled tool exception is raised
-  from session iteration; when only `stream_audio()` or `stream_transcripts()` is consumed, it ends
-  those views and is raised when the session context closes. An `on_tool_execute_error` capability
-  can return a replacement result or raise `ModelRetry` to keep the session running. To end the call
-  from a tool, await `ctx.realtime_session.close()` for a clean hang-up (the tool does not resume and
-  its call is recorded as interrupted), or call `ctx.cancel()` to make the session context raise
-  `RunCancelled`.
+  `google_async_tool_calls=True` on a native-audio model, and does it unconditionally on
+  `gemini-3.8-live-extended-thinking`, which has no blocking mode and reasons in the background —
+  it speaks a filler, runs the tool, and speaks again inside one exchange, so read
+  `RealtimeTurnCompleteEvent` or await `session.wait_for_reply()` rather than watching each response
+  to know it's done). An unhandled tool
+  exception is raised from session iteration while it is active; otherwise it ends `stream_audio()` and
+  `stream_transcripts()` and is raised when the session context closes. The next outbound method
+  raises an already-ended receive side's failure instead, and every failure is delivered only once.
+  Its call is recorded with `outcome='failed'`, leaving history valid for a standard-agent handoff.
+  An `on_tool_execute_error` capability can return a replacement result or raise `ModelRetry` to keep
+  the session running. To end the call from a tool, await `ctx.realtime_session.close()` for a clean
+  hang-up (the tool does not resume, its call is recorded as interrupted, and a concurrent
+  `send_audio()` async iterable returns cleanly at its next chunk), or call `ctx.cancel()` to make
+  the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely:
+  cancelling the watchdog does not interrupt teardown, and the session context waits for teardown
+  before exiting. While iteration is running the loop ends cleanly and `session.result` is settled.
+- **Late event consumption is bounded**: while nothing is iterating the session, it retains only the
+  most recent 512 `PartDeltaEvent`s and the most recent 512 structural events, so a long call that
+  nobody iterates cannot grow without bound. Parts are dropped whole, so a late iterator never sees a
+  delta without its `PartStartEvent`. A parked failure is always retained. An active
+  `async for event in session` remains lossless.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a
   control-plane **sideband** with `.session(provider_session=answer.session)`. The browser owns the
   audio; the sideband session runs tools and builds history (its audio methods raise, and
   `audio_retention` must stay `'transcript_only'`).
+- **Browser WebSocket relays**: `handle_barge_in=True` cannot know browser playback position because
+  forwarded chunks count as played. Have the browser report real playback and pass it to
+  `interrupt(played_bytes=...)`; `played_ms=` does not flush session-queued audio.
 
 See the [Realtime guide](https://pydantic.dev/docs/ai/realtime/overview/) for the full walkthrough.
 

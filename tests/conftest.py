@@ -66,6 +66,14 @@ with suppress(ImportError):
 
 T = TypeVar('T')
 
+# Like `try_import` for a whole directory: these suites need their workspace member installed, which
+# the `--package` matrix cells for other members do not do.
+collect_ignore = [
+    directory
+    for directory, package in (('harness', 'pydantic_ai_harness'), ('clai2', 'pydantic_clai2'))
+    if importlib.util.find_spec(package) is None
+]
+
 __all__ = (
     'IsDatetime',
     'IsDecimal',
@@ -100,6 +108,10 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
+    )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
 
 
@@ -407,6 +419,11 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
     ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    # Enum member docstrings are read from source the same way, once per enum, when a schema is built.
+    ('os.stat', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('os.getcwd', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     # logfire resolves the current working directory while classifying user stack frames.
     ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
     # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
@@ -480,6 +497,33 @@ def blockbuster(
     bb = _configured_blockbuster(blockbuster_excluded_modules)
     with _activated_blockbuster(bb):
         yield bb
+
+
+def detach_dbos_logging() -> None:
+    """Detach the OTel `LoggingHandler` and `DBOSLogTransformer` filter `DBOS.destroy()` leaves behind.
+
+    DBOS attaches them to the root logger and every registered logger (the filter always, the handler
+    with `enable_otlp=True`) and does not detach them on destroy. Their emit path imports
+    `dbos._context`, which imports `http.server`: fatal inside the Temporal workflow sandbox when a
+    later test in the same process runs a Temporal workflow.
+    TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
+    https://github.com/dbos-inc/dbos-transact-py/issues/871
+    """
+    from dbos import _logger as dbos_logger_module
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    handler_types: tuple[type[logging.Handler], ...] = (LoggingHandler,)
+    # DBOS 2.31+ builds this one instead of the deprecated SDK handler.
+    with suppress(ImportError):
+        from opentelemetry.instrumentation.logging.handler import LoggingHandler as InstrumentationLoggingHandler
+
+        handler_types += (InstrumentationLoggingHandler,)
+
+    for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
+        for handler in [h for h in logger.handlers if isinstance(h, handler_types)]:
+            logger.removeHandler(handler)
+        for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
+            logger.removeFilter(log_filter)
 
 
 @pytest.fixture
@@ -1096,6 +1140,11 @@ def gemini_api_key() -> str:
 @pytest.fixture(scope='session')
 def groq_api_key() -> str:
     return os.getenv('GROQ_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def typesafe_api_key() -> str:
+    return os.getenv('TYPESAFE_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')

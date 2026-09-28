@@ -1,0 +1,97 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '478'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Give me information about Tokyo
+          type: text
+        role: user
+      model: claude-opus-5-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+            population:
+              type: integer
+          required:
+          - city
+          - country
+          - population
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '703'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-3c9ba4aeacd878afd513696570ff7938-b5df114ab8aed6ae-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - caller:
+          type: direct
+        id: toolu_01BADFX8hJN7r2xpfW5oTapH
+        input:
+          city: Tokyo
+          country: Japan
+          population: 14000000
+        name: final_result
+        type: tool_use
+      id: msg_011CfK1Js5Sb7apVThpNy4ZU
+      model: claude-opus-5-5
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 402
+        output_tokens: 97
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

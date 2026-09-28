@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx2
 import pytest
+from opentelemetry.trace import get_tracer
 from pydantic import BaseModel, Field
 from pydantic.errors import PydanticUserError
 from pydantic_core import PydanticSerializationError
@@ -54,6 +55,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
+from pydantic_ai._instrumentation import include_content_ctx
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
@@ -164,6 +166,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
 
 def test_durability_codecs() -> None:
@@ -369,7 +372,6 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
 warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     pytest.mark.filterwarnings(
@@ -2440,6 +2442,9 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
+        # Toolsets the run holds entered, built from `deps`, which is projected: they carry no
+        # input the task's own resolution wouldn't reach, so they must not fork the key.
+        '_run_held_toolsets',
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -4719,3 +4724,96 @@ async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_mcp_server_keeps_one_session_per_flow(blockbuster_enabled: bool) -> None:
+    """A statically attached `MCPToolset` connects inside a task, once per flow (#8458).
+
+    The traffic is what it always was — flow code held the session open around the whole run — but
+    the connection now happens in the first task that needs the server, where a failed connection is
+    covered by the task's retry policy instead of failing the flow. Not a VCR test: an in-process
+    server is what makes the round trips countable server-side, which is what attributes the MCP
+    SDK's own pre-call listing correctly.
+    """
+    assert blockbuster_enabled is False
+    from .counting_mcp import counting_mcp_server, two_echo_calls_model
+
+    server, counts = counting_mcp_server()
+    toolset = MCPToolset(server, id='session_mcp')
+    agent = Agent(
+        two_echo_calls_model(),
+        name='prefect_mcp_session',
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_flow() -> str:
+        # The flow doesn't connect the server; the first task that needs it does.
+        assert not toolset.is_running
+        return (await agent.run('go')).output
+
+    assert await run_flow() == 'done'
+    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    # The run closed the session it held; nothing keeps the server connected between runs.
+    assert not toolset.is_running
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_decide_span_nests_under_chat(
+    allow_model_requests: None, capfire: CaptureLogfire, blockbuster_enabled: bool
+) -> None:
+    """A decision model's `decide` span lands under the task, under `chat`, with the request's content policy.
+
+    The task runs in the flow's process, and its context carries the policy the `chat` span set. Blocking-call
+    detection is off, as for the other flows defined in a test: Prefect reads the flow's source to name it.
+    """
+    assert blockbuster_enabled is False
+    agent = Agent(
+        ShipItDecisionModel(),
+        output_type=ShipIt,
+        name='prefect_decide',
+        capabilities=[PrefectDurability(), Instrumentation()],
+    )
+
+    @flow(name='prefect_decide_flow')
+    async def run_decision_agent() -> ShipIt:
+        return (await agent.run('The migration is reviewed and the tests pass.')).output
+
+    assert await run_decision_agent() == ShipIt(ship=True)
+    lineage, attributes = decide_span_lineage(capfire.exporter.exported_spans_as_dict())
+    assert lineage[:3] == snapshot(
+        [IsStr(regex=r'Model Request: ship-it-\w+'), 'chat ship-it', 'invoke_agent prefect_decide']
+    )
+    assert attributes['pydantic_ai.decision.state'] == 'The migration is reviewed and the tests pass.'
+
+
+@pytest.mark.parametrize('as_capability', [True, False])
+@pytest.mark.parametrize('run_include_content', [True, False])
+def test_rebuilt_request_policy_follows_the_run(
+    capfire: CaptureLogfire, run_include_content: bool, as_capability: bool
+) -> None:
+    """A unit that starts without the request's policy rebuilds it, and exports content only if the run asked too.
+
+    The agent's settings here are the worker's own resolution, which can differ from the ones the run opened `chat`
+    with; `trace_include_content` is the run's own answer, carried across the boundary with its context.
+    """
+    settings = InstrumentationSettings(include_content=True)
+    agent = Agent(
+        ShipItDecisionModel(),
+        output_type=ShipIt,
+        name='prefect_rebuilt_policy',
+        capabilities=[PrefectDurability(), *([Instrumentation(settings)] if as_capability else [])],
+    )
+    if not as_capability:
+        agent.instrument = settings
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), trace_include_content=run_include_content)
+    with get_tracer('test').start_as_current_span('unit'):
+        with durability._request_policy_scope(ctx):  # pyright: ignore[reportPrivateUsage]
+            policy = include_content_ctx.get()
+            assert policy is not None
+            assert policy.include_content is run_include_content
+    assert include_content_ctx.get() is None

@@ -1,0 +1,66 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Return the number 42."}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"response":
+      {"type": "integer"}}, "required": ["response"], "type": "object"}}, "description": "The final response which ends this
+      conversation"}}], "toolChoice": {"any": {}}}, "additionalModelRequestFields": {"thinking": {"type": "adaptive"}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NGJjZjgxMzktYzc2NC00NzQ1LTk3MjItODdkMWI5MTJlOTQ5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '465'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-5/converse-stream
+  response:
+    body:
+      string: !!binary |
+        AAAArgAAAFIvUM5GCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTpjb250ZW50LXR5cGUHABBh
+        cHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsicCI6ImFiY2RlZmdoaWprbG1u
+        b3BxcnN0dXZ3eHl6QUJDREVGR0hJSktMTU5PUFFSU1RVVlciLCJyb2xlIjoiYXNzaXN0YW50In2u
+        E8nsAAABIgAAAFfgcLT/CzpldmVudC10eXBlBwARY29udGVudEJsb2NrU3RhcnQNOmNvbnRlbnQt
+        dHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50Qmxv
+        Y2tJbmRleCI6MCwicCI6ImFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6QUJDREVGR0hJSktMTU5P
+        UFFSU1RVVldYIiwic3RhcnQiOnsidG9vbFVzZSI6eyJuYW1lIjoiZmluYWxfcmVzdWx0IiwidG9v
+        bFVzZUlkIjoidG9vbHVzZV9TbXZkNHhoNkZrSTN0bFFvdTl6RVBwIiwidHlwZSI6InRvb2xfdXNl
+        In19fQLT0dIAAADCAAAAVwP4oIULOmV2ZW50LXR5cGUHABFjb250ZW50QmxvY2tEZWx0YQ06Y29u
+        dGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRl
+        bnRCbG9ja0luZGV4IjowLCJkZWx0YSI6eyJ0b29sVXNlIjp7ImlucHV0IjoiIn19LCJwIjoiYWJj
+        ZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXpBQiJ9kGIr1wAAAM4AAABXxghNhAs6ZXZlbnQtdHlwZQcA
+        EWNvbnRlbnRCbG9ja0RlbHRhDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNz
+        YWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjAsImRlbHRhIjp7InRvb2xVc2Ui
+        OnsiaW5wdXQiOiJ7XCIifX0sInAiOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ekFCQ0RFRkdI
+        SUpLIn3zWmMQAAAAwAAAAFd5OPPlCzpldmVudC10eXBlBwARY29udGVudEJsb2NrRGVsdGENOmNv
+        bnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250
+        ZW50QmxvY2tJbmRleCI6MCwiZGVsdGEiOnsidG9vbFVzZSI6eyJpbnB1dCI6InJlc3BvbnNlXCI6
+        In19LCJwIjoiYWJjZGVmZ2hpamtsbW5vIn3ZAphoAAAA0QAAAFckuE3XCzpldmVudC10eXBlBwAR
+        Y29udGVudEJsb2NrRGVsdGENOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3Nh
+        Z2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MCwiZGVsdGEiOnsidG9vbFVzZSI6
+        eyJpbnB1dCI6IiA0Mn0ifX0sInAiOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ekFCQ0RFRkdI
+        SUpLTE0ifXG1x4oAAACNAAAAVq5cX4sLOmV2ZW50LXR5cGUHABBjb250ZW50QmxvY2tTdG9wDTpj
+        b250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29u
+        dGVudEJsb2NrSW5kZXgiOjAsInAiOiJhYmNkZWZnaGkifSTxELEAAAC+AAAAUda5CH4LOmV2ZW50
+        LXR5cGUHAAttZXNzYWdlU3RvcA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVz
+        c2FnZS10eXBlBwAFZXZlbnR7InAiOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ekFCQ0RFRkdI
+        SUpLTE1OT1BRUlNUVVZXWFlaMDEyMzQ1Njc4Iiwic3RvcFJlYXNvbiI6InRvb2xfdXNlIn3dLf8b
+        AAAA2gAAAE43A9QGCzpldmVudC10eXBlBwAIbWV0YWRhdGENOmNvbnRlbnQtdHlwZQcAEGFwcGxp
+        Y2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJtZXRyaWNzIjp7ImxhdGVuY3lNcyI6
+        MTg3Nn0sInAiOiJhYiIsInVzYWdlIjp7ImlucHV0VG9rZW5zIjo1NTksIm91dHB1dFRva2VucyI6
+        MzcsInNlcnZlclRvb2xVc2FnZSI6e30sInRvdGFsVG9rZW5zIjo1OTZ9fS4yGws=
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1

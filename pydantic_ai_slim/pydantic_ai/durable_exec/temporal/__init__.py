@@ -28,6 +28,13 @@ from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
+from ._event_stream import (
+    AgentEventStream,
+    DurableAgentRunEvents,
+    WorkflowStreamTopic,
+    stream_agent_events,
+    workflow_stream_event_handler,
+)
 from ._logfire import LogfirePlugin
 from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
@@ -46,11 +53,16 @@ __all__ = [
     'TemporalOperationNamer',
     'PydanticAIWorkflow',
     'PydanticAIPayloadConverter',
+    'AgentEventStream',
+    'WorkflowStreamTopic',
+    'DurableAgentRunEvents',
+    'workflow_stream_event_handler',
+    'stream_agent_events',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
 # Note: It's difficult to add a test that covers this because pytest presumably does these imports itself
-# when you have a @pytest.mark.anyio somewhere.
+# when running async tests via the anyio pytest plugin.
 # I suppose we could add a test that runs a python script in a separate process, but I have not done that...
 import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]  #noqa: F401
 

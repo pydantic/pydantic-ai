@@ -253,7 +253,6 @@ def test_openai_compatible_provider_import_guard(
     assert error_hint in error
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_http_client_lifecycle(case: Case) -> None:
     provider = case.create()
@@ -272,7 +271,6 @@ async def test_openai_compatible_provider_http_client_lifecycle(case: Case) -> N
     assert second_client.is_closed
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_preserves_caller_owned_httpx2_client(case: Case) -> None:
     async with httpx2.AsyncClient() as http_client:
@@ -284,7 +282,6 @@ async def test_openai_compatible_provider_preserves_caller_owned_httpx2_client(c
         assert not http_client.is_closed
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_deprecates_caller_owned_httpx_client(case: Case) -> None:
     async with httpx.AsyncClient() as http_client:
@@ -300,7 +297,6 @@ async def test_openai_compatible_provider_deprecates_caller_owned_httpx_client(c
         assert not http_client.is_closed
 
 
-@pytest.mark.anyio
 async def test_openai_compatible_provider_preserves_caller_owned_sdk_client() -> None:
     async with httpx2.AsyncClient() as http_client:
         openai_client = AsyncOpenAI(api_key='test', http_client=http_client)

@@ -52,6 +52,7 @@ __all__ = [
     'UIAdapter',
     'StateHandler',
     'StateDeps',
+    'DEFAULT_ALLOWED_CONTENT_TYPES',
 ]
 
 RunInputT = TypeVar('RunInputT')
@@ -75,6 +76,59 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+
+
+DEFAULT_ALLOWED_CONTENT_TYPES = frozenset({'application/json'})
+"""Request media types [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] accepts by default.
+
+This is a CSRF control, not content negotiation. A browser can send the three CORS-safelisted
+content types (`text/plain`, `multipart/form-data`, `application/x-www-form-urlencoded`) — or no
+content type at all — cross-origin with no preflight, and every one of them can carry a JSON body.
+An endpoint that parses the body regardless of the header can therefore be driven by any page the
+caller happens to have open, using whatever ambient credentials the browser attaches. Authenticating
+the endpoint does not prevent that; that is what makes CSRF a distinct concern from the client-trust
+boundary described in the [UI adapter trust model](https://pydantic.dev/docs/ai/ui/overview/#trust-model-for-client-submitted-messages).
+
+`application/json` is not safelisted, so requiring it forces a preflight, which a cross-origin page
+can only pass if the application's own CORS policy grants it. Legitimate frontends are unaffected:
+both the AG-UI and Vercel AI SDK default transports send `application/json`, so a genuinely
+cross-origin frontend is preflighted and admitted by the CORS middleware the application already runs.
+
+This is an allowlist rather than a denylist of the safelisted types, because a denylist would miss
+the no-content-type case and would silently stop covering anything added to the safelist later.
+"""
+
+
+def _check_content_type(request: Request, allowed_content_types: frozenset[str] | None) -> None:
+    """Reject a request whose media type is not allowed, before its body is read.
+
+    Raises a Starlette `HTTPException` with status 415, which Starlette and FastAPI render as a
+    response on their own — unlike the `ValidationError` from body parsing, which
+    [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] has to convert itself.
+
+    Does nothing when `allowed_content_types` is `None`.
+    """
+    if allowed_content_types is None:
+        return
+
+    # Media types are case-insensitive, so normalize the configured entries too, not just the
+    # request's. Comparing a lowercased request value against a raw allowlist rejects a valid
+    # request whenever the caller wrote `APPLICATION/JSON`, and the 415 then names the very media
+    # type the request already sent. Normalizing here also keeps that message honest, since it is
+    # built from the same set the comparison uses.
+    allowed = {allowed_type.strip().lower() for allowed_type in allowed_content_types}
+
+    media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
+    if media_type in allowed:
+        return
+
+    from starlette.exceptions import HTTPException
+
+    expected = ', '.join(sorted(allowed))
+    raise HTTPException(
+        status_code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+        detail=f'Expected `Content-Type: {expected}`, got {media_type or "no content type"}',
+    )
 
 
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
@@ -319,13 +373,35 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> Self:
         """Create an adapter from a request.
 
         Extra keyword arguments are forwarded to the adapter constructor, allowing subclasses
         to accept additional adapter-specific parameters.
+
+        Args:
+            request: The incoming Starlette/FastAPI request.
+            agent: The agent the adapter will run.
+            manage_system_prompt: Who owns the system prompt. See
+                [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+            allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
+                [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
+            allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts
+                from the client. See
+                [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
+            allow_uploaded_files: Whether to honor `UploadedFile` references from client-submitted messages. See
+                [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files].
+            allowed_content_types: Request media types to accept, as a CSRF control. Defaults to
+                [`DEFAULT_ALLOWED_CONTENT_TYPES`][pydantic_ai.ui.DEFAULT_ALLOWED_CONTENT_TYPES]
+                (`application/json`); anything else is rejected with a `415` before the body is read.
+                Pass a wider set to admit another media type your frontend sends, or `None` to skip the
+                check entirely when the route is already covered by CSRF protection of your own.
+            **kwargs: Additional keyword arguments forwarded to the adapter constructor.
         """
+        _check_content_type(request, allowed_content_types)
+
         return cls(
             agent=agent,
             run_input=cls.build_run_input(await request.body()),
@@ -680,6 +756,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -722,6 +799,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
             allow_uploaded_files: Whether to honor `UploadedFile` references from client-submitted messages. See
                 [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files].
+            allowed_content_types: Request media types to accept, as a CSRF control. See
+                [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
@@ -746,6 +825,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     allowed_file_url_schemes=allowed_file_url_schemes,
                     allowed_file_url_force_download=allowed_file_url_force_download,
                     allow_uploaded_files=allow_uploaded_files,
+                    allowed_content_types=allowed_content_types,
                     **kwargs,
                 ),
             )

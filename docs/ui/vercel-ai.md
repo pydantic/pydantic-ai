@@ -1,3 +1,7 @@
+---
+description: "Stream Pydantic AI agent runs to frontends built with Vercel AI SDK UI hooks like useChat, using the Vercel AI Data Stream Protocol adapter."
+---
+
 # Vercel AI Data Stream Protocol
 
 Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a frontend using [AI SDK UI](https://ai-sdk.dev/docs/ai-sdk-ui/overview) hooks like [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat). You can optionally use [AI Elements](https://ai-sdk.dev/elements) for pre-built UI components.
@@ -222,6 +226,8 @@ Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool
 ## Message metadata
 
 [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes application keys from [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those application keys and the timestamp on the way back. The framework-reserved `__pydantic_ai__` namespace is excluded in both directions.
+
+`load_messages` also keeps the `UIMessage.id` in that reserved namespace, and `dump_messages` uses it as the id again, so a history the browser sent comes back with the ids the browser assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive `UIMessage`s merge into one message, such as a system message followed by a user message, only the last id is kept. Pass `generate_message_id` to `dump_messages` to choose ids yourself instead.
 
 When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
 

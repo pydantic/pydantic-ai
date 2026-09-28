@@ -59,8 +59,6 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class Anonymous:
@@ -581,24 +579,6 @@ def test_generic_alias_metadata_is_not_capability_configuration() -> None:
     assert isinstance(merged, ReinjectSystemPrompt)
     assert merged.replace_existing is True
     assert getattr(merged, '__orig_class__', None) is ReinjectSystemPrompt[Any]
-
-
-def test_durable_operation_bindings_are_not_capability_configuration() -> None:
-    """Bindings added when a capability is reused by durable agents are runtime bookkeeping.
-
-    Reached through the same rule as any other cached state rather than by being named in the
-    merge: they are a `cached_property`, so the merge finds them on the class, and the merged
-    capability starts without them so the next engine to bind creates its own.
-    """
-
-    first = ReinjectSystemPrompt(replace_existing=False)
-    assert first._durable_operation_bindings is not None  # pyright: ignore[reportPrivateUsage]
-
-    merged = ReinjectSystemPrompt.combine([first, ReinjectSystemPrompt(replace_existing=True)])
-
-    assert isinstance(merged, ReinjectSystemPrompt)
-    assert merged.replace_existing is True
-    assert '_durable_operation_bindings' not in vars(merged), "the last instance's bindings do not ride along"
 
 
 def test_a_cached_property_is_recomputed_against_the_merged_fields() -> None:

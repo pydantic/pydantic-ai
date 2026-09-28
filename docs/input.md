@@ -1,3 +1,7 @@
+---
+description: "Send images, audio, video, PDFs and other documents to a Pydantic AI agent by URL, as binary content, or as files uploaded to a provider's Files API."
+---
+
 # Multimodal Input
 
 Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
@@ -221,7 +225,7 @@ Follow the [Anthropic Files API docs](https://docs.anthropic.com/en/docs/build-w
 !!! note "Beta Feature"
     The Anthropic Files API is currently in beta. `AnthropicModel` automatically adds the required `anthropic-beta: files-api-2025-04-14` header when a request contains an Anthropic [`UploadedFile`][pydantic_ai.messages.UploadedFile], so you don't need to set it yourself.
 
-```py {title="uploaded_file_anthropic.py" test="skip"}
+```py {title="uploaded_file_anthropic.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -256,7 +260,7 @@ asyncio.run(main())
 
 Follow the [OpenAI Files API docs](https://platform.openai.com/docs/api-reference/files/create) to upload files. You can access the underlying OpenAI client via `provider.client`.
 
-```py {title="uploaded_file_openai.py" test="skip"}
+```py {title="uploaded_file_openai.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -297,7 +301,7 @@ asyncio.run(main())
 
 Follow the [Google Files API docs](https://ai.google.dev/gemini-api/docs/files) to upload files. You can access the underlying Google GenAI client via `provider.client`.
 
-```py {title="uploaded_file_google.py" test="skip"}
+```py {title="uploaded_file_google.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -336,7 +340,7 @@ For Bedrock, files must be uploaded to S3 separately (e.g., using [boto3](https:
 !!! note "`media_type` may be required"
     Bedrock requires `media_type` when the file extension is ambiguous or missing. For S3 URLs with clear extensions like `.pdf`, `.png`, etc., it can be inferred automatically.
 
-```py {title="uploaded_file_bedrock.py" test="skip"}
+```py {title="uploaded_file_bedrock.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -369,7 +373,7 @@ asyncio.run(main())
 
 Follow the [xAI Files API docs](https://docs.x.ai/docs/guides/files) to upload files. You can access the underlying xAI client via `provider.client`.
 
-```py {title="uploaded_file_xai.py" test="skip"}
+```py {title="uploaded_file_xai.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
