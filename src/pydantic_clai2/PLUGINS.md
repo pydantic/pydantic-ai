@@ -380,6 +380,7 @@ order plugin instructions, renderers, and status segments are consulted in.
 | `repo_context` | `pydantic_clai2.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `grain` | `pydantic_clai2.grain` | `{}` | off until enabled: search and read Grain meetings; see [below](#grain-meetings-with-a-saved-sign-in) |
 
 ### Other harness capabilities
 
@@ -387,7 +388,7 @@ order plugin instructions, renderers, and status segments are consulted in.
 declared. It does not list every public harness capability for Space-enable:
 hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
-CLAI plugins written for them.
+CLAI plugins written for them, like [`grain`](#grain-meetings-with-a-saved-sign-in).
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -507,6 +508,76 @@ The request and its response are also emitted as `AskUserRequestedEvent` and
 `AskUserAnsweredEvent`, so a plugin that only wants to watch (log the question,
 show a "waiting for you" state) registers `@host.on(EventClass)` or
 `@host.render(EventClass)` without being the answerer.
+
+### `grain`: meetings, with a saved sign-in
+
+`grain` (`pydantic_clai2.grain`) gives the agent harness's
+[`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
+the Grain meetings, transcripts, and notes you can see. It starts disabled;
+turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
+settings menu. Until you have opened the menu once or picked a key, loading it
+prints a line pointing there.
+
+`/grain`, `C` in `/plugins`, or `/plugins configure grain` opens the settings
+menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
+close** leaves the menu. Each change is saved to the plugin's settings at once
+and applies to the next prompt. Reopen it any time to change a setting or pick a
+different key:
+
+```text
+ Grain
+> Token                    browser sign-in
+  Tools                    read-only
+  Server instructions      included
+  Save & close
+```
+
+| Row | Setting | Default | Does |
+|---|---|---|---|
+| Token | none (see below) | browser sign-in | where the Grain token comes from |
+| Tools | `read_only` | `true` | read-only offers only the tools Grain marks read-only; all tools also lets the agent create clips and tag meetings |
+| Server instructions | `include_instructions` | `true` | pass Grain's own instructions for its tools to the agent |
+
+Grain's MCP endpoint is fixed, and the capability has no workspace, base URL, or
+project option, so the menu has none either.
+
+No token goes in plugin settings, which are plaintext SQLite. The plugin takes
+the first of these that applies:
+
+1. The `GRAIN_ACCESS_TOKEN` environment variable. The Token row shows it and says
+   it overrides the choice there while it is set.
+2. A [saved API key](#saved-api-keys) picked on the Token row, or with
+   `/grain key`. The searchable picker lists your `/keys` entries by name; you can
+   also type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
+   the name harness's `Grain` documents. CLAI keeps only the key's name and looks
+   the key up on every run, so replacing it in `/keys` takes effect on the next
+   prompt, deleting it makes Grain fail rather than connect without it, and
+   `/keys` refuses to rename it while Grain uses it. Several plugins can share one
+   named key, the way `vllm` and `openrouter` connections can. Choose "No API
+   key" to go back to the browser sign-in.
+3. A browser sign-in. The first prompt that connects opens your browser and
+   prints the sign-in URL, in case the browser does not open (over SSH, for
+   example). The tokens go to the OS keyring (or CLAI's private credential file
+   when there is no keyring), the way `/mcp` OAuth servers keep theirs, so later
+   sessions refresh them instead of signing in again. A headless run
+   (`clai2 -p`) cannot sign in: with no saved sign-in, its Grain connection fails
+   and says so.
+
+`/grain status` says which of the three this session uses. `/grain logout`
+forgets the browser sign-in and the tokens the session holds, so the next prompt
+that uses Grain signs in again. It cannot revoke `GRAIN_ACCESS_TOKEN` (unset it,
+then `/plugins reload grain`) or a `/keys` entry (pick "No API key").
+
+If you enabled `grain` from the old `/plugins` catalog, which saved
+`pydantic_ai_harness.grain:Grain` under that id, CLAI moves that declaration onto
+this plugin at startup and keeps it enabled or disabled. A declaration you gave
+settings with `/plugins add` stays as you wrote it.
+
+The settings can also be given up front:
+
+```text
+/plugins add grain pydantic_clai2.grain '{"read_only": false, "include_instructions": true}'
+```
 
 ## Managing plugins
 
@@ -931,6 +1002,8 @@ async def configure() -> str:
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
 
+The built-in `grain` plugin's menu (`/grain`, or `C` in `/plugins`) works this way.
+
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
@@ -1052,8 +1125,14 @@ the secret on the command line.
 
 When saved keys exist, vLLM's token prompt and OpenRouter's **Enter API key** flow
 show a searchable list of names. Choose one, enter a different key privately, or
-choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
-login flows are unchanged. Select keys only for endpoints you trust.
+choose **No API key** for vLLM. The Token row of `/grain` uses the same picker, and a token
+typed there is saved under `GRAIN_ACCESS_TOKEN`. Esc closes the picker without
+connecting. Browser login flows are unchanged. Select keys only for endpoints you trust.
+
+Plugins keep secrets here rather than in plugin settings, which are plaintext
+SQLite. Name a key after the environment variable the service documents (for
+example `GITHUB_TOKEN` or `GRAIN_ACCESS_TOKEN`) so every plugin for that service
+can pick the same entry, and replacing it once updates them all.
 
 Named keys use the existing credential backend, separate from provider logins and
 SQLite settings. If no OS keyring exists, CLAI warns that it saved them in the
