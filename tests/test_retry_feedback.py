@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
-from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
@@ -60,6 +60,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.ui._adapter import retry_feedback_from_payload, retry_feedback_payload
 
 from ._inline_snapshot import snapshot
+from .cassette_utils import request_json
 from .conftest import IsDatetime, IsStr, legacy_retry_prompt_part, message_part, try_import
 
 with try_import() as anthropic_imports_successful:
@@ -738,7 +739,7 @@ def _error_channel_model(
 
 def _model_call_bodies(vcr: Cassette) -> list[Any]:
     """The recorded model-call bodies, in order."""
-    return [json.loads(request.body) for request in vcr.requests]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType,reportUnknownVariableType]
+    return [request_json(request) for request in vcr.requests]
 
 
 @pytest.mark.vcr
@@ -1128,7 +1129,7 @@ async def test_retry_feedback_reaches_the_provider(
     feedback = message_part(result.all_messages(), RetryFeedbackPart, message_index=2)
     assert feedback.cause == 'model_retry'
 
-    second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    second_request = request_json(vcr.requests[1])
     assert [(turn['role'], turn['content']) for turn in second_request['messages']] == expected_turns
 
 
