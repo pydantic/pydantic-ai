@@ -405,3 +405,38 @@ def test_coder_entry_page_describes_current_tools(surface: str) -> None:
     assert 'allowlisted shell' not in introduction
     assert 'explorer sub-agent' not in introduction
     assert 'no default instructions' not in introduction
+
+
+# CLAI2's GitHub README and unified-docs page are the same guide. The docs page
+# rewrites only links that are relative to the source package or repository.
+_REPO_ROOT = _ROOT.parents[1]
+_CLAI2_README = _REPO_ROOT / 'src' / 'pydantic_clai2' / 'README.md'
+_CLAI2_DOCS = _REPO_ROOT / 'docs' / 'harness' / 'clai2.md'
+_CLAI2_DOC_LINK_REPLACEMENTS = (
+    (
+        'https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md',
+        'PLUGINS.md',
+    ),
+    (
+        'https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/MODEL_SETTINGS_AUDIT.md',
+        'MODEL_SETTINGS_AUDIT.md',
+    ),
+    ('ask-user.md', '../../docs/harness/ask-user.md'),
+)
+
+
+def _normalise_clai2_docs(text: str) -> str:
+    text = text.replace(
+        "```bash\npip/uv-add 'pydantic-ai-harness[exa]'\n```\n\n```bash\nexport EXA_API_KEY=...\n```",
+        "```sh\npip install 'pydantic-ai-harness[exa]'\nexport EXA_API_KEY=...\n```",
+    )
+    for docs_target, readme_target in _CLAI2_DOC_LINK_REPLACEMENTS:
+        text = text.replace(docs_target, readme_target)
+    return text
+
+
+def test_clai2_docs_match_package_readme() -> None:
+    """Keep the published CLAI2 guide current with the package README."""
+    readme = _CLAI2_README.read_text(encoding='utf-8')
+    docs = _normalise_clai2_docs(_CLAI2_DOCS.read_text(encoding='utf-8'))
+    assert docs == readme

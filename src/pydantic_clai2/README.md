@@ -221,7 +221,7 @@ if you recall an expired marker. If submission is rejected because no model is
 selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
 
 Pillow is a terminal-only dependency; see the CLAI dependency boundary in
-[#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
+[#8938](https://github.com/pydantic/pydantic-ai/issues/8938).
 
 ## Input history
 
@@ -239,7 +239,7 @@ input recall. `/clear`, or bare `clear`, is an alias of `/new`. Model responses 
 The `CLAI coverage` check combines branch coverage from Python 3.10 and 3.14
 and requires 100% for `src/pydantic_clai2`. It is separate from Harness coverage;
 passing CLAI test jobs alone does not mean either coverage gate has passed.
-Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
+Tracked under [#8938](https://github.com/pydantic/pydantic-ai/issues/8938).
 
 ## Start chatting
 
