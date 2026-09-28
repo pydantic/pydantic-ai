@@ -69,8 +69,6 @@ skip_if_no_openai = pytest.mark.skipif(not openai_available(), reason='openai no
 skip_if_no_google = pytest.mark.skipif(not google_available(), reason='google not installed')
 skip_if_no_xai = pytest.mark.skipif(not xai_available(), reason='xai not installed')
 
-pytestmark = pytest.mark.anyio
-
 
 def make_tool(name: str, *, strict: bool | None = None) -> ToolDefinition:
     return ToolDefinition(name=name, strict=strict)

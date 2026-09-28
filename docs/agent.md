@@ -34,7 +34,7 @@ roulette_agent = Agent(  # (1)!
     'openai:gpt-5.2',
     deps_type=int,
     output_type=bool,
-    system_prompt=(
+    instructions=(
         'Use the `roulette_wheel` function to see if the '
         'customer has won based on the number they provide.'
     ),
@@ -162,7 +162,7 @@ from pydantic_ai import (
 
 weather_agent = Agent(
     'openai:gpt-5.2',
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -631,7 +631,7 @@ weather_agent = Agent[WeatherService, str](
     'openai:gpt-5.2',
     deps_type=WeatherService,
     output_type=str,  # We'll produce a final answer as plain text
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -1078,7 +1078,7 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     retries={'tools': 3},
     output_type=NeverOutputType,
-    system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
+    instructions='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
 
 
@@ -1436,7 +1436,7 @@ agent = Agent(
 )
 
 
-@agent.system_prompt
+@agent.instructions
 def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
     return f"The user's name is {ctx.deps}."
 
@@ -1457,7 +1457,7 @@ Running `mypy` on this will give the following output:
 
 ```bash
 ➤ uv run mypy type_mistakes.py
-type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str]"  [arg-type]
+type_mistakes.py:18: error: Argument 1 to "instructions" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str | None]"  [arg-type]
 type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
 Found 2 errors in 1 file (checked 1 source file)
 ```

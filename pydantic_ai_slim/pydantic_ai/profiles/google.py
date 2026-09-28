@@ -254,6 +254,15 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
+_REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
+    'gemini-2.5-flash-native-audio',
+    'gemini-3.1-flash-live',
+    'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
+    'gemini-live-2.5-flash',  # Vertex AI
+)
+"""Live model families whose typed turns don't see an image sent just before them as a video frame."""
+
+
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for a Gemini Live model."""
     # `models/gemini-3.8-live` is as valid an id as the bare spelling — `google-genai` passes a
@@ -261,7 +270,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # normalized once here rather than every check below having to allow for both.
     model_name = model_name.rsplit('/', 1)[-1]
     is_extended_thinking = model_name.startswith('gemini-3.8-live-extended-thinking')
-    is_3_8_live = model_name == 'gemini-3.8-live'
+    # A prefix match like every other id check here, so a dated or `-preview` snapshot of the model
+    # gets the same flags: an exact match would send such a snapshot a thinking level it rejects.
+    is_3_8_live = model_name.startswith('gemini-3.8-live') and not is_extended_thinking
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -339,6 +350,21 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # for this model`. The native-audio models and `gemini-3.8-live` take `INTERRUPT` (verified live
     # 2026-09-16 for the latter, as Google documents).
     profile['google_supports_async_tool_call_scheduling'] = 'native-audio' in model_name or is_3_8_live
+    # Verified live 2026-09-25 with `enable_affective_dialog`: `gemini-3.1-flash-live-preview` refuses the
+    # handshake with `1007 Request contains an invalid argument`, and `gemini-3.8-live` and
+    # `gemini-3.8-live-extended-thinking` accept it and then close the session with that same `1007` on the
+    # first send. `gemini-2.5-flash-native-audio-latest` and the Vertex `gemini-live-2.5-flash` take it.
+    # Only the families verified to reject it are refused, so a newer Live model isn't turned away before
+    # its profile is updated.
+    profile['google_supports_affective_dialog'] = not model_name.startswith(
+        ('gemini-3.1-flash-live', 'gemini-3.8-live')
+    )
+    # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
+    # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
+    # sees images in its own content, so these get the recent image sent again there.
+    profile['google_text_turns_see_video_frames'] = not model_name.startswith(
+        _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS
+    )
     return profile
 
 

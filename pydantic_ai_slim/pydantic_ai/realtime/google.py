@@ -16,6 +16,7 @@ Application Default Credentials.
 
 from __future__ import annotations as _annotations
 
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
@@ -217,9 +218,11 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     [text-to-speech](../models/google.md) feature; a Live session has one voice, set with `google_voice`.
     """
     google_affective_dialog: bool
-    """Whether to enable emotion-aware delivery (native-audio models only).
+    """Whether to enable emotion-aware delivery.
 
-    Not supported by the Gemini 3.8 Live models, which reject it at connect."""
+    Not supported by the Gemini 3.1 Flash Live and 3.8 Live models, so `connect` raises
+    [`UserError`][pydantic_ai.exceptions.UserError] if it's enabled for one of them (see
+    [`google_supports_affective_dialog`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_supports_affective_dialog])."""
     google_proactive_audio: bool
     """Whether the model may decide *when* to respond, including staying silent on input not
     addressed to it. Useful for "react to the camera" experiences.
@@ -354,9 +357,39 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     Function response scheduling is not supported for this model` if the field is sent at all.
     """
 
+    google_supports_affective_dialog: bool
+    """Whether the model takes [`google_affective_dialog`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_affective_dialog]. Default: `True`.
+
+    When `False`, `connect` raises [`UserError`][pydantic_ai.exceptions.UserError] for a session that
+    enables it, rather than opening one the provider rejects. `False` for the `gemini-3.1-flash-live` and
+    `gemini-3.8-live` families, which don't support affective dialog: `gemini-3.1-flash-live-preview`
+    refuses the handshake with `1007 Request contains an invalid argument`, and the 3.8 models open the
+    session and then close it with the same error on the first send.
+    """
+
+    google_text_turns_see_video_frames: bool
+    """Whether a typed turn sees an image sent just before it as a live video frame. Default: `True`.
+
+    `session.send(image)` sends the image as a video frame, which a spoken turn sees. On a model where
+    a typed turn doesn't, the most recent image sent in the last 10 seconds is sent again in the typed
+    turn's own content, ahead of the text. Every Gemini Live model probed misses it:
+    `gemini-3.1-flash-live-preview`, `gemini-3.8-live` and its extended-thinking variant answer that
+    they can't see an image, and `gemini-2.5-flash-native-audio-*` and Vertex's `gemini-live-2.5-flash`
+    misread it.
+    """
+
+
+_MIN_WEBSOCKET_CLOSE_CODE = 1000
+"""The lowest WebSocket close code (RFC 6455 section 7.4), above every HTTP status."""
 
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
+
+# How recently an image must have been sent for a typed turn to carry it again, on a model whose typed
+# turns don't see video frames. Long enough for someone to type a short question about an image they
+# just shared, short enough that a question well after it doesn't re-send a stale one. A camera stream
+# always has a fresh frame.
+_RECENT_IMAGE_SECONDS = 10.0
 
 
 # Literal -> SDK enum mappings, kept as small tables so the public API stays string-friendly.
@@ -1101,6 +1134,13 @@ class GoogleRealtimeModel(RealtimeModel):
                 'policy enables resumption.'
             )
         self._check_proactive_audio_api_version(settings)
+        if settings.get('google_affective_dialog', False) and not self._google_profile.get(
+            'google_supports_affective_dialog', True
+        ):
+            raise UserError(
+                f'`google_affective_dialog=True` is not supported by {self.model!r}; Gemini Live rejects it. '
+                'Leave it unset for this model.'
+            )
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
@@ -1131,12 +1171,17 @@ class GoogleRealtimeModel(RealtimeModel):
 
         try:
             # A rejected config (unsupported `voice`, unknown model) closes the WebSocket, which the SDK
-            # surfaces as an `APIError`. Map it to the same typed exceptions a regular request raises,
-            # mirroring `GoogleModel`. Reconnects dial from the receive loop, which keeps handling the
-            # `APIError` as a retryable drop.
+            # surfaces as an `APIError`. Map it to a typed exception rather than leaking the SDK's.
+            # Reconnects dial from the receive loop, which keeps handling the `APIError` as a retryable drop.
             try:
                 session = await dial(None)
             except genai_errors.APIError as e:
+                if e.code >= _MIN_WEBSOCKET_CLOSE_CODE:
+                    # The server closed the socket during setup, and the SDK reports the WebSocket close
+                    # code (`1007` for a rejected config, `1008` for an unknown model) where an HTTP status
+                    # would go. A close code is not an HTTP status, so this is a `RealtimeError`, worded like
+                    # a close later in the session and like the OpenAI-protocol providers' handshake closes.
+                    raise RealtimeError(model_name=self.model, message=f'Gemini Live connection closed: {e}') from e
                 mapped_error = _map_api_error(e, self.model)
                 if isinstance(mapped_error, ModelHTTPError):
                     raise mapped_error from e
@@ -1241,6 +1286,18 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # verified live), so when this is set at reconnect time the turn's boundary would otherwise
         # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
         self._turn_open = False
+        # On a model whose typed turns don't see video frames, the most recent image sent and when (by
+        # `time.monotonic()`), for the next typed turn to carry again. See `send`.
+        self._text_turns_see_video_frames = cast('GoogleRealtimeModelProfile', self._profile).get(
+            'google_text_turns_see_video_frames', True
+        )
+        self._recent_image: tuple[BinaryImage, float] | None = None
+
+    @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        # A blocking tool-call frame is answered once, when every call has its result. A non-blocking
+        # call's result cuts into the speech on its own, so it may get an answer of its own.
+        return not self._async_tool_calls_enabled
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -1252,7 +1309,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         Accepts `BinaryAudio` (raw PCM16, 16kHz, mono), a `str` text turn, `TextContext` (text sent
         with `turn_complete=False`, so it waits for the next turn), `BinaryImage` (a live video
         frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
-        automatic VAD).
+        automatic VAD), and a `ToolResult`'s `respond` is ignored: Gemini answers a tool-call frame by
+        itself once every call in it has a result.
         """
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
         if isinstance(content, BinaryAudio):
@@ -1261,12 +1319,21 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 audio=genai_types.Blob(data=content.data, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
             )
         elif isinstance(content, str):
+            parts = [genai_types.Part(text=content)]
+            recent_image = self._recent_image
+            if recent_image is not None and time.monotonic() - recent_image[1] <= _RECENT_IMAGE_SECONDS:
+                # This model's typed turns don't see video frames: send the image again, in the turn.
+                image = recent_image[0]
+                parts.insert(
+                    0, genai_types.Part(inline_data=genai_types.Blob(data=image.data, mime_type=image.media_type))
+                )
             # A typed message is a discrete turn: commit it with `send_client_content(turn_complete=True)`
             # so the model replies, rather than buffering it as streaming realtime input.
             await self._session.send_client_content(
-                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content)]),
-                turn_complete=True,
+                turns=genai_types.Content(role='user', parts=parts), turn_complete=True
             )
+            if self._recent_image is recent_image:
+                self._recent_image = None  # carried (or stale): a later typed turn doesn't send it again
         elif isinstance(content, TextContext):
             await self._session.send_client_content(
                 turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
@@ -1276,6 +1343,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
                 video=genai_types.Blob(data=content.data, mime_type=content.media_type)
             )
+            if not self._text_turns_see_video_frames:
+                self._recent_image = (content, time.monotonic())
         elif isinstance(content, ToolResult):
             name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
             # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
@@ -1491,7 +1560,17 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # A tool call opens the turn like audio output does: the session holds a partial
                 # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
                 self._turn_open = True
-                events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=to_json(call.args or {}).decode()))
+                # Every call in the frame belongs to one model response, which Gemini answers once all of
+                # them have results. `response_usage_follows` keeps them together until the frame's usage
+                # below closes the response.
+                events.append(
+                    ToolCall(
+                        tool_call_id=call_id,
+                        tool_name=name,
+                        args=to_json(call.args or {}).decode(),
+                        response_usage_follows=True,
+                    )
+                )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
             # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
             # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
@@ -1510,6 +1589,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     )
                 )
             )
+        elif message.tool_call is not None and message.tool_call.function_calls:
+            # A tool-call frame carries no usage of its own (the turn's usage comes with a later
+            # `turn_complete`), but the calls above were promised some: an empty report closes their
+            # response now, since Gemini answers only once it has their results.
+            events.append(SessionUsage(usage=RequestUsage()))
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
         # tokens into the finalized `ModelResponse` / `chat` span before `ResponseDone` closes it.
         if message.server_content is not None and message.server_content.turn_complete:

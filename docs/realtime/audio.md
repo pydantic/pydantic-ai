@@ -28,6 +28,7 @@ input and output rates can differ.
 Start with 100 ms input chunks to balance interactive cadence with per-chunk overhead, then tune for
 your transport. The provider pages list their model-specific rates and constraints:
 [OpenAI](openai.md#feature-support-and-limitations),
+[OpenAI GPT-Live](openai-live.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
 [Google Gemini](gemini.md#feature-support-and-limitations), and
 [xAI](xai.md#feature-support-and-limitations).
@@ -169,6 +170,11 @@ microphone audio. For continuous streams like that, use the session's image-rete
 bound local history; they do not change which frames the provider receives. See
 [Retaining images](history.md#retaining-images). Gemini-specific live-video settings belong on the
 [Gemini provider page](gemini.md#settings).
+
+A model whose profile reports
+[`image_input_requires_response`][pydantic_ai.realtime.RealtimeModelProfile.image_input_requires_response]
+takes an image only with `respond=True`, and a context-only image raises. OpenAI GPT-Live works this way,
+because only its delegated backend sees images; see [Images go to the backend](openai-live.md#images-go-to-the-backend).
 
 ## Edge cases
 

@@ -75,7 +75,8 @@ Live models it defaults to asynchronous tool calls, so Pydantic AI declares tool
 
 Both 3.8 models keep proactive audio permanently on, so there's nothing for `google_proactive_audio`
 to turn on and it can be left unset. Gemini rejects an explicit `False`, which Pydantic AI never sends,
-and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog.
+and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog, and neither does
+`gemini-3.1-flash-live-preview`: `google_affective_dialog=True` raises `UserError` when the session connects.
 
 ## Settings
 
@@ -103,7 +104,7 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | Setting | Purpose |
 | --- | --- |
 | `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
-| `google_affective_dialog` | Emotion-aware delivery, on native-audio models (not the 3.8 models) |
+| `google_affective_dialog` | Emotion-aware delivery, on the 2.5 models (not 3.1 Flash Live or the 3.8 models) |
 | `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
 | `google_activity_handling`, `google_turn_coverage` | [Interruption](turns.md#barge-in) behavior and which input belongs to a turn |
@@ -238,6 +239,13 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
 - [Seeded](history.md#seeding-a-session) function calls/results are represented as readable text
   because Live cannot accept function parts in seeded turns.
+- `send()` sends an [image](audio.md#images) as a live video frame. Spoken turns see video frames,
+  but typed turns don't on the Live models. So a typed turn (`send('...')`) also carries the most
+  recent image sent in the last 10 seconds in its own content, ahead of the text. That image is sent,
+  and counted as input, twice. Context text (`respond=False`) and audio don't carry it. To ask about an
+  image in writing, send the two together so the question is always inside the window:
+  `session.send([image, 'What is this?'])`. The `google_text_turns_see_video_frames` profile flag
+  controls the second send.
 - Gemini 3.x Live models transcribe the user's speech even with input transcription
   [turned off](audio.md#input-transcription). Pydantic AI discards those transcripts, so the setting
   still keeps the user's words out of history, but they are still produced on Google's side.

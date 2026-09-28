@@ -565,7 +565,6 @@ def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSumm
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_logfire_streaming_records_time_to_first_chunk(capfire: CaptureLogfire) -> None:
     """A streaming agent run records `gen_ai.client.operation.time_to_first_chunk` on the
     model-request span and as a histogram metric (value is non-deterministic, so assert shape)."""
@@ -1140,7 +1139,6 @@ def test_instrument_all():
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_aggregated_usage_attribute_names_default(capfire: CaptureLogfire) -> None:
     """Agent run spans use aggregated usage attribute names by default."""
 
@@ -1194,7 +1192,6 @@ async def test_aggregated_usage_attribute_names_default(capfire: CaptureLogfire)
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_aggregated_usage_attribute_names_can_be_disabled(capfire: CaptureLogfire) -> None:
     def model_function(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('Hello!')], usage=RequestUsage(input_tokens=10, output_tokens=5))
@@ -1212,7 +1209,6 @@ async def test_aggregated_usage_attribute_names_can_be_disabled(capfire: Capture
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_in_place_history_mutation_warns_and_leaves_stale_request_spans(capfire: CaptureLogfire) -> None:
     """Mutating a message already in the history in place mid-run is unsupported.
 
@@ -1281,7 +1277,6 @@ async def test_in_place_history_mutation_warns_and_leaves_stale_request_spans(ca
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_history_mutation_in_errored_run_does_not_displace_the_run_error(capfire: CaptureLogfire) -> None:
     """A run that errors after an in-place history mutation surfaces the run's own exception.
 
@@ -1311,7 +1306,6 @@ async def test_history_mutation_in_errored_run_does_not_displace_the_run_error(c
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
     from logfire.experimental.annotations import record_feedback
 
@@ -3771,7 +3765,6 @@ def test_deferral_unexpected_exception_still_errors_v5(capfire: CaptureLogfire) 
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_agent_description(capfire: CaptureLogfire) -> None:
     agent = Agent(
         model=TestModel(),
@@ -3792,7 +3785,6 @@ async def test_agent_description(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_agent_description_absent_when_none(capfire: CaptureLogfire) -> None:
     agent = Agent(
         model=TestModel(), name='my_agent', capabilities=[Instrumentation(settings=InstrumentationSettings())]
@@ -4390,7 +4382,6 @@ async def _run_delegating_agent(*, share_usage: bool, sequential: bool, instrume
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('share_usage', [True, False])
 @pytest.mark.parametrize('sequential', [True, False])
-@pytest.mark.anyio
 async def test_run_span_reports_its_own_usage_under_concurrent_delegation(
     capfire: CaptureLogfire, share_usage: bool, sequential: bool
 ) -> None:
@@ -4419,7 +4410,6 @@ async def test_run_span_reports_its_own_usage_under_concurrent_delegation(
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('share_usage', [True, False])
 @pytest.mark.parametrize('sequential', [True, False])
-@pytest.mark.anyio
 async def test_run_span_excludes_an_uninstrumented_delegates_usage(
     capfire: CaptureLogfire, share_usage: bool, sequential: bool
 ) -> None:
@@ -4441,7 +4431,6 @@ async def test_run_span_excludes_an_uninstrumented_delegates_usage(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_nested_delegation_spans_sum_to_the_runs_total(capfire: CaptureLogfire) -> None:
     """Every run in a three-deep tree reports its own requests, so the spans still sum to the total.
 
@@ -4541,7 +4530,6 @@ def test_model_request_exception_events_honor_include_content(capfire: CaptureLo
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_run_span_records_failures_from_its_own_finalization(capfire: CaptureLogfire) -> None:
     """The run span's finalization is inside the scope `use_span` used to cover.
 

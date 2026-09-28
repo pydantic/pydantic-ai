@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel
+from pydantic_ai.profiles.anthropic import AnthropicEffort
 
 from ..._inline_snapshot import snapshot
 from ...conftest import IsInt, RequestCapture, message, try_import
@@ -76,7 +77,6 @@ if not anthropic_imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -156,7 +156,7 @@ async def test_anthropic_inference_recovery_survives_serialized_agent_history(al
 
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in request['betas']
 
@@ -188,9 +188,9 @@ async def test_anthropic_sends_no_block_binding_by_default(
 async def test_anthropic_retries_a_stale_thinking_block_with_drop_block(allow_model_requests: None):
     """A rejected replay is retried once asking Anthropic to drop the block, and the run continues.
 
-    The retried `thinking` object rides in `extra_body`: a request that configured no thinking has
-    no typed home for `block_binding`, and the SDK's `thinking` union always requires a `type` the
-    caller never asked for.
+    The retried `thinking` object rides in `extra_body`, typed `adaptive` when the request configured
+    no thinking: Claude Sonnet 5.5 rejects a `thinking` object without a `type`, and every binding model
+    thinks adaptively when none is given.
     """
     mock_client = MockAnthropic.create_mock(
         [
@@ -210,7 +210,7 @@ async def test_anthropic_retries_a_stale_thinking_block_with_drop_block(allow_mo
     assert first.get('extra_body') is None
     assert retried['thinking'] is OMIT
     assert retried['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in retried['betas']
 
@@ -233,7 +233,7 @@ async def test_anthropic_retries_a_stale_thinking_block_streamed(allow_model_req
     assert first.get('extra_body') is None
     assert retried['thinking'] is OMIT
     assert retried['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in retried['betas']
 
@@ -251,9 +251,24 @@ async def test_anthropic_keeps_dropping_stale_thinking_blocks_for_the_rest_of_th
 
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in request['betas']
+
+
+async def test_anthropic_stops_dropping_stale_thinking_blocks_under_between_tools(allow_model_requests: None):
+    """`between_tools` thinking can't carry `block_binding`, so a recovered history sends it unchanged."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='6', type='text')], usage=BetaUsage(input_tokens=12, output_tokens=1))
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'between_tools'})
+
+    await model.request(recovered_thinking_history(), settings, ModelRequestParameters())
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['thinking'] == snapshot({'type': 'between_tools'})
+    assert request.get('extra_body') is None
 
 
 async def test_anthropic_keeps_dropping_stale_thinking_blocks_for_the_rest_of_a_streamed_session(
@@ -269,7 +284,7 @@ async def test_anthropic_keeps_dropping_stale_thinking_blocks_for_the_rest_of_a_
 
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in request['betas']
 
@@ -308,7 +323,7 @@ async def test_anthropic_count_tokens_retries_a_stale_thinking_block(allow_model
     )
     assert requests[0].get('extra_body') is None
     assert requests[1]['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in requests[1]['betas']
 
@@ -363,7 +378,7 @@ async def test_anthropic_count_tokens_recovery_only_carries_into_later_counts(
     assert len(caught_warnings) == 1
     assert len(count_requests) == 3
     assert count_requests[2]['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     replay_request = next(message for message in reversed(replay_history) if isinstance(message, ModelRequest))
     assert replay_request.metadata == (
@@ -483,7 +498,7 @@ async def test_anthropic_count_recovery_after_compaction_affects_the_new_window(
 
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in request['betas']
 
@@ -527,7 +542,7 @@ async def test_anthropic_count_tokens_keeps_dropping_after_recovery(allow_model_
 
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in request['betas']
 
@@ -562,7 +577,9 @@ async def test_anthropic_bedrock_count_tokens_sends_persisted_binding_on_the_wir
     content = json.loads(client.post.await_args.kwargs['content'])
     invoke_model_body = json.loads(base64.b64decode(content['input']['invokeModel']['body']))
     assert invoke_model_body['anthropic_beta'] == [_THINKING_BINDING_BETA]
-    assert invoke_model_body['thinking'] == snapshot({'block_binding': {'prefix_mismatch_behavior': 'drop_block'}})
+    assert invoke_model_body['thinking'] == snapshot(
+        {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
 
 
 async def test_anthropic_retry_carries_the_configured_thinking_forward(allow_model_requests: None):
@@ -617,7 +634,13 @@ async def test_anthropic_retry_survives_a_caller_extra_body_thinking(allow_model
     first, retried = get_mock_chat_completion_kwargs(mock_client)
     assert first['extra_body'] == snapshot({'thinking': {'display': 'updates'}})
     assert retried['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}, 'display': 'updates'}}
+        {
+            'thinking': {
+                'type': 'adaptive',
+                'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+                'display': 'updates',
+            }
+        }
     )
 
 
@@ -692,7 +715,13 @@ async def test_anthropic_extra_body_thinking_overrides_typed_block_binding(allow
     assert _THINKING_BINDING_BETA not in sent_betas(mock_client)
     assert first['extra_body'] == snapshot({'thinking': {'display': 'updates'}})
     assert retried['extra_body'] == snapshot(
-        {'thinking': {'display': 'updates', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {
+            'thinking': {
+                'type': 'adaptive',
+                'display': 'updates',
+                'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+            }
+        }
     )
     assert _THINKING_BINDING_BETA in retried['betas']
 
@@ -717,24 +746,27 @@ async def test_anthropic_failed_stale_thinking_retry_does_not_warn_that_run_cont
 
 
 @pytest.mark.parametrize(
-    'model_name,asks_to_fail',
+    'model_name,settings',
     [
-        pytest.param('claude-fable-5', False, id='model_does_not_bind'),
-        pytest.param('claude-fable-5-1', True, id='caller_asked_to_fail'),
+        pytest.param('claude-fable-5', None, id='model_does_not_bind'),
+        pytest.param(
+            'claude-fable-5-1',
+            {'anthropic_thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}},
+            id='caller_asked_to_fail',
+        ),
+        pytest.param(
+            'claude-sonnet-5-5',
+            {'anthropic_thinking': {'type': 'between_tools'}},
+            id='between_tools_rejects_block_binding',
+        ),
     ],
 )
 async def test_anthropic_does_not_retry_a_stale_thinking_block(
-    allow_model_requests: None, model_name: str, asks_to_fail: bool
+    allow_model_requests: None, model_name: str, settings: AnthropicModelSettings | None
 ):
-    """The retry is scoped: a model that doesn't bind can't produce this, and an explicit
-    `'error'` is a caller asking to fail rather than to lose reasoning."""
-    settings = (
-        AnthropicModelSettings(
-            anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
-        )
-        if asks_to_fail
-        else None
-    )
+    """The retry is scoped: a model that doesn't bind can't produce this, an explicit `'error'` is a
+    caller asking to fail rather than to lose reasoning, and `between_tools` thinking can't carry the
+    `block_binding` the retry would add — Anthropic rejects it with `Extra inputs are not permitted`."""
     mock_client = MockAnthropic.create_mock(stale_thinking_block_error())
     m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
 
@@ -1056,9 +1088,14 @@ _STALE_THINKING_BLOCK_PREFIX_CHANGE = pytest.mark.moves_cache_prefix(
 )
 
 
-# Opus 5.5 answers a trivial prompt at its default `medium` effort without thinking, which would leave
-# no block to invalidate. Opus 5 runs at the same effort so it stays a like-for-like control for 5.5.
-_HISTORY_EFFORT_MODELS = frozenset({'claude-opus-5-5', 'claude-opus-5'})
+# Opus 5.5 answers a trivial prompt at its default `medium` effort without thinking, and Sonnet 5.5 does
+# at `high`, either of which would leave no block to invalidate. Opus 5 runs at Opus 5.5's effort so it
+# stays a like-for-like control for 5.5.
+_HISTORY_EFFORTS: dict[str, AnthropicEffort] = {
+    'claude-opus-5-5': 'high',
+    'claude-opus-5': 'high',
+    'claude-sonnet-5-5': 'xhigh',
+}
 
 
 async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessage]:
@@ -1066,8 +1103,8 @@ async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessa
     agent = Agent(
         model,
         instructions='You are a helpful assistant. Answer briefly.',
-        model_settings=AnthropicModelSettings(anthropic_effort='high')
-        if model.model_name in _HISTORY_EFFORT_MODELS
+        model_settings=AnthropicModelSettings(anthropic_effort=effort)
+        if (effort := _HISTORY_EFFORTS.get(model.model_name))
         else None,
     )
     result = await agent.run('Think about it, then say what 17*23 is.')
@@ -1076,7 +1113,15 @@ async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessa
     return result.all_messages()
 
 
-_BINDING_MODELS = pytest.mark.parametrize('model_name', ['claude-fable-5-1', 'claude-opus-5-5'])
+# `cassetter`'s `rewrite` answers a request with any unplayed interaction that matches it, including one it
+# recorded moments earlier, so a multi-request test recorded on a method + URI match replays its first
+# response. Cassettes recorded since the move to `cassetter` match on the body to record every request.
+# A param mark is only the closest `vcr` marker when the test carries no `@pytest.mark.vcr()` of its own.
+_MATCH_BODY = pytest.mark.vcr(additional_matchers=['body'])
+
+_BINDING_MODELS = pytest.mark.parametrize(
+    'model_name', ['claude-fable-5-1', 'claude-opus-5-5', pytest.param('claude-sonnet-5-5', marks=_MATCH_BODY)]
+)
 
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
@@ -1113,7 +1158,6 @@ async def test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_ac
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
 @_BINDING_MODELS
-@pytest.mark.vcr()
 async def test_anthropic_drops_a_stale_thinking_block(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture, model_name: str
 ):
@@ -1156,9 +1200,8 @@ async def test_anthropic_drops_a_stale_thinking_block(
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
 @pytest.mark.parametrize(
     ('model_name', 'binds'),
-    [('claude-opus-5-5', True), ('claude-opus-5', False)],
+    [('claude-opus-5-5', True), ('claude-opus-5', False), pytest.param('claude-sonnet-5-5', True, marks=_MATCH_BODY)],
 )
-@pytest.mark.vcr()
 async def test_anthropic_explicit_error_rejects_a_stale_thinking_block_on_binding_models(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
@@ -1166,11 +1209,11 @@ async def test_anthropic_explicit_error_rejects_a_stale_thinking_block_on_bindin
     model_name: str,
     binds: bool,
 ):
-    """Claude Opus 5.5 binds thinking blocks like Claude Fable 5.1, and Claude Opus 5 does not.
+    """Claude Opus 5.5 and Sonnet 5.5 bind thinking blocks like Claude Fable 5.1, and Claude Opus 5 does not.
 
     This is the recorded evidence behind `anthropic_binds_thinking_blocks`. The account these were
-    recorded against predates enforcement, so asking for `'error'` is what runs the check: Opus 5.5
-    rejects the replay after the instructions change, while Opus 5 accepts it. An explicit `'error'`
+    recorded against predates enforcement, so asking for `'error'` is what runs the check: Opus 5.5 and
+    Sonnet 5.5 reject the replay after the instructions change, while Opus 5 accepts it. An explicit `'error'`
     is a caller asking to fail, so it is never retried.
     """
     m = anthropic_model(model_name, capture=True)

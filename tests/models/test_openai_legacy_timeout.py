@@ -33,7 +33,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
 ]
 
 LEGACY_TIMEOUT = ModelSettings(timeout=httpx.Timeout(connect=1, read=2, write=3, pool=4))

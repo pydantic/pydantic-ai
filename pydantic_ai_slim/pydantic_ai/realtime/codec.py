@@ -158,6 +158,12 @@ class AudioDelta:
     _: KW_ONLY
     item_id: str | None = None
     """Provider item ID for the spoken output this chunk belongs to, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -177,6 +183,12 @@ class OutputTranscript:
     an audio transcript becomes a [`SpeechPart`][pydantic_ai.messages.SpeechPart]."""
     item_id: str | None = None
     """Provider item ID for the spoken output, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -229,6 +241,12 @@ class ToolCall:
     uses this signal to keep all calls and their usage on the same `ModelResponse`."""
     item_id: str | None = None
     """Provider conversation-item ID for this call, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -300,6 +318,10 @@ class SessionUsage:
     finish_reason: FinishReason | None = None
     """Normalized completion reason for the response this usage belongs to, when available."""
 
+    provider_details: dict[str, Any] | None = None
+    """Provider-specific details about how this usage was incurred, merged into the response's
+    `ModelResponse.provider_details`. Only applies to response-scoped usage."""
+
     response_scoped: bool = True
     """Whether this usage belongs to a specific model response.
 
@@ -307,6 +329,15 @@ class SessionUsage:
     `ModelResponse.usage`. `False` is run-level only, e.g. input audio transcription usage,
     which is billed on a separate model/meter and is accumulated into the run's `RunUsage`
     but attributed to no `ModelResponse`.
+    """
+
+    context_window_used: float | None = None
+    """The fraction of the model's context window in use, when the provider reports it.
+
+    A snapshot rather than an amount to accumulate: the session keeps the latest reported value and
+    exposes it as [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
+    It can go down after the provider compacts or truncates the conversation. `None`, the default,
+    means this report says nothing about the context window.
     """
 
     event_kind: Literal['session_usage'] = 'session_usage'
@@ -492,6 +523,26 @@ class RealtimeConnection(ABC):
         truncation when this is `True`. Defaults to `False`, which keeps the client-side cancel.
         """
         return False
+
+    @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        """Whether one reply answers all the tool results of a model response, rather than one per result.
+
+        For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
+        a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
+        response), and the session then counts one reply per tool-calling response. Defaults to `False`,
+        which counts one per result, as a connection that asks for a response after each one needs.
+        """
+        return False
+
+    def _take_merged_response_requests(self) -> int:
+        """How many requests for a response sent since the last call were answered by another one's response.
+
+        For the session's reply accounting only: a connection that holds a request made during an
+        active response, and answers any further ones with the same response, reports them here so
+        the session stops waiting for a response of their own.
+        """
+        return 0
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:

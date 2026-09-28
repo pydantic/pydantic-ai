@@ -74,9 +74,7 @@ from .conftest import IsDatetime, IsStr, iter_message_parts
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 async def test_deferred_capability_catalog_mentions_search_only_when_search_surface_exists() -> None:

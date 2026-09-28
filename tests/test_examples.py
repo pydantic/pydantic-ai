@@ -122,6 +122,9 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
             continue
+        if ex.path.resolve().is_relative_to(root_dir / 'docs' / 'harness'):
+            # Written for the harness repository, which never ran them; not yet made runnable here.
+            continue
         if ex.path.name == 'README.md' and (
             'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'ClearToolResults(' in ex.source
         ):
@@ -695,6 +698,15 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/workspace.md
+    'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
+    'Now add a test for it.': 'Added test_fizzbuzz.py.',
+    'Ask the reviewer to check fizzbuzz.py.': ToolCallPart(
+        tool_name='ask_reviewer', args={'request': 'Check fizzbuzz.py for bugs.'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'Check fizzbuzz.py for bugs.': ToolCallPart(
+        tool_name='read_file', args={'path': 'fizzbuzz.py'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     # docs/models/decision.md
     'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
     'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
@@ -1459,6 +1471,24 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Write fizzbuzz to fizzbuzz.py and run it.':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='execute',
+                        args={
+                            'command': [
+                                'python',
+                                '-c',
+                                'from pathlib import Path; '
+                                'code = \'for i in range(1, 16): print("fizz"*(i%3==0) + "buzz"*(i%5==0) or i)\\n\'; '
+                                "Path('fizzbuzz.py').write_text(code); exec(code)",
+                            ]
+                        },
+                        tool_call_id='pyd_ai_tool_call_id',
+                    )
+                ]
+            )
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
@@ -1500,6 +1530,23 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
             return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'read_file' and 'fizz' in str(m.content):
+        # docs/workspace.md: the reviewer read the file the coding agent wrote in the shared workspace
+        return ModelResponse(parts=[TextPart('fizzbuzz.py is correct.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'ask_reviewer':
+        return ModelResponse(parts=[TextPart(f'The reviewer says {m.content}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'execute':
+        prompts = [
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        ]
+        # The examples' `execute` tool reports failures as '[exit N] ...'; the command
+        # really ran in the workspace, so require it to have succeeded.
+        assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
+        if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
+            return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)

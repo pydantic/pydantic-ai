@@ -86,12 +86,19 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] restricts the function tools while leaving the
     model free to just speak.
 
-    `'none'` and function-tool allow-lists are enforced on every provider by restricting the tools
-    advertised when the session is created. OpenAI, Azure OpenAI, and xAI additionally support
-    declarative `'auto'` and `'required'` choices. Gemini has no declarative tool-choice configuration,
-    so `'required'` is ignored and allow-lists restrict availability without requiring a tool call.
+    It is applied once, when the session is created, and holds for every response. `'none'` and
+    function-tool allow-lists are enforced on every provider by restricting the tools advertised to the
+    model. OpenAI, Azure OpenAI, and xAI send the mode too, so they raise
+    [`UserError`][pydantic_ai.exceptions.UserError] before connecting for a choice that forces a tool
+    call (`'required'` or a list of tool names): applied to every response, including the one after a
+    tool result, it would never let the model answer. Use `ToolOrOutput` to restrict the tools instead.
+    Gemini has no declarative tool-choice configuration, so `'required'` is ignored and allow-lists
+    restrict availability without requiring a tool call.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI, and
+    OpenAI GPT-Live, which raises for `'required'` and lists of tool names: a session applies the
+    choice to every response, including the one after a tool result, so a forced call never lets the
+    model answer.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
@@ -206,11 +213,12 @@ class ReconnectPolicy(TypedDict, total=False):
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a
     [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] event. What server-side state
-    survives depends on the provider: OpenAI Realtime and Azure OpenAI start a fresh turn (the audio
-    buffer and prior turns are lost), while Gemini Live and xAI restore prior turns through native
-    session resumption, enabled automatically whenever a reconnect policy is set (Gemini honors an
-    explicit `google_enable_session_resumption=False` opt-out by refusing the combination with a
-    [`UserError`][pydantic_ai.exceptions.UserError]).
+    survives depends on the provider: OpenAI Realtime and Azure OpenAI keep no server state across
+    connections, so the session replays its finalized message history into the new one (prior turns
+    survive; buffered input audio and a reply in flight do not), while Gemini Live and xAI restore prior
+    turns through native session resumption, enabled automatically whenever a reconnect policy is set
+    (Gemini honors an explicit `google_enable_session_resumption=False` opt-out by refusing the
+    combination with a [`UserError`][pydantic_ai.exceptions.UserError]).
     """
 
     max_attempts: int
