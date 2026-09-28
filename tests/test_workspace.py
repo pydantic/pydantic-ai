@@ -977,6 +977,109 @@ async def test_setup_failure_calls_on_run_error_on_resolved_capability(dynamic: 
     assert cleaned == ['resolved']
 
 
+async def test_setup_failure_calls_on_run_error_for_each_repeated_resolved_capability() -> None:
+    cleanup_order: list[int] = []
+    second_resolution_complete = asyncio.Event()
+    calls = 0
+
+    class FreshCleanup(AbstractCapability[Any]):
+        def __init__(self, instance: int | None = None) -> None:
+            self.instance = instance
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            nonlocal calls
+            calls += 1
+            instance = calls
+            if instance == 1:
+                await second_resolution_complete.wait()
+            else:
+                second_resolution_complete.set()
+            return FreshCleanup(instance)
+
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            assert self.instance is not None
+            cleanup_order.append(self.instance)
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    class RunLayer(CombinedCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            await super().for_run(ctx)
+            raise RuntimeError('capability setup failed')
+
+    cleanup = FreshCleanup()
+    agent = Agent(TestModel())
+    with pytest.raises(RuntimeError, match='capability setup failed'):
+        await agent.run('go', capabilities=[RunLayer([cleanup, cleanup])])
+
+    assert cleanup_order == [2, 1]
+
+
+async def test_setup_failure_uses_run_layer_instance_for_overridden_capability() -> None:
+    cleanup_order: list[int] = []
+    agent_cleanup_resolved = asyncio.Event()
+    calls = 0
+
+    class FreshCleanup(AbstractCapability[Any]):
+        def __init__(self, instance: int | None = None) -> None:
+            self.instance = instance
+            self.id = 'cleanup'
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            nonlocal calls
+            calls += 1
+            instance = calls
+            if instance == 1:
+                agent_cleanup_resolved.set()
+            return FreshCleanup(instance)
+
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            assert self.instance is not None
+            cleanup_order.append(self.instance)
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    class RunLayer(CombinedCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            await agent_cleanup_resolved.wait()
+            await super().for_run(ctx)
+            raise RuntimeError('capability setup failed')
+
+    cleanup = FreshCleanup()
+    agent = Agent(TestModel(), capabilities=[cleanup])
+    with pytest.raises(RuntimeError, match='capability setup failed'):
+        await agent.run('go', capabilities=[RunLayer([cleanup])])
+
+    assert cleanup_order == [2]
+
+
+async def test_setup_failure_uses_replacement_returned_by_combined_for_run() -> None:
+    cleanup_order: list[str] = []
+    replacement_resolved = asyncio.Event()
+
+    class FreshCleanup(AbstractCapability[Any]):
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            cleanup_order.append(self.label)
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    class ReplacingCombined(CombinedCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            replacement_resolved.set()
+            return FreshCleanup('resolved')
+
+    class FailingCapability(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            await replacement_resolved.wait()
+            raise RuntimeError('capability setup failed')
+
+    agent = Agent(TestModel(), capabilities=[FailingCapability()])
+    with pytest.raises(RuntimeError, match='capability setup failed'):
+        await agent.run('go', capabilities=[ReplacingCombined([FreshCleanup('original')])])
+
+    assert cleanup_order == ['resolved']
+
+
 async def test_setup_error_hook_nested_agent_run_keeps_normal_recovery() -> None:
     nested_results: list[str] = []
 

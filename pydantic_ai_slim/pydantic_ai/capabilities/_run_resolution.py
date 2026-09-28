@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Awaitable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import Any
@@ -16,21 +16,32 @@ def _is_capability(value: object) -> TypeIs[AbstractCapability[AgentDepsT]]:
     return isinstance(value, AbstractCapability)
 
 
-class _RunCapabilityResolutions:
+class RunCapabilityResolutions:
     def __init__(self) -> None:
-        self.resolved: dict[int, object] = {}
+        self.resolved: dict[int, list[object | None]] = {}
+        self.layers: list[RunCapabilityResolutions] | None = None
+
+    def reserve(self, capability: AbstractCapability[AgentDepsT]) -> int:
+        occurrences = self.resolved.setdefault(id(capability), [])
+        occurrences.append(None)
+        return len(occurrences) - 1
+
+    def record(self, capability: AbstractCapability[AgentDepsT], occurrence: int, resolved: object) -> None:
+        self.resolved[id(capability)][occurrence] = resolved
 
 
-_current_resolutions: ContextVar[_RunCapabilityResolutions | None] = ContextVar('_current_resolutions', default=None)
+_current_resolutions: ContextVar[RunCapabilityResolutions | None] = ContextVar('_current_resolutions', default=None)
 _setup_error_dispatch: ContextVar[object | None] = ContextVar('_setup_error_dispatch', default=None)
 
 
 @contextmanager
-def capture_run_capability_resolutions() -> Generator[_RunCapabilityResolutions, None, None]:
-    resolutions = _RunCapabilityResolutions()
-    token: Token[_RunCapabilityResolutions | None] = _current_resolutions.set(resolutions)
+def capture_run_capability_resolutions(
+    resolutions: RunCapabilityResolutions | None = None,
+) -> Generator[RunCapabilityResolutions, None, None]:
+    captured = resolutions or RunCapabilityResolutions()
+    token: Token[RunCapabilityResolutions | None] = _current_resolutions.set(captured)
     try:
-        yield resolutions
+        yield captured
     finally:
         _current_resolutions.reset(token)
 
@@ -55,20 +66,40 @@ def is_setup_error_dispatching(ctx: RunContext[Any]) -> bool:
     return active_run_capabilities is not None and run_capabilities is active_run_capabilities
 
 
-async def resolve_capability_for_run(
+def resolve_capability_for_run(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
-) -> AbstractCapability[AgentDepsT]:
-    resolved = await capability.for_run(ctx)
-    if resolutions := _current_resolutions.get():
-        resolutions.resolved[id(capability)] = resolved
-    return resolved
+) -> Awaitable[AbstractCapability[AgentDepsT]]:
+    resolutions = _current_resolutions.get()
+    occurrence = resolutions.reserve(capability) if resolutions is not None else None
+
+    async def resolve() -> AbstractCapability[AgentDepsT]:
+        resolved = await capability.for_run(ctx)
+        if resolutions is not None and occurrence is not None:
+            resolutions.record(capability, occurrence, resolved)
+        return resolved
+
+    return resolve()
 
 
 def replace_resolved_run_capabilities(
-    capability: AbstractCapability[AgentDepsT], resolutions: _RunCapabilityResolutions
+    capability: AbstractCapability[AgentDepsT], resolutions: RunCapabilityResolutions
 ) -> AbstractCapability[AgentDepsT]:
+    # A container subclass may replace itself in `for_run`, rather than only rebinding its
+    # children. In that case the completed root resolution is the exact layer used for a run,
+    # and visiting the original container would lose the replacement (CombinedCapability's
+    # visitor deliberately visits children only).
+    root_resolutions = resolutions.resolved.get(id(capability), [])
+    if root_resolutions and _is_capability(root_resolutions[0]):
+        return root_resolutions[0]
+
+    occurrences_seen: dict[int, int] = {}
+
     def replace(cap: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        resolved = resolutions.resolved.get(id(cap))
+        capability_id = id(cap)
+        occurrence = occurrences_seen.get(capability_id, 0)
+        occurrences_seen[capability_id] = occurrence + 1
+        resolved_occurrences = resolutions.resolved.get(capability_id, [])
+        resolved = resolved_occurrences[occurrence] if occurrence < len(resolved_occurrences) else None
         if _is_capability(resolved):
             return resolved
         return cap

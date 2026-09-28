@@ -82,6 +82,7 @@ from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities._run_resolution import (
+    RunCapabilityResolutions as _RunCapabilityResolutions,
     capture_run_capability_resolutions,
     replace_resolved_run_capabilities,
     resolve_capability_for_run,
@@ -1822,12 +1823,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     instrumentation_cap=instrumentation_cap,
                     inject_deferred_loader=True,
                     base_is_override=base_is_override,
+                    resolution_capture=resolutions,
                 )
             except BaseException as error:
-                setup_capability = pre_run_root
-                if pre_run_root is base_capability and extra_capabilities:
-                    _, _, setup_capability = _compose_run_capabilities([base_capability], extra_capabilities)
-                setup_capability = replace_resolved_run_capabilities(setup_capability, resolutions)
+                if resolutions.layers is not None:
+                    assert len(resolutions.layers) == len(extra_capabilities) + 1
+                    resolved_base = replace_resolved_run_capabilities(base_capability, resolutions.layers[0])
+                    resolved_extras = [
+                        replace_resolved_run_capabilities(capability, layer_resolutions)
+                        for capability, layer_resolutions in zip(
+                            extra_capabilities, resolutions.layers[1:], strict=True
+                        )
+                    ]
+                    _, _, setup_capability = _compose_run_capabilities([resolved_base], resolved_extras)
+                else:
+                    setup_capability = pre_run_root
+                    if pre_run_root is base_capability and extra_capabilities:
+                        _, _, setup_capability = _compose_run_capabilities([base_capability], extra_capabilities)
+                    setup_capability = replace_resolved_run_capabilities(setup_capability, resolutions)
                 await _run_setup_error_hook(setup_capability, initial_ctx, error)
                 raise
         run_capability = resolved_caps.run_capability
@@ -3225,6 +3238,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrumentation_cap: InstrumentationCap | None,
         inject_deferred_loader: bool,
         base_is_override: bool,
+        resolution_capture: _RunCapabilityResolutions | None = None,
     ) -> _ResolvedRunCapabilities[AgentDepsT]:
         """Resolve the per-run capability layers and extract their contributions.
 
@@ -3243,10 +3257,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for the native-tool validation error's `source`.
         """
         run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        setup_layer_start = 0
         # Prepend `Instrumentation` (outermost, so its spans wrap everything) unless the user already
         # added one themselves — mirroring the explicit-capability-wins precedence.
         if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
             run_layers.insert(0, instrumentation_cap)
+            setup_layer_start = 1
 
         # Resolve `for_run` per layer instead of composing a `CombinedCapability` first (which would
         # gather over the same children): the `override(native_tools=...)` merge below needs the
@@ -3257,7 +3273,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # durable-exec integrations rely on this for deterministic replay). Composing from the resolved
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
-        resolved_layers = await _utils.gather(*(resolve_capability_for_run(cap, ctx) for cap in run_layers))
+        if resolution_capture is None:
+            resolved_layers = await _utils.gather(*(resolve_capability_for_run(cap, ctx) for cap in run_layers))
+        else:
+            layer_resolutions = [_RunCapabilityResolutions() for _ in run_layers]
+            resolution_capture.layers = layer_resolutions[setup_layer_start:]
+
+            async def resolve_layer(
+                capability: AbstractCapability[AgentDepsT], layer_capture: _RunCapabilityResolutions
+            ) -> AbstractCapability[AgentDepsT]:
+                with capture_run_capability_resolutions(layer_capture):
+                    return await resolve_capability_for_run(capability, ctx)
+
+            resolved_layers = await _utils.gather(
+                *(
+                    resolve_layer(capability, layer_capture)
+                    for capability, layer_capture in zip(run_layers, layer_resolutions, strict=True)
+                )
+            )
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
