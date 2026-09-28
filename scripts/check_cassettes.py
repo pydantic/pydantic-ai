@@ -24,7 +24,7 @@ _FORBIDDEN_CHARS = r"""<>?%*:|"'/\\"""
 
 
 def _sanitize_cassette_name(name: str) -> str:
-    """Replicate pytest-recording's cassette name sanitization."""
+    """Replicate the cassette name sanitization of cassetter's pytest plugin."""
     for ch in _FORBIDDEN_CHARS:
         name = name.replace(ch, '-')
     return name

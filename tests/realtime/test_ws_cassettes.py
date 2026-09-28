@@ -58,7 +58,6 @@ class _FakeWebSocket:
         self.closed_with = (args, kwargs)
 
 
-@pytest.mark.anyio
 async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unit test: recording safety must be pinned without putting real credentials on the wire."""
     monkeypatch.setenv('AZURE_OPENAI_API_KEY', '0paque-azure-key-value-42')
@@ -138,7 +137,6 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
     ]
 
 
-@pytest.mark.anyio
 async def test_recording_normalizes_client_ids() -> None:
     """Unit test: generated outbound IDs need deterministic matching without a provider session."""
     first_id = '0123456789abcdef01234567'
@@ -188,7 +186,6 @@ def test_realtime_cassette_plan(
     assert realtime_cassette_plan(cassette_exists=True, record_mode=record_mode) == existing_plan
 
 
-@pytest.mark.anyio
 async def test_record_dump_load_replays_frames_byte_identically(tmp_path: Path) -> None:
     """Unit test: the raw-frame persistence round-trip can be verified without a live WebSocket."""
     sent_frames = [json.dumps({'type': 'client.one'}), json.dumps({'type': 'client.two', 'value': 'café'})]
@@ -212,7 +209,6 @@ async def test_record_dump_load_replays_frames_byte_identically(tmp_path: Path) 
         assert await replay.recv(decode=False) == received.encode()
 
 
-@pytest.mark.anyio
 async def test_replay_waits_for_send_and_replays_close() -> None:
     """Unit test: full-duplex ordering and close handling require controlled task scheduling."""
     cassette = RealtimeCassette(
@@ -237,7 +233,6 @@ async def test_replay_waits_for_send_and_replays_close() -> None:
     assert exc_info.value.rcvd.reason == 'provider failure'
 
 
-@pytest.mark.anyio
 async def test_empty_replay_closes_cleanly_and_disconnect_requires_binding() -> None:
     cassette = RealtimeCassette()
     with pytest.raises(RuntimeError, match='no active WebSocket'):
@@ -248,7 +243,6 @@ async def test_empty_replay_closes_cleanly_and_disconnect_requires_binding() -> 
     assert replay._peek() is None  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_replay_can_hold_open_after_last_frame_until_client_closes() -> None:
     replay = ReplayWebSocket(RealtimeCassette(), hold_open=True)
 
@@ -261,7 +255,6 @@ async def test_replay_can_hold_open_after_last_frame_until_client_closes() -> No
         await receive_task
 
 
-@pytest.mark.anyio
 async def test_disconnect_delegates_to_the_bound_connection() -> None:
     """Once bound, `disconnect()` drops the active transport so replay reaches the recorded close.
 
@@ -285,7 +278,6 @@ async def test_disconnect_delegates_to_the_bound_connection() -> None:
     assert [message async for message in ReplayWebSocket(cassette)] == [json.dumps({'type': 'server.event'})]
 
 
-@pytest.mark.anyio
 async def test_recording_truncates_inbound_audio() -> None:
     """Unit test: inbound audio is truncated so cassettes stay small — both provider shapes."""
     long_audio = 'A' * 400  # far longer than the retained byte budget
@@ -322,7 +314,6 @@ _LONG_AUDIO = 'A' * 400  # far longer than the retained byte budget
 _GEMINI_MIC = {'realtime_input': {'audio': {'data': _LONG_AUDIO, 'mime_type': 'audio/pcm;rate=16000'}}}
 
 
-@pytest.mark.anyio
 async def test_recording_truncates_outbound_gemini_microphone_audio() -> None:
     """Unit test: Gemini microphone frames are truncated like OpenAI's, so a long call stays a small cassette."""
     cassette = RealtimeCassette()
@@ -342,7 +333,6 @@ async def test_recording_truncates_outbound_gemini_microphone_audio() -> None:
     assert [message.data for message in rest if isinstance(message, CassetteMessage)] == untouched
 
 
-@pytest.mark.anyio
 async def test_replay_matches_microphone_audio_recorded_untruncated() -> None:
     """Unit test: cassettes recorded before Gemini microphone frames were truncated still replay."""
     replay = ReplayWebSocket(RealtimeCassette(interactions=[CassetteMessage(direction='sent', data=_GEMINI_MIC)]))
@@ -353,7 +343,6 @@ _MIC_FRAME = {'type': 'input_audio_buffer.append', 'audio': 'AAAA'}
 _TOOL_RESULT = {'type': 'conversation.item.create'}
 
 
-@pytest.mark.anyio
 async def test_audio_waits_for_its_recorded_turn() -> None:
     """Unit test: a microphone frame waits behind the traffic recorded before it.
 
@@ -380,7 +369,6 @@ async def test_audio_waits_for_its_recorded_turn() -> None:
     await replay.send(json.dumps(_MIC_FRAME))
 
 
-@pytest.mark.anyio
 async def test_audio_turn_wait_gives_up_without_progress(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unit test: if the traffic recorded ahead never comes, the wait ends and `send()` reports the mismatch."""
     monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
@@ -391,13 +379,11 @@ async def test_audio_turn_wait_gives_up_without_progress(monkeypatch: pytest.Mon
         await replay.send(json.dumps(_MIC_FRAME))
 
 
-@pytest.mark.anyio
 async def test_audio_turn_wait_is_a_no_op_while_recording() -> None:
     """Unit test: recording sends in real time, so there is no recorded order to wait for."""
     await RealtimeCassette().before_audio_send()
 
 
-@pytest.mark.anyio
 async def test_recording_records_clean_close_while_iterating() -> None:
     """Unit test: async iteration records inbound frames and persists a clean terminal close."""
     frame = json.dumps({'type': 'server.event'})
@@ -412,7 +398,6 @@ async def test_recording_records_clean_close_while_iterating() -> None:
     ]
 
 
-@pytest.mark.anyio
 async def test_recording_records_error_close_and_delegates_passthrough() -> None:
     """Unit test: an abnormal disconnect records a non-ok close; `close()` and unknown attrs delegate."""
     fake_ws = _FakeWebSocket([ConnectionClosedError(Close(1011, 'boom'), None)])
@@ -441,7 +426,6 @@ def test_load_round_trips_close_frame(tmp_path: Path) -> None:
     assert RealtimeCassette.load(path).interactions == cassette.interactions
 
 
-@pytest.mark.anyio
 async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unit test: replay asserts outbound frames match the recording, catching silent wire drift."""
     monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
@@ -458,7 +442,6 @@ async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.Monk
 _LIVE_MIC_FRAME = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
 
 
-@pytest.mark.anyio
 async def test_replay_waits_for_a_direct_recv_reader() -> None:
     """A send behind recorded inbound frames waits for a reader that calls `recv()` itself.
 
@@ -492,14 +475,12 @@ def test_is_audio_send(frame: dict[str, object], is_audio: bool) -> None:
     assert ws_cassettes._is_audio_send(frame) is is_audio  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_replay_close_is_noop() -> None:
     """Unit test: replay's `close()` accepts the websockets signature and does nothing."""
     replay = ReplayWebSocket(RealtimeCassette())
     await replay.close(1000, 'done')
 
 
-@pytest.mark.anyio
 async def test_recording_stamps_when_each_interaction_happened(tmp_path: Path) -> None:
     """Recording timestamps every interaction from the first one, and the stamps survive a dump/load round trip."""
     fake_ws = _FakeWebSocket([json.dumps({'type': 'server.event'}), ConnectionClosedOK(Close(1000, 'bye'), None)])
@@ -539,7 +520,6 @@ def test_untimed_cassette_round_trips_without_timing(tmp_path: Path) -> None:
     assert 'at:' not in path.read_text(encoding='utf-8')
 
 
-@pytest.mark.anyio
 async def test_replay_clock_reads_when_the_frame_being_handled_was_recorded() -> None:
     """`now()` moves to each inbound frame's recorded time as it is taken up, however fast replay runs."""
     replay = ReplayWebSocket(
@@ -565,7 +545,6 @@ async def test_replay_clock_reads_when_the_frame_being_handled_was_recorded() ->
     assert clock == [1.25, 1.25, 1.25, 2.5]
 
 
-@pytest.mark.anyio
 async def test_replay_clock_ignores_sends_that_overtake_the_frame_being_handled() -> None:
     """A send waiting on an inbound frame can go out before that frame is handled; the clock must not follow it.
 
@@ -620,7 +599,6 @@ def test_timed_live_replay_runs_the_turn_clock_on_recorded_time() -> None:
             assert openai_live._now is real_clock  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_live_turn_clock_moves_as_each_frame_is_mapped_not_read() -> None:
     """GPT-Live keeps its next read in flight while it handles a frame, so that read must not move the clock."""
     first = {'type': 'session.unknown_event', 'n': 1}

@@ -26,7 +26,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')]
 
 # These tests inspect local provider configuration and routing without making HTTP requests, so VCR cannot cover them.
 
