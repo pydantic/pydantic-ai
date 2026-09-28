@@ -172,7 +172,12 @@ sends one frame per second — so for camera and screen streams, use both delibe
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
-even when they arrive after that turn's response or overlap the following turn. If a reported speech
+even when they arrive after that turn's response or overlap the following turn. A turn the user
+starts while the model is still answering, whether they [barge in](turns.md#barge-in) or push to talk
+over it, is recorded after that answer. Such a turn joins history once the provider ends the answer it
+cut off, or after a few seconds if the provider never does. In that fallback the turn is recorded where
+history stands, so it lands before the answer it interrupted, and ahead of anything sent with
+[`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was still in flight. If a reported speech
 segment never receives a transcript, the session still records its retained audio or a content-less
 `SpeechPart` when the session closes.
 
@@ -180,6 +185,12 @@ With transcription disabled:
 
 - retained input audio creates an audio-only user `SpeechPart`;
 - without input retention, the session records a content-less user `SpeechPart`;
+- on providers that report speech boundaries (OpenAI, Azure, and xAI with server VAD), each turn is
+  the speech between them: the silence an always-on microphone streams between utterances is no turn.
+  Gemini Live reports none, so a turn there runs to the response that answers it, and audio sent after
+  the last response is recorded as one more turn when the session closes;
+- with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn; a
+  commit with no audio since the last one records nothing;
 - content-less parts preserve the local turn boundary but contribute no words to a text handoff and
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.

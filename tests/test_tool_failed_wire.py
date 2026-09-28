@@ -55,7 +55,6 @@ with try_import() as xai_imports_successful:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
 
-pytestmark = pytest.mark.anyio
 
 _TOOL_CONTENT = 'Disk full'
 _FAILED_WIRE_CONTENT = '{"error":"Disk full"}'

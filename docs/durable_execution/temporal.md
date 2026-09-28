@@ -156,7 +156,7 @@ async def main():
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
-8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], and `UnsupportedEventLoopError` as `workflow_failure_exception_types`.
+8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), and the workspace errors `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` and `WorkspaceUnavailableError`, while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], `UnsupportedEventLoopError`, and [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] as `workflow_failure_exception_types`.
 9. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
 10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
@@ -239,6 +239,22 @@ The activity's `RunContext` is rebuilt from the serialized payload, so its field
 A tool's [`prepare`](../tools-advanced.md#tool-prepare) function is not affected by these limitations: for tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] (including those defined on the agent itself), it runs in workflow code with the complete `RunContext`, once per run step like outside a workflow. The tool definition it returns is sent to the tool-call activity, which uses it as-is, so the tool the model saw is the tool that runs, down to its [`timeout`](../tools-advanced.md#tool-timeout). Tools from a `DynamicToolset` are the exception: as the toolset is re-resolved inside activities, their `prepare` functions run there as well and see the limited `RunContext`.
 
 A `native=` factory on [`XSearch`][pydantic_ai.capabilities.XSearch] or [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] is resolved twice, on either side of the boundary: once in workflow code to configure the native tool, and again inside the fallback subagent's tool-call activity, where it sees the limited `RunContext`. Read `ctx.deps` there, not `ctx.messages`.
+
+### Workspaces
+
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run: in a tool it is rebuilt inside the activity and calls the provider directly, and in workflow code (capability hooks, output functions, `result.workspace`) each call runs as an activity. Because an activity can run on any worker:
+
+- Construct every worker's agent with the same workspace capabilities as the workflow's.
+- In a custom [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace], read only `deps` and the [run context fields listed above](#agent-run-context-and-dependencies).
+- Move large files inside a tool: a workflow-side call carries the file in the activity payload, which counts against the [payload size limit](#large-payloads).
+- With `LocalWorkspace`, give every worker the directory at the same absolute path, on shared storage.
+
+Adding a workspace to an agent changes its workflows' history, so drain in-flight workflows first or
+deploy the change with Temporal worker versioning or on a new task queue.
+
+Temporal stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
+Keep secrets in the workspace capability's `env=` or use them inside a tool rather than passing
+secrets as workflow-side arguments; use a [payload codec](#large-payloads) to protect history.
 
 ### Capabilities at Runtime
 
@@ -693,6 +709,8 @@ On top of the automatic retries for request failures that Temporal will perform,
 When using Temporal, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, for example by setting `max_retries=0` on a [custom `OpenAIProvider` API client](../models/openai.md#custom-openai-client).
 
 You can customize Temporal's retry policy using [activity configuration](#activity-configuration).
+
+An exception a tool raises reaches workflow code as Temporal's `ActivityError`, with the original exception's class name in `cause.type`.
 
 ## Observability with Logfire
 
