@@ -1709,7 +1709,6 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     'sh -c \'for file do real=$(realpath -- "$file" && printf .) || exit 2; '
                     'real=${real%.}; real=${real%?}; printf "%s\\\\0" "$real"; done\' sh ' + shlex.join(chunk),
                     shell=True,
-                    cwd=cwd,
                     timeout=120,
                 )
                 if result.exit_code != 0:

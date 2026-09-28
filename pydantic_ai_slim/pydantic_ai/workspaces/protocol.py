@@ -166,14 +166,13 @@ class SupportsCommands(Protocol):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> WorkspaceResult:
         """Execute a command with stdin at EOF, returning complete output or raising an error.
 
         Undecodable stdout/stderr bytes are replaced with U+FFFD, never dropped.
-        A missing argv program exits 127. A missing `cwd` raises `FileNotFoundError`.
+        The command starts in `working_dir()`. A missing argv program exits 127.
         If the environment is destroyed while the command runs, raise `WorkspaceUnavailableError`;
         a command killed by a signal in a live environment returns its exit code.
         On timeout or cancellation, stop the foreground process tree on a best-effort basis;
@@ -183,7 +182,6 @@ class SupportsCommands(Protocol):
         Args:
             command: An argv sequence, or a shell string with `shell=True`; a mismatch raises `TypeError`.
             shell: Whether to interpret `command` with the workspace's shell.
-            cwd: Absolute working directory, defaulting to `working_dir()`; a relative one raises `ValueError`.
             env: Extra environment variables, layered over the backend's own.
             timeout: A positive finite number of seconds before
                 [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]; no timeout by default.

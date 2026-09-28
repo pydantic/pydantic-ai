@@ -74,10 +74,11 @@ async def run_ripgrep(
     """
     command = shlex.join(['rg', '--null', '--color=never', *arguments])
     script = (
+        f'cd {shlex.quote(cwd)} || exit\n'
         f'command -v rg > /dev/null 2>&1 || exit {_MISSING}\n'
         f'{{ {command}; echo "{_STATUS_PREFIX}$?" >&2; }} | head -c {_MAX_OUTPUT_BYTES}'
     )
-    result = await workspace.run(script, shell=True, cwd=cwd, timeout=_TIMEOUT)
+    result = await workspace.run(script, shell=True, timeout=_TIMEOUT)
     stderr_lines = result.stderr.rstrip('\n').split('\n')
     status_line = stderr_lines[-1] if stderr_lines else ''
     detail = '\n'.join(stderr_lines[:-1]).strip()

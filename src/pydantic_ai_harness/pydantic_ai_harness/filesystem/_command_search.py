@@ -90,13 +90,14 @@ async def run_posix_search(
     # Capture enumeration's status before sorting: a failed git/find must not masquerade
     # as an empty successful search through the pipeline's final xargs status.
     script = (
+        f'cd {shlex.quote(cwd)} || exit\n'
         '{ list=$(mktemp) || exit 2; '
         f'{{ {enumeration}; }} > "$list"; code=$?; '
         'if [ "$code" -eq 0 ]; then LC_ALL=C sort -z "$list" | '
         f'{processing}; code=$?; fi; rm -f -- "$list"; '
         f'echo "{_STATUS}$code" >&2; }} | head -c {_MAX_OUTPUT_BYTES}'
     )
-    result = await workspace.run(script, shell=True, cwd=cwd, timeout=120)
+    result = await workspace.run(script, shell=True, timeout=120)
     stderr, _, status = result.stderr.rpartition(_STATUS)
     output = result.stdout
     cut = len(output.encode('utf-8', errors='surrogateescape')) >= _MAX_OUTPUT_BYTES
