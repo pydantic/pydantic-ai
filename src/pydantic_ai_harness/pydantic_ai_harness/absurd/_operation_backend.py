@@ -51,9 +51,7 @@ def _is_envelope(stored: object) -> TypeGuard[dict[str, object]]:
     if not (is_str_dict(stored) and stored.keys() == {_ENVELOPE_KEY}):
         return False
     payload = stored[_ENVELOPE_KEY]
-    return (
-        is_str_dict(payload) and payload.get('kind') == 'tool_return' and _is_tool_return_object(payload.get('result'))
-    )
+    return is_str_dict(payload) and payload.get('kind') in _RAW_RESULT_KINDS and 'result' in payload
 
 
 _response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
@@ -76,7 +74,8 @@ async def _from_stream_checkpoint(stored: object) -> object:
 def _to_checkpoint(payload: dict[str, object]) -> object:
     """Reduce an encoded `CallToolResult` to the stored checkpoint: the raw return value."""
     result = payload['result']
-    if payload['kind'] == 'tool_return' and _is_tool_return_object(result):
+    # A raw value shaped like the envelope is enveloped too, so it reads back as itself.
+    if _is_envelope(result) or (payload['kind'] == 'tool_return' and _is_tool_return_object(result)):
         return {_ENVELOPE_KEY: payload}
     return result
 

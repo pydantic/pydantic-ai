@@ -517,8 +517,17 @@ class TestToolResults:
 
     @pytest.mark.parametrize(
         'value',
-        [{'kind': 'tool-return', 'rows': 3}, {'__pydantic_ai_harness_absurd_tool_result__': 'hello'}],
-        ids=['tool-return-kind', 'reserved-key'],
+        [
+            {'kind': 'tool-return', 'rows': 3},
+            {'__pydantic_ai_harness_absurd_tool_result__': 'hello'},
+            {
+                '__pydantic_ai_harness_absurd_tool_result__': {
+                    'kind': 'tool_return',
+                    'result': {'kind': 'tool-return', 'return_value': 'x', 'content': 'y'},
+                }
+            },
+        ],
+        ids=['tool-return-kind', 'reserved-key', 'envelope-shaped'],
     )
     async def test_raw_dict_that_looks_encoded_round_trips(self, absurd: AsyncAbsurd, value: dict[str, object]) -> None:
         calls = {'calls': 0}
@@ -537,13 +546,14 @@ class TestToolResults:
         )
 
         async with running_task_context(absurd) as ctx:
-            await agent.run('go')
-        assert (await checkpoints(absurd, ctx.task_id))['raw__function_toolset__tools.call_tool:query'] == value
+            first = await agent.run('go')
         async with reenter_running_task(absurd, ctx.task_id):
-            result = await agent.run('go')
+            second = await agent.run('go')
 
-        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
-        assert [r.content for r in returns] == [value]
+        def returned(messages: list[ModelMessage]) -> list[object]:
+            return [p.content for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+
+        assert returned(second.all_messages()) == returned(first.all_messages()) == [value]
         assert calls['calls'] == 1
 
 
