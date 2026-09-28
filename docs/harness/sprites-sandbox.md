@@ -255,6 +255,9 @@ if __name__ == '__main__':
 
 Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
 
+## Telemetry
+
+`SpritesSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the Sprite on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command and file operation runs inside the span of the tool call that asked for it. Creating a Sprite logs its name at `INFO` (`Created Sprite <name>`) on the `pydantic_ai_harness.sprites_sandbox._backend` logger, so a Sprite that outlives its run can still be found.
 
 ## API reference
 
