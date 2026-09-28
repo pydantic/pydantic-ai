@@ -30,6 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceReadOnlyError,
+    WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
@@ -1339,6 +1340,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 continue
             try:
                 raw = await scope.workspace.read_bytes(file_path)
+            except WorkspaceUnavailableError:
+                # The environment is gone, so the rest of the tree is unreadable too.
+                raise
             except (WorkspaceError, OSError):
                 # A single inaccessible file should not hide matches in the rest of the tree.
                 skipped.append(posixpath.relpath(file_path, scope.cwd))

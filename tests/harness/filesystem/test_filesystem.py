@@ -34,6 +34,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
+    WorkspaceUnavailableError,
 )
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
@@ -2479,6 +2480,16 @@ class TestWorkspaceBackends:
         assert (await toolset.search_files('Hello', workspace=FilesystemOnlyWorkspace(workspace))).splitlines()[
             0
         ] == '[1 files skipped (too large or unreadable): hello.txt]'
+
+    async def test_unavailable_workspace_during_a_search_read_is_reported(
+        self, toolset: FileSystemToolset[None], fs_root: Path
+    ) -> None:
+        # A gone environment ends the search instead of counting the file as skipped.
+        workspace = FailingWorkspace(
+            fs_root, {'read_bytes': WorkspaceUnavailableError('sandbox was destroyed')}, where='hello.txt'
+        )
+        with pytest.raises(WorkspaceUnavailableError, match='sandbox was destroyed'):
+            await toolset.search_files('Hello', workspace=FilesystemOnlyWorkspace(workspace))
 
     @pytest.mark.parametrize('operation', ['list_dir', 'read_bytes'])
     async def test_workspace_failure_during_a_walk_is_reported(
