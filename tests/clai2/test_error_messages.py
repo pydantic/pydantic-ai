@@ -20,8 +20,6 @@ from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.test_app_edges import inputs
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.mark.parametrize('mode', ['interactive', 'headless'])
 @pytest.mark.parametrize('chain', ['direct', 'cause', 'context', 'suppressed', 'cycle', 'network', 'persistence'])

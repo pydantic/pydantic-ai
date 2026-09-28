@@ -272,7 +272,6 @@ def test_infer_realtime_model_unknown_provider() -> None:
         infer_realtime_model('openai:')
 
 
-@pytest.mark.anyio
 async def test_agent_realtime_session_infers_string_model() -> None:
     agent: Agent[None, str] = Agent()
     with pytest.raises(UserError, match='Unknown realtime model'):

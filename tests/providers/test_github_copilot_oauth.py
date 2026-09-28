@@ -22,7 +22,7 @@ with try_import() as imports_successful:
         GitHubCopilotProvider,
     )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='openai not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='openai not installed')]
 
 DEVICE = {
     'device_code': 'secret-device-code',

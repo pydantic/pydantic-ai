@@ -13,8 +13,6 @@ from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
 
 from .conftest import tools_path
 
-pytestmark = pytest.mark.anyio
-
 
 class CountingBackend(LocalWorkspaceBackend):
     def __init__(self, root: Path, path: str) -> None:

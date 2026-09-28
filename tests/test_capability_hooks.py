@@ -83,9 +83,7 @@ from .conftest import IsDatetime, IsStr
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 # --- Hooks test helpers ---

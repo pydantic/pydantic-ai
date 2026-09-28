@@ -18,8 +18,6 @@ from pydantic_ai_harness.shell import Shell, ShellToolset
 
 from ._tool_calls import call_tool
 
-pytestmark = pytest.mark.anyio
-
 _ON_THE_WORKSPACE = r"set it on the workspace, e\.g\. `LocalWorkspace\('\./repo'\)`"
 
 

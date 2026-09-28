@@ -12,8 +12,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session
 from pydantic_clai2.interrupts import Interrupts
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

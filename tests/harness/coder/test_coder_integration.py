@@ -4,11 +4,7 @@ import shlex
 import sys
 from pathlib import Path
 
-import pytest
-
 from .test_tools import call
-
-pytestmark = pytest.mark.anyio
 
 
 async def test_coder_completes_task(tmp_path: Path) -> None:

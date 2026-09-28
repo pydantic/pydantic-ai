@@ -74,8 +74,6 @@ from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.system_reminders import Reminder
 
-pytestmark = pytest.mark.anyio
-
 
 async def _decline(request: AskUserRequest) -> AskUserResponse:
     """Only here to construct `AskUser`; the combine tests never call a tool."""

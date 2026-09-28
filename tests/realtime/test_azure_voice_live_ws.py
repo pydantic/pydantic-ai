@@ -35,7 +35,7 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime import WebRTCSession
     from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
 
 
 async def test_text_output_modality_returns_text(

@@ -88,7 +88,6 @@ def test_check_vcr_cassette_usage_allows_fully_used_cassette() -> None:
     check_vcr_cassette_usage(cassette, strict_usage=False)
 
 
-@pytest.mark.anyio
 async def test_blockbuster_exemption_contract(
     blockbuster_types: tuple[type[BlockBuster], type[BlockingError]],
 ) -> None:

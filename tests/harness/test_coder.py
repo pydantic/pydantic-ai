@@ -18,8 +18,6 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.subagents import SubAgents
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

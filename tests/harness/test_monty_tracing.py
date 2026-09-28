@@ -25,8 +25,6 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.code_mode import CodeModeToolset
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflowToolset, WorkflowAgent
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:
