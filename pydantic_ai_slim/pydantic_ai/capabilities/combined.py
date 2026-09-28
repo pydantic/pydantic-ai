@@ -33,6 +33,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
+from ._run_resolution import is_setup_error_dispatching, resolve_capability_for_run
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -248,7 +249,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
+        new_caps = await gather(*(resolve_capability_for_run(c, ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
@@ -544,6 +545,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         error: BaseException,
     ) -> AgentRunResult[Any]:
+        if is_setup_error_dispatching(ctx):
+            for capability in reversed(self.capabilities):
+                cap_ctx = _ctx_for_cap(capability, ctx)
+                try:
+                    await capability.on_run_error(cap_ctx, error=error)
+                except BaseException as new_error:
+                    error = new_error
+            raise error
+
         for capability in reversed(self.capabilities):
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:

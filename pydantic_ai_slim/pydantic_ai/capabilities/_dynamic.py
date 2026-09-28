@@ -10,6 +10,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._run_resolution import resolve_capability_for_run
 from .abstract import AbstractCapability, CapabilityOrdering
 from .wrapper import WrapperCapability
 
@@ -99,7 +100,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             return None
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
         capability = capability.for_agent(ctx.agent)
-        return await capability.for_run(ctx)
+        return await resolve_capability_for_run(capability, ctx)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         capability = await self._resolve_capability(ctx)

@@ -20,7 +20,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.durable_exec._workspace import WorkspaceCall
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import WorkspaceTimeoutError
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError
 
 from ..workspace_fakes import InMemoryProvider
 from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents, tool_runs
@@ -195,5 +195,30 @@ async def test_prefect_tool_workspace_timeout_is_not_retried_by_task_engine(tmp_
         return (await agent.run('run')).output
 
     with pytest.raises(WorkspaceTimeoutError):
+        await run_agent()
+    assert starts == 1
+
+
+async def test_prefect_base_workspace_error_is_not_retried_by_task_engine() -> None:
+    """Workspace failures represented by the base error must not repeat a tool call."""
+    starts = 0
+
+    def fail_workspace() -> str:
+        nonlocal starts
+        starts += 1
+        raise WorkspaceError('workspace failed')
+
+    agent = Agent(
+        TestModel(call_tools=['fail_workspace']),
+        name='prefect_workspace_error',
+        tools=[fail_workspace],
+        capabilities=[PrefectDurability(tool_task_config=TaskConfig(retries=2, retry_delay_seconds=0))],
+    )
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(WorkspaceError, match='workspace failed'):
         await run_agent()
     assert starts == 1

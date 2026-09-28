@@ -36,6 +36,7 @@ from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, ModelRespons
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
 from ._on_event import collect_on_event_methods, marked_listens_to
+from ._run_resolution import is_setup_error_dispatching
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -972,6 +973,14 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return await chain()
 
     async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
+        if is_setup_error_dispatching(ctx):
+            for entry in self._get('on_run_error'):
+                try:
+                    await _call_entry(entry, 'on_run_error', ctx, error=error)
+                except BaseException as new_error:
+                    error = new_error
+            raise error
+
         for entry in self._get('on_run_error'):
             try:
                 return await _call_entry(entry, 'on_run_error', ctx, error=error)

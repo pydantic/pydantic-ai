@@ -81,6 +81,12 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities._run_resolution import (
+    capture_run_capability_resolutions,
+    replace_resolved_run_capabilities,
+    resolve_capability_for_run,
+    setup_error_dispatch_scope,
+)
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -208,6 +214,34 @@ class _RunLifecycle:
     short_circuited: bool
 
 
+def _prepare_run_capability_context(
+    run_capability: AbstractCapability[AgentDepsT], run_ctx: RunContext[AgentDepsT]
+) -> None:
+    run_capabilities_by_id: dict[str, AbstractCapability[AgentDepsT]] = {
+        capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
+    }
+    # Mutate a mapping shared by the run's contexts in place; realtime sessions do not share one.
+    if (existing := run_ctx._run_capabilities_by_id) is None:  # pyright: ignore[reportPrivateUsage]
+        run_ctx._run_capabilities_by_id = run_capabilities_by_id  # pyright: ignore[reportPrivateUsage]
+    else:
+        existing.clear()
+        existing.update(run_capabilities_by_id)
+    run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
+
+
+async def _run_setup_error_hook(
+    run_capability: AbstractCapability[AgentDepsT], run_ctx: RunContext[AgentDepsT], error: BaseException
+) -> None:
+    """Dispatch error hooks when setup fails before a run result can be built."""
+    if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+        raise error
+    run_ctx.root_capability = run_capability
+    _prepare_run_capability_context(run_capability, run_ctx)
+    # There is no run result to recover here, so preserve the setup error if the hook returns.
+    with setup_error_dispatch_scope(run_ctx):
+        await run_capability.on_run_error(run_ctx, error=error)
+
+
 @asynccontextmanager
 async def _run_lifecycle_hooks(  # noqa: C901
     run_capability: AbstractCapability[Any],
@@ -270,18 +304,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     # Before `wrap_run`, not inside the handler it wraps: a `wrap_run` implementation may call a
     # durable operation before it awaits the handler, and one that short-circuits never awaits it at
     # all, so dispatch has to be installed by the time the chain is entered.
-    run_capabilities_by_id = {
-        capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
-    }
-    # Mutated in place where the run already shares one mapping by reference with every `RunContext`
-    # it builds (see `GraphAgentDeps.run_capabilities_by_id`); a realtime session has no graph to
-    # share one, so it gets this mapping directly.
-    if (existing := run_ctx._run_capabilities_by_id) is None:  # pyright: ignore[reportPrivateUsage]
-        run_ctx._run_capabilities_by_id = run_capabilities_by_id  # pyright: ignore[reportPrivateUsage]
-    else:
-        existing.clear()
-        existing.update(run_capabilities_by_id)
-    run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
+    _prepare_run_capability_context(run_capability, run_ctx)
 
     outer_context = contextvars.copy_context()
     _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
@@ -1790,14 +1813,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
         # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
         # with the realtime call site.
-        resolved_caps = await self._resolve_run_capabilities(
-            initial_ctx,
-            base_capability=base_capability,
-            extra_capabilities=extra_capabilities,
-            instrumentation_cap=instrumentation_cap,
-            inject_deferred_loader=True,
-            base_is_override=base_is_override,
-        )
+        with capture_run_capability_resolutions() as resolutions:
+            try:
+                resolved_caps = await self._resolve_run_capabilities(
+                    initial_ctx,
+                    base_capability=base_capability,
+                    extra_capabilities=extra_capabilities,
+                    instrumentation_cap=instrumentation_cap,
+                    inject_deferred_loader=True,
+                    base_is_override=base_is_override,
+                )
+            except BaseException as error:
+                setup_capability = pre_run_root
+                if pre_run_root is base_capability and extra_capabilities:
+                    _, _, setup_capability = _compose_run_capabilities([base_capability], extra_capabilities)
+                setup_capability = replace_resolved_run_capabilities(setup_capability, resolutions)
+                await _run_setup_error_hook(setup_capability, initial_ctx, error)
+                raise
         run_capability = resolved_caps.run_capability
         # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
         # contributed, so every later step's `RunContext` describes what the run's spans use.
@@ -1871,7 +1903,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_capability=run_capability,
             max_output_retries=effective_output_toolset_max_retries,
         )
-        toolset = await toolset.for_run(initial_ctx)
+        try:
+            toolset = await toolset.for_run(initial_ctx)
+        except BaseException as error:
+            await _run_setup_error_hook(run_capability, initial_ctx, error)
+            raise
         tool_manager = ToolManager[AgentDepsT](
             toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
         )
@@ -3221,7 +3257,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # durable-exec integrations rely on this for deterministic replay). Composing from the resolved
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
-        resolved_layers = await _utils.gather(*(cap.for_run(ctx) for cap in run_layers))
+        resolved_layers = await _utils.gather(*(resolve_capability_for_run(cap, ctx) for cap in run_layers))
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]

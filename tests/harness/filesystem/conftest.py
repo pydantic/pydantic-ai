@@ -26,3 +26,9 @@ def no_rg_path(tmp_path_factory: pytest.TempPathFactory) -> str:
 def no_rg_git_path(tmp_path_factory: pytest.TempPathFactory) -> str:
     """A `PATH` without `rg` or `git`, to exercise the POSIX search's `find` enumeration."""
     return tools_path(tmp_path_factory.mktemp('no-rg-git-bin'), exclude=frozenset({'rg', 'git'}))
+
+
+@pytest.fixture(scope='session')
+def no_readlink_path(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """A `PATH` with system tools except `readlink`, to exercise fail-closed symlink resolution."""
+    return tools_path(tmp_path_factory.mktemp('no-readlink-bin'), exclude=frozenset({'rg', 'readlink'}))

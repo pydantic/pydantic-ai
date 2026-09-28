@@ -12,6 +12,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import (
+    WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
     WorkspaceTimeoutError,
@@ -31,6 +32,7 @@ _NON_RETRYABLE_ERRORS = (
     PydanticUserError,
     UnexpectedModelBehavior,
     # As on Temporal: a retry cannot fix these, and restarting a command could repeat its completed side effects.
+    WorkspaceError,
     WorkspaceTimeoutError,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,

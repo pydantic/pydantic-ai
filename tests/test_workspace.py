@@ -20,7 +20,13 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, LocalWorkspace, WrapperCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CombinedCapability,
+    DynamicCapability,
+    LocalWorkspace,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
@@ -38,6 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -874,6 +881,128 @@ async def test_failed_run_error_hook_exposes_workspace_ref_for_cleanup() -> None
     with pytest.raises(ValueError, match='failure'):
         await agent.run('go')
     assert seen == [backend.ref]
+
+
+@pytest.mark.parametrize('failure', ['capability', 'toolset'])
+async def test_setup_failure_calls_on_run_error_for_workspace_cleanup(failure: str) -> None:
+    backend = FakeWorkspace('setup-failure')
+    workspace_ready = asyncio.Event()
+    cleaned: list[WorkspaceRef | None] = []
+
+    class SetupWorkspace(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            await ctx.workspace.working_dir()
+            workspace_ready.set()
+            return self
+
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            cleaned.append(ctx.workspace.ref)
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    class FailingCapability(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            if failure == 'capability':
+                await workspace_ready.wait()
+                raise RuntimeError('capability setup failed')
+            return self
+
+    class FailingToolset(FunctionToolset[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
+            await workspace_ready.wait()
+            raise RuntimeError('toolset setup failed')
+
+    agent = Agent(TestModel(), capabilities=[SetupWorkspace(), FailingCapability()])
+    toolsets: list[AbstractToolset[Any]] = [FailingToolset()] if failure == 'toolset' else []
+    expected_error = f'{failure} setup failed'
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        await agent.run('go', workspace=backend, toolsets=toolsets)
+
+    assert cleaned == [backend.ref]
+
+
+async def test_setup_failure_runs_every_run_capability_error_hook_without_workspace() -> None:
+    cleaned: list[str] = []
+
+    class Cleanup(AbstractCapability[Any]):
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.id = f'cleanup-{name}'
+            self.defer_loading = True
+
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            cleaned.append(self.name)
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    class FailingCapability(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            raise RuntimeError('capability setup failed')
+
+    with pytest.raises(RuntimeError, match='capability setup failed'):
+        await Agent(TestModel()).run(
+            'go', capabilities=[Cleanup('first'), Cleanup('second'), Cleanup('deferred'), FailingCapability()]
+        )
+
+    assert set(cleaned) == {'first', 'second', 'deferred'}
+
+
+@pytest.mark.parametrize('dynamic', [False, True])
+async def test_setup_failure_calls_on_run_error_on_resolved_capability(dynamic: bool) -> None:
+    cleaned: list[str] = []
+    setup_ready = asyncio.Event()
+
+    class FreshCapability(AbstractCapability[Any]):
+        def __init__(self, instance: str = 'original') -> None:
+            self.instance = instance
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            await asyncio.sleep(0)
+            setup_ready.set()
+            return FreshCapability('resolved')
+
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            cleaned.append(self.instance)
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    class FailingCapability(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            await setup_ready.wait()
+            raise RuntimeError('capability setup failed')
+
+    fresh: AbstractCapability[Any] = FreshCapability()
+    capability = DynamicCapability(lambda ctx: fresh) if dynamic else fresh
+    with pytest.raises(RuntimeError, match='capability setup failed'):
+        await Agent(TestModel(), capabilities=[capability, FailingCapability()]).run('go')
+
+    assert cleaned == ['resolved']
+
+
+async def test_setup_error_hook_nested_agent_run_keeps_normal_recovery() -> None:
+    nested_results: list[str] = []
+
+    class RecoverRunCapability(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='nested run recovered')
+
+    def fail_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('nested model failure')
+
+    nested_agent = Agent(FunctionModel(fail_model), capabilities=[RecoverRunCapability()])
+
+    class Cleanup(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            result = await nested_agent.run('nested')
+            nested_results.append(result.output)
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    class FailingCapability(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            raise RuntimeError('capability setup failed')
+
+    with pytest.raises(RuntimeError, match='capability setup failed'):
+        await Agent(TestModel(), capabilities=[Cleanup(), FailingCapability()]).run('outer')
+
+    assert nested_results == ['nested run recovered']
 
 
 async def test_the_result_carries_the_workspace_the_run_used() -> None:

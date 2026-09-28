@@ -28,6 +28,7 @@ from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavi
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import (
+    WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
     WorkspaceTimeoutError,
@@ -173,6 +174,7 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
         FallbackExceptionGroup.__name__,
         # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
         # restarting a command could repeat its already-completed side effects.
+        WorkspaceError.__name__,
         WorkspaceTimeoutError.__name__,
         WorkspaceOutputLimitError.__name__,
         WorkspaceReadOnlyError.__name__,

@@ -423,6 +423,10 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # Prefect's `Task` reads its function's source for display when core builds a task, which the
     # durable workspace tests do while constructing an agent inside a running test.
     ('os.stat', 'prefect/tasks.py', '__init__'),
+    # Prefect checks and creates the local result-store directory while persisting and replaying task results.
+    ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    ('os.stat', 'prefect/filesystems.py', 'awrite_path'),
+    ('os.stat', 'prefect/filesystems.py', 'aread_path'),
     # logfire resolves the current working directory while classifying user stack frames.
     ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
     # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is

@@ -752,6 +752,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
 
+        For agent runs, errors from capability or toolset `for_run()` setup also reach this hook so it
+        can clean up partial setup. Since setup has not produced an `AgentRunResult`, returning one does
+        not recover those errors.
+
         For a realtime session, returning a recovery result sets `session.result` and suppresses the
         error at the caller's `async with` boundary, after events may already have been observed.
         """

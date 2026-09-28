@@ -2045,6 +2045,18 @@ class TestRunErrorHooks:
         await agent.run('hello')
         assert 'on_run_error' not in cap.log
 
+    async def test_on_run_error_not_called_for_generator_exit_during_setup(self):
+        class FailingSetupCapability(AbstractCapability[Any]):
+            async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+                raise GeneratorExit()
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                pytest.fail('on_run_error should not be called for control exceptions')
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[FailingSetupCapability()])
+        with pytest.raises(GeneratorExit):
+            await agent.run('hello')
+
     async def test_on_run_error_can_transform_error(self):
         @dataclass
         class TransformErrorCap(AbstractCapability[Any]):
@@ -2070,6 +2082,29 @@ class TestRunErrorHooks:
         agent = Agent(FunctionModel(failing_model), capabilities=[RecoverRunCap()])
         result = await agent.run('hello')
         assert result.output == 'recovered'
+
+    async def test_setup_on_run_error_runs_all_registered_hooks(self):
+        hooks = Hooks()
+        observed: list[str] = []
+
+        @hooks.on.run_error
+        async def first(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            observed.append('first')
+            return AgentRunResult(output='setup recovery is unavailable')
+
+        @hooks.on.run_error
+        async def second(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            observed.append('second')
+            return AgentRunResult(output='setup recovery is unavailable')
+
+        class FailingSetupCapability(AbstractCapability[Any]):
+            async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+                raise RuntimeError('capability setup failed')
+
+        with pytest.raises(RuntimeError, match='capability setup failed'):
+            await Agent(TestModel(), capabilities=[hooks, FailingSetupCapability()]).run('hello')
+
+        assert observed == ['first', 'second']
 
     async def test_on_run_error_not_called_when_wrap_run_recovers(self):
         @dataclass
