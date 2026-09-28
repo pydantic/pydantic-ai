@@ -929,12 +929,12 @@ def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
 
     async def _stream(messages: list[ModelMessage], info: AgentInfo):
         response = respond(messages, info)
-        for part in response.parts:
+        for index, part in enumerate(response.parts):
             if isinstance(part, TextPart):
                 yield part.content
             else:
                 assert isinstance(part, ToolCallPart)
-                yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+                yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
 
     return asyncio.run(
         shim.run(
@@ -1017,7 +1017,10 @@ def test_run_warns_the_model_when_the_request_budget_is_nearly_spent(monkeypatch
     assert warned == [False] * 18 + [True, True]
 
 
-def test_run_caps_subagents_so_the_budget_notice_still_fires(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+@pytest.mark.parametrize('parallel_tasks', [1, 2])
+def test_run_caps_subagents_so_the_budget_notice_still_fires(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parallel_tasks: int
+):
     from pydantic_ai.messages import TextPart, ToolCallPart
 
     sink = tmp_path / 'outputs.jsonl'
@@ -1040,13 +1043,20 @@ def test_run_caps_subagents_so_the_budget_notice_still_fires(monkeypatch: pytest
             return ModelResponse(parts=[TextPart('done')])
         if warned[-1]:
             return ModelResponse(parts=[ToolCallPart('noop', {'message': 'out of budget'})])
-        return ModelResponse(parts=[ToolCallPart('Task', {'description': 'scan', 'prompt': 'scan everything'})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('Task', {'description': f'scan {i}', 'prompt': 'scan everything'})
+                for i in range(parallel_tasks)
+            ]
+        )
 
-    # Of the 20 requests, the last 2 are the parent's; the sub-agent gets what is left
-    # after the parent's first one, instead of `SUBAGENT_REQUEST_LIMIT` (75).
+    # Of the 20 requests, the last 2 are the parent's; the first sub-agent gets what is
+    # left after the parent's first one, instead of `SUBAGENT_REQUEST_LIMIT` (75), and a
+    # parallel second one is refused rather than granted the same headroom.
     assert _run_shim(_respond, sink) == 0
     assert sub_requests == 17
     assert warned == [False, True, True]
+    assert shim._subagent_requests_in_flight == 0  # pyright: ignore[reportPrivateUsage]
 
 
 def test_task_refuses_to_spawn_inside_the_final_tenth():

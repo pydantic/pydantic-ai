@@ -912,7 +912,7 @@ def log_safe_outputs_state() -> None:
 # Requests granted to sub-agents that have not returned yet. Their usage reaches the
 # parent's `ctx.usage` only on return, so parallel `Task` calls would otherwise each
 # see the same headroom and jointly overshoot it.
-_subagent_requests_in_flight = 0
+_subagent_requests_in_flight: int = 0
 
 
 def _subagent_request_limit(ctx: RunContext[object]) -> int:
