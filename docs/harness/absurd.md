@@ -133,7 +133,10 @@ going at once in one task would claim each other's checkpoints.
 `parallel_execution_mode` defaults to `'sequential'` and applies to every run of the agent. Set it
 to `'parallel_ordered_events'` to run tool calls concurrently while emitting their result events in
 model-call order. Plain `'parallel'` is excluded because completion-order event delivery can assign
-repeated event-handler step names to different calls on replay.
+repeated event-handler step names to different calls on replay. A tool call claims its step slot when it reaches
+the step, so a capability hook that awaits before the tool runs (`before_tool_execute`,
+`wrap_tool_execute`) can reorder concurrent calls of the same tool between the first run and a
+replay; keep `'sequential'` for agents with such hooks.
 
 ## CodeMode composition
 
