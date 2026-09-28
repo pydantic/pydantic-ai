@@ -190,8 +190,8 @@ You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQ
 Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies).
 
 DBOS stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
-Keep secrets in the workspace capability's `env=` or use them inside a tool instead of passing
-secrets as workflow-side arguments. Protect stored history with an appropriate payload codec.
+Keep secrets in the workspace capability's `env=` instead of passing them to workspace calls;
+calls from function tools run in the workflow too, so their arguments are stored as well. Protect stored history with an appropriate payload codec.
 
 Adding a workspace to an agent changes its workflows' steps, so let in-flight workflows finish or
 deploy the change as a new application version; DBOS can't recover a workflow started before it.

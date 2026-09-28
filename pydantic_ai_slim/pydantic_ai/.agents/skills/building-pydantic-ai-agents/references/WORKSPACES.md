@@ -105,8 +105,8 @@ same capabilities (policy wrappers included). One `ensure` unit at run start cre
 environment and records its ref and working directory, so all units share one environment and
 `working_dir()`/`resolve()` need no unit. Inside a container `workspace=` takes `None`, `'new'`, a
 `WorkspaceRef`, a previous `result.workspace`, or a live instance whose ref a capability recognizes,
-which is rebuilt through that capability. Any wrapper around it, such as `ReadOnlyWorkspace`, is
-rejected with `UserError`, so put policy on the capability (e.g. `LocalWorkspace(..., read_only=True)`). A
+which is rebuilt through that capability. A wrapper around it, such as `ReadOnlyWorkspace`, is
+rejected with `UserError` unless the capability rebuilds the same policy, so put policy on the capability (e.g. `LocalWorkspace(..., read_only=True)`). A
 live instance without a recognized ref raises `UserError`. Workspace calls retry like capability
 operations, so a command or write may repeat if a worker dies mid-call. The deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` wrappers refuse
 workspaces in their container.
