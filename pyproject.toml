@@ -463,6 +463,7 @@ xfail_strict = true
 markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
+    "sprites_live: runs against a real Sprites control plane; needs credentials",
 ]
 filterwarnings = [
     "error",
