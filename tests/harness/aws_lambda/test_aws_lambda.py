@@ -962,7 +962,7 @@ class TestBridgeFailureModes:
         started_waiting = time.monotonic()
         deadline = time.monotonic() + 5
         while not abandoned.is_closed() and time.monotonic() < deadline:
-            time.sleep(0.01)  # pragma: no cover - the retired loop normally closes before polling
+            time.sleep(0.01)  # pragma: lax no cover - the retired loop normally closes before polling
 
         assert abandoned.is_closed()
         assert not abandoned_thread.is_alive()

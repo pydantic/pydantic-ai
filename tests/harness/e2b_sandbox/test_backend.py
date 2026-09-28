@@ -320,7 +320,7 @@ class TestRun:
                     os.kill(child, 0)
                 except ProcessLookupError:
                     break
-                await anyio.sleep(0.01)
+                await anyio.sleep(0.01)  # pragma: lax no cover - the child is often already reaped on the first check
 
     async def test_host_fake_closes_output_when_spawn_fails(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -43,6 +43,8 @@ class TruthInput:
     """The session's number for this input (the `event_id` echo), when the frame carried one."""
     rejected: bool = False
     answered_by: str | None = None
+    refused_at: int | None = None
+    """When the server refused this input, or the response it asked for."""
     refused_read: int | None = None
     """When the client read an error refusing this input, or the response it asked for."""
     answer_lost: bool = False

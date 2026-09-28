@@ -111,7 +111,13 @@ from ._openai_protocol import (
 from ._lifecycle import LIFECYCLE_EVENT_TYPES, InputId, LifecycleEvent, ResponseStatus
 from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
-from ._utils import inject_trace_context, reconnect_with_backoff, require_pcm_audio, resolve_advertised_tools
+from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
+    inject_trace_context,
+    reconnect_with_backoff,
+    require_pcm_audio,
+    resolve_advertised_tools,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -436,6 +442,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
+        self._gave_up = False
         self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
@@ -512,6 +519,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._lifecycle.foreign_messages_sent(sum(is_user_message_item(item) for item in items))
 
     @property
+    def _can_reconnect(self) -> bool:
+        return (
+            not self._gave_up
+            and self._dial is not None
+            and self._reconnect is not None
+            and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
+        )
+
+    @property
     def _answers_tool_calls_per_response(self) -> bool:
         return True
 
@@ -577,7 +593,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         elif isinstance(content, ClearAudio):
             await self._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
         elif isinstance(content, CreateResponse):
-            await self._request_response((input_index,))
+            await self._solicit_response((input_index,))
         elif isinstance(content, CancelResponse):
             # Only cancel when a response is actually active: with server VAD the provider may have
             # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
@@ -664,7 +680,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
         if (response_id := self._tool_call_responses.pop(content.tool_call_id, None)) is None:
             # A call this connection didn't see made: its result asks for a response of its own.
-            await self._request_response((input_index,))
+            await self._solicit_response((input_index,))
             return
         batch = self._tool_call_batches[response_id]
         batch.unanswered.discard(content.tool_call_id)
@@ -695,7 +711,25 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             }
         )
         if respond:
-            await self._request_response((input_index,))
+            await self._solicit_response((input_index,))
+
+    async def _solicit_response(self, input_indexes: Sequence[int]) -> None:
+        """Request a response for a caller's `send()`, which is told when the request didn't go out.
+
+        A `response.create` that fails on a dead socket never reached the server, so no response is
+        active. Left marked active, a reconnect would re-ask for a response the caller was told had
+        failed. Only the caller's own request is taken back: one the receive loop sends for a deferred
+        request has no caller to tell, so the reconnect re-asks for it as before.
+        """
+        ws = self._ws
+        try:
+            await self._request_response(input_indexes)
+        except self.transport_errors:
+            # Only a request that went straight out can fail here; a deferred one sends nothing yet. If
+            # the link was replaced meanwhile, the active response is the new socket's, not this one.
+            if self._ws is ws:
+                self._response_active = False
+            raise
 
     async def _request_response(self, input_indexes: Sequence[int], *, answers: Sequence[InputId] | None = None) -> None:
         """Ask the model to respond now, or defer until the active response completes.
@@ -800,12 +834,16 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     yield event, False
                 yield RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect), False
                 continue
+            reconnects = self._reconnect is not None and self._dial is not None
+            if reconnects:
+                # Out of attempts: no reconnect is coming any more.
+                self._gave_up = True
             self._lifecycle.closed()
             for event in self._take_pending_lifecycle():
                 yield event, False
             # No reconnect policy, or the reconnect failed: a closed connection is fatal. Surface it as a
             # non-recoverable error and end the stream cleanly, rather than raising.
-            reconnect_failed = '; reconnect failed' if self._reconnect is not None and self._dial is not None else ''
+            reconnect_failed = '; reconnect failed' if reconnects else ''
             yield (
                 RealtimeSessionErrorEvent(
                     message=f'{self._provider_label} connection closed{reconnect_failed}: {closed}', recoverable=False
