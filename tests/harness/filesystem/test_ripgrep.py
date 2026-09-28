@@ -248,11 +248,30 @@ class TestGrep:
             ({'pattern': '(', 'context': 0}, 'ripgrep failed'),
             ({'pattern': 'os', 'context': 21}, 'context must be between'),
             ({'pattern': 'os', 'path': 'missing'}, 'not a file or directory'),
-            ({'pattern': 'os', 'path': '../outside'}, 'outside the root'),
+            ({'pattern': 'os', 'path': '../outside'}, 'is outside root_dir'),
         ],
     )
     async def test_retries(self, workspace: Path, arguments: dict[str, object], message: str) -> None:
         assert message in await call(workspace, 'grep', arguments)
+
+    @pytest.mark.skipif(os.name == 'nt' or os.geteuid() == 0, reason='root reads a mode-000 file')
+    async def test_unreadable_paths_leave_a_partial_result(self, workspace: Path) -> None:
+        locked, locked_dir = workspace / 'locked.py', workspace / 'locked'
+        locked.write_text('import os\n')
+        locked_dir.mkdir()
+        (locked_dir / 'inner.py').write_text('import os\n')
+        locked.chmod(0)
+        locked_dir.chmod(0)
+        try:
+            assert await call(workspace, 'grep', {'pattern': 'import os'}) == (
+                'src/app.py:1:import os\n[2 paths could not be read (Permission denied): locked, locked.py]'
+            )
+            assert await call(workspace, 'list_files', {'glob': '*.py'}) == (
+                'locked.py\nsrc/app.py\n[1 path could not be read (Permission denied): locked]'
+            )
+        finally:
+            locked.chmod(0o644)
+            locked_dir.chmod(0o755)
 
     @pytest.mark.skipif(os.name == 'nt', reason='POSIX symlinks')
     async def test_symlink_outside_root_is_dropped(

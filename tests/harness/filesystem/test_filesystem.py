@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import posixpath
+import re
 import stat
 from collections.abc import Sequence
 from dataclasses import replace
@@ -287,24 +288,26 @@ def outside(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 class TestPathSecurity:
     async def test_traversal_with_dotdot(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
-        with pytest.raises(PermissionError, match='resolves outside'):
+        with pytest.raises(PermissionError, match='is outside root_dir'):
             await toolset._resolve_path(await toolset._scope(ws), '../../../etc/passwd')  # pyright: ignore[reportPrivateUsage]
 
     async def test_traversal_absolute_path(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
-        with pytest.raises(PermissionError, match='resolves outside'):
+        with pytest.raises(PermissionError, match=r'`/etc/passwd` is outside root_dir `.*`; .*Create or clone'):
             await toolset._resolve_path(await toolset._scope(ws), '/etc/passwd')  # pyright: ignore[reportPrivateUsage]
 
     async def test_traversal_encoded(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
-        with pytest.raises(PermissionError, match='resolves outside'):
+        with pytest.raises(PermissionError, match='is outside root_dir'):
             await toolset._resolve_path(await toolset._scope(ws), 'subdir/../../..')  # pyright: ignore[reportPrivateUsage]
 
     async def test_symlinked_directory_leading_outside_is_refused(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend, outside: Path
     ) -> None:
         (fs_root / 'escape').symlink_to(outside)
-        with pytest.raises(ModelRetry, match='resolves outside the root directory'):
+        refusal = r'`escape/secret.txt` leads outside root_dir `.*` through a symlink.*Use a path inside `'
+        with pytest.raises(ModelRetry, match=refusal) as refused:
             await toolset.read_file('escape/secret.txt', workspace=ws)
-        with pytest.raises(ModelRetry, match='resolves outside the root directory'):
+        assert str(outside) not in str(refused.value)
+        with pytest.raises(ModelRetry, match='leads outside root_dir'):
             await toolset.write_file('escape/new.txt', 'x', workspace=ws)
         assert not (outside / 'new.txt').exists()
 
@@ -479,6 +482,31 @@ class TestRootDir:
     async def test_no_workspace_fails_the_run(self) -> None:
         with pytest.raises(UserError, match='`FileSystem` needs a workspace'):
             await call_tool([FileSystem[None]()], 'list_directory', {})
+
+    async def test_no_workspace_names_the_one_the_history_continues_in(self, tmp_path: Path) -> None:
+        capabilities: list[AbstractCapability[object]] = [LocalWorkspace(tmp_path), FileSystem[object]()]
+        first = await Agent(TestModel(call_tools=[]), capabilities=capabilities).run('go')
+        agent = Agent(TestModel(call_tools=[]), capabilities=[FileSystem[object]()])
+        local = f'local:{tmp_path}'
+        with pytest.raises(UserError, match=re.escape(f'history continues in workspace `{local}`')) as error:
+            await agent.run('again', message_history=first.all_messages())
+        assert f'(such as `LocalWorkspace({str(tmp_path)!r})`)' in str(error.value)
+
+        history: list[ModelMessage] = [
+            ModelResponse(parts=[TextPart('done')], workspace_ref=WorkspaceRef(provider='modal', id='sb-1'))
+        ]
+        with pytest.raises(UserError) as error:
+            await agent.run('again', message_history=history)
+        assert str(error.value) == (
+            '`FileSystem` needs a workspace. The message history continues in workspace `modal:sb-1`; attach the '
+            'capability that provides `modal` workspaces (such as `ModalSandbox()`) to continue there, or pass '
+            '`workspace=` to the run.'
+        )
+
+        # A provider the harness does not ship names no example capability.
+        history = [ModelResponse(parts=[TextPart('done')], workspace_ref=WorkspaceRef(provider='memfs', id='m1'))]
+        with pytest.raises(UserError, match=r'provides `memfs` workspaces to continue there'):
+            await agent.run('again', message_history=history)
 
     async def test_unavailable_workspace_names_policy_reason(self) -> None:
         with pytest.raises(UserError, match=r'`FileSystem`.*disabled by policy') as error:
@@ -1033,11 +1061,12 @@ class TestListDirectory:
         result = await toolset.list_directory('.', workspace=ws)
         assert 'inner_link.txt  (' in result
         assert 'escape_link.txt' in result
-        with pytest.raises(ModelRetry, match='resolves outside the root directory'):
+        refusal = r'leads outside root_dir .* through a symlink'
+        with pytest.raises(ModelRetry, match=refusal):
             await toolset.read_file('escape_link.txt', workspace=ws)
-        with pytest.raises(ModelRetry, match='resolves outside the root directory'):
+        with pytest.raises(ModelRetry, match=refusal):
             await toolset.write_file('escape_link.txt', 'x', workspace=ws)
-        with pytest.raises(ModelRetry, match='resolves outside the root directory'):
+        with pytest.raises(ModelRetry, match=refusal):
             await toolset.list_directory('escape_dir', workspace=ws)
         assert (outside / 'secret.txt').read_text() == 'escaped!\n'
 
@@ -2585,3 +2614,29 @@ def _toolset_with_patterns(read_only: list[str] | None, protected: list[str]) ->
         max_search_results=1,
         max_find_results=1,
     )
+
+
+class TestUsedAsAToolset:
+    """The tools emit capability events, which core accepts only from a capability's tools."""
+
+    @pytest.fixture
+    def anyio_backend(self) -> str:
+        # Agent.run needs asyncio.
+        return 'asyncio'
+
+    @pytest.mark.parametrize('prefix', [None, 'fs'])
+    async def test_a_bare_toolset_points_to_the_capability(self, tmp_path: Path, prefix: str | None) -> None:
+        (tmp_path / 'a.txt').write_text('a\n')
+        toolset = FileSystem[object]().get_toolset()
+        name = 'read_file' if prefix is None else f'{prefix}_read_file'
+
+        def read(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(name, {'path': 'a.txt'})])
+
+        agent = Agent(
+            FunctionModel(read),
+            capabilities=[LocalWorkspace(tmp_path)],
+            toolsets=[toolset if prefix is None else toolset.prefixed(prefix)],
+        )
+        with pytest.raises(UserError, match=r'Pass `capabilities=\[FileSystem\(\)\]` rather than its toolset'):
+            await agent.run('go')

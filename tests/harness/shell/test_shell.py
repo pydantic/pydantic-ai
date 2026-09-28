@@ -1824,6 +1824,23 @@ class TestLaunch:
         assert status == (False, 0)
         assert Path(job.output_path).read_text(encoding='utf-8') == 'finished\n'
 
+    @pytest.mark.parametrize(('lacking', 'named'), [(('mv',), '`mv`'), (('mv', 'base64'), '`mv` and `base64`')])
+    async def test_missing_job_tools_fail_the_launch_by_name(
+        self, tmp_path: Path, lacking: tuple[str, ...], named: str
+    ) -> None:
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir()
+        for source in (Path('/usr/bin'), Path('/bin')):
+            for tool in source.iterdir():
+                if tool.name not in lacking and not os.path.lexists(bin_dir / tool.name):
+                    (bin_dir / tool.name).symlink_to(tool)
+        backend = LocalWorkspaceBackend(tmp_path, env={'PATH': str(bin_dir)})
+        with pytest.raises(ToolFailed) as failed:
+            await _shell_toolset(tmp_path).start_command(_run_context(Workspace(backend)), 'echo hello')
+        assert failed.value.message == (
+            f'Shell needs `mv` and `base64` on PATH in the workspace; this image lacks {named}.'
+        )
+
 
 class TestReadBgOutputEdgeCases:
     async def test_missing_logs_read_as_empty(self, shell_dir: Path) -> None:
