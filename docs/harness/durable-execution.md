@@ -78,7 +78,7 @@ DBOS(config=dbos_config)
 agent = Agent(
     'anthropic:claude-opus-5-5',
     name='coder',
-    capabilities=[LocalWorkspace('.'), Coder(), DBOSDurability(parallel_execution_mode='sequential')],
+    capabilities=[LocalWorkspace('.'), Coder(), DBOSDurability()],
 )
 
 
@@ -167,8 +167,7 @@ Add it to the agent's capabilities next to `TemporalDurability()`. For work long
 
 ### Engine notes
 
-- **DBOS** runs a workspace run's tool calls one at a time, and warns unless you pass
-  `DBOSDurability(parallel_execution_mode='sequential')`.
+- **DBOS** runs a workspace run's tool calls one at a time, so recovery replays each call's recorded result.
 - **Sticky `cd`** is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, keyed by the
   run ID, so a new worker continues in the same directory after a restart. Without an explicit
   `run_id`, a durable run's ID comes from its workflow or flow run and survives worker recovery. The
