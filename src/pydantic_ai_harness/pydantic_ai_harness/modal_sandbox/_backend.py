@@ -572,7 +572,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         # Modal takes whole seconds and reads 0 as no deadline, so round up. The client
         # deadline below includes exec-start, collection, and stream drain.
         deadline = None if timeout is None else max(1, math.ceil(timeout))
-        timed_out = f'Command timed out after {timeout} seconds.'
+        timed_out = '' if timeout is None else f'Command timed out after {timeout:g} seconds'
         token = uuid4().hex
         pid_file = f'/tmp/.pydantic-modal-{token}.pid'
         cancel_file = f'/tmp/.pydantic-modal-{token}.cancel'
@@ -668,7 +668,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 ):
                     await exit_event.wait()
             except WorkspaceTimeoutError as error:
-                command_error = error
+                # This deadline is what remains of the command's; report the one the caller gave.
+                command_error = WorkspaceTimeoutError(timed_out, stdout=error.stdout, stderr=error.stderr)
                 group.cancel_scope.cancel()
             else:
                 # Once the process exits, output gets a short grace past its command deadline to drain.

@@ -101,7 +101,7 @@ async def test_filesystem_not_directory_error_uses_builtin_exception(fake_modal:
 async def test_command_start_timeout_is_bounded(fake_modal: FakeModal) -> None:
     fake_modal.exec_hangs = True
     backend = ModalSandboxBackend()
-    with pytest.raises(WorkspaceTimeoutError, match=r'Command timed out after 0.01s'):
+    with pytest.raises(WorkspaceTimeoutError, match=r'^Command timed out after 0\.01 seconds$'):
         with anyio.fail_after(0.2):
             await backend.run(['echo', 'hello'], timeout=0.01)
 
@@ -146,7 +146,7 @@ async def test_command_timeout_keeps_captured_output(fake_modal: FakeModal) -> N
     fake_modal.responder = lambda argv, timeout: ('partial stdout', 'partial stderr', 0)
     fake_modal.wait_hangs = True
     backend = ModalSandboxBackend()
-    with pytest.raises(WorkspaceTimeoutError) as exc_info:
+    with pytest.raises(WorkspaceTimeoutError, match=r'^Command timed out after 0\.01 seconds$') as exc_info:
         await backend.run(['echo', 'hello'], timeout=0.01)
     assert exc_info.value.stdout == 'partial stdout'
     assert exc_info.value.stderr == 'partial stderr'

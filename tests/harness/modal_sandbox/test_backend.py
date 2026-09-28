@@ -152,7 +152,7 @@ class TestRun:
         # names the timeout the caller asked for.
         fake_modal.responder = lambda argv, timeout: ('', '', -1)
         backend = await started()
-        with pytest.raises(WorkspaceTimeoutError, match=r'^Command timed out after 0\.5 seconds\.$'):
+        with pytest.raises(WorkspaceTimeoutError, match=r'^Command timed out after 0\.5 seconds$'):
             await backend.run(['sleep', '99'], timeout=0.5)
         assert fake_modal.sandboxes[0].exec_calls[-1].timeout == 1
 
