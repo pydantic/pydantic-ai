@@ -941,7 +941,7 @@ def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
             prompt='review the PR',
             model=FunctionModel(respond, stream_function=_stream),
             label='test-model',
-            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
+            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
             mcp_servers=[_safe_outputs_toolset(sink)],
             session_id='test-session',
         )
@@ -1015,6 +1015,52 @@ def test_run_warns_the_model_when_the_request_budget_is_nearly_spent(monkeypatch
     # one to end the run.
     assert _run_shim(_respond, sink) == 0
     assert warned == [False] * 18 + [True, True]
+
+
+def test_run_caps_subagents_so_the_budget_notice_still_fires(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from pydantic_ai.messages import TextPart, ToolCallPart
+
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 20)
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    sub_requests = 0
+    warned: list[bool] = []
+
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal sub_requests
+        instructions = info.instructions or ''
+        if shim.SUBAGENT_INSTRUCTIONS in instructions:
+            # A sub-agent that never finishes on its own.
+            sub_requests += 1
+            return ModelResponse(parts=[ToolCallPart('Glob', {'pattern': '*'})])
+        warned.append(shim.REQUEST_BUDGET_NOTICE in instructions)
+        if sink.exists():
+            return ModelResponse(parts=[TextPart('done')])
+        if warned[-1]:
+            return ModelResponse(parts=[ToolCallPart('noop', {'message': 'out of budget'})])
+        return ModelResponse(parts=[ToolCallPart('Task', {'description': 'scan', 'prompt': 'scan everything'})])
+
+    # Of the 20 requests, the last 2 are the parent's; the sub-agent gets what is left
+    # after the parent's first one, instead of `SUBAGENT_REQUEST_LIMIT` (75).
+    assert _run_shim(_respond, sink) == 0
+    assert sub_requests == 17
+    assert warned == [False, True, True]
+
+
+def test_task_refuses_to_spawn_inside_the_final_tenth():
+    import asyncio
+
+    from pydantic_ai.usage import RunUsage, UsageLimits
+
+    class _Ctx:
+        model = None
+        usage = RunUsage(requests=18)
+        usage_limits = UsageLimits(request_limit=20)
+
+    out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
+    assert out == 'error: the request budget is nearly spent; finish the task from what you already have'
 
 
 def test_read_only_subagent_tools_are_non_mutating_and_exclude_task():
@@ -1170,6 +1216,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pyte
     class _Ctx:
         model = FunctionModel(_respond, stream_function=_stream)
         usage = parent_usage
+        usage_limits = None
 
     out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'scan models/openai.py', 'find tool_call_id bugs'))
     assert out == 'SUB: investigated'
@@ -1599,6 +1646,7 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.Monke
     class _Ctx:
         model = TestModel()
         usage = RunUsage()
+        usage_limits = None
 
     out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
     assert out == 'error: sub-agent failed: downstream model exploded'
@@ -1630,6 +1678,7 @@ def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch: pytest
     class _Ctx:
         model = FunctionModel(_respond, stream_function=_stream)
         usage = RunUsage()
+        usage_limits = None
 
     asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'sub', 'work'))
 

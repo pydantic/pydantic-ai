@@ -909,8 +909,32 @@ def log_safe_outputs_state() -> None:
         logger.info('  safe-output: %s', ln[:300])
 
 
+# Requests granted to sub-agents that have not returned yet. Their usage reaches the
+# parent's `ctx.usage` only on return, so parallel `Task` calls would otherwise each
+# see the same headroom and jointly overshoot it.
+_subagent_requests_in_flight = 0
+
+
+def _subagent_request_limit(ctx: RunContext[object]) -> int:
+    """Requests a new sub-agent may spend without eating into the parent's final tenth.
+
+    The parent's budget notice only fires if the parent itself still has requests left
+    when that tenth starts; a sub-agent that returns past it would skip the notice.
+    """
+    request_limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
+    if request_limit is None:
+        return SUBAGENT_REQUEST_LIMIT
+    headroom = request_limit - request_limit // 10 - ctx.usage.requests - _subagent_requests_in_flight
+    return min(SUBAGENT_REQUEST_LIMIT, headroom)
+
+
 async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     """Claude's `Task` tool: spawn a read-only sub-agent on `ctx.model`."""
+    global _subagent_requests_in_flight
+    sub_request_limit = _subagent_request_limit(ctx)
+    if sub_request_limit <= 0:
+        logger.info('Task refused, request budget nearly spent: %s', description[:120])
+        return 'error: the request budget is nearly spent; finish the task from what you already have'
     logger.info('Task spawn: %s', description[:120])
     # Fresh dedupe set per sub-agent — otherwise inheriting the parent's
     # `seen` AGENTS.md set would silently hide context the sub-agent needs.
@@ -929,12 +953,13 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
             ProcessEventStream(_stream_events),
         ],
     )
-    # Fresh `RunUsage` so `SUBAGENT_REQUEST_LIMIT` bounds the sub-agent, not
+    # Fresh `RunUsage` so `sub_request_limit` bounds the sub-agent, not
     # (parent + sub). Merge the deltas back regardless of success/failure.
     sub_usage = RunUsage()
+    _subagent_requests_in_flight += sub_request_limit
     try:
         result = await asyncio.wait_for(
-            sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT), usage=sub_usage),
+            sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage),
             timeout=SUBAGENT_TIMEOUT_SECS,
         )
     except asyncio.TimeoutError:
@@ -950,6 +975,8 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         ctx.usage.incr(sub_usage)
         logger.exception('sub-agent failed: %s', description[:120])
         return f'error: sub-agent failed: {exc}'
+    finally:
+        _subagent_requests_in_flight -= sub_request_limit
     ctx.usage.incr(sub_usage)
     logger.info('Task done: +%d sub-requests (run total now %d)', sub_usage.requests, ctx.usage.requests)
     return str(result.output or '')
