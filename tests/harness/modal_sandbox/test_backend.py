@@ -435,6 +435,26 @@ class TestRun:
         assert len(sandbox.start_scripts) == 1
         assert sum('command -v setsid' in ' '.join(call.argv) for call in sandbox.exec_calls) == 1
 
+    async def test_isolation_probe_does_not_consume_the_command_timeout(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The first command on a custom image probes for setsid. A slow probe, like acquiring the
+        # sandbox, must not count against the command's own timeout.
+        now = 0.0
+        monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=lambda: now))
+
+        def slow_probe(argv: list[str], timeout: int | None) -> tuple[str, str, int]:
+            nonlocal now
+            if 'command -v setsid' in ' '.join(argv):
+                now += 60
+                return '', '', 0
+            return '', '', 137
+
+        fake_modal.responder = slow_probe
+        backend = await started(image='custom:full')
+        # A 137 that did not use up the command's deadline is its real exit, not a timeout.
+        assert (await backend.run(['kill-self'], timeout=30)).exit_code == 137
+
     async def test_missing_setsid_uses_direct_exec_and_caches_probe(self, fake_modal: FakeModal) -> None:
         fake_modal.responder = lambda argv, timeout: (
             ('', '', 127) if 'command -v setsid' in ' '.join(argv) else ('ok', '', 0)

@@ -586,8 +586,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
         variables: dict[str, str | None] | None = {**self._env, **(env or {})} or None
-        # Acquiring the sandbox has its own bound; the timeout is the command's alone.
+        # Acquiring the sandbox and probing for setsid have their own bounds; the timeout is the command's alone.
         sandbox = await self.get_sandbox()
+        # Without setsid, only the wrapper leader can be signalled, not its descendants.
+        isolated = await self._has_setsid(sandbox)
         started_at = time.monotonic()
         # Modal takes whole seconds and reads 0 as no deadline, so round up. The client
         # deadline below includes exec-start, collection, and stream drain.
@@ -596,8 +598,6 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         token = uuid4().hex
         pid_file = f'/tmp/.pydantic-modal-{token}.pid'
         cancel_file = f'/tmp/.pydantic-modal-{token}.cancel'
-        # Without setsid, only the wrapper leader can be signalled, not its descendants.
-        isolated = await self._has_setsid(sandbox)
         # Register a killable group before running user code; a tombstone prevents a late
         # exec-start reply from launching work after its caller has been cancelled.
         # `setsid -w` waits for its child; without -w Modal reports success after the fork.
