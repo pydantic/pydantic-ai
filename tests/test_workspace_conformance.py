@@ -11,9 +11,9 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import (
+    FileEntry,
     LocalWorkspaceBackend,
     WorkspaceBackend,
-    WorkspaceFileEntry,
     WorkspaceRef,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
@@ -132,10 +132,10 @@ class _FilesystemProviderBackend:
     async def write_bytes(self, path: str, data: bytes) -> None:
         await self.backend.write_bytes(path, data)
 
-    async def stat(self, path: str) -> WorkspaceFileEntry:
+    async def stat(self, path: str) -> FileEntry:
         return await self.backend.stat(path)
 
-    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         return await self.backend.list_dir(path)
 
     async def make_dir(self, path: str) -> None:

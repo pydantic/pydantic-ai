@@ -35,11 +35,9 @@ from pydantic_ai.workspaces import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
-    WorkspaceFileEntry,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
-    WorkspaceResult,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WrapperWorkspace,
@@ -97,10 +95,6 @@ class WorkspaceCallResult:
     error: WorkspaceCallError | None = None
 
 
-def _entry(entry: WorkspaceFileEntry) -> FileEntry:
-    return FileEntry(name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size)
-
-
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
 class WorkspaceCall:
     """One `Workspace` method call: the method and the arguments it takes."""
@@ -127,9 +121,8 @@ class WorkspaceCall:
                     )
                 return WorkspaceCallResult(text=working_dir, ref=workspace.ref)
             case 'run':
-                result = await workspace.run(self.command, shell=self.shell, env=self.env, timeout=self.timeout)
                 return WorkspaceCallResult(
-                    command=CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+                    command=await workspace.run(self.command, shell=self.shell, env=self.env, timeout=self.timeout)
                 )
             case 'read_bytes':
                 return WorkspaceCallResult(data=await workspace.read_bytes(self.path))
@@ -137,9 +130,9 @@ class WorkspaceCall:
                 await workspace.write_bytes(self.path, self.data)
                 return WorkspaceCallResult()
             case 'stat':
-                return WorkspaceCallResult(entries=[_entry(await workspace.stat(self.path))])
+                return WorkspaceCallResult(entries=[await workspace.stat(self.path)])
             case 'list_dir':
-                return WorkspaceCallResult(entries=[_entry(entry) for entry in await workspace.list_dir(self.path)])
+                return WorkspaceCallResult(entries=list(await workspace.list_dir(self.path)))
             case 'make_dir':
                 await workspace.make_dir(self.path)
                 return WorkspaceCallResult()
@@ -304,7 +297,7 @@ class DurableWorkspace(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> WorkspaceResult:
+    ) -> CommandResult:
         if not self._in_container():
             return await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
         call = WorkspaceCall(
@@ -324,12 +317,12 @@ class DurableWorkspace(WrapperWorkspace):
             return await self.wrapped.write_bytes(path, data)
         await self._call(WorkspaceCall(method='write_bytes', path=path, data=data))
 
-    async def stat(self, path: str) -> WorkspaceFileEntry:
+    async def stat(self, path: str) -> FileEntry:
         if not self._in_container():
             return await self.wrapped.stat(path)
         return (await self._call(WorkspaceCall(method='stat', path=path))).entries[0]
 
-    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
         if not self._in_container():
             return await self.wrapped.list_dir(path)
         return (await self._call(WorkspaceCall(method='list_dir', path=path))).entries
