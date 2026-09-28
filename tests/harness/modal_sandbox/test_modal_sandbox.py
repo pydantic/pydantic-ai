@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import sys
 import warnings
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import anyio
 import pytest
 
 import pydantic_ai_harness.modal_sandbox as modal_sandbox_package
-from pydantic_ai import Agent
+from pydantic_ai import Agent, models
 from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -31,6 +33,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _capability
 
+from .._docs_examples import python_blocks
 from .._tool_calls import call_tools
 from .conftest import skip_or_fail_live_tier
 from .fake_modal import FakeModal
@@ -554,3 +557,24 @@ def test_live_tier_with_empty_credentials_skips_unless_required(
     monkeypatch.setenv('MODAL_REQUIRE_LIVE', require)
     with pytest.raises(outcome):
         skip_or_fail_live_tier()
+
+
+def test_documented_run_error_hook_terminates_the_failed_runs_sandbox(fake_modal: FakeModal, tmp_path: Path) -> None:
+    # The block is copied on its own, so it must not depend on names another block defines.
+    fake_modal.host_root = tmp_path.resolve()
+    [block] = [block for block in python_blocks('docs/harness/modal-sandbox.md') if 'on.run_error' in block.source]
+
+    # The run streams its model requests: one command, which creates the sandbox, then a failure.
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        if len(messages) > 1:
+            raise RuntimeError('model failed')
+        command_tool = next(tool.name for tool in info.function_tools if tool.name in ('shell', 'run_command'))
+        yield {0: DeltaToolCall(name=command_tool, json_args='{"command": "true"}')}
+
+    model = FunctionModel(stream_function=stream)
+    namespace: dict[str, Any] = {'__name__': '__main__'}
+    with mock.patch.object(models, 'infer_model', return_value=model):
+        exec(compile(block.source, f'{block.path}:{block.start_line}', 'exec'), namespace)
+    with pytest.raises(RuntimeError, match='model failed'):
+        namespace['agent'].run_sync('Run a command.')
+    assert fake_modal.sandboxes[0].shutting_down
