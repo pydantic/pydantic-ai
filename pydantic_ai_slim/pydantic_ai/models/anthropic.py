@@ -645,6 +645,18 @@ def _effective_thinking(
     return OMIT if isinstance(thinking, Omit) else dict(thinking)
 
 
+def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
+    """Whether the retry may add `drop_block` to the wire `thinking` object.
+
+    Not when the caller set a `block_binding` of their own, and not for a thinking type other than
+    `adaptive`, since Anthropic accepts `block_binding` only alongside adaptive thinking. A missing
+    type counts as adaptive, which is what `_drop_stale_thinking_blocks` fills in.
+    """
+    return isinstance(thinking, Omit) or (
+        'block_binding' not in thinking and thinking.get('type', 'adaptive') == 'adaptive'
+    )
+
+
 def _is_stale_thinking_block_error(
     profile: ModelProfile,
     thinking: dict[str, object] | Omit,
@@ -655,13 +667,11 @@ def _is_stale_thinking_block_error(
     Scoped to models that bind and to requests that set no `block_binding` of their own, through the
     typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
     fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
-    `adaptive` is out too: Anthropic accepts `block_binding` only alongside adaptive thinking.
+    `adaptive` is out too; see `_can_add_drop_block`.
     """
     if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
-    if not isinstance(thinking, Omit) and (
-        'block_binding' in thinking or thinking.get('type', 'adaptive') != 'adaptive'
-    ):
+    if not _can_add_drop_block(thinking):
         return False
     body: object | None = error.body
     return (
@@ -740,10 +750,7 @@ def _thinking_with_stale_block_history(
     """Resolve request parameters that keep a prior request-local drop active for this history."""
     keep_dropping = (
         profile.get('anthropic_binds_thinking_blocks', False)
-        and (
-            isinstance(effective_thinking, Omit)
-            or ('block_binding' not in effective_thinking and effective_thinking.get('type', 'adaptive') == 'adaptive')
-        )
+        and _can_add_drop_block(effective_thinking)
         and _history_dropped_stale_thinking_blocks(
             messages,
             compaction_boundary=compaction_boundary,
