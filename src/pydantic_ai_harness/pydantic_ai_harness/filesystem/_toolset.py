@@ -1220,6 +1220,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # without commands, or when the command path itself fails.
         if entry is not None and supports_commands(scope.workspace):
             return await self._command_search_files(scope, ctx, entry, resolved, pattern, include_glob)
+        include_hidden = bool(include_glob and _explicit_hidden(include_glob))
         walk_cut = False
         hidden_count = 0
         if entry is None:
@@ -1227,11 +1228,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         elif not entry.is_dir:
             files = [entry]
         else:
-            walked, walk_cut = await self._walk(
-                scope, resolved, include_hidden=bool(include_glob and _explicit_hidden(include_glob))
-            )
+            walked, walk_cut = await self._walk(scope, resolved, include_hidden=include_hidden)
             # Hidden directories are pruned; count their directory entry, not unseen descendants.
-            if not (include_glob and _explicit_hidden(include_glob)):
+            if not include_hidden:
                 hidden_count = sum(_is_hidden(posixpath.relpath(child.path, resolved)) for child in walked)
             files = [child for child in walked if not child.is_dir]
 
@@ -1240,9 +1239,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         capped = False
         for file in sorted(files, key=lambda child: _sort_key(child.path)):
             file_path = file.path
-            rel_str = self._walk_entry(
-                scope, file_path, resolved, include_hidden=bool(include_glob and _explicit_hidden(include_glob))
-            )
+            rel_str = self._walk_entry(scope, file_path, resolved, include_hidden=include_hidden)
             if rel_str is None:
                 continue
             if include_glob and not fnmatch.fnmatch(rel_str, include_glob):
@@ -1298,6 +1295,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         prepare, permitted = self._batch_authorizer(scope, cwd)
         prefix = posixpath.relpath(cwd, scope.root)
         command_glob = include_glob.removeprefix(prefix + '/') if include_glob and prefix != '.' else include_glob
+        include_hidden = bool(include_glob and _explicit_hidden(include_glob))
 
         async def accept(record: Record) -> str | None:
             if include_glob and not (
@@ -1309,7 +1307,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 scope,
                 cwd,
                 record,
-                include_hidden=bool(include_glob and _explicit_hidden(include_glob)),
+                include_hidden=include_hidden,
                 permitted=permitted,
             )
 
@@ -1335,11 +1333,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 cwd=cwd,
                 limit=self._max_search_results,
                 accept=lambda record: (
-                    self._match_line(
-                        scope, cwd, record, include_hidden=bool(include_glob and _explicit_hidden(include_glob))
-                    )
-                    if permitted(record)
-                    else None
+                    self._match_line(scope, cwd, record, include_hidden=include_hidden) if permitted(record) else None
                 ),
                 prepare=prepare,
             )
@@ -1350,7 +1344,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 cwd=cwd,
                 target=target,
                 pattern=pattern,
-                include_hidden=bool(include_glob and _explicit_hidden(include_glob)),
+                include_hidden=include_hidden,
                 limit=self._max_search_results,
                 accept=accept,
                 prepare=prepare,
@@ -1415,13 +1409,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         # Without `**`, nothing deeper than the pattern's own components can match.
         max_depth = None if '**' in parts else len(parts)
-        walked, walk_cut = await self._walk(
-            scope, resolved, max_depth=max_depth, include_hidden=_explicit_hidden(pattern)
-        )
+        include_hidden = _explicit_hidden(pattern)
+        walked, walk_cut = await self._walk(scope, resolved, max_depth=max_depth, include_hidden=include_hidden)
         # Report only the entries observed: the walk prunes hidden subdirectories.
         hidden_count = (
             0
-            if _explicit_hidden(pattern)
+            if include_hidden
             else sum(
                 _is_hidden(relative := posixpath.relpath(child.path, resolved))
                 and (child.is_dir and '**' in parts or _glob_match(parts, relative.split('/')))
@@ -1438,7 +1431,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         matches: list[str] = []
         capped = False
         for match in sorted(found, key=lambda child: _sort_key(child.path)):
-            if self._walk_entry(scope, match.path, resolved, include_hidden=_explicit_hidden(pattern)) is None:
+            if self._walk_entry(scope, match.path, resolved, include_hidden=include_hidden) is None:
                 continue
             if not match.is_dir and match.size is None and not await scope.workspace.exists(match.path):
                 # A dangling symlink is inside the root but names nothing.
@@ -1486,6 +1479,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if entry is None or not entry.is_dir:
             raise NotADirectoryError(f'Path {path!r} is not a directory.')
         prepare, permitted = self._batch_authorizer(scope, resolved)
+        include_hidden = bool(glob and _explicit_hidden(glob))
         arguments = ['--files', '--sort', 'path', *(['--glob', glob] if glob is not None else [])]
         try:
             if scope.lacks_ripgrep:
@@ -1497,7 +1491,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 limit=self._max_find_results,
                 listing=True,
                 accept=lambda record: (
-                    self._ripgrep_entry(scope, resolved, record, include_hidden=bool(glob and _explicit_hidden(glob)))
+                    self._ripgrep_entry(scope, resolved, record, include_hidden=include_hidden)
                     if permitted(record)
                     else None
                 ),
@@ -1514,13 +1508,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
                     return None
                 return await self._authorized_entry(
-                    scope, resolved, record, include_hidden=bool(glob and _explicit_hidden(glob)), permitted=permitted
+                    scope, resolved, record, include_hidden=include_hidden, permitted=permitted
                 )
 
             results, capped = await run_posix_search(
                 scope.workspace,
                 cwd=resolved,
-                include_hidden=bool(glob and _explicit_hidden(glob)),
+                include_hidden=include_hidden,
                 limit=self._max_find_results,
                 accept=accept,
                 prepare=prepare,
@@ -1622,6 +1616,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         else:
             cwd, target = posixpath.dirname(resolved), posixpath.join('.', posixpath.basename(resolved))
         prepare, permitted = self._batch_authorizer(scope, cwd)
+        include_hidden = bool(glob and _explicit_hidden(glob))
         arguments = [
             '--line-number',
             '--with-filename',
@@ -1651,9 +1646,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 cwd=cwd,
                 limit=self._max_search_results,
                 accept=lambda record: (
-                    self._match_line(scope, cwd, record, include_hidden=bool(glob and _explicit_hidden(glob)))
-                    if permitted(record)
-                    else None
+                    self._match_line(scope, cwd, record, include_hidden=include_hidden) if permitted(record) else None
                 ),
                 prepare=prepare,
             )
@@ -1671,7 +1664,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
                     return None
                 return await self._authorized_match(
-                    scope, cwd, record, include_hidden=bool(glob and _explicit_hidden(glob)), permitted=permitted
+                    scope, cwd, record, include_hidden=include_hidden, permitted=permitted
                 )
 
             results, capped = await run_posix_search(
@@ -1683,7 +1676,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 literal=literal,
                 ignore_case=ignore_case,
                 context=context,
-                include_hidden=bool(glob and _explicit_hidden(glob)),
+                include_hidden=include_hidden,
                 limit=self._max_search_results,
                 accept=accept,
                 prepare=prepare,
