@@ -58,6 +58,8 @@ if _HAS_SPRITES:  # pragma: no branch - the fixture requires the SDK-backed fake
     async def transport(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncIterator[SpriteTransport]:
         transport = SpriteTransport(tmp_path)
         monkeypatch.setenv('SPRITE_TOKEN', 'test-token')
+        # Handshake retries back off for seconds against the live service; the fake fails at once.
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._HANDSHAKE_RETRY_DELAYS', (0.0, 0.0))
         monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend.AsyncSpritesClient', transport.client)
         # `WSCommand` opens the exec WebSocket through the `connect` it imports from `websockets`.
         monkeypatch.setattr('sprites.websocket.connect', transport.connect)

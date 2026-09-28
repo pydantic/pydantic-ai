@@ -177,7 +177,9 @@ class SpriteTransport:
         self.close_started = asyncio.Event()
         self.release_close: asyncio.Event | None = None
         self.connect_error: Exception | None = None
-        self.connect_error_once: Exception | None = None
+        # Raised by the next connects, one each, before `connect_error`.
+        self.connect_errors: list[Exception] = []
+        self.connects = 0
         # The socket closes before the command reports an exit status.
         self.connection_dropped = False
         self.exec_close_error: Exception | None = None
@@ -201,10 +203,9 @@ class SpriteTransport:
         return client
 
     async def connect(self, url: str, **kwargs: object) -> FakeExecSocket:
-        if self.connect_error_once is not None:
-            error = self.connect_error_once
-            self.connect_error_once = None
-            raise error
+        self.connects += 1
+        if self.connect_errors:
+            raise self.connect_errors.pop(0)
         if self.connect_error is not None:
             raise self.connect_error
         if self.exec_latency:

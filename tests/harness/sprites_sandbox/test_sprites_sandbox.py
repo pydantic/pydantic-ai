@@ -694,12 +694,16 @@ class TestSpritesSandbox:
         with pytest.raises(NetworkError, match='handshake'):
             await SpritesSandboxBackend().run(['true'])
         assert transport.execs == []
+        # Three attempts for the command, then three for the stderr capture read-back after it failed.
+        assert transport.connects == 6
 
     async def test_exec_handshake_retries_when_command_cannot_have_started(self, transport: SpriteTransport) -> None:
-        transport.connect_error_once = TimeoutError('connect stalled')
-        result = await SpritesSandboxBackend().run(['echo', 'ok'])
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        transport.connect_errors = [TimeoutError('connect stalled'), InvalidMessage('bad handshake')]
+        result = await backend.run(['echo', 'ok'])
         assert result.stdout == 'ok\n'
-        assert len(transport.execs) == 1
+        assert (transport.connects, len(transport.execs)) == (3, 1)
 
     async def test_lost_exit_after_side_effect_is_not_retryable(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()

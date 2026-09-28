@@ -108,6 +108,9 @@ _T = TypeVar('_T')
 _CLOSE_TIMEOUT = 6.0
 # Above the SDK's fixed 120-second creation request timeout, so the SDK's own error wins when it fires.
 _ACQUIRE_TIMEOUT = 150.0
+# Seconds before each retry of an exec handshake that failed before its socket opened: three
+# attempts over about five seconds. A single retry after 0.1 seconds ended 4 of 14 live eval runs.
+_HANDSHAKE_RETRY_DELAYS = (1.0, 4.0)
 # Bounds the internal `pwd` probe behind `working_dir()`, which may first wake a sleeping Sprite.
 _INTERNAL_EXEC_TIMEOUT = 30
 # Combined output ceiling and error preview size, as in Pydantic AI's local backend.
@@ -592,8 +595,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         try:
             with deadline:
                 # Stdin EOF gates execution: a handshake that failed before the socket opened cannot
-                # have started the command, so it is retried once; an opened socket never is.
-                for attempt in (1, 2):  # pragma: no branch - every attempt breaks or raises
+                # have started the command, so it is retried with backoff; an opened socket never is.
+                for delay in (*_HANDSHAKE_RETRY_DELAYS, None):  # pragma: no branch - each breaks or raises
                     try:
                         await exec_command.start()
                         break
@@ -602,9 +605,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                             raise WorkspaceUnavailableError(
                                 'Sprites exec connection failed; command may have run'
                             ) from error
-                        if attempt == 2:
+                        if delay is None:
                             raise NetworkError(f'Sprites exec handshake failed: {error}') from error
-                        await anyio.sleep(0.1)
+                        await anyio.sleep(delay)
                         exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
                 try:
                     code = await exec_command.wait()
