@@ -110,7 +110,6 @@ class WorkspaceCall:
     data: bytes = b''
     command: WorkspaceCommand = ''
     shell: bool = False
-    cwd: str | None = None
     env: dict[str, str] | None = None
     timeout: float | None = None
 
@@ -128,9 +127,7 @@ class WorkspaceCall:
                     )
                 return WorkspaceCallResult(text=working_dir, ref=workspace.ref)
             case 'run':
-                result = await workspace.run(
-                    self.command, shell=self.shell, cwd=self.cwd, env=self.env, timeout=self.timeout
-                )
+                result = await workspace.run(self.command, shell=self.shell, env=self.env, timeout=self.timeout)
                 return WorkspaceCallResult(
                     command=CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
                 )
@@ -305,14 +302,13 @@ class DurableWorkspace(WrapperWorkspace):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> WorkspaceResult:
         if not self._in_container():
-            return await self.wrapped.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
         call = WorkspaceCall(
-            method='run', command=command, shell=shell, cwd=cwd, env=dict(env) if env else None, timeout=timeout
+            method='run', command=command, shell=shell, env=dict(env) if env else None, timeout=timeout
         )
         result = (await self._call(call)).command
         assert result is not None

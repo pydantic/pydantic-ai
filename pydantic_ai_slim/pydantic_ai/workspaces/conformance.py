@@ -92,15 +92,6 @@ class WorkspaceBackendSuite:
         result = await _commands(backend).run(['sh', '-c', 'read value || printf eof'], timeout=30)
         assert (result.exit_code, result.stdout) == (0, 'eof')
 
-    async def test_missing_cwd_raises_file_not_found(self, backend: WorkspaceBackend) -> None:
-        missing = posixpath.join(await backend.working_dir(), f'.pydantic-ai-missing-{uuid.uuid4().hex}')
-        with pytest.raises(FileNotFoundError):
-            await _commands(backend).run(['pwd'], cwd=missing)
-
-    async def test_relative_cwd_is_rejected(self, backend: WorkspaceBackend) -> None:
-        with pytest.raises(ValueError):
-            await _commands(backend).run(['true'], cwd='relative')
-
     async def test_undecodable_command_bytes_are_replaced(
         self, backend: WorkspaceBackend, has_real_posix_shell: bool
     ) -> None:
@@ -200,9 +191,6 @@ class WorkspaceBackendSuite:
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         result = await _commands(backend).run(['sh', '-c', 'printf %s "$CONFORMANCE"'], env={'CONFORMANCE': 'value'})
         assert result.stdout == 'value'
-
-    async def test_absolute_cwd_is_used(self, backend: WorkspaceBackend) -> None:
-        assert (await _commands(backend).run(['sh', '-c', 'pwd -P'], cwd='/')).stdout == '/\n'
 
     async def test_ref_exists_after_the_first_operation_and_is_stable(self, backend: WorkspaceBackend) -> None:
         before = backend.ref

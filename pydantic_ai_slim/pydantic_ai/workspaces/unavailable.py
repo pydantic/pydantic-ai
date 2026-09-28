@@ -27,7 +27,6 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsCommands):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> Never:
