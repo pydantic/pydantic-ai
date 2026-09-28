@@ -182,6 +182,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             except FileExistsError as error:
                 # Only the parent itself existing as a file gets here; deeper ones raise `NotADirectoryError`.
                 raise NotADirectoryError(path) from error
+            with suppress(FileNotFoundError):
+                # Opening a FIFO or device for writing would block or write somewhere unexpected.
+                mode = target.stat().st_mode
+                if not stat_module.S_ISREG(mode) and not stat_module.S_ISDIR(mode):
+                    raise OSError(f'not a regular file: {path!r}')
             target.write_bytes(data)
 
         await run_in_executor(write)
