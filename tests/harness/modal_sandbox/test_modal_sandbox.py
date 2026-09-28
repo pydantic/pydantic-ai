@@ -45,6 +45,14 @@ async def test_backend_acquires_fresh_workspace_and_records_ref(fake_modal: Fake
     assert backend.ref == WorkspaceRef(provider='modal', id=native.object_id)
 
 
+def test_root_package_exports_the_capability_and_backend() -> None:
+    import pydantic_ai_harness
+
+    assert pydantic_ai_harness.ModalSandbox is ModalSandbox
+    assert pydantic_ai_harness.ModalSandboxBackend is ModalSandboxBackend
+    assert {'ModalSandbox', 'ModalSandboxBackend'} <= set(pydantic_ai_harness.__all__)
+
+
 def test_missing_modal_extra_fails_at_import_with_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     """The package refuses to import without `modal`, so no later call can hit a bare `ModuleNotFoundError`."""
     monkeypatch.setitem(sys.modules, 'modal', None)
