@@ -264,16 +264,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
         validate_timeout(timeout)
-        if cwd is not None and not Path(cwd).is_absolute():
-            raise ValueError(
-                f'cwd must be an absolute path, got {cwd!r}: a relative cwd would resolve against '
-                "the host process's working directory, not the workspace's"
-            )
         merged_env = {**self._env, **(env or {})}
         if isinstance(command, str):
             if not shell:
@@ -281,8 +275,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         elif shell:
             raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
 
-        root = await self._get_working_dir()
-        working_dir = cwd if cwd is not None else root
+        working_dir = await self._get_working_dir()
         # Directory preparation is not command time; process startup still counts, so a
         # process spawned after the deadline is terminated by the existing cleanup path.
         absolute_deadline = None if timeout is None else anyio.current_time() + timeout
@@ -311,7 +304,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 # A deleted workspace directory raises `WorkspaceUnavailableError` here.
                 await self._get_working_dir()
             # Like `sh`, a program that is missing (127) or not executable (126) is a normal result.
-            # Only the program itself: a missing `cwd` raises the same error types and must still raise.
+            # Only the program itself: an unusable working directory raises the same error types and must still raise.
             if isinstance(command, str) or error.filename != command[0]:
                 raise
             missing = isinstance(error, FileNotFoundError)
