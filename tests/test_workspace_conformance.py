@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -147,3 +148,22 @@ class TestProviderBackend(WorkspaceBackendSuite):
             provider.directories.pop(ref.id, None)
 
         return destroy
+
+
+class _NormalizingRealpathBackend(FilesystemOnlyWorkspaceBackend):
+    async def realpath(self, path: str) -> str:
+        return posixpath.normpath(path)
+
+
+class _RelativeRealpathBackend(FilesystemOnlyWorkspaceBackend):
+    async def realpath(self, path: str) -> str:
+        return path.lstrip('/')
+
+
+@pytest.mark.anyio
+async def test_native_realpath_rule_runs_without_commands() -> None:
+    """The other `realpath` rules need `ln -s`, so a filesystem-only backend's `realpath` needs its own."""
+    rule = WorkspaceBackendSuite().test_native_realpath_keeps_the_working_dir_and_missing_names
+    await rule(_NormalizingRealpathBackend(FakeWorkspace('normalizing-realpath')))
+    with pytest.raises(AssertionError):
+        await rule(_RelativeRealpathBackend(FakeWorkspace('relative-realpath')))
