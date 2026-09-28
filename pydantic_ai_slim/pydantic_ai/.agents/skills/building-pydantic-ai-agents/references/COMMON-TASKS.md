@@ -90,6 +90,14 @@ Read [Build Multi-Step Workflows with Graphs](./ORCHESTRATION-AND-INTEGRATIONS.m
 
 Read [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior).
 
+## Set Up Observability with Logfire
+
+Read [Set Up Observability and Model Access](../SKILL.md#set-up-observability-and-model-access), then [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior).
+
+## Reach Every Model with One Key
+
+Read [Choose or Configure Models](./AGENTS-CORE.md#choose-or-configure-models) for `gateway/` model strings through the Pydantic AI Gateway.
+
 ## Advanced and Less Common Features
 
 Read only the relevant section in [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTRATION-AND-INTEGRATIONS.md):

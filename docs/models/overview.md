@@ -4,6 +4,9 @@ description: "See every LLM provider Pydantic AI supports, how models, providers
 
 # Model Providers
 
+!!! tip "One key for every model"
+    The easiest way to try models from several providers is the [Pydantic AI Gateway](../gateway.md): one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring in [Pydantic Logfire](../logfire.md). Set `PYDANTIC_AI_GATEWAY_API_KEY` and add the `gateway/` prefix to the model string, for example `Agent('gateway/anthropic:claude-sonnet-4-6')`. The [Gateway quick start](../gateway.md#quick-start) shows how to create a key.
+
 Pydantic AI is model-agnostic and has built-in support for multiple model providers:
 
 * [OpenAI](openai.md)

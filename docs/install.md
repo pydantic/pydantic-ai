@@ -15,18 +15,45 @@ pip/uv-add pydantic-ai
 This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), and [Logfire](logfire.md) integrations.
 To use any other models or integrations, add the relevant extras to your install command, e.g. `pydantic-ai[bedrock,temporal]`. Alternatively, you can install the [`pydantic-ai-slim`](#slim-install) package with only the extras you need.
 
+## Next steps
+
+**See what your agent does.** Pydantic AI is instrumented with [OpenTelemetry](logfire.md), and [Pydantic Logfire](https://pydantic.dev/logfire) shows every run, model request, and tool call, with its cost. The `logfire` SDK comes with `pydantic-ai` (with the ["slim" version](#slim-install), add the `logfire` extra), and Logfire has a [free tier](https://pydantic.dev/pricing/). Authenticate once and create a project:
+
+```bash
+py-cli logfire auth
+py-cli logfire projects new
+```
+
+Then add two lines before your agent runs:
+
+```python {title="hello_logfire.py"}
+import logfire
+
+from pydantic_ai import Agent
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
+agent = Agent('openai:gpt-5.2', name='hello_world_agent')
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
+
+The [Logfire guide](logfire.md#using-logfire) covers the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
+
+**Reach every model with one key.** The [Pydantic AI Gateway](gateway.md) is one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring: set `PYDANTIC_AI_GATEWAY_API_KEY` and use a `gateway/` model string such as `gateway/openai:gpt-5.2`. Or use a provider's own API key, as described in [Models and Providers](models/overview.md).
+
+**Building with a coding agent?** Install the [Pydantic AI skill](coding-agent-skills.md), so your agent writes current Pydantic AI code and sets up Logfire the way these docs describe.
+
 ## TLS certificates
 
 Pydantic AI's own HTTP requests, and those of providers migrated to [`httpx2`](https://httpx2.pydantic.dev/), verify TLS certificates against the operating system trust store rather than shipping a `certifi` bundle.
 Minimal container images and corporate proxies that rely on a private CA therefore need those certificates installed in the image (for example the `ca-certificates` package, plus your proxy's root CA).
 Alternatively, pass such a provider an `httpx2.AsyncClient` you configured yourself through its `http_client` argument — see the [provider docs](models/overview.md) for the client each one accepts.
 Providers whose SDKs still use legacy `httpx` (such as Groq and Cohere) keep its `certifi`-based verification and take a legacy `httpx.AsyncClient` instead.
-
-## Use with Pydantic Logfire
-
-Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
-
-Logfire comes included with `pydantic-ai` (but not the ["slim" version](#slim-install)), so you can typically start using it immediately by following the [Logfire setup docs](logfire.md#using-logfire).
 
 ## Running Examples
 

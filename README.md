@@ -333,7 +333,8 @@ For the annotated walkthrough and Logfire tracing, see the [same example in the 
 
 ## Next Steps
 
-- [Install Pydantic AI](https://pydantic.dev/docs/ai/overview/install/) and put your own coding agent to work: install the [Pydantic AI skill](https://pydantic.dev/docs/ai/overview/coding-agent-skills/), point it at the [examples](https://pydantic.dev/docs/ai/examples/setup/) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build. No API key needed to start (there's a built-in [`'test'` model](https://pydantic.dev/docs/ai/guides/testing/#unit-testing-with-testmodel)).
+- [Install Pydantic AI](https://pydantic.dev/docs/ai/overview/install/) and put your own coding agent to work: install the [Pydantic AI skill](https://pydantic.dev/docs/ai/overview/coding-agent-skills/), point it at the [examples](https://pydantic.dev/docs/ai/examples/setup/) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build. No API key needed to start (there's a built-in [`'test'` model](https://pydantic.dev/docs/ai/guides/testing/#unit-testing-with-testmodel)), and the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/) is one key for every model when you're ready.
+- See what your agent did: [instrument it](https://pydantic.dev/docs/ai/integrations/logfire/) with one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai), which has a [free tier](https://pydantic.dev/pricing/), is the easiest way to look, any OTLP backend works.
 - Read the [docs](https://pydantic.dev/docs/ai/core-concepts/agent/) and the [API reference](https://pydantic.dev/docs/ai/api/pydantic-ai/agent/).
 - Give your agent its batteries: [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/).
 - Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
@@ -345,7 +346,7 @@ Everything you need to ship production-grade AI agents:
 - [Pydantic AI](https://pydantic.dev/pydantic-ai?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): the type-safe AI SDK
 - [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/): the official capability library and harness, from single capabilities to complete agents
 - [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): AI-first, full-stack observability
-- [Pydantic AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): unified LLM proxy
+- [Pydantic AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): one key for every model, with cost monitoring and spending limits
 - [Pydantic Evals](https://pydantic.dev/docs/ai/evals/evals/): evaluate any Python function, agents included, with [production evals on Logfire](https://pydantic.dev/logfire/evals?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai)
 - [Pydantic Graph](https://pydantic.dev/docs/ai/graph/graph/): typed graph control flow
 - [genai-prices](https://github.com/pydantic/genai-prices): model pricing data, kept current
