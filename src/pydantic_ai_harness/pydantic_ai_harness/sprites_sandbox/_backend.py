@@ -527,6 +527,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 interrupted = True
                 await _close_command(exec_command)
                 partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
+                # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
                 stderr = await self._collect_stderr(capture) if _capture_stderr else ''
                 raise WorkspaceTimeoutError(
                     f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
@@ -536,7 +537,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             if not interrupted:
                 await _close_command(exec_command)
                 if _capture_stderr:
-                    await self._collect_stderr(capture)
+                    # Removes the capture file, as far as the shielded grace allows.
+                    await stop_shielded(lambda: self._read_capture(capture))
             if isinstance(error, Exception) and (mapped := _map_error(error, sandbox.name)) is not None:
                 raise mapped from error
             raise
@@ -547,24 +549,25 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
 
     async def _collect_stderr(self, path: str) -> str:
-        output = ''
-
-        async def collect() -> None:
-            nonlocal output
-            # Bounded to avoid moving an unbounded stderr capture through the exec URL/output buffer.
-            result = await self.run(
-                ['sh', '-c', 'head -c 65536 -- "$1"; rm -f -- "$1"', 'sh', path],
-                timeout=1,
-                _capture_stderr=False,
-                _check_working_dir=False,
-            )
-            output = result.stdout
-
+        """The stderr capture of a timed-out command, or `''` if it cannot be read."""
         try:
-            await stop_shielded(collect)
+            return await self._read_capture(path)
         except Exception:
             logger.warning('Could not retrieve Sprite stderr capture')
-        return output
+            return ''
+
+    async def _read_capture(self, path: str) -> str:
+        """Read and remove the stderr capture of a command stopped before its wrapper printed it."""
+        # Bounded to avoid moving an unbounded stderr capture through the exec URL/output buffer.
+        # A fresh exec takes a live round trip of about two seconds (observed 2026-09-28), so the
+        # read gets the internal command bound, not a sub-second one.
+        result = await self.run(
+            ['sh', '-c', 'head -c 65536 -- "$1"; rm -f -- "$1"', 'sh', path],
+            timeout=_INTERNAL_EXEC_TIMEOUT,
+            _capture_stderr=False,
+            _check_working_dir=False,
+        )
+        return result.stdout
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         async with self._operation():

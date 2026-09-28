@@ -771,6 +771,24 @@ class TestSpritesSandbox:
         assert caught.value.stderr == 'ready'
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
+    async def test_timeout_reads_stderr_back_over_a_slow_exec(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        caught: list[WorkspaceTimeoutError] = []
+
+        async def run() -> None:
+            with pytest.raises(WorkspaceTimeoutError) as error:
+                await backend.run('printf ready >&2; exec sleep 5', shell=True, timeout=0.5)
+            caught.append(error.value)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            await transport.exec_started.wait()
+            # Only the exec that reads the capture back pays the handshake time of a live Sprite.
+            transport.exec_latency = 1.5
+        assert caught[0].stderr == 'ready'
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
     async def test_cancellation_closes_the_socket(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()

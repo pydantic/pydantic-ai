@@ -183,6 +183,8 @@ class SpriteTransport:
         # Holds the client's stdin EOF, and with it the stream's attachment, until set.
         self.release_stdin_eof: asyncio.Event | None = None
         self.url_limit = 40_000
+        # Seconds each exec handshake takes from now on; a live one takes about two (2026-09-28).
+        self.exec_latency = 0.0
         self.fs_writes: list[str] = []
 
     def client(self, token: str) -> AsyncSpritesClient:
@@ -197,6 +199,8 @@ class SpriteTransport:
             raise error
         if self.connect_error is not None:
             raise self.connect_error
+        if self.exec_latency:
+            await anyio.sleep(self.exec_latency)
         # /v1/sprites/{name}/exec
         name = unquote(urlsplit(url).path.split('/')[3])
         if name not in self.names:
