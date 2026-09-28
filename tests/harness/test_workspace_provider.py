@@ -58,7 +58,7 @@ async def test_failed_stop_does_not_replace_original_cancellation() -> None:
     async def stop() -> None:
         raise RuntimeError('stop failed')
 
-    with pytest.raises(WorkspaceTimeoutError):
+    with pytest.raises(WorkspaceTimeoutError, match=r'^Command timed out after 0\.01 seconds$'):
         async with command_deadline(0.01, stop=stop):
             await anyio.sleep_forever()
 
