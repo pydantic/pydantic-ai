@@ -1,7 +1,7 @@
 """Fly.io Sprites backend for Pydantic AI's `WorkspaceBackend` protocol.
 
-External assumptions last verified 2026-09-25 against sprites-py 0.7.0 source, the Sprites API
-docs, and (2026-09-15) a local WebSocket transport probe, with no live cloud calls:
+External assumptions last verified against sprites-py 0.7.0 source, the Sprites API docs, a local
+WebSocket transport probe (2026-09-15), and the live service on the dates given below:
 
 * `AsyncSpritesClient` requires its token as an argument and reads no environment variable; sprite
   creation uses the SDK's fixed 120-second request timeout, while `aclose` closes the local async
@@ -15,7 +15,8 @@ docs, and (2026-09-15) a local WebSocket transport probe, with no live cloud cal
   EXIT frame or the JSON `exit` message, raises `NetworkError` when the socket closes before either,
   and turns a failed handshake into a parsed `APIError` carrying the HTTP status. The working
   directory goes in the `dir` query parameter as the SDK sends it; the API page lists `dir` only
-  for the HTTP exec endpoint:
+  for the HTTP exec endpoint. A `dir` that does not exist fails the exec with exit status 1 and a
+  `chdir` message on stdout, without starting the command (observed 2026-09-28):
   https://github.com/superfly/sprites-py/blob/v0.7.0/src/sprites/websocket.py
 * The exec API starts the command as soon as the request arrives, before the client's output
   stream is attached, and replays only the last 16 or 64 KiB printed before then: the rest was lost
@@ -45,7 +46,8 @@ docs, and (2026-09-15) a local WebSocket transport probe, with no live cloud cal
   https://docs.sprites.dev/concepts/lifecycle/
 
 Re-check these sources, the installed signatures, and the local transport probe before changing
-lifecycle or command transport behavior. The integration uses the SDK's native asyncio client.
+lifecycle or command transport behavior. The integration uses the SDK's native asyncio client, so
+it runs on asyncio only.
 """
 
 from __future__ import annotations
@@ -398,7 +400,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # Every operation acquires the Sprite first, so this one check covers them all.
         _require_asyncio()
         async with self._lock:
-            sandbox = await self._acquire(fetched=fetched)
+            sandbox = await self._acquire_locked(fetched=fetched)
             if self._working_dir_pending:
                 # Still pending after a failed or cancelled attempt, so the next acquisition retries it.
                 await self._make_working_dir(sandbox)
@@ -423,7 +425,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             )
         self._working_dir_pending = False
 
-    async def _acquire(self, *, fetched: bool) -> AsyncSprite:
+    async def _acquire_locked(self, *, fetched: bool) -> AsyncSprite:
         """Create or attach to the Sprite; the caller holds `_lock`."""
         if (sandbox := self._sandbox) is not None and not (fetched and self._unfetched):
             return sandbox
