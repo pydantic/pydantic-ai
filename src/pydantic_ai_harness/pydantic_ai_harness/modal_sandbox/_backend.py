@@ -278,11 +278,14 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self._setsid_available: bool | None = True if image is None and ref is None and sandbox is None else None
 
     async def get_sandbox(self) -> modal.Sandbox:
-        """Return the typed `modal.Sandbox`, creating or attaching to it on first use.
+        """Return the typed `modal.Sandbox`, for Modal features the workspace API does not cover.
 
-        The lock serializes concurrent first uses -- two callers each creating a sandbox would
-        leave the loser billed and unreferenced. Attaching by `ref` to a sandbox that no longer
-        exists raises `WorkspaceUnavailableError`; it does not create a replacement.
+        On a backend with no sandbox yet, this creates one (which Modal bills) or attaches to the one
+        `ref` names, just like the first operation. Attaching by `ref` to a sandbox that no longer
+        exists raises `WorkspaceUnavailableError`; it does not create a replacement. After that it
+        returns the cached handle without checking that the sandbox is still running: one terminated
+        elsewhere surfaces on the next operation. Calling this does not make you responsible for
+        terminating the sandbox; whoever holds the `ref` decides, as before.
 
         Raises:
             UserError: The event loop is not asyncio.
