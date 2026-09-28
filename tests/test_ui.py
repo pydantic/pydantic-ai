@@ -79,7 +79,6 @@ from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent, OnComplet
 from pydantic_ai.ui._adapter import resolve_allow_uploaded_files
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 

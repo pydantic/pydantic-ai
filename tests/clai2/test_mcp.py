@@ -34,8 +34,6 @@ from pydantic_clai2.plugin_loader import PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart
 from pydantic_clai2.settings_store import SettingsStore
 
-pytestmark = pytest.mark.anyio
-
 
 def make_host(settings: dict[str, JsonValue], store: MCPStore | None = None) -> PluginHost[None]:
     host: PluginHost[None] = PluginHost(name='mcp', console=Console(file=io.StringIO()), settings=settings)

@@ -20,8 +20,6 @@ from pydantic_ai_harness.shell import Shell
 if os.name == 'posix':  # pragma: no branch
     import resource
 
-pytestmark = pytest.mark.anyio
-
 
 def writer(size: int) -> str:
     code = f"with open('output', 'wb') as output: output.write(b'x' * {size})"
@@ -55,7 +53,6 @@ class TestShellFileLimits:
         with pytest.raises(ValueError, match='persist_cwd'):
             Shell(max_file_bytes=1, persist_cwd=True).get_toolset()
 
-    @pytest.mark.anyio
     @pytest.mark.skipif(os.name != 'posix', reason='Requires POSIX resource limits')
     @pytest.mark.parametrize('background', [False, True])
     @pytest.mark.parametrize('size', [128, 8192])
@@ -83,13 +80,11 @@ class TestShellFileLimits:
         assert resource.getrlimit(resource.RLIMIT_FSIZE) == parent_limits
         (tmp_path / 'parent-output').write_bytes(b'x' * 8192)
 
-    @pytest.mark.anyio
     async def test_default_unlimited(self, tmp_path: Path) -> None:
         toolset = Shell(cwd=tmp_path).get_toolset()
         assert 'exit code' not in await toolset.run_command(writer(8192))
         assert (tmp_path / 'output').stat().st_size == 8192
 
-    @pytest.mark.anyio
     @pytest.mark.skipif(os.name != 'posix', reason='Requires POSIX resource limits')
     async def test_child_hard_limit(self, tmp_path: Path) -> None:
         toolset = Shell(cwd=tmp_path, max_file_bytes=1024).get_toolset()
@@ -97,7 +92,6 @@ class TestShellFileLimits:
         result = await toolset.run_command(f'{shlex.quote(sys.executable)} -c {shlex.quote(code)}')
         assert '(1024, 1024)' in result
 
-    @pytest.mark.anyio
     @pytest.mark.skipif(os.name != 'posix', reason='Requires POSIX resource limits')
     async def test_signal_diagnosis(self, tmp_path: Path) -> None:
         toolset = Shell(cwd=tmp_path, max_file_bytes=1024).get_toolset()
@@ -105,7 +99,6 @@ class TestShellFileLimits:
         assert 'File-size limit exceeded' in result
         assert (tmp_path / 'output').stat().st_size == 1024
 
-    @pytest.mark.anyio
     @pytest.mark.skipif(os.name != 'posix', reason='Requires POSIX resource limits')
     async def test_agent_run_clone(self, tmp_path: Path, anyio_backend: str) -> None:
         if anyio_backend != 'asyncio':  # pragma: no cover -- only asyncio runs here

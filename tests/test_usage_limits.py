@@ -38,8 +38,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
-
 
 def test_genai_prices():
     usage = GenaiPricesUsage(input_tokens=100, output_tokens=50)

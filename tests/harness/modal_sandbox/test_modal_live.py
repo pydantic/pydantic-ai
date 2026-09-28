@@ -67,7 +67,6 @@ pytestmark = [
             'requires PYDANTIC_AI_HARNESS_MODAL_LIVE=1 and either MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or ~/.modal.toml'
         ),
     ),
-    pytest.mark.anyio,
 ]
 
 # A small, common image keeps cold starts cheap; these tests need only a POSIX shell and coreutils.

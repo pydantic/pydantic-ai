@@ -88,8 +88,6 @@ from tests.harness.experimental.acp._acp_clients import (
     RecordingClientBase,
 )
 
-pytestmark = pytest.mark.anyio
-
 # A decider maps a permission request (the tool call) to the option_id the client "clicks",
 # or to None to signal a cancelled permission outcome (the user dismissed the dialog).
 PermissionDecider = Callable[[schema.ToolCallUpdate], str | None]

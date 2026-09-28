@@ -26,8 +26,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.theme_picker import build_theme_picker, theme_command
 from tests.clai2.menu_script import Script, make_context, pick
 
-pytestmark = pytest.mark.anyio
-
 
 async def test_picker_and_settings_share_registry_and_persistence(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)

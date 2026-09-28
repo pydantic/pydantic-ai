@@ -1,9 +1,7 @@
 """Tests for the `CodeMode` capability and the `CodeModeToolset` it wraps.
 
-Style follows `pydantic_ai/tests/test_toolsets.py`: module-level
-`pytestmark = pytest.mark.anyio`, an `anyio_backend` fixture, async tests, and a
-`build_run_context` factory. The `anyio` package's pytest plugin is already
-loaded by the project (no extra dev dependency needed).
+Style follows `pydantic_ai/tests/test_toolsets.py`: an `anyio_backend` fixture, async
+tests, and a `build_run_context` factory.
 """
 
 from __future__ import annotations
@@ -93,8 +91,6 @@ async def _close_direct_toolsets(anyio_backend: str) -> AsyncIterator[None]:
         toolset = _entered_toolsets.pop()
         await toolset.__aexit__(None, None, None)
 
-
-pytestmark = pytest.mark.anyio
 
 T = TypeVar('T')
 

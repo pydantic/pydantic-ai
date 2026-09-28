@@ -76,9 +76,7 @@ from .conftest import IsStr, iter_message_parts, remove_schema_descriptions, try
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire

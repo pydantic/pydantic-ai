@@ -15,8 +15,6 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 
-pytestmark = pytest.mark.anyio
-
 
 def model_for(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) -> FunctionModel:
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:

@@ -45,7 +45,6 @@ if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
 ]
 

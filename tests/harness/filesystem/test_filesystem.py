@@ -33,8 +33,6 @@ from pydantic_ai_harness.filesystem._toolset import (
     _sanitize_recoverable_error,  # pyright: ignore[reportPrivateUsage]
 )
 
-pytestmark = pytest.mark.anyio
-
 
 def _reported_hash(result: str) -> str:
     """Extract the content hash a tool reports, from a `[hash:xxxx]` suffix."""
@@ -1786,7 +1784,6 @@ class TestFileSystemCapability:
         with pytest.raises(ValueError, match='max_read_lines must be a positive integer'):
             FileSystem(max_read_lines='1000')  # type: ignore[arg-type]
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self, tmp_path: Path, anyio_backend: object) -> None:
         if str(anyio_backend) != 'asyncio':  # pragma: no cover -- only asyncio runs here
             pytest.skip('Agent.run requires asyncio event loop')
