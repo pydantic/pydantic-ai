@@ -83,7 +83,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     """
 
     max_read_lines: int = 2000
-    """Maximum number of lines returned by a single `read_file` call."""
+    """Number of lines a `read_file` call returns when it passes no `limit`."""
 
     max_read_chars: int | None = _DEFAULT_READ_CHARS
     """Maximum characters in a single `read_file` result, header and hint included.
@@ -92,7 +92,8 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     hint names the first line not shown, so a caller paging by `offset` cannot
     skip content. Defaults to 50,000 characters. Set this at or below any
     downstream tool-output cap; a cap applied after the fact cuts mid-line and
-    drops or strands the hint. `None` leaves only `max_read_lines` in force.
+    drops or strands the hint. `None` leaves only `max_read_lines` in force. A cap
+    smaller than the header and hint themselves cannot be met; the result still carries them.
     """
 
     max_list_results: int = 1000

@@ -65,7 +65,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. Binary files are detected and not dumped. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
+| `read_file` | Read a text file with line numbers and a content hash. Binary files are detected and not dumped. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -247,8 +247,8 @@ applies the same rule to absolute symlink targets.
 ## Security model
 
 - **Containment.** Every tool call resolves its path, symlinks included, and
-  rejects one that leads outside `root_dir`, through `..`, an absolute path, or
-  a symlink. Listings may name a link that leads outside, but reading or
+  rejects one that leads outside `root_dir`, whether through `..`, an absolute
+  path, or a symlink. Listings may name a link that leads outside, but reading or
   writing it is rejected, and the directory walkers don't descend into it.
   Patterns match the path relative to `root_dir`; `read_only_patterns` and
   `denied_patterns` also match a symlink's target, so a link to `.env` is

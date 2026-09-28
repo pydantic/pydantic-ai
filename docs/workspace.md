@@ -67,8 +67,9 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run i
 ```
 
 The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites. A
-sandbox is created the first time a tool uses it, and keeps running after the run until you or its
-provider stop it; see [Cleaning up](#cleaning-up). If no tool used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
+sandbox is created the first time the run uses it (a tool call, or `Coder` loading repo
+instructions at run start; durable runs create it when they start), and keeps running after the run until you or its
+provider stop it; see [Cleaning up](#cleaning-up). If the run never used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
 
 ## Pick up where you left off {#continuing-in-the-same-workspace}
 
@@ -120,9 +121,10 @@ async def main() -> None:
     await agent.run('Explain what fizzbuzz.py does.', workspace=ref)
 ```
 
-- A sandbox's `ref` is `None` until a tool first uses it, so a run whose tools never touched the
+- A sandbox's `ref` is `None` until the run first uses it, so a run that never touched the
   workspace records no reference. A later turn that doesn't use it keeps the earlier reference.
-- If the sandbox a reference names has been deleted or has expired, the run raises
+- If the sandbox a reference names no longer exists, the run's first use of it (at run start for
+  durable runs) raises
   [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] instead of quietly
   starting over in an empty one. Pass `workspace='new'` to start over on purpose.
 - [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] and the [UI adapters](ui/overview.md)
@@ -384,8 +386,8 @@ activities.
   `activity_config={'start_to_close_timeout': timedelta(seconds=60), 'retry_policy': RetryPolicy(maximum_attempts=3)}`.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
   capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
-  read-only policy, and so does a live workspace that has no ref yet or a capability passed to the run
-  that changes the workspace. Put policy on the agent's capability instead, such as
+  read-only policy, and so does a live backend that has no ref yet or a capability passed to the run
+  that changes the workspace. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
   `LocalWorkspace(..., read_only=True)`.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and
   Temporal tools with `metadata={'temporal': False}`. Reach the provider's own API from a tool that
@@ -673,7 +675,7 @@ works without shell support, but cannot run commands.
   `defer_loading=True` is rejected because the workspace must be selected before deferred
   capabilities load. Its ref normalizes `.` and `..` without resolving symlinks, so differently
   spelled symlink roots have distinct refs even if they point to the same directory.
-- `LocalWorkspace` serializes reads and writes of one file from the same process; other processes and commands can still interleave with them.
+- A `LocalWorkspace` backend serializes its own reads and writes of one file; other runs, processes and commands can still interleave with them.
 - A run has one workspace.
 - Non-durable runs do not create or delete sandboxes solely at run boundaries; durable runs eagerly create or attach an environment at their start, even without tool use. In either case, deletion remains the caller's job.
 - How a timed-out command is stopped depends on the provider.
