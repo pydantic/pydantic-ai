@@ -82,6 +82,12 @@ Cancellation and command deadlines attempt to stop the foreground command withou
 
 If only your own tools use the sandbox, pass `ModalSandbox(warn_if_no_tools=False)` to silence the missing-tools warning, or filter its category, `ModalSandboxNoToolsWarning`. Old arguments warn with `HarnessDeprecationWarning` from `pydantic_ai_harness`.
 
+File reads refuse FIFOs rather than waiting indefinitely for a writer. Writes through symlinks update the target, including when the target was created by a shell command.
+
+### What a timeout stops
+
+`run(timeout=...)` starts its clock after sandbox acquisition and includes command start, execution, and output collection. On its deadline or cancellation, the backend attempts to stop the command's foreground process group, not the shared sandbox or detached background jobs. Partial stdout and stderr are available on `WorkspaceTimeoutError`; if the stop RPC fails, the command may still run, so retain the sandbox ref for explicit cleanup. `timeout=None` has no command deadline; the sandbox's own lifetime and idle settings still apply. Custom or attached images without `setsid -w` still run commands, but cancellation can signal only the wrapper process, not its descendants. Install util-linux (`setsid`) in the image for process-group stopping.
+
 ## Reattach later
 
 To come back to the sandbox without the message history, store its ref and pass it back as `workspace=`:
@@ -103,7 +109,7 @@ The ref holds no credentials, so the process that reattaches needs your Modal cr
 
 `image`, `app_name`, `create_app_if_missing`, `sandbox_timeout`, and `idle_timeout` only shape a new sandbox; `working_dir` and `env` apply to every command, including after you reattach.
 
-Already have a `modal.Sandbox`? Pass `workspace=ModalSandboxBackend(sandbox=sandbox)` to a run, with `ModalSandboxBackend` from `pydantic_ai_harness.modal_sandbox`. `ModalSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
+Already have a `modal.Sandbox`? Pass `workspace=ModalSandboxBackend(sandbox=sandbox)` to a run, with `ModalSandboxBackend` from `pydantic_ai_harness.modal_sandbox`. `ModalSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. A backend's `get_sandbox()` returns its `modal.Sandbox`.
 
 ## Clean up
 
@@ -120,13 +126,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
 
 `ModalSandbox().backend(ref)` constructs a backend for an existing ref without I/O. `destroy(ref)` uses the sandbox ID directly; it does not resume an expired sandbox or run its tools, and a sandbox that no longer exists returns quietly. Only destroy sandboxes you own.
 
-### What a timeout stops
-
-`run(timeout=...)` starts its clock after sandbox acquisition and includes command start, execution, and output collection. On its deadline or cancellation, the backend attempts to stop the command's foreground process group, not the shared sandbox or detached background jobs. Partial stdout and stderr are available on `WorkspaceTimeoutError`; if the stop RPC fails, the command may still run, so retain the sandbox ref for explicit cleanup. `timeout=None` has no command deadline; the sandbox's own lifetime and idle settings still apply. Custom or attached images without `setsid -w` still run commands, but cancellation can signal only the wrapper process, not its descendants. Install util-linux (`setsid`) in the image for process-group stopping.
-
-File reads refuse FIFOs rather than waiting indefinitely for a writer. Writes through symlinks update the target, including when the target was created by a shell command.
-
-`get_sandbox()` returns the `modal.Sandbox`. A sandbox you don't terminate ends when its `sandbox_timeout` runs out, or after `idle_timeout` seconds without activity if you set one. See [Modal's timeouts](https://modal.com/docs/guide/sandbox#timeouts).
+A sandbox you don't terminate ends when its `sandbox_timeout` runs out, or after `idle_timeout` seconds without activity if you set one. See [Modal's timeouts](https://modal.com/docs/guide/sandbox#timeouts).
 
 A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
 
@@ -162,8 +162,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 | `sandbox_timeout` | Seconds a new sandbox lives before Modal stops it (10-86,400). Default: `86_400` (24 hours, Modal's maximum). |
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. |
-| `defer_loading` | `defer_loading=True` is unsupported: workspace selection happens at run setup. |
-| `env` | Environment variables every command gets. Nothing from your machine's environment reaches the sandbox. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 
 Modal runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
@@ -203,6 +202,12 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 | `ModalSandboxTerminalError`, `ModalSandboxUnavailableError`, `ModalSandboxAuthError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceUnavailableError`. |
 
 ## Durable execution
+
+Install the `temporal` extra too:
+
+```bash
+pip/uv-add "pydantic-ai-harness[modal,temporal]"
+```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.
 
@@ -258,3 +263,5 @@ Removing a capability while workflows using it are still running changes their r
 ::: pydantic_ai_harness.modal_sandbox.ModalSandbox
 
 ::: pydantic_ai_harness.modal_sandbox.ModalSandboxBackend
+
+::: pydantic_ai_harness.modal_sandbox.ModalSandboxNoToolsWarning
