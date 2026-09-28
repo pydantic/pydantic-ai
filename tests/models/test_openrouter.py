@@ -1,5 +1,4 @@
 import datetime
-import json
 import os
 from collections.abc import AsyncIterable, Sequence
 from copy import deepcopy
@@ -9,8 +8,8 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel, ValidationError
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -1594,7 +1593,7 @@ async def test_openrouter_web_search_tool_usage(
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.provider_details is not None
-    raw_response = json.loads(vcr.responses[0]['body']['string'])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    raw_response = vcr.interactions[0].response.body.content
     assert raw_response['usage']['server_tool_use_details'] == {'web_search_requests': 1}
     assert response.provider_details['server_tool_use'] == {'web_search_requests': 1}
     assert 'annotations' not in response.provider_details
