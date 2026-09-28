@@ -557,3 +557,8 @@ def test_live_tier_with_empty_credentials_skips_unless_required(
     monkeypatch.setenv('MODAL_REQUIRE_LIVE', require)
     with pytest.raises(outcome):
         skip_or_fail_live_tier()
+
+
+def test_empty_sandbox_id_is_rejected() -> None:
+    with pytest.warns(HarnessDeprecationWarning), pytest.raises(UserError, match='empty string'):
+        ModalSandbox(sandbox_id='')  # pyright: ignore[reportArgumentType]

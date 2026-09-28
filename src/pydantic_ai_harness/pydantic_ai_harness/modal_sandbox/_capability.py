@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from typing_extensions import Never
 
@@ -242,8 +242,12 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.env = env
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
-        sandbox_id = legacy.get('sandbox_id')
-        self._legacy_ref = WorkspaceRef(provider='modal', id=sandbox_id) if sandbox_id else None
+        # `legacy` is typed `Never` to close the signature; its values are whatever the caller passed.
+        sandbox_id = cast('str | None', legacy.get('sandbox_id'))
+        if sandbox_id == '':
+            # Treating it as absent would silently create and bill a new sandbox.
+            raise UserError('`sandbox_id` must name a Modal sandbox, got an empty string.')
+        self._legacy_ref = WorkspaceRef(provider='modal', id=sandbox_id) if sandbox_id is not None else None
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
