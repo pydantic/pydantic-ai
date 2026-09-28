@@ -243,8 +243,9 @@ previous login.
 
 Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, and `COPILOT_GITHUB_TOKEN`, checked in that order when
-no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
-application's token files. This is shell-owned authentication, not a plugin API.
+no login is saved. Copilot login does not read `GH_TOKEN`, `GITHUB_TOKEN`, the
+`GITHUB_TOKEN` key in `/keys`, or another application's token files; that key
+belongs to the separate [`github` plugin](#github-tools-from-githubs-hosted-mcp-server). This is shell-owned authentication, not a plugin API.
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
 Bare `/login` continues to sign in to Codex.
 
@@ -508,6 +509,76 @@ The request and its response are also emitted as `AskUserRequestedEvent` and
 show a "waiting for you" state) registers `@host.on(EventClass)` or
 `@host.render(EventClass)` without being the answerer.
 
+### `github`: tools from GitHub's hosted MCP server
+
+The `github` built-in (`pydantic_clai2.github`) gives the model harness
+[`GitHub`](../pydantic_ai_harness/pydantic_ai_harness/github/README.md): the tools of GitHub's hosted
+MCP server, acting as the account behind a token. It starts disabled.
+`/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
+settings menu. To change the settings later, run `/plugins configure github` or
+press `C` on it in `/plugins`.
+You never need to reinstall it.
+
+The menu is the shared field editor that `/set` uses: type to filter, Enter to
+edit a row, `R` to reset one, Esc or **Save & close** to close. Each change is
+saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
+new settings.
+
+| Row | Default | Does |
+|---|---|---|
+| Sign-in | GitHub CLI (browser) | where the token comes from: the GitHub CLI's browser sign-in, or a token saved in `/keys` (pick one from a searchable list, or type a new one into a masked field) |
+| GitHub host | github.com | github.com, or GitHub Enterprise Cloud with data residency; the latter asks for `octocorp.ghe.com` or the full MCP URL and connects to `https://copilot-api.octocorp.ghe.com/mcp` |
+| Tools | read-only | read-only, or read and write |
+| Tool groups | server defaults | `all`, a preset, or your own comma-separated groups such as `repos,issues,actions` |
+| Server instructions | forwarded | whether the GitHub server's own instructions reach the agent |
+
+GitHub Enterprise Server has no hosted MCP server, so it is not offered. The
+token's own permissions still limit what any of these settings can reach.
+
+#### Signing in through the browser
+
+GitHub's hosted MCP server does not support dynamic client registration, so an
+MCP client can only use OAuth with an OAuth App registered to that client. CLAI
+doesn't register one. Instead it uses the GitHub CLI (`gh`), which has its own.
+Choosing **GitHub CLI (browser)** under Sign-in runs
+`gh auth login --hostname HOST --web --clipboard`. The menu shows the one-time
+code (`gh` also copies it to your clipboard) and opens
+`https://github.com/login/device` in your browser. Once you approve the code,
+the screen closes by itself. Enter opens the page again, and Esc stops `gh` and
+leaves the setting unchanged. If `gh` already has a login for the host, choosing
+it just switches the plugin over. `HOST` is `github.com`, or the ghe.com host for
+GitHub Enterprise Cloud.
+
+`gh` keeps the token in your OS keyring. On every run the plugin calls
+`gh auth token --hostname HOST`, so `gh auth login`, `gh auth switch`, or
+`gh auth logout` in a shell take effect from the next turn. `GH_TOKEN`,
+`GITHUB_TOKEN`, and their enterprise variants are removed from the environment
+`gh` sees. Without that, `gh` would hand back the variable's token instead of
+your login, and it refuses to sign in while one is set. If `gh` is not installed,
+the menu says so; install it from <https://cli.github.com> or use `/keys`.
+
+#### Using a token saved in `/keys`
+
+Choosing **Token saved in /keys** stores the token in the named API key store
+that `/keys` manages, not in plugin settings, which are plaintext SQLite. A new
+token typed in the menu is saved in `/keys` under the key's name. If a key of
+that name already exists, the menu asks before replacing it, because other
+plugins and connections may share it. `GITHUB_TOKEN` is a label in `/keys`, not
+an environment variable. Any plugin that names the same key shares it.
+
+Either way, the plugin's settings hold only which source to use and a key's name,
+such as `{"login": "key", "token": {"name": "GITHUB_TOKEN"}}`. A declaration that
+tries to hold a token is rejected.
+
+The token is looked up on every run. If none is available when the plugin loads
+(no `gh` login for the host, or the named key is missing), the plugin still
+loads, prints a warning, and keeps its settings menu available. Until you sign
+in or save a key, each run fails with an error saying how to fix it, so the agent
+never runs as the wrong account. `/keys` does not stop you renaming or deleting a
+key that a plugin uses. Neither sign-in uses your `/login github-copilot` login,
+and Copilot does not read the `GITHUB_TOKEN` key. The plugin emits no telemetry
+of its own; tool calls appear in core's spans.
+
 ## Managing plugins
 
 `/plugins` on its own opens a full-screen menu, the same kind Code Puppy uses
@@ -553,6 +624,7 @@ CLAI does the same thing:
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
 | `/plugins configure NAME` | open a loaded plugin's settings menu (in a CLAI session only) |
 | `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
+| `/plugins configure NAME` | open a loaded plugin's settings menu, if it registered one with `host.configure`; `enable` and `add` open it too |
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,
@@ -906,6 +978,40 @@ CLAI ignores unknown names in its own saved settings and preserves their values 
 other versions or branches. This does not relax validation of plugin declarations
 or `host.settings(Model)`.
 
+### Keep secrets in `/keys`: `KeyReference`, `SavedKey`, `host.save_settings`
+
+Plugin settings are stored in plaintext SQLite, so a token, API key, or client
+secret must never be one of them. Keep the secret in the named API key store that
+`/keys` manages, and put only its name in your settings. Use the conventional
+uppercase variable name as the label, such as `GITHUB_TOKEN` or `SLACK_BOT_TOKEN`,
+so plugins that need the same credential share one key; replacing it in `/keys`
+reaches all of them. The label does not export or read an environment variable.
+
+```python
+from pydantic import BaseModel, ConfigDict, Field
+
+from pydantic_clai2.api_keys import KeyReference, SavedKey
+
+
+class MySettings(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    token: KeyReference = Field(default_factory=lambda: KeyReference(name='MY_SERVICE_TOKEN'))
+
+
+def activate(host):
+    settings = host.settings(MySettings)
+    host.add(MyService(auth=SavedKey(name=settings.token.name, setup='Add MY_SERVICE_TOKEN in /keys.')))
+```
+
+`SavedKey` is a capability `auth` function. It looks the key up on every run and
+raises with `setup` when the key is missing, so a deleted key fails closed rather
+than falling back to something else. To let the user choose a key, call `prompt_api_key(prompt=..., label=...)`: it
+returns a `KeyReference` to a saved key, a masked new value for you to
+`save_key(name=..., value=...)`, or `None` when cancelled. Then call
+`host.save_settings(settings)` with the new reference. It saves your plugin's
+declaration as `plugins add` would, and `host.settings(Model)` returns the new
+values from then on.
+
 ### Offer a settings menu: `@host.configure`
 
 Register an async function that shows a settings menu and returns a line to
@@ -930,6 +1036,8 @@ async def configure() -> str:
     messages = await run_worker(lambda: run_flow(FieldMenu(NotifySource(host))))
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
+
+The built-in `github` plugin is a complete example.
 
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
