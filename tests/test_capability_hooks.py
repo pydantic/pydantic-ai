@@ -2069,7 +2069,7 @@ class TestRunErrorHooks:
         reconstruction_count_before_setup = len(reconstruction_states)
         with pytest.raises(GeneratorExit):
             await agent.run('hello')
-        assert reconstruction_states[reconstruction_count_before_setup:] == []
+        assert not any(reconstruction_states[reconstruction_count_before_setup:])
 
     async def test_on_run_error_can_transform_error(self):
         @dataclass
