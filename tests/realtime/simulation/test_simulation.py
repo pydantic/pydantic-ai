@@ -489,7 +489,6 @@ def test_known_gemini_resumed_session_forgets_a_tool_call() -> None:
         sim.call_tools()
         sim.drop()
         sim.advance_time(1)
-        sim.finish_tool()
         sim.settle()
 
     reproduce('G6', GeminiSimulation(), scenario)

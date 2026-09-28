@@ -252,6 +252,11 @@ class OpenAIServer:
         event_id = f'evt_error_{self._next_error}'
         self._next_error += 1
         self._refusals[event_id] = refused
+        now = self.truth.tick()
+        for key in refused:
+            input_ = self.truth.input(key)
+            assert input_ is not None
+            input_.refused_at = input_.refused_at or now
         self._emit(session, {**frame, 'event_id': event_id})
 
     def _new_item(self, prefix: str = 'item') -> str:

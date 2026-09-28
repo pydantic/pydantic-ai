@@ -78,7 +78,7 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
         "response's content as stragglers: history records it empty, though the model said it and the provider kept it"
     ),
     tracked_by='per-response-id state: a cancel targets a response id, and is a no-op once that response is done; found by this simulator',
-    codes=frozenset({'response.truncated', 'response.missing', 'wait.hang'}),
+    codes=frozenset({'response.truncated', 'response.missing', 'usage.attribution', 'wait.hang'}),
     providers=OPENAI_PROTOCOL,
     matches=_late_cancel,
 )

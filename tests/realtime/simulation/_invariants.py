@@ -360,6 +360,10 @@ class Checker:
     def _input_resolved(self, input_: TruthInput, by: int, seen: set[str]) -> bool:
         if (input_.refused_read is not None and input_.refused_read <= by) or input_.answer_lost:
             return True  # pragma: lax no cover
+        if input_.refused_at is not None and any(
+            input_.refused_at < loss <= by for loss in self.sim.truth.connection_losses
+        ):  # pragma: lax no cover (a refusal lost with its connection: no reply is coming)
+            return True
         # The response that answers it, or any the model gave after it arrived: a request the connection
         # folded into another (a merged or superseded `response.create`) is answered by whichever came next.
         return any(
