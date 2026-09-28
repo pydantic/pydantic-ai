@@ -3229,13 +3229,17 @@ class _SlowSettlePage(_FakePage):
 
 
 class TestOperationDeadline:
-    async def test_each_stage_gets_what_is_left_not_the_whole_budget(self) -> None:
-        class _SlowGotoPage(_FakePage):
-            async def goto(self, url: str, *, timeout: float | None = None) -> None:
-                await asyncio.sleep(0.05)
-                await super().goto(url, timeout=timeout)
+    async def test_each_stage_gets_what_is_left_not_the_whole_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = _Clock()
 
-        page = _SlowGotoPage()
+        def ticking_monotonic() -> float:
+            now = clock()
+            clock.advance(0.002)
+            return now
+
+        monkeypatch.setattr(toolset_module, 'monotonic', ticking_monotonic)
+
+        page = _FakePage()
         await _toolset(page).navigate('https://example.com/', timeout_ms=2000)
         # The goto saw the full budget; every later call in the same operation saw
         # less, because the time the goto spent is gone.
