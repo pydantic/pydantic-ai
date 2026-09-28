@@ -187,11 +187,10 @@ before writing cleanup.
 - Know which backend a suite runs under before you trust it. Every `async def`
   test runs via anyio's pytest plugin (`anyio_mode = "auto"`), and the root
   `anyio_backend` fixture picks the backend from `--anyio-backend` (asyncio by
-  default; pass `--anyio-backend=trio` to run under Trio). A suite goes asyncio-only by
-  overriding the `anyio_backend` fixture at module level to return `'asyncio'`,
-  which `tests/harness/subagents` and `tests/harness/filesystem/test_events.py`
-  do. That override is why `SubAgentToolset.delegate_task` can use
-  `asyncio.wait_for` today. Reach for `anyio` primitives by default
-  (`fail_after`, `Lock`, task groups); before you remove an `anyio_backend`
-  override, grep the package for `asyncio.` and convert or skip each hit, and
-  keep `aws_lambda` asyncio-only because its bridge owns a real asyncio loop.
+  default; pass `--anyio-backend=trio` to run under Trio). The whole harness
+  suite is asyncio-only: `tests/harness/conftest.py` overrides `anyio_backend`
+  to return `'asyncio'`. That override is why `SubAgentToolset.delegate_task`
+  can use `asyncio.wait_for` today. Reach for `anyio` primitives by default
+  (`fail_after`, `Lock`, task groups); before you remove that override, grep
+  the package for `asyncio.` and convert or skip each hit, and keep
+  `aws_lambda` asyncio-only because its bridge owns a real asyncio loop.

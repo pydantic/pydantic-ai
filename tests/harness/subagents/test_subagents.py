@@ -48,12 +48,6 @@ class _RecordingCapability(AbstractCapability[AgentDepsT]):
         return _instructions
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 def _delegate_then_finish(agent_name: str, *, retries_before: int = 0) -> FunctionModel:
     """A parent model that delegates to `agent_name` once, then replies with text.
 

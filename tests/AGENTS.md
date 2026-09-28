@@ -7,7 +7,8 @@ Every `async def` test runs via the anyio pytest plugin automatically (`anyio_mo
 `uv run pytest <test-path> --anyio-backend=trio --record-mode=none` to run selected portable tests on Trio without duplicating the default suite. During the Trio migration,
 run affected concurrency tests once per backend. Keep broad Trio runs manual or periodic; do not add a
 second backend to every ordinary CI matrix. The selector does not imply that every test or integration
-already supports Trio.
+already supports Trio. `tests/harness` and `tests/clai2` pin `anyio_backend` to asyncio in their `conftest.py`;
+don't re-override it per file.
 
 VCR + public-API tests are the default. We test through the public API the way a user would (`Agent(...)`, `agent.run(...)`) against real provider responses recorded as cassettes — provider APIs are the ultimate judge of whether the code is correct when run as intended, and that user-facing correctness is what we care about, not behavior in isolated units.
 

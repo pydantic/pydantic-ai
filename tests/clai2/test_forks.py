@@ -36,11 +36,6 @@ from pydantic_clai2.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
 PromptT = TypeVar('PromptT')
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def last_prompt(messages: list[ModelMessage]) -> str:
     for message in reversed(messages):
         if isinstance(message, ModelRequest):  # pragma: no branch

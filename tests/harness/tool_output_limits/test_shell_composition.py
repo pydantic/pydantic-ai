@@ -21,11 +21,6 @@ from pydantic_ai_harness.tool_output_limits import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('output_chars', [6_000, 25_000, 120_000], ids=['truncate', 'spill', 'native-cap-then-spill'])
 async def test_shell_stacking_recipe(tmp_path: Path, output_chars: int):
     executable = Path(sys.executable).as_posix()

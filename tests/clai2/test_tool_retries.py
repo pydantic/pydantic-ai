@@ -19,11 +19,6 @@ from tests.clai2.menu_script import make_context
 from tests.clai2.test_app_edges import inputs
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def test_menu_validates_persists_and_resets_tool_retries(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)
     source = SettingsSource(context)

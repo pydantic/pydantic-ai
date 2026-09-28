@@ -19,12 +19,6 @@ from pydantic_clai2.plugin_loader import PluginError, PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 RECORDER = """
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart

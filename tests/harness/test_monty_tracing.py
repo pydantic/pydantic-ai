@@ -26,11 +26,6 @@ from pydantic_ai_harness.code_mode import CodeModeToolset
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflowToolset, WorkflowAgent
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.fixture(scope='session')
 def monty_telemetry() -> Iterator[tuple[TracerProvider, InMemorySpanExporter]]:
     provider = TracerProvider()

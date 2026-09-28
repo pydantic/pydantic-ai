@@ -25,11 +25,6 @@ collect_ignore = (
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def run_context() -> RunContext[None]:
     """Minimal `RunContext` for invoking toolset methods directly in tests."""
     return RunContext[None](

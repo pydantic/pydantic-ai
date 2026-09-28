@@ -19,11 +19,6 @@ from pydantic_clai2.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.settings_store import SettingsStore
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -14,11 +14,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 class BufferedWrite(io.BytesIO):
     def __init__(self, path: Path, content: bytes) -> None:
         super().__init__(content)

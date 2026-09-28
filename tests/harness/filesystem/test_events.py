@@ -44,11 +44,6 @@ needs_mode_bits = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def _has_tool_result(messages: list[ModelMessage]) -> bool:
     return any(isinstance(part, (RetryPromptPart, ToolReturnPart)) for message in messages for part in message.parts)
 

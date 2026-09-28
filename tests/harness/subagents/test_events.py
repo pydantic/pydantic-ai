@@ -37,11 +37,6 @@ from pydantic_ai_harness.subagents import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @dataclass
 class Listener(AbstractCapability[object]):
     """Records every delegation event in order."""
