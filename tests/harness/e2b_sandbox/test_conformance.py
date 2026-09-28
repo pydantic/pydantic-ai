@@ -38,6 +38,11 @@ class TestFakeE2BSandboxBackend(WorkspaceBackendSuite):
         return E2BSandboxBackend()
 
     @pytest.fixture
+    def fresh_backend(self, backend: E2BSandboxBackend) -> Callable[[], WorkspaceBackend]:
+        # `backend` points the fake E2B at the host directory; each call starts another sandbox there.
+        return E2BSandboxBackend
+
+    @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return _attach
 
@@ -46,8 +51,9 @@ class TestFakeE2BSandboxBackend(WorkspaceBackendSuite):
         return _kill
 
 
+# The live tier runs without coverage; in CI only its gate fixtures run, to skip it.
 @pytest.mark.e2b_live
-class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover - live tier runs without coverage
+class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
     # Class-scoped so the rules share one sandbox instead of starting one each; the suite runs
     # its destroy rule last. The teardown uses E2B's blocking API because a class-scoped
     # fixture outlives each test's event loop.

@@ -138,10 +138,6 @@ class FakeCommandHandle:
         """Release a host-backed handle; in-memory handles have nothing to release."""
 
     @property
-    def pid(self) -> int:
-        return self._pid
-
-    @property
     def stdout(self) -> str:
         return self._stdout
 
@@ -180,7 +176,6 @@ class FakeCommands:
         self._control = control
         self.calls: list[FakeCommandCall] = []
         self.handles: list[FakeCommandHandle] = []
-        self.killed_pids: list[int] = []
         self.group_stops: list[str] = []
 
     async def run(
@@ -219,19 +214,7 @@ class FakeCommands:
             exit_code=exit_code,
         )
         self.handles.append(handle)
-        if self._control.start_response_held is not None:
-            # E2B has started the process before the start event with its pid arrives.
-            await self._control.start_response_held.wait()
         return handle
-
-    async def kill(self, pid: int, request_timeout: float | None = None) -> bool:
-        del request_timeout
-        await anyio.lowlevel.checkpoint()
-        self._sandbox.check_alive()
-        self.killed_pids.append(pid)
-        if self._control.kill_command_error is not None:
-            raise self._control.kill_command_error
-        return True
 
 
 class FakeFilesystem:
@@ -434,6 +417,8 @@ class _HostCommandHandle(FakeCommandHandle):
         while (exit_code := self.process.poll()) is None:
             self._sandbox.check_alive()
             await anyio.sleep(0.01)
+        # Killing the sandbox also ends its processes, so the exit alone does not mean it lives.
+        self._sandbox.check_alive()
         stdout, stderr = await anyio.to_thread.run_sync(lambda: (self.stdout, self.stderr))
         await anyio.to_thread.run_sync(self.close)
         if exit_code != 0:
@@ -489,16 +474,6 @@ class _HostCommands(FakeCommands):
         handle = _HostCommandHandle(self._control, self._sandbox, process, out, err)
         self.handles.append(handle)
         return handle
-
-    async def kill(self, pid: int, request_timeout: float | None = None) -> bool:
-        del request_timeout
-        await anyio.lowlevel.checkpoint()
-        self._sandbox.check_alive()
-        self.killed_pids.append(pid)
-        handle = next(handle for handle in self.handles if handle.pid == pid)
-        assert isinstance(handle, _HostCommandHandle)
-        await anyio.to_thread.run_sync(handle.close)
-        return True
 
 
 @contextmanager
@@ -752,8 +727,6 @@ class FakeE2B:
     run_error: Exception | None = None
     wait_error: Exception | None = None
     command_hangs: bool = False
-    # When set, `commands.run` starts the command and then holds its response until the event is set.
-    start_response_held: anyio.Event | None = None
     kill_command_error: Exception | None = None
     fs_error: Exception | None = None
     read_error: Exception | None = None
@@ -826,9 +799,6 @@ if TYPE_CHECKING:
         `stdout` / `stderr` are the accumulated output the deadline path reports, so a fake
         that stopped exposing them would hide the timeout behavior entirely.
         """
-
-        @property
-        def pid(self) -> int: ...
 
         @property
         def stdout(self) -> str: ...

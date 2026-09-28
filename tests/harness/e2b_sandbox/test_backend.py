@@ -955,7 +955,7 @@ async def test_command_timeout_starts_once_the_sandbox_is_acquired(fake_e2b: Fak
         while not fake_e2b.create_calls:
             await anyio.lowlevel.checkpoint()
         entered = anyio.current_time()
-        while anyio.current_time() <= entered:
+        while anyio.current_time() <= entered:  # pragma: lax no cover - the clock may already have moved
             await anyio.lowlevel.checkpoint()
         released_at.append(anyio.current_time())
         held.set()
