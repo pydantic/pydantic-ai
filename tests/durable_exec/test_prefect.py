@@ -80,6 +80,7 @@ from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
     DurableOperationId,
     DynamicToolsetCallToolParams,
+    EventStreamHandlerId,
     ModelRequestId,
     ToolsetCallToolId,
 )
@@ -89,6 +90,7 @@ from pydantic_ai.durable_exec._toolset import (
     DurableMCPToolset,
     wrap_tool_call_result,
 )
+from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -140,7 +142,7 @@ try:
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
-    from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationConfig
+    from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationBackend, PrefectOperationConfig
     from pydantic_ai.durable_exec.prefect._toolset import with_non_retryable_errors
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
@@ -365,6 +367,37 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
     marker = object()
     assert config.for_tool('tool', operation_id=call_id, tool=marker, tool_name='tool') == {'timeout_seconds': 3}
     assert calls == [('function', None, ''), ('function', marker, 'tool')]
+
+
+async def test_prefect_task_inputs_keep_released_cache_keys_outside_workspaces() -> None:
+    """Only workspace operations carry the agent's sequence key, so other cache keys match earlier releases."""
+    backend = PrefectOperationBackend(
+        config=PrefectOperationConfig(model={}, event={}, capability={}, tool={}), event_sequence_key='events:agent'
+    )
+
+    async def task_inputs() -> object:
+        task_context = TaskRunContext.get()
+        assert task_context is not None
+        return task_context.parameters['logical_inputs']
+
+    @flow
+    async def run_operations() -> list[object]:
+        return [
+            await backend.execute(operation_id=operation_id, name='op', body=task_inputs, cache_key=('in',), config={})
+            for operation_id in (
+                EventStreamHandlerId(),
+                CapabilityOperationId('custom', operation='op'),
+                WORKSPACE_OPERATION_ID,
+                WORKSPACE_OPERATION_ID,
+            )
+        ]
+
+    assert await run_operations() == [
+        ('in', 0),
+        ('in', 0),
+        ('in', 'events:agent:capability:9:workspacecall', 0),
+        ('in', 'events:agent:capability:9:workspacecall', 1),
+    ]
 
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
