@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelRetry
@@ -18,6 +19,9 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
     def __init__(self, store: CapabilityStore) -> None:
         super().__init__()
         self._store = store
+        # Parallel tool calls would otherwise overlap the manifest's read-modify-write cycles
+        # (losing an update) and the import's process-global `sys.dont_write_bytecode` toggle.
+        self._store_lock = anyio.Lock()
         self.add_function(
             self.author_capability,
             name='author_capability',
@@ -41,7 +45,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
             code: Complete Python source defining one `AbstractCapability` subclass.
         """
         try:
-            record = await anyio.to_thread.run_sync(self._store.write, name, code)
+            async with self._store_lock:
+                record = await anyio.to_thread.run_sync(self._store.write, name, code)
         except ValueError as exc:
             raise ModelRetry(str(exc)) from exc
         if record.last_error is not None:
@@ -72,6 +77,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         Args:
             name: Name of the capability to disable.
         """
-        if await anyio.to_thread.run_sync(self._store.disable, name):
+        async with self._store_lock:
+            found = await anyio.to_thread.run_sync(self._store.disable, name)
+        if found:
             return f'Capability {name!r} disabled; it will not be injected on the next run.'
         return f'No authored capability named {name!r}.'
