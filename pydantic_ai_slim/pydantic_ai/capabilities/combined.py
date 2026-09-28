@@ -445,7 +445,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def _has_get_workspace(self) -> bool:
-        return any(capability._has_get_workspace for capability in self.capabilities)
+        return type(self).get_workspace is not CombinedCapability.get_workspace or any(
+            capability._has_get_workspace for capability in self.capabilities
+        )
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         for capability in self.capabilities:
