@@ -131,7 +131,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
 
     Claude models older than Claude Sonnet 4.5 answer such a request with a 400, where later models accept it and stop
     at the context window. When True, a request that doesn't set `max_tokens` gets the lower default of 4096, so a
-    conversation close to the context window still fits.
+    conversation close to the context window still fits. It's also set for Claude 3 and 3.5, whose maximum output
+    (4,096 or 8,192 tokens) is below the higher default.
     """
 
     anthropic_binds_thinking_blocks: bool
@@ -267,7 +268,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     # Before Claude Sonnet 4.5, Anthropic rejects a request whose input plus `max_tokens` exceeds the context window:
     # Bedrock's `claude-sonnet-4-20250514` answers 192K input tokens plus 16384 with a 400 (`Input is too long for
-    # requested model.`) and accepts 192K plus 4096, where Haiku 4.5 accepts 192K plus 16384.
+    # requested model.`) and accepts 192K plus 4096, where Haiku 4.5 accepts 192K plus 16384. Claude 3 and 3.5 also
+    # need the lower default, since their maximum output is 4,096 or 8,192 tokens.
     rejects_max_tokens_beyond_context_window = model_name in (
         'claude-opus-4',
         'claude-sonnet-4',

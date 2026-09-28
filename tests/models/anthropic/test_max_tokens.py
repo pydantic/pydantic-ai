@@ -20,8 +20,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if TYPE_CHECKING:
-    from pydantic_ai.models.anthropic import AnthropicModel
-
     ANTHROPIC_MODEL_FIXTURE = Callable[..., AnthropicModel]
 
 pytestmark = [

@@ -650,8 +650,8 @@ _DEFAULT_MAX_TOKENS = 16384
 """The `max_tokens` sent when the request doesn't set one.
 
 Anthropic requires `max_tokens`. This stays under the SDK's limit for non-streaming requests (about 21,000 tokens,
-8,192 for some Claude Opus 4 and 4.1 model ids), and fits the maximum output of every Claude model since Opus 4.1
-(32,000).
+8,192 for some Claude Opus 4 and 4.1 model ids), and fits the maximum output of every Claude model that gets it
+(Claude Sonnet 4.5 and later); older models get `_LEGACY_DEFAULT_MAX_TOKENS`.
 """
 
 _LEGACY_DEFAULT_MAX_TOKENS = 4096

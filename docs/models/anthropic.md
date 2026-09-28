@@ -110,7 +110,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-Anthropic requires [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which thinking counts toward. When you don't set it, Pydantic AI sends 16384, or 4096 on models older than Claude Sonnet 4.5, which reject a request whose input plus `max_tokens` exceeds the context window.
+Anthropic requires [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which thinking counts toward. When you don't set it, Pydantic AI sends 16384, or 4096 on models older than Claude Sonnet 4.5, which reject a request whose input plus `max_tokens` exceeds the context window. Those are recognized by model name, so set `max_tokens` yourself if you reach one through a Bedrock ARN or a custom deployment name.
 
 ### Service tier
 
