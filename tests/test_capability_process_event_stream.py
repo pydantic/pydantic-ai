@@ -40,9 +40,7 @@ from .capability_models import (
     tool_calling_stream_function,
 )
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 class _RequestOnlyModel(Model):

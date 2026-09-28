@@ -97,6 +97,7 @@ from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
 
 if TYPE_CHECKING:
@@ -184,8 +185,6 @@ else:
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, iter_message_parts, message, message_part
 from .continuation_utils import ScriptedContinuationModel, scripted_response
-
-pytestmark = pytest.mark.anyio
 
 requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
@@ -8351,6 +8350,7 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -8427,6 +8427,7 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -8509,6 +8510,7 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -12157,6 +12159,29 @@ async def test_agent_capability_for_run_called_once_per_run():
     await agent.run('Hello', capabilities=[CountingCapability('run')])
 
     assert for_run_calls == {'agent': 1, 'run': 1}
+
+
+async def test_no_workspace_for_run_keeps_unresolved_root_capability() -> None:
+    class InspectCapability(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            assert ctx.root_capability is None
+            return self
+
+    await Agent(TestModel(), capabilities=[InspectCapability()]).run('Hello')
+
+
+async def test_no_workspace_preserves_history_response_identity() -> None:
+    agent = Agent(TestModel())
+    first = await agent.run('Hello')
+    response = first.all_messages()[-1]
+    second = await agent.run(message_history=first.all_messages())
+    assert second.all_messages()[-1] is response
+
+
+async def test_no_workspace_rejects_commands() -> None:
+    result = await Agent(TestModel()).run('Hello')
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
+        await result.workspace.run('pwd')
 
 
 async def test_run_with_unapproved_tool_call_in_history():

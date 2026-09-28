@@ -73,7 +73,6 @@ _WAV_HEADER_BYTES = 44
 """Retained speech audio is a WAV file; subtract its header to compare against the PCM that was sent."""
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
 

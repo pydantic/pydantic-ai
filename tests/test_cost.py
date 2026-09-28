@@ -39,7 +39,6 @@ with try_import() as openai_imports_successful:
 
     from .models.mock_openai import MockOpenAI
 
-pytestmark = pytest.mark.anyio
 
 requires_openai = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 

@@ -76,9 +76,7 @@ with try_import() as xai_imports:
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 # ---------------------------------------------------------------------------

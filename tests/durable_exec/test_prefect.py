@@ -16,6 +16,7 @@ from collections.abc import (
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
@@ -116,6 +117,14 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 try:
     from prefect import flow, task
@@ -166,6 +175,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..workspace_fakes import ref_workspace
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
 
@@ -372,7 +382,6 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
 warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     pytest.mark.filterwarnings(
@@ -440,6 +449,19 @@ model = OpenAIChatModel(
 # Simple agent for basic testing
 simple_agent = Agent(model, name='simple_agent')
 simple_prefect_agent = PrefectAgent(simple_agent)  # pyright: ignore[reportDeprecated]
+
+
+async def test_prefect_agent_rejects_a_workspace_inside_a_flow(tmp_path: Path) -> None:
+    """The deprecated wrapper has no durability capability, so a workspace's operations could not run as tasks."""
+
+    @flow
+    async def run_agent() -> None:
+        await simple_prefect_agent.run('Hello', workspace=LocalWorkspaceBackend(tmp_path))
+
+    with pytest.raises(
+        UserError, match='Workspaces are not supported inside a Prefect flow through the deprecated wrapper agent'
+    ):
+        await run_agent()
 
 
 def test_prefect_agent_construction_warns_deprecated() -> None:
@@ -2214,6 +2236,18 @@ def test_cache_policy_keys_the_run_context_tool_call_id_verbatim():
     assert key_for_history('model-first') != key_for_history('model-second')
 
 
+def test_cache_policy_keys_deferred_workspace_identity():
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(workspace_id: str) -> str | None:
+        workspace = ref_workspace(WorkspaceRef(provider='fake', id=workspace_id))
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace)
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for('alpha') != key_for('beta')
+
+
 def test_cache_policy_excludes_non_serializable_metadata_and_validation_context():
     """`metadata` and `validation_context` hold arbitrary user values, like `deps`.
 
@@ -2447,6 +2481,9 @@ def test_cache_key_run_context_projection_is_exhaustive():
         # input the task's own resolution wouldn't reach, so they must not fork the key.
         '_run_held_toolsets',
     }
+    projected_via_derived_key = {
+        'workspace',  # projected as `workspace_id`, known without connecting a deferred workspace
+    }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
     all_fields = set(RunContext.__dataclass_fields__)
@@ -2454,7 +2491,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
     overlap = projected & cache_irrelevant
     assert not overlap, f'Fields both projected and marked irrelevant: {overlap}'
 
-    uncategorized = all_fields - (projected | cache_irrelevant)
+    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
@@ -4394,10 +4431,17 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
         return condition
 
     condition = condition_of(TaskConfig())
-    # The same three types Temporal marks non-retryable on every activity config.
+    # The same types Temporal marks non-retryable on every activity config.
     assert await condition(None, None, _State(UserError('bad config'))) is False
     assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
     assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
+    for error in (
+        WorkspaceTimeoutError('slow'),
+        WorkspaceOutputLimitError('loud', limit=1),
+        WorkspaceReadOnlyError('read-only'),
+        WorkspaceUnavailableError('gone'),
+    ):
+        assert await condition(None, None, _State(error)) is False
     assert await condition(None, None, _State(RuntimeError('boom'))) is True
 
     def deny(task: Any, task_run: Any, state: Any) -> bool:

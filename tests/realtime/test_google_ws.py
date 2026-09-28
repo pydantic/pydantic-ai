@@ -51,7 +51,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelProfile, GoogleRealtimeModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
 
