@@ -232,6 +232,7 @@ This release makes the workspace the single place that decides where an agent wo
 - **Sub-agent definitions** are read from the workspace at run start, and `~/.agents/agents/` is no longer read. [`SubAgents(workspace=LocalWorkspaceBackend('/app'))`](subagents.md) reads them from somewhere else.
 - **[Memory's `FileStore`](memory.md)** keeps its files in the workspace, and receipts in `.memory-operations.json` replace its SQLite journal. `FileStore('.', workspace=LocalWorkspaceBackend('/path'))` keeps them on this machine.
 - **Capability Creation** runs only when the workspace is a writable `LocalWorkspace`.
+- **Durable runs in flight.** Adding a workspace changes what a durable run records at its start, so Temporal and DBOS runs started before the change no longer replay. Let them finish or version the deployment first; see [deploying changes](durable-execution.md#engine-notes) and the workspace guide's [Durable execution](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) section.
 
 When retaining `result.workspace` after a run with a provider backend that exposes `aclose()`, finish using it and call `await result.workspace.backend.aclose()` to release its client session. This closes the client, not necessarily the sandbox; follow that provider's deletion API for owned sandboxes.
 
