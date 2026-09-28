@@ -59,8 +59,6 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
 
     def backend(self, ref: WorkspaceRef) -> E2BSandboxBackend:
         """Attach lazily to an existing E2B sandbox."""
-        if ref.provider != 'e2b':
-            raise ValueError(f'Expected an E2B workspace ref, got {ref.provider!r}')
         return E2BSandboxBackend(
             ref=ref, sandbox_timeout=self.sandbox_timeout, working_dir=self.working_dir, env=self.env
         )
@@ -68,7 +66,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Kill a sandbox by ID, including paused sandboxes, without attaching."""
         if ref.provider != 'e2b':
-            raise ValueError(f'Expected an E2B workspace ref, got {ref.provider!r}')
+            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
         await _backend.kill_sandbox(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

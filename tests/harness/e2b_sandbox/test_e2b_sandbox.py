@@ -62,9 +62,16 @@ def test_capability_uses_workspace_contract() -> None:
     assert backend.ref == WorkspaceRef(provider='e2b', id='known')
 
 
-def test_foreign_reference_is_rejected() -> None:
-    with pytest.raises(ValueError, match="expected 'e2b'"):
-        E2BSandboxBackend(ref=WorkspaceRef(provider='modal', id='other'))
+async def test_foreign_reference_is_rejected(fake_e2b: FakeE2B) -> None:
+    foreign = WorkspaceRef(provider='modal', id='other')
+    message = re.escape("unsupported workspace provider 'modal'; expected 'e2b'")
+    with pytest.raises(ValueError, match=message):
+        E2BSandboxBackend(ref=foreign)
+    with pytest.raises(ValueError, match=message):
+        E2BSandbox().backend(foreign)
+    with pytest.raises(ValueError, match=message):
+        await E2BSandbox().destroy(foreign)
+    assert not fake_e2b.sandboxes
 
 
 @pytest.mark.parametrize(
