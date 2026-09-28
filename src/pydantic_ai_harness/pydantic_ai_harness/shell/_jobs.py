@@ -48,6 +48,7 @@ unset __harness_stopped
 trap __harness_stopped=1 TERM
 publish null
 while [ -z "$__harness_stopped" ] && [ ! -e "$dir/launch.ready" ]; do
+  kill -0 "$5" 2> /dev/null || [ -e "$dir/launch.ready" ] || __harness_stopped=1
   sleep 0.1 2> /dev/null || [ -n "$__harness_stopped" ] || sleep 1
 done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
@@ -60,14 +61,16 @@ fi
 ) < /dev/null >> "$out" 2>> "$err"
 publish $?
 """
-"""The job's supervisor: arguments are the job directory, the log mode, the command, and the file limit.
+"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, and the launcher's PID.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
 a trap with an action is reset in a child. Stopping the group therefore still records how the
 command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation leaves `exit_code` null.
 The trap also records the signal, so a job stopped before its command starts (the wrapper waits
-for `launch.ready` first) never starts it and publishes `143` instead.
+for `launch.ready` first) never starts it and publishes `143` instead. A launcher that dies
+before `launch.ready` (a cancelled or timed-out launch) counts as a stop too, so the wrapper
+never waits for it forever.
 
 A `SIGTERM` that lands while the command's subshell is being forked, before its default signal
 handling is in place, is lost. `Job.kill` therefore creates the job's `stop` file before
@@ -88,10 +91,10 @@ else
 fi
 if [ "$mode" = combined ]; then : > "$dir/output.log"; else : > "$dir/stdout.log"; : > "$dir/stderr.log"; fi
 if command -v setsid > /dev/null 2>&1; then
-  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" < /dev/null > /dev/null 2>&1 &
+  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
   pid=$!; group=$pid
 else
-  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" < /dev/null > /dev/null 2>&1 &
+  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
   pid=$!; group=-
   if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
