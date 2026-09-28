@@ -30,7 +30,9 @@ from uuid import uuid4
 
 import anyio
 import anyio.to_thread
+import sniffio
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -263,7 +265,12 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         The lock serializes concurrent first uses -- two callers each creating a sandbox would
         leave the loser billed and unreferenced. Attaching by `ref` to a sandbox that no longer
         exists raises `WorkspaceUnavailableError`; it does not create a replacement.
+
+        Raises:
+            UserError: The event loop is not asyncio.
         """
+        # Every operation acquires the sandbox first, so this one check covers them all.
+        _require_asyncio()
         if (sandbox := self._sandbox) is not None:
             return sandbox
         task = self._acquisition
@@ -782,8 +789,14 @@ async def _check_stop(process: modal.container_process.ContainerProcess[bytes], 
         logger.warning('Modal command stop exited nonzero in sandbox %s', sandbox_id)
 
 
+def _require_asyncio() -> None:
+    if sniffio.current_async_library() != 'asyncio':
+        raise UserError('Modal needs the asyncio event loop: the Modal SDK runs its calls on asyncio tasks.')
+
+
 async def terminate_sandbox(sandbox_id: str) -> None:
     """Terminate a sandbox by ID without attaching; one that no longer exists returns quietly."""
+    _require_asyncio()
     import modal
 
     try:

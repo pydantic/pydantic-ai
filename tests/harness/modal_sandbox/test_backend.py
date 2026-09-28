@@ -12,6 +12,7 @@ from typing import Any
 import anyio
 import pytest
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
@@ -1022,3 +1023,18 @@ class TestErrorMapping:
         else:
             assert type(exc_info.value) is expected
             assert exc_info.value.__cause__ is error
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_trio_is_refused_before_any_modal_call(fake_modal: FakeModal) -> None:
+    """The Modal SDK runs its calls on asyncio tasks, so Trio gets a clear `UserError` instead."""
+    message = r'^Modal needs the asyncio event loop: the Modal SDK runs its calls on asyncio tasks\.$'
+    backend = ModalSandboxBackend()
+    with pytest.raises(UserError, match=message):
+        await backend.run(['true'])
+    with pytest.raises(UserError, match=message):
+        await backend.read_bytes('/file')
+    with pytest.raises(UserError, match=message):
+        await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-owned'))
+    assert not fake_modal.create_kwargs
+    assert fake_modal.attach_ids == []
