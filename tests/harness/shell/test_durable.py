@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -14,7 +13,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.models.function import FunctionModel
 
 try:
     from temporalio import workflow
@@ -72,15 +71,8 @@ def _agent(root: Path, key: str) -> Agent[None, str]:
             )
         return ModelResponse(parts=[TextPart('done')])
 
-    async def stream(messages: object, info: object):
-        for index, part in enumerate(model(messages, info).parts):
-            if isinstance(part, TextPart):
-                yield part.content
-            elif isinstance(part, ToolCallPart):
-                yield {index: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
-
     return Agent(
-        FunctionModel(model, stream_function=stream),
+        FunctionModel(model),
         name=f'shell_{key}',
         capabilities=[LocalWorkspace(root), Shell(persist_cwd=True), TemporalDurability()],
     )

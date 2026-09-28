@@ -546,7 +546,7 @@ class TestDurableJob:
         command_id = first.split('ID: ')[-1]
         with anyio.fail_after(5):
             while 'finished' not in await toolset.check_command(ctx, command_id):
-                await anyio.sleep(0.05)
+                await anyio.sleep(0.05)  # pragma: lax no cover
         assert (shell_dir / 'side-effects.txt').read_text().splitlines() == ['one']
 
 
@@ -604,7 +604,7 @@ class TestCancelledRunCwd:
 
         async def interrupted() -> NoReturn:
             await anyio.sleep_forever()
-            raise AssertionError('unreachable')
+            raise AssertionError('unreachable')  # pragma: no cover
 
         async def run() -> None:
             await shell.wrap_run(ctx, handler=interrupted)
@@ -1478,16 +1478,13 @@ class TestShellCapability:
 
     @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self, tmp_path: Path) -> None:
-
-        if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
-            pytest.skip('Agent.run() requires asyncio')
         model = TestModel(custom_output_text='done', call_tools=[])
         agent: Agent[None, str] = Agent(model, capabilities=[Shell()])
         result = await agent.run('run echo hello', workspace=LocalWorkspaceBackend(tmp_path))
         assert result.output == 'done'
 
     async def test_no_workspace_fails_the_run(self) -> None:
-        if sniffio.current_async_library() != 'asyncio':
+        if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
             pytest.skip('Agent.run() requires asyncio')
         agent: Agent[None, str] = Agent(TestModel(call_tools=[]), capabilities=[Shell()])
         with pytest.raises(UserError, match='`Shell` needs a workspace'):
@@ -1799,19 +1796,15 @@ class TestLaunch:
         try:
             assert '[stopped]' in await ts.stop_command(ctx, command_id)
             with anyio.fail_after(30):
-                while _alive(pid):
+                while True:
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
                     await anyio.sleep(0.01)  # pragma: lax no cover
         finally:
             with suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGKILL)
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
 
 
 class _NoSetsidInCallersGroup(LocalWorkspaceBackend):

@@ -59,7 +59,8 @@ async def _default_stream(messages: object, info: object):
     for index, part in enumerate(_default_model(messages, info).parts):
         if isinstance(part, TextPart):
             yield part.content
-        elif isinstance(part, ToolCallPart):
+        else:
+            assert isinstance(part, ToolCallPart)
             yield {index: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
 
 
@@ -137,7 +138,8 @@ async def test_temporal_vetoes_before_mutation(
         for index, part in enumerate(model(messages, info).parts):
             if isinstance(part, TextPart):
                 yield part.content
-            elif isinstance(part, ToolCallPart):
+            else:
+                assert isinstance(part, ToolCallPart)
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
 
     agent = Agent(

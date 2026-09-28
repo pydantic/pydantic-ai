@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from pathlib import Path
+
+import pytest
 
 from pydantic_ai.workspaces import WorkspaceRef
 
@@ -83,3 +86,68 @@ def test_modal_durable_example_is_module_level_and_runnable() -> None:
         assert 'Coder()' in source
         assert 'PydanticAIPlugin()' in source
         assert 'workflows=[' in source
+
+
+_TEMPORAL_PAGE = """
+```python
+import asyncio
+import uuid
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+from pydantic_ai_harness.coder import Coder
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    name='docs_example_coder',
+    capabilities=[LocalWorkspace({root!r}), Coder(), TemporalDurability()],
+)
+
+
+@workflow.defn
+class CoderWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await agent.run(prompt)).output
+
+
+async def main() -> None:
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+    async with Worker(client, task_queue='coder', workflows=[CoderWorkflow]):
+        print(
+            await client.execute_workflow(
+                CoderWorkflow.run, 'Look around.', id=f'coder-{{uuid.uuid4()}}', task_queue='coder'
+            )
+        )
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+"""
+
+
+# Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14.
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason='temporalio sandbox is incompatible with Python 3.14 '
+    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
+)
+def test_temporal_block_runs_its_workflow_against_a_local_dev_server(tmp_path: Path) -> None:
+    pytest.importorskip('temporalio')
+    page = tmp_path / 'page.md'
+    page.write_text(_TEMPORAL_PAGE.format(root=str(tmp_path)))
+    (example,) = python_blocks(str(page))
+
+    async def cleanup(ref: WorkspaceRef) -> None:
+        Path(ref.id, 'cleaned').touch()
+
+    _, runs = run_block(example, cleanup=cleanup)
+    assert [(run.used_sandbox, set(run.outputs)) for run in runs] == [(True, {'shell', 'write_file', 'read_file'})]
+    assert (tmp_path / 'cleaned').exists()
