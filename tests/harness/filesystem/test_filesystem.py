@@ -843,7 +843,7 @@ class HeldWriteWorkspace:
             return FileEntry(name=posixpath.basename(path), path=path, is_dir=False, size=len(self.files[path]))
         if path == '/work':
             return FileEntry(name='work', path=path, is_dir=True, size=None)
-        raise FileNotFoundError(path)
+        raise FileNotFoundError(path)  # pragma: no cover
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         raise NotImplementedError  # pragma: no cover
