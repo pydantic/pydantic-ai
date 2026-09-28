@@ -102,7 +102,8 @@ def _no_workspace_tools_message(agent_name: str | None) -> str:
 def _legacy_argument_message(names: list[str]) -> str:
     moves = '\n'.join(f'- `{name}`: {_LEGACY_ARGUMENTS[name]}' for name in names)
     listed = ', '.join(f'{name}=...' for name in names)
-    ignored = ' and ignored' if names != ['sandbox_id'] else ''
+    # `sandbox_id` still attaches, so only say 'ignored' when it is not among them.
+    ignored = '' if 'sandbox_id' in names else ' and ignored'
     return (
         f"`ModalSandbox({listed})` is deprecated{ignored}. `ModalSandbox` now supplies the Modal sandbox as the run's "
         '`ctx.workspace` and registers no tools of its own; add `Shell()` and/or `FileSystem()` alongside it '

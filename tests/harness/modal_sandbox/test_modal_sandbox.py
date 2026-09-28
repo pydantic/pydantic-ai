@@ -209,7 +209,7 @@ def test_previous_constructor_arguments_warn_with_guidance(legacy: dict[str, Any
 
 def test_several_previous_arguments_are_reported_together() -> None:
     with pytest.warns(
-        HarnessDeprecationWarning, match=r'ModalSandbox\(sandbox_id=..., instructions=...\)` is deprecated and ignored'
+        HarnessDeprecationWarning, match=r'ModalSandbox\(sandbox_id=..., instructions=...\)` is deprecated\. '
     ) as record:
         ModalSandbox(sandbox_id='sb-1', instructions='')  # pyright: ignore[reportArgumentType]
     assert str(record[0].message).count('\n- `') == 2
