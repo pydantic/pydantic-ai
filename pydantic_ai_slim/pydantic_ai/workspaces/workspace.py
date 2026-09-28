@@ -397,21 +397,19 @@ class Workspace(WorkspaceBackend):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> WorkspaceResult:
-        """Run a command and wait for it; a relative `cwd` resolves against the working directory.
+        """Run a command in the working directory and wait for it.
 
+        To start elsewhere, prefix a shell command with `cd <shlex-quoted dir> && `.
         There is no default `timeout`. Raises `UserError` if the backend can't run commands.
         """
         validate_timeout(timeout)
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
-        if cwd is not None:
-            cwd = await self.resolve(cwd)
-        return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        return await backend.run(command, shell=shell, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
         """The default working directory, which relative paths resolve against."""

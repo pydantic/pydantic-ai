@@ -4769,12 +4769,11 @@ class WorkspaceProbePolicy(WrapperWorkspace):
         command: str | Sequence[str],
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
         assert activity.in_activity()
-        result = await self.wrapped.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
         assert self.ref is not None
         return FakeWorkspaceResult(
             exit_code=result.exit_code,

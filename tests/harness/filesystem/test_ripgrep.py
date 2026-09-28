@@ -281,13 +281,12 @@ class _CountingProbes(LocalWorkspaceBackend):
         command: WorkspaceCommand,
         *,
         shell: bool = False,
-        cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
         if isinstance(command, str) and 'command -v rg' in command:
             self.probes += 1
-        return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
 class TestWithoutRipgrep:
