@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import posixpath
 import shlex
 import shutil
 import signal
@@ -1600,7 +1601,7 @@ class TestStopEscalation:
         await job.kill()
 
 
-_KILL_SCRIPT = 'kill -s "$1" -- "$2"'
+_KILL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 
 
 class _RecordingKill(LocalWorkspaceBackend):
@@ -1654,8 +1655,9 @@ class TestSignalling:
         assert stopped.splitlines()[-2:] == ['[stopped]', '[exit code: 143]']
         signals = [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]]
         target = f'-{job.pgid}' if job.pgid is not None else str(job.pid)
-        assert signals[0] == ['sh', '-c', _KILL_SCRIPT, 'kill', 'TERM', target]
-        assert all(argv[-2:] == ['0', target] for argv in signals[1:])
+        stop_file = posixpath.join(job.directory, 'stop')
+        assert signals[0] == ['sh', '-c', _KILL_SCRIPT, 'kill', 'TERM', target, stop_file]
+        assert all(argv[-3:] == ['0', target, stop_file] for argv in signals[1:])
         assert all(argv[0] != 'kill' for argv in backend.argv)
         await _wait_for_exit(job.pid)
 
@@ -1669,6 +1671,21 @@ class TestSignalling:
         stopped = await ts.stop_command(ctx, command_id)
         assert stopped.splitlines() == ['(no output)', '[stopped]', '[exit code: 143]']
         await _wait_for_exit(job.pid)
+
+    async def test_a_stop_file_keeps_the_command_from_starting(self, shell_dir: Path) -> None:
+        # A SIGTERM lost while the command's subshell forks leaves only the stop file `Job.kill` creates first.
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_NeverReady(shell_dir)))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'echo started'))
+        job = await _job(ts, ctx, command_id)
+        (Path(job.directory) / 'stop').touch()
+        (Path(job.directory) / 'launch.ready').touch()
+        with anyio.fail_after(30):
+            while (status := await job.status())[0]:
+                await anyio.sleep(0.05)  # pragma: lax no cover
+        assert status == (False, 143)
+        assert Path(job.output_path).read_text(encoding='utf-8') == ''
+        await job.cleanup()
 
     async def test_failed_signal_is_not_reported_as_stopped(self, shell_dir: Path) -> None:
         backend = _RecordingKill(

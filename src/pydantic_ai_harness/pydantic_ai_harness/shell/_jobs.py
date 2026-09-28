@@ -54,8 +54,10 @@ if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else 
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
 fi
-[ -z "$__harness_stopped" ] || {{ publish 143; exit 143; }}
-sh -c "$3" < /dev/null >> "$out" 2>> "$err"
+(
+  [ -z "$__harness_stopped" ] && [ ! -e "$dir/stop" ] || exit 143
+  exec sh -c "$3"
+) < /dev/null >> "$out" 2>> "$err"
 publish $?
 """
 """The job's supervisor: arguments are the job directory, the log mode, the command, and the file limit.
@@ -66,6 +68,17 @@ a trap with an action is reset in a child. Stopping the group therefore still re
 command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation leaves `exit_code` null.
 The trap also records the signal, so a job stopped before its command starts (the wrapper waits
 for `launch.ready` first) never starts it and publishes `143` instead.
+
+A `SIGTERM` that lands while the command's subshell is being forked, before its default signal
+handling is in place, is lost. `Job.kill` therefore creates the job's `stop` file before
+signalling, and the subshell checks for it once a signal would end it.
+"""
+
+_SIGNAL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
+"""Send signal `$1` to `$2`, first creating the stop file `$3` the wrapper checks before starting the command.
+
+`true` rather than `:`, as a failed redirection on a special builtin exits the shell (the job
+directory may be gone).
 """
 
 _LAUNCHER = """if [ "$exclusive" = 1 ]; then
@@ -283,7 +296,8 @@ class Job:
         """
         target = f'-{self.pgid}' if self.pgid is not None else str(self.pid)
         result = await self.workspace.run(
-            ['sh', '-c', 'kill -s "$1" -- "$2"', 'kill', name, target], timeout=CONTROL_TIMEOUT
+            ['sh', '-c', _SIGNAL_SCRIPT, 'kill', name, target, posixpath.join(self.directory, 'stop')],
+            timeout=CONTROL_TIMEOUT,
         )
         if result.exit_code == 0:
             return True
