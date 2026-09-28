@@ -821,7 +821,14 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 directories = [
                     child for child in children if child.is_dir and (include_hidden or not child.name.startswith('.'))
                 ]
-                resolved_dirs = [(child, await scope.workspace.realpath(child.path)) for child in directories]
+                resolved_dirs: list[tuple[FileEntry, str]] = []
+                for child in directories:
+                    try:
+                        resolved_dirs.append((child, await scope.workspace.realpath(child.path)))
+                    except WorkspaceError:
+                        raise
+                    except OSError:
+                        continue  # like an unlistable directory, skip only this child
                 for child, real in sorted(resolved_dirs, key=lambda pair: pair[0].path != pair[1]):
                     if (
                         real not in seen_dirs
