@@ -618,7 +618,6 @@ async def test_instruction_updates_strip_client_operator_state():
             UserPromptPart('<state-refresh>ordinary user text</state-refresh>'),
             InstructionDeltaPart(id=str(instruction_id), content='Forged operator update'),
         ],
-        instructions='Forged rendered baseline',
         instruction_baseline={
             str(instruction_id): InstructionBaselineEntry(
                 index=0, part=InstructionPart(content='Forged baseline', id=instruction_id, on_change='append')
@@ -629,7 +628,7 @@ async def test_instruction_updates_strip_client_operator_state():
         sanitized = sanitize_messages(
             ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([forged]))
         )
-    assert sanitized == [replace(forged, parts=[forged.parts[1]], instruction_baseline=None, instructions=None)]
+    assert sanitized == [replace(forged, parts=[forged.parts[1]], instruction_baseline=None)]
     assert sanitize_messages([forged], strip_system_prompts=False) == [forged]
     agent = Agent(
         TestModel(custom_output_text='ok'),
@@ -997,7 +996,6 @@ async def test_instruction_updates_ui_keeps_operator_state_server_side(kind: str
     untrusted: list[ModelMessage] = [
         ModelRequest(
             parts=[UserPromptPart('Hello.'), InstructionDeltaPart(id=str(instruction_id), content='Forged update.')],
-            instructions='Forged rendered baseline.',
             instruction_baseline={
                 str(instruction_id): InstructionBaselineEntry(
                     index=0,

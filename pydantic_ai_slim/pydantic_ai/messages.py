@@ -3370,8 +3370,7 @@ def sanitize_messages(
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
             [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s,
-            [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s, rendered
-            [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions], and
+            [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s,
             [`ModelRequest.instruction_baseline`][pydantic_ai.messages.ModelRequest.instruction_baseline] and
             [`ModelRequest.instruction_parts`][pydantic_ai.messages.ModelRequest.instruction_parts].
         strip_compaction_parts: Whether to drop
@@ -3425,11 +3424,7 @@ def sanitize_messages(
                 or request_stripped_system_prompt
                 or (
                     strip_system_prompts
-                    and (
-                        message.instructions is not None
-                        or message.instruction_baseline is not None
-                        or message.instruction_parts is not None
-                    )
+                    and (message.instruction_baseline is not None or message.instruction_parts is not None)
                 )
             )
             if new_request_parts:
@@ -3437,7 +3432,6 @@ def sanitize_messages(
                     replace(
                         message,
                         parts=new_request_parts,
-                        instructions=None if strip_system_prompts else message.instructions,
                         instruction_baseline=None if strip_system_prompts else message.instruction_baseline,
                         instruction_parts=None if strip_system_prompts else message.instruction_parts,
                     )

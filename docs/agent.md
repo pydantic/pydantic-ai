@@ -1712,7 +1712,7 @@ Provider acceptance and instruction following remain model-dependent. In recorde
 !!! note "Scope and trust"
     Append delivery supports always-on agent, capability, and toolset instruction sources. Deferred capability instructions and realtime sessions warn when given this opt-in and retain their existing delivery behavior. Legacy `system_prompt(dynamic=True)` is unchanged. There is no change to the default policy.
 
-    [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction records, baselines, and rendered instruction strings are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin.
+    [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta parts, baselines, and prefix parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin.
 
     Append delivery does not make instruction callbacks durable. In [durable execution](durable_execution/overview.md), callbacks must be deterministic or obtain changing external values through a [durable capability operation](capabilities/custom.md#durable-capability-operations) or the engine's durable units. Registering a bound async capability method decorated with `@durable_operation` through `capability.instructions(name='state', on_change='append')(capability.read_state)` records its result before history changes are computed. Replay then uses recorded values rather than fresh external reads.
 
