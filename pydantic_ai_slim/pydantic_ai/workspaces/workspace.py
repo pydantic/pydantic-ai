@@ -322,7 +322,8 @@ class _ShellFilesystem(SupportsFilesystem):
             shell=True,
         )
         await self._raise_for_error(result, path)
-        return _decode_sized(result.stdout, path).decode()
+        # Keep undecodable POSIX name bytes, as `list_dir` does, so its paths resolve too.
+        return _decode_sized(result.stdout, path).decode(errors='surrogateescape')
 
     async def _raise_for_error(self, result: CommandResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:

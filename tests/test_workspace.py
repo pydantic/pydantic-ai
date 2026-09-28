@@ -285,6 +285,12 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
     assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
 
 
+async def test_shell_realpath_keeps_a_non_utf8_filename(tmp_path: Path) -> None:
+    # `list_dir` returns such a name with surrogate escapes; `write_bytes` resolves it through `realpath`.
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    assert await workspace.realpath('file-\udcff') == f'{os.path.realpath(tmp_path)}/file-\udcff'
+
+
 async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> None:
     if os.geteuid() == 0:
         pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
