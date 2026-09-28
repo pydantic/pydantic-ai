@@ -17,8 +17,8 @@ _ROOT_NOTES = {
     '.grok': 'Grok setup is derived from the .claude/.agents setup.',
 }
 
-# Workspace directory entries do not say whether a directory is a symlink, so a walk cannot
-# detect a symlink cycle; this bound stops one. Real skill trees are two levels deep.
+# Directories are deduplicated by their resolved path, so symlink cycles and aliases are walked once;
+# this bound backs that up on backends that cannot resolve links. Real skill trees are two levels deep.
 _MAX_SKILL_DEPTH = 8
 
 
@@ -78,9 +78,15 @@ async def _scan_skills(workspace: Workspace, skills_root: str, root_dir: str) ->
         return []
 
     found: list[str] = []
+    seen: set[str] = set()
     pending = deque([(skills_root, 0)])
     while pending:
         directory, depth = pending.popleft()
+        # Entries follow directory symlinks, so a link to `.` would otherwise multiply the walk at every level.
+        real = await workspace.realpath(directory)
+        if real in seen:
+            continue
+        seen.add(real)
         # Defensive race: the directory may disappear after `_stat`.
         try:
             entries = await workspace.list_dir(directory)
