@@ -290,6 +290,10 @@ if __name__ == '__main__':
 
 Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
 
+## Telemetry
+
+`E2BSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command and file operation runs inside the tool call span that asked for it. Creating a sandbox also logs `Created E2B sandbox <id>` at INFO on the `pydantic_ai_harness.e2b_sandbox._backend` logger, so the id is on record even if the run ends before it is stored.
+
 ## API reference
 
 ::: pydantic_ai_harness.e2b_sandbox.E2BSandbox
