@@ -25,8 +25,6 @@ from pydantic_ai.tools import Tool, ToolDefinition
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 
 # Module-level types for tests that need get_type_hints() resolution
 class _Color(str, Enum):

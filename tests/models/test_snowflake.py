@@ -1,12 +1,11 @@
 from __future__ import annotations as _annotations
 
-import json
 from typing import Any, cast
 
 import pytest
+from cassetter import Cassette
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ThinkingPart
@@ -14,6 +13,7 @@ from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.settings import ModelSettings
 
+from ..cassette_utils import request_json
 from ..conftest import IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
@@ -35,7 +35,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -237,13 +236,13 @@ async def test_snowflake_thinking(allow_model_requests: None, live_provider: Sno
         {'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'}
     )
 
-    first_request = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    first_request = request_json(vcr.requests[0])
     assert first_request['reasoning'] == {'effort': 'low'}
     # Cortex applies a non-1 default temperature server-side, which Claude rejects with thinking enabled.
     assert first_request['temperature'] == 1
 
     # The second request replays the thinking as `reasoning_details` on the assistant message.
-    second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    second_request = request_json(vcr.requests[1])
     assistant_message = next(m for m in second_request['messages'] if m['role'] == 'assistant')
     assert assistant_message['reasoning_details'][0]['type'] == 'reasoning.text'
     assert assistant_message['reasoning_details'][0]['signature']

@@ -38,7 +38,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 
