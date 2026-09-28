@@ -34,7 +34,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 Give the agent a project directory with `SpritesSandbox(working_dir='/home/sprite/project')`: a new Sprite gets it created for you, and commands and relative paths start there.
 
-A new Sprite comes with git, Python, and Node.js ([preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/)), but not pytest or ripgrep (`rg`). Install what your project needs, such as `pip install pytest`; Sprites retain installed packages. For faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep` once in the Sprite and store its ref to reuse it on later runs.
+A new Sprite comes with git, Python, and Node.js ([preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/)), but not pytest or ripgrep (`rg`). Install what your project needs, such as pytest; Sprites retain installed packages. For faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep` once in the Sprite and store its ref to reuse it on later runs.
 
 ## Continue in the same sandbox
 
