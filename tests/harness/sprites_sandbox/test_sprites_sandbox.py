@@ -181,6 +181,31 @@ class TestSpritesSandbox:
         assert (first.stdout, second) == ('hi', True)
         assert (len(transport.clients), transport.close_calls) == (2, 2)
 
+    async def test_operations_on_one_backend_look_the_sprite_up_once(self, transport: SpriteTransport) -> None:
+        owner = SpritesSandboxBackend()
+        native = await owner.get_sandbox()
+        # What a Temporal activity does: rebuild the backend from the ref and run several operations.
+        backend = SpritesSandbox[None]().get_workspace(context(), ref=owner.ref)
+        assert isinstance(backend, SpritesSandboxBackend)
+        note = str(transport.root / 'note.txt')
+        await backend.write_bytes(note, b'hi')
+        assert await backend.read_bytes(note) == b'hi'
+        assert (await backend.run(['true'])).exit_code == 0
+        # Each operation closed its own client, but only the first one looked the Sprite up.
+        assert (len(transport.clients), transport.close_calls, transport.gets) == (4, 3, 1)
+
+        # The public handle is always a fetched one.
+        assert (await backend.get_sandbox()).name == native.name
+        assert transport.gets == 2
+
+        await native.delete()
+        with pytest.raises(WorkspaceUnavailableError):
+            await backend.run(['true'])
+        # A Sprite reported unavailable is looked up again before the next operation.
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await backend.exists(note)
+        assert transport.gets == 3
+
     async def test_an_operation_during_the_last_close_opens_its_own_client(self, transport: SpriteTransport) -> None:
         backend = SpritesSandbox[None]().get_workspace(context(), ref=None)
         assert isinstance(backend, SpritesSandboxBackend)

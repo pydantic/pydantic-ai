@@ -318,6 +318,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # operation in flight ends, so a dropped backend leaves no open connection behind.
         self._close_after_operation = False
         self._operations = 0
+        # The Sprite this backend has looked up, so a later client (one per operation, while nothing
+        # will call `aclose()`) attaches by name without another control-plane lookup.
+        self._attached_name: str | None = None
+        # Set while `_sandbox` is such an unfetched handle, which `get_sandbox()` does not hand out.
+        self._unfetched = False
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -333,8 +338,16 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         would leave the loser billed and unreferenced. Attaching by `ref` to a Sprite that
         no longer exists raises `WorkspaceUnavailableError`; it does not create a replacement.
         """
+        return await self._get_sandbox(fetched=True)
+
+    async def _get_sandbox(self, *, fetched: bool = False) -> AsyncSprite:
+        """The Sprite handle, looked up at most once per backend unless `fetched` asks for a fresh lookup.
+
+        An unfetched handle is safe for the backend's own calls: a deleted Sprite still fails the
+        command or file call itself, as `WorkspaceUnavailableError`.
+        """
         async with self._lock:
-            if (sandbox := self._sandbox) is not None:
+            if (sandbox := self._sandbox) is not None and not (fetched and self._unfetched):
                 return sandbox
 
             client = self._client
@@ -347,6 +360,10 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 self._client = client
 
             ref = self._ref
+            if not fetched and ref is not None and ref.id == self._attached_name:
+                self._sandbox = sandbox = client.sprite(ref.id)
+                self._unfetched = True
+                return sandbox
 
             async def acquire() -> AsyncSprite:
                 with anyio.move_on_after(_ACQUIRE_TIMEOUT):
@@ -378,6 +395,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     self._sandbox = sandbox
                     self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
                     self._uncertain_create = False
+                    self._attached_name = sandbox.name
+                    self._unfetched = False
                     return sandbox
                 # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
                 # control plane is a transport failure, which propagates for a retry;
@@ -426,6 +445,10 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._operations += 1
         try:
             yield
+        except WorkspaceUnavailableError:
+            # The Sprite may be gone or the credentials revoked: the next operation looks it up again.
+            self._attached_name = None
+            raise
         finally:
             self._operations -= 1
             if self._operations == 0 and self._close_after_operation and self._owns_client:
@@ -442,7 +465,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             result = await self.run(['pwd', '-P'], timeout=_INTERNAL_EXEC_TIMEOUT)
             printed = result.stdout.removesuffix('\n')
             if result.exit_code != 0 or not posixpath.isabs(printed):
-                sandbox = await self.get_sandbox()
+                sandbox = await self._get_sandbox()
                 raise WorkspaceError(
                     f'Could not determine the working directory of Sprite {sandbox.name!r}: '
                     f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}. Use absolute paths.'
@@ -491,7 +514,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
         # Acquiring the Sprite has its own bound; the command's deadline starts after it and covers
         # the working-directory check.
-        sandbox = await self.get_sandbox()
+        sandbox = await self._get_sandbox()
         deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
         if directory is not None and _check_working_dir:
             # Sprites exec silently ignores a nonexistent `dir`; reject it before running user work.
@@ -575,7 +598,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     async def _write_bytes(self, path: str, data: bytes) -> None:
         # Not through a command: the exec API sends argv in the URL, which caps a command at about 40 KB.
-        sandbox = await self.get_sandbox()
+        sandbox = await self._get_sandbox()
         target = sandbox.filesystem() / path
         try:
             mode = 0o644
