@@ -35,8 +35,3 @@ def vcr_config() -> dict[str, Any]:
         # between recording and replay for the same URL.
         'match_on': ['method', 'path', 'query'],
     }
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'

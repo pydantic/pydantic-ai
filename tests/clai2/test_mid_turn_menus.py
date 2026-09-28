@@ -29,11 +29,6 @@ from pydantic_clai2.session_settings import SessionSettings
 from pydantic_clai2.settings_store import SettingsStore
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def test_only_bare_opted_in_commands_run_during_a_turn() -> None:
     commands = Commands()
     commands.register(Command(name='menu', description='', handler=lambda _: '', during_turn=True))

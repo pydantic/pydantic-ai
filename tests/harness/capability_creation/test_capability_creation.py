@@ -36,13 +36,6 @@ from pydantic_ai_harness.capability_creation import (
 )
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 VALID_CODE = """
 from dataclasses import dataclass
 

@@ -63,11 +63,6 @@ def _no_real_modal(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPat
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def fake_modal(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeModal]:
     """Inject a fake `modal` module and yield its control surface."""
     control = FakeModal()

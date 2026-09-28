@@ -17,12 +17,6 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 def _delegate_with_model(agent_name: str, model: str | None) -> FunctionModel:
     """A parent model that delegates once (optionally naming a model), then replies."""
     calls = {'n': 0}

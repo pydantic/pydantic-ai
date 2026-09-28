@@ -14,11 +14,6 @@ from pydantic_clai2.key_menu import KeyAction, KeysSource, build_keys_menu, keys
 from tests.clai2.menu_script import Script, pick, typed
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def test_management_flow() -> None:
     script = Script(
         lists=[

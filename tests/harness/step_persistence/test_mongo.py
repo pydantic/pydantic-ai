@@ -41,11 +41,6 @@ from pydantic_ai_harness.step_persistence import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def _mock_client() -> AsyncMongoClient[dict[str, object]]:
     return AsyncMongoMockClient()  # pyright: ignore[reportUnknownVariableType, reportReturnType]
 

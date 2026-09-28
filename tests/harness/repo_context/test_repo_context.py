@@ -35,11 +35,6 @@ from pydantic_ai_harness.repo_context._loader import (
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def workspace(tmp_path: Path) -> Workspace:
     return Workspace(LocalWorkspaceBackend(working_dir=tmp_path))
 

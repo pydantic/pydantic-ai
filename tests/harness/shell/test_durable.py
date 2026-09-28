@@ -69,11 +69,6 @@ def _agent(root: Path, key: str) -> Agent[None, str]:
     )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_concurrent_temporal_workflows_keep_separate_cwd(tmp_path: Path) -> None:
     for key in ('a', 'b'):
         (tmp_path / key).mkdir()
