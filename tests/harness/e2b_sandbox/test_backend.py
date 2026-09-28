@@ -267,6 +267,24 @@ class TestRun:
         assert process.poll() is not None
         assert handle._out.closed and handle._err.closed  # pyright: ignore[reportPrivateUsage]
 
+    async def test_host_fake_filesystem_stays_under_host_root(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
+        root = tmp_path / 'root'
+        root.mkdir()
+        outside = tmp_path / 'outside'
+        outside.mkdir()
+        sentinel = outside / 'sentinel'
+        sentinel.write_text('keep')
+        (root / 'escape').symlink_to(outside)
+        (root / 'inside').write_text('x')
+        fake_e2b.host_root = root
+        files = fake_e2b.new_sandbox('host').files
+        for path in (str(sentinel), '/', str(root / 'escape' / 'sentinel'), str(root / '..' / 'outside')):
+            with pytest.raises(AssertionError, match='outside the host root'):
+                await files.remove(path)
+        assert sentinel.read_text() == 'keep'
+        await files.remove(str(root / 'inside'))
+        assert not (root / 'inside').exists()
+
     async def test_host_fake_closes_output_when_spawn_fails(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

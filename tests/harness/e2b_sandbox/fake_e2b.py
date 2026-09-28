@@ -531,6 +531,20 @@ def _host_io(fn: Callable[_P, CoroutineType[object, object, _T]]) -> Callable[_P
 class _HostFilesystem(FakeFilesystem):
     """Mirrors `sandbox.files` on the host filesystem, so commands and file calls share one tree."""
 
+    async def _check(self, path: str) -> None:
+        await super()._check(path)
+        # These calls act on the developer's real disk: confine them to `host_root`, plus the
+        # backend's own `/tmp` side-channel files. The parent is resolved but not the entry
+        # itself, so removing a symlink still removes the link rather than its target.
+        path = posixpath.normpath(path)
+        if posixpath.dirname(path) == '/tmp' and posixpath.basename(path).startswith('pydantic-e2b-pgid-'):
+            return
+        assert self._control.host_root is not None
+        resolved = Path(os.path.realpath(posixpath.dirname(path)), posixpath.basename(path))
+        assert resolved.is_relative_to(os.path.realpath(self._control.host_root)), (
+            f'host fake refused {path!r}: it is outside the host root'
+        )
+
     @_host_io
     async def read(
         self,
