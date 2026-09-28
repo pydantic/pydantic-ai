@@ -1491,6 +1491,15 @@ class TestShellCapability:
         with pytest.raises(UserError, match='`Shell` needs a workspace'):
             await agent.run('run echo hello')
 
+    async def test_hand_built_toolset_without_workspace_fails_the_run(self, tmp_path: Path) -> None:
+        if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+            pytest.skip('Agent.run() requires asyncio')
+        agent: Agent[None, str] = Agent(
+            TestModel(call_tools=[]), deps_type=type(None), toolsets=[_shell_toolset(tmp_path)]
+        )
+        with pytest.raises(UserError, match='`ShellToolset` needs a workspace'):
+            await agent.run('run echo hello')
+
 
 async def _tools_offered_to_model(cwd: Path, *, shell_first: bool) -> dict[str, str | None]:
     """Run an agent with Shell and CodeMode and return the tools the model was offered."""

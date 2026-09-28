@@ -24,7 +24,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
-from pydantic_ai_harness._workspace import metadata_dir, supports_commands
+from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job
 from pydantic_ai_harness.shell._limits import file_limit_status, limited_script, validate_file_limit
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
@@ -160,7 +160,9 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        """Offer no tools when the workspace cannot execute commands."""
+        """Offer no tools when the workspace cannot execute commands; fail a run with no workspace."""
+        if not ctx.workspace.attached:
+            require_workspace(ctx.workspace, 'ShellToolset')
         if not supports_commands(ctx.workspace):
             return {}
         return await super().get_tools(ctx)
