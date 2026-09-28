@@ -58,14 +58,10 @@ class TokenEndpoint:
         return httpx.MockTransport(self)
 
 
-def granted(
-    access: str = 'at-1', refresh_token: str | None = 'rt-1', expires_in: float | None = 3600
-) -> httpx.Response:
-    body: dict[str, object] = {'access_token': access, 'token_type': 'user'}
+def granted(access: str = 'at-1', refresh_token: str | None = 'rt-1') -> httpx.Response:
+    body: dict[str, object] = {'access_token': access, 'token_type': 'user', 'expires_in': 3600}
     if refresh_token:
         body['refresh_token'] = refresh_token
-    if expires_in is not None:
-        body['expires_in'] = expires_in
     return httpx.Response(200, json=body)
 
 
@@ -77,11 +73,12 @@ def browser(answer: Callable[[dict[str, str]], dict[str, str]], *, opens: bool =
 
         def land() -> None:
             callback = f'{params["redirect_uri"]}?{urlencode(answer(params))}'
-            for _ in range(500):
+            for _ in range(500):  # pragma: no branch
                 try:
                     httpx.get(callback, timeout=1)
                     return
-                except httpx.ConnectError:
+                except httpx.ConnectError:  # pragma: lax no cover
+                    # Only when the browser lands before the callback server listens.
                     time.sleep(0.01)
 
         threading.Thread(target=land, daemon=True).start()
