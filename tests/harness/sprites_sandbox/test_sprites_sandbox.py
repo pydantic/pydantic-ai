@@ -9,7 +9,6 @@ from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import anyio
-import anyio.lowlevel
 import client_signals.core
 import httpx
 import pytest
@@ -437,10 +436,8 @@ class TestSpritesSandbox:
         get, connect = transport.get, transport.connect
 
         async def observed_get(*args: Any, **kwargs: Any) -> Any:
-            started = anyio.current_time()
             # Held until the clock has moved on, so a deadline taken before acquisition lands earlier.
-            while anyio.current_time() == started:
-                await anyio.lowlevel.checkpoint()
+            await anyio.sleep(0.001)
             acquired_at.append(anyio.current_time())
             return await get(*args, **kwargs)
 
