@@ -334,6 +334,17 @@ class TestRun:
             for handle in fake_e2b.sandboxes[0].commands.handles:
                 handle.close()
 
+    async def test_timed_out_command_leaves_no_registration_files(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
+        fake_e2b.host_root = tmp_path
+        backend = await started()
+        with pytest.raises(WorkspaceTimeoutError):
+            await backend.run(['sleep', '20'], timeout=0.1)
+        (launch,) = [call.command for call in fake_e2b.sandboxes[0].commands.calls if 'exec sleep' in call.command]
+        match = re.search(r'/tmp/pydantic-e2b-pgid-[0-9a-f]+', launch)
+        assert match is not None
+        assert not Path(match.group()).exists()
+        assert not Path(f'{match.group()}.claim').exists()
+
     async def test_cancel_before_remote_start_fences_late_start_and_retry(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

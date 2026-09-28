@@ -505,7 +505,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 f'if mkdir {claim} 2>/dev/null; then exit 0; fi; '
                 f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
                 'sleep 0.1; i=$((i+1)); done; '
-                f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); p=${{record%%:*}}; '
+                # A registered launcher already consumed its claim, so both files can go; a claim
+                # this stop won is kept to fence a late start.
+                f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -f {pgid_file}; rmdir {claim}; '
+                'p=${record%%:*}; '
                 # Match creation time before signalling: a reused PID belongs to another run.
                 '[ "$(ps -o lstart= -p "$p")" = "${record#*:}" ] || exit 0; '
                 + ('[ "$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ")" = "$p" ] || exit 0; ' if isolated else '')
