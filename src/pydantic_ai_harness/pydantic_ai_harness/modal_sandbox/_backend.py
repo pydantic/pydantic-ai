@@ -368,6 +368,13 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         absolute_path('path', path)
         sandbox = await self.get_sandbox()
         async with self._mapped_errors(sandbox, f'Could not remove {path!r}', path):
+            # The removal is recursive, so refuse the working directory and its ancestors, like the
+            # built-in backends. The leaf stays unresolved: removing a link removes only the link.
+            root = await self.working_dir()
+            parent = await Workspace(self).realpath(posixpath.dirname(path))
+            target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
+            if root == target or root.startswith(target.rstrip('/') + '/'):
+                raise ValueError('cannot remove the workspace root or its ancestor')
             await sandbox.filesystem.remove.aio(path, recursive=True)
 
     async def exists(self, path: str) -> bool:

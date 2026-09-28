@@ -409,7 +409,8 @@ class _HostFilesystem:
     def _remove(self, remote_path: str, *, recursive: bool = False) -> None:
         path = Path(remote_path)
         with _host_errors(remote_path):
-            if path.is_dir() and recursive:
+            # Modal removes a link itself, even one to a directory.
+            if path.is_dir() and not path.is_symlink() and recursive:
                 shutil.rmtree(path)
             else:
                 path.unlink()

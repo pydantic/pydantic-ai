@@ -914,10 +914,29 @@ class TestFilesystem:
     async def test_remove_is_recursive(self, fake_modal: FakeModal) -> None:
         # One call covers both halves of the protocol's `remove`: on a file `recursive`
         # changes nothing, and on a directory it is what removes a non-empty one.
+        fake_modal.responder = lambda argv, timeout: ('/work\n', '', 0)
         backend = await started()
         await backend.make_dir('/tmp/pkg')
         await backend.remove('/tmp/pkg')
         assert fake_modal.sandboxes[0].removals == [('/tmp/pkg', True)]
+
+    async def test_remove_refuses_the_working_dir_and_its_ancestors(
+        self, fake_modal: FakeModal, tmp_path: Path
+    ) -> None:
+        # Modal's recursive remove would take the whole working directory with `.`.
+        root = tmp_path.resolve() / 'work'
+        (root / 'child').mkdir(parents=True)
+        (root / 'link').symlink_to(root)
+        fake_modal.host_root = root
+        workspace = Workspace(await started(working_dir=str(root)))
+        for path in ('.', 'child/..', str(root.parent), '/'):
+            with pytest.raises(ValueError, match='workspace root or its ancestor'):
+                await workspace.remove(path)
+        assert (root / 'child').is_dir()
+        # A link to the root is removed itself, like any other entry.
+        await workspace.remove('link')
+        await workspace.remove('child')
+        assert sorted(root.iterdir()) == []
 
     async def test_exists_is_false_through_a_non_directory(self, fake_modal: FakeModal) -> None:
         # Modal splits "there is nothing at that path" in two, and a non-leaf path component
