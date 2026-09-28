@@ -8,7 +8,7 @@ interaction between `bedrock_cache_tool_definitions` and `toolChoice` shapes.
 from __future__ import annotations as _annotations
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent, ModelRequest, RunContext, ToolReturnPart
 from pydantic_ai.settings import ModelSettings
