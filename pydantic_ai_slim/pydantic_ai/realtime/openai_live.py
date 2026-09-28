@@ -735,7 +735,10 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(event, ResponseEvent):
             return self._map_response_event(cast('dict[str, Any]', event.event), delegation_id=event.delegation_id)
         if isinstance(event, SessionUsageUpdatedEvent):
-            return self._map_usage(event.usage.seconds)
+            context_window = event.context_window
+            return self._map_usage(
+                event.usage.seconds, context_window_used=context_window.usage_ratio if context_window else None
+            )
         if isinstance(event, SessionClosedEvent):
             return self._map_session_closed(event)
         if isinstance(event, ErrorEvent):
@@ -972,18 +975,23 @@ class OpenAILiveConnection(RealtimeConnection):
             )
         ]
 
-    def _map_usage(self, cumulative_seconds: float) -> list[RealtimeCodecEvent]:
+    def _map_usage(
+        self, cumulative_seconds: float, *, context_window_used: float | None = None
+    ) -> list[RealtimeCodecEvent]:
         """Emit the audio seconds billed since the last report, priced as the Live model.
 
         Live reports a running total and says explicitly not to sum successive values, while
-        `RunUsage` accumulates what it is given — so the connection does the subtraction.
+        `RunUsage` accumulates what it is given — so the connection does the subtraction. The context
+        window fraction is a snapshot, so it is passed on as is, even when no more seconds were billed.
 
         The price is resolved here because this usage belongs to no `ModelResponse`, and so is never
         priced at a response boundary: without it, the session's cost would leave out the call itself.
         """
         increment = cumulative_seconds - self._reported_seconds
         if increment <= 0:
-            return []
+            if context_window_used is None:
+                return []
+            return [SessionUsage(RequestUsage(), response_scoped=False, context_window_used=context_window_used)]
         self._reported_seconds = cumulative_seconds
         usage = RequestUsage(audio_seconds=increment)
         if (
@@ -996,7 +1004,7 @@ class OpenAILiveConnection(RealtimeConnection):
         ) is not None:
             usage.cost = price.total_price
         # Live bills the session, not a response: this belongs to the run, not to any one `ModelResponse`.
-        return [SessionUsage(usage, response_scoped=False)]
+        return [SessionUsage(usage, response_scoped=False, context_window_used=context_window_used)]
 
 
 def _now() -> float:

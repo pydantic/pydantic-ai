@@ -631,7 +631,6 @@ def test_prepare_messages_system_prompt_wrapping(
     assert _request_parts(model.prepare_messages(messages)) == expected
 
 
-@pytest.mark.anyio
 async def test_model_default_async_context_returns_model() -> None:
     model = TestModel()
     assert await AbstractModel.__aenter__(model) is model

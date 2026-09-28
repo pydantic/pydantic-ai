@@ -240,7 +240,9 @@ has nowhere to put function parts. Audio and images in seeded history raise
 [`UserError`][pydantic_ai.exceptions.UserError] rather than being dropped. Live accepts up to 128
 seeded messages and 8,192 tokens in total, so seed a long conversation with its recent end. Within a
 session, Live manages its own context: once it nears the limit, it continues from a summary of the
-older conversation, so a long call does not keep every early detail verbatim.
+older conversation, so a long call does not keep every early detail verbatim. The fraction of its
+context in use, as Live reports it, is
+[`context_window_used`](history.md#context-window), which drops once Live summarizes.
 
 ## Images go to the backend
 

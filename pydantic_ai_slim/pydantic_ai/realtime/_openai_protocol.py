@@ -721,7 +721,7 @@ def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEve
     )
 
 
-def _response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
+def response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
     """Retain the raw response status, incomplete reason, and failure error for provider fidelity."""
     details: dict[str, Any] = {'status': response.status}
     if (reason := _response_status_reason(response)) is not None:
@@ -749,7 +749,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
         finish_reason=response_finish_reason(response),
-        provider_details=_response_provider_details(response),
+        provider_details=response_provider_details(response),
     )
 
 
@@ -766,23 +766,46 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     if event_type in ('response.output_audio.delta', 'response.audio.delta'):
         event = _AUDIO_DELTA_ADAPTER.validate_python(data)
-        return AudioDelta(data=base64.b64decode(event.delta, validate=True), item_id=event.item_id or None)
+        return AudioDelta(
+            data=base64.b64decode(event.delta, validate=True),
+            item_id=event.item_id or None,
+            response_id=event.response_id or None,
+        )
 
     elif event_type in ('response.output_audio_transcript.delta', 'response.audio_transcript.delta'):
         event = _AUDIO_TRANSCRIPT_DELTA_ADAPTER.validate_python(data)
-        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
+        return OutputTranscript(
+            text=event.delta or '', is_final=False, item_id=event.item_id or None, response_id=event.response_id or None
+        )
 
     elif event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
         event = _AUDIO_TRANSCRIPT_DONE_ADAPTER.validate_python(data)
-        return OutputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
+        return OutputTranscript(
+            text=event.transcript or '',
+            is_final=True,
+            item_id=event.item_id or None,
+            response_id=event.response_id or None,
+        )
 
     elif event_type == 'response.output_text.delta':
         event = ResponseTextDeltaEvent.model_validate(data)
-        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None, output_text=True)
+        return OutputTranscript(
+            text=event.delta or '',
+            is_final=False,
+            item_id=event.item_id or None,
+            output_text=True,
+            response_id=event.response_id or None,
+        )
 
     elif event_type == 'response.output_text.done':
         event = ResponseTextDoneEvent.model_validate(data)
-        return OutputTranscript(text=event.text or '', is_final=True, item_id=event.item_id or None, output_text=True)
+        return OutputTranscript(
+            text=event.text or '',
+            is_final=True,
+            item_id=event.item_id or None,
+            output_text=True,
+            response_id=event.response_id or None,
+        )
 
     elif event_type in (
         'conversation.item.input_audio_transcription.delta',
@@ -802,6 +825,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
             tool_name=event.name or '',
             args=event.arguments or '{}',
             response_usage_follows=True,
+            response_id=event.response_id or None,
         )
 
     elif event_type == 'input_audio_buffer.speech_started':

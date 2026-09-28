@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx2
 import pytest
+from cassetter import RawRequest, RawResponse
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import WrapperAgent
@@ -51,7 +52,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
 
@@ -225,26 +225,29 @@ def test_parse_call_id(location: str | None, expected: str | None) -> None:
 
 
 def test_scrub_ephemeral_secret_redacts_client_secret() -> None:
-    """The VCR `before_record_response` hook redacts the minted `ek_...` client secret from recorded bodies.
+    """The `before_record_response` hook redacts the minted `ek_...` client secret from recorded bodies.
 
     A unit test because the hook only runs while *recording* a cassette; offline replay never invokes it,
     so a cassette test can't reach it — yet it's the guard that keeps recorded signaling cassettes free of
     anything secret-shaped.
     """
-    minted = {'body': {'string': json.dumps({'value': 'ek_live_secret', 'expires_at': 1}).encode()}}
-    assert json.loads(_scrub_ephemeral_secret(minted)['body']['string'])['value'] == 'ek_scrubbed'
+
+    def scrub(body: bytes | None) -> bytes | None:
+        return _scrub_ephemeral_secret(RawResponse(status=200, headers={}, body=body)).body
+
+    minted = json.dumps({'value': 'ek_live_secret', 'expires_at': 1}).encode()
+    assert json.loads(scrub(minted) or b'')['value'] == 'ek_scrubbed'
     # A non-secret JSON body is returned unchanged.
-    other = {'body': {'string': b'{"foo": "bar"}'}}
-    assert _scrub_ephemeral_secret(other)['body']['string'] == b'{"foo": "bar"}'
+    assert scrub(b'{"foo": "bar"}') == b'{"foo": "bar"}'
     # The defensive guards pass non-body, empty, non-JSON, and non-object bodies through untouched.
-    assert _scrub_ephemeral_secret({}) == {}
-    assert _scrub_ephemeral_secret({'body': {'string': b''}})['body']['string'] == b''
-    assert _scrub_ephemeral_secret({'body': {'string': b'not json'}})['body']['string'] == b'not json'
-    assert _scrub_ephemeral_secret({'body': {'string': b'[1, 2]'}})['body']['string'] == b'[1, 2]'
+    assert scrub(None) is None
+    assert scrub(b'') == b''
+    assert scrub(b'not json') == b'not json'
+    assert scrub(b'[1, 2]') == b'[1, 2]'
 
 
 def test_zero_sdp_addresses_blanks_offer_addresses() -> None:
-    """The VCR `before_record_request` hook keeps the recorder's own addresses out of a cassette.
+    """The `before_record_request` hook keeps the recorder's own addresses out of a cassette.
 
     A unit test for the same reason as the one above: the hook only runs while recording. It matters
     for the sideband audio cassette, whose offer comes from a live `aiortc` peer rather than the
@@ -252,9 +255,8 @@ def test_zero_sdp_addresses_blanks_offer_addresses() -> None:
     addresses.
     """
 
-    class _Request:
-        def __init__(self, body: Any) -> None:
-            self.body = body
+    def zero(body: bytes | None) -> bytes | None:
+        return _zero_sdp_addresses(RawRequest(method='POST', uri='https://example.com/', headers={}, body=body)).body
 
     offer = (
         b'--boundary\r\nContent-Type: application/sdp\r\n\r\n'
@@ -263,7 +265,7 @@ def test_zero_sdp_addresses_blanks_offer_addresses() -> None:
         b'a=candidate:2 1 udp 2130706431 fd7a:115c:a1e0::1 57945 typ host\r\n'
         b'c=IN IP6 fd7a:115c:a1e0::1\r\na=ice-ufrag:creB\r\n'
     )
-    assert _zero_sdp_addresses(_Request(offer)).body == (
+    assert zero(offer) == (
         b'--boundary\r\nContent-Type: application/sdp\r\n\r\n'
         b'v=0\r\nc=IN IP4 0.0.0.0\r\n'
         b'a=candidate:1 1 udp 2130706431 0.0.0.0 46294 typ host\r\n'
@@ -271,13 +273,13 @@ def test_zero_sdp_addresses_blanks_offer_addresses() -> None:
         b'c=IN IP6 ::\r\na=ice-ufrag:creB\r\n'
     )
     # An SDP whose only address is the `c=` connection line (no `a=candidate:` lines) is still zeroed:
-    # the substitution is gated on the body being bytes, not on an ICE candidate being present.
-    assert _zero_sdp_addresses(_Request(b'v=0\r\nc=IN IP4 192.168.1.5\r\na=ice-ufrag:creB\r\n')).body == (
+    # the substitution is gated on the body being present, not on an ICE candidate being present.
+    assert zero(b'v=0\r\nc=IN IP4 192.168.1.5\r\na=ice-ufrag:creB\r\n') == (
         b'v=0\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:creB\r\n'
     )
     # Bodies with no address fields at all — every other recorded request — are unchanged.
-    assert _zero_sdp_addresses(_Request(b'{"model": "gpt-realtime"}')).body == b'{"model": "gpt-realtime"}'
-    assert _zero_sdp_addresses(_Request(None)).body is None
+    assert zero(b'{"model": "gpt-realtime"}') == b'{"model": "gpt-realtime"}'
+    assert zero(None) is None
 
 
 # --- client secret minting --------------------------------------------------------------------------

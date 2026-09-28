@@ -6,8 +6,7 @@ from pathlib import Path
 
 import httpx2
 import pytest
-from vcr.cassette import Cassette
-from vcr.record_mode import RecordMode
+from cassetter import Cassette, RecordMode
 
 from pydantic_ai import (
     Agent,
@@ -33,7 +32,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.skipif(not imports_successful(), reason='openai/logfire not installed'),
 ]

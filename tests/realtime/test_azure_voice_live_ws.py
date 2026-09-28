@@ -35,7 +35,7 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime import WebRTCSession
     from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
 
 
 async def test_text_output_modality_returns_text(
@@ -194,6 +194,7 @@ async def test_audio_in_server_vad_turn(
         emits_input_speech_events=True,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
+        response_usage_covers_context=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supports_thinking=False,

@@ -213,11 +213,12 @@ class ReconnectPolicy(TypedDict, total=False):
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a
     [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] event. What server-side state
-    survives depends on the provider: OpenAI Realtime and Azure OpenAI start a fresh turn (the audio
-    buffer and prior turns are lost), while Gemini Live and xAI restore prior turns through native
-    session resumption, enabled automatically whenever a reconnect policy is set (Gemini honors an
-    explicit `google_enable_session_resumption=False` opt-out by refusing the combination with a
-    [`UserError`][pydantic_ai.exceptions.UserError]).
+    survives depends on the provider: OpenAI Realtime and Azure OpenAI keep no server state across
+    connections, so the session replays its finalized message history into the new one (prior turns
+    survive; buffered input audio and a reply in flight do not), while Gemini Live and xAI restore prior
+    turns through native session resumption, enabled automatically whenever a reconnect policy is set
+    (Gemini honors an explicit `google_enable_session_resumption=False` opt-out by refusing the
+    combination with a [`UserError`][pydantic_ai.exceptions.UserError]).
     """
 
     max_attempts: int
