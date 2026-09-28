@@ -514,7 +514,7 @@ show a "waiting for you" state) registers `@host.on(EventClass)` or
 ### `ordinal`: social posts in Ordinal
 
 `ordinal` (`pydantic_clai2.ordinal`) gives the model harness
-[`Ordinal`](../pydantic_ai_harness/ordinal/README.md), which drafts, schedules,
+[`Ordinal`](../pydantic_ai_harness/pydantic_ai_harness/ordinal/README.md), which drafts, schedules,
 and analyzes social posts through Ordinal's hosted MCP server. It starts disabled;
 `/plugins enable ordinal` turns it on. Ordinal MCP needs the Pro plan or higher.
 If you had enabled or disabled the former `pydantic_ai_harness.ordinal:Ordinal`
