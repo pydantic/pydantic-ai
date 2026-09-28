@@ -33,6 +33,17 @@ configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`, or
 `workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))` for a read-only run (outside
 durable execution; see below).
+`SSHWorkspace(destination, *, working_dir=None, read_only=False, env=None, ssh_args=())` (backend
+`SSHWorkspaceBackend`) runs the same operations on a remote host through the system `ssh` client
+(`BatchMode=yes`, so keys and ports come from `~/.ssh/config` and the agent); file operations use the
+shell fallback there. Its ref is `WorkspaceRef(provider='ssh', id='<destination>[:<working_dir>]')`
+from construction, and the capability claims only that ref. An unreachable host, missing directory or
+dropped connection raises `WorkspaceUnavailableError`. `BubblewrapSandbox(wrapped_capability, *,
+network=False, bwrap_args=())` wraps another workspace capability's workspace in `BubblewrapWorkspace`,
+a `WrapperWorkspace` that prefixes every command with `bwrap` (read-only host, private `/tmp`, no
+network, writable working dir) and runs it through the wrapped workspace, so
+`BubblewrapSandbox(SSHWorkspace(...))` sandboxes commands on the remote host. File methods are not
+sandboxed; they go to the wrapped workspace.
 Without an attached workspace, operations raise `WorkspaceUnavailableError`; a capability that needs one checks
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override

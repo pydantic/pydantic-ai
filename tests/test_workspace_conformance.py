@@ -12,12 +12,16 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import (
+    BubblewrapWorkspace,
     LocalWorkspaceBackend,
+    SSHWorkspaceBackend,
+    Workspace,
     WorkspaceBackend,
     WorkspaceRef,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 
+from .fake_remote_tools import install_fake_remote_tools
 from .workspace_fakes import (
     FakeWorkspace,
     FilesystemOnlyWorkspaceBackend,
@@ -53,6 +57,55 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _local_destroy_environment()
+
+
+class TestSSHWorkspaceBackend(WorkspaceBackendSuite):
+    """Runs against a fake `ssh` that executes the remote command on this machine."""
+
+    @pytest.fixture(autouse=True)
+    def fake_ssh(self, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+        install_fake_remote_tools(tmp_path_factory.mktemp('fake-remote'), monkeypatch)
+
+    @pytest.mark.skip(reason='the same shell paging as `TestRunOnlyWorkspaceBackend`, at a connection per 64 KiB')
+    async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None: ...
+
+    @staticmethod
+    def attach(ref: WorkspaceRef) -> WorkspaceBackend:
+        destination, _, working_dir = ref.id.partition(':')
+        return SSHWorkspaceBackend(destination, working_dir=working_dir)
+
+    @pytest.fixture
+    def backend(self, tmp_path: Path) -> WorkspaceBackend:
+        return SSHWorkspaceBackend('box', working_dir=str(tmp_path))
+
+    @pytest.fixture
+    def destructive_backend(self, tmp_path_factory: pytest.TempPathFactory) -> Callable[[], WorkspaceBackend]:
+        path = tmp_path_factory.mktemp('fresh-ssh-ws')
+        return lambda: self.attach(WorkspaceRef(provider='ssh', id=f'box:{path}'))
+
+    @pytest.fixture
+    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
+        return self.attach
+
+    @pytest.fixture
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+        async def destroy(backend: WorkspaceBackend) -> None:
+            assert backend.ref is not None
+            await anyio.to_thread.run_sync(shutil.rmtree, backend.ref.id.partition(':')[2])
+
+        return destroy
+
+
+class TestBubblewrapAroundSSH(TestSSHWorkspaceBackend):
+    """The same rules hold with every command going through (a fake) `bwrap` on the SSH host."""
+
+    @staticmethod
+    def attach(ref: WorkspaceRef) -> WorkspaceBackend:
+        return BubblewrapWorkspace(Workspace(TestSSHWorkspaceBackend.attach(ref)))
+
+    @pytest.fixture
+    def backend(self, tmp_path: Path) -> WorkspaceBackend:
+        return BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('box', working_dir=str(tmp_path))))
 
 
 class _StrictLoopBackend(LocalWorkspaceBackend):

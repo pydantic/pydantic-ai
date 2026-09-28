@@ -6,7 +6,9 @@
             - Workspace
             - WrapperWorkspace
             - ReadOnlyWorkspace
+            - BubblewrapWorkspace
             - LocalWorkspaceBackend
+            - SSHWorkspaceBackend
             - UnavailableWorkspace
             - WorkspaceRef
             - WorkspaceBackend

@@ -189,6 +189,85 @@ agent = Agent(
 )
 ```
 
+## Work on another machine over SSH
+
+`SSHWorkspace` runs commands and file operations on a remote host, as the user you log in as. It
+uses your `ssh` client, so your SSH configuration (`~/.ssh/config`) and agent supply the keys,
+ports and jump hosts:
+
+```python {title="ssh_workspace.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SSHWorkspace
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[SSHWorkspace('dev@build-box', working_dir='/srv/app', env={'UV_OFFLINE': '1'})],
+)
+```
+
+`working_dir` defaults to the login directory, and a relative one starts there. The directory must
+already exist. Commands get the remote login environment plus `env=`. `ssh` runs with
+`BatchMode=yes`, so a host that wants a password fails instead of waiting for one; pass extra
+options with `ssh_args=`, such as `ssh_args=['-i', key_path]`. For a single run, pass
+`workspace=SSHWorkspaceBackend('dev@build-box')`.
+
+Every operation opens an SSH connection, and file operations run as shell commands on the host, so
+the host needs a POSIX `sh` and the usual file utilities. Turn on connection sharing in your SSH
+configuration (`ControlMaster auto` with a `ControlPersist` time) to make them fast. A host that
+can't be reached, a missing working directory, or a connection lost mid-command raises
+`WorkspaceUnavailableError`. On a timeout or cancellation the local `ssh` is stopped, but the remote
+command may keep running.
+
+The ref is `WorkspaceRef(provider='ssh', id='dev@build-box:/srv/app')`, and `SSHWorkspace` only
+accepts a reference to its own host and directory.
+
+## Sandbox commands with bubblewrap
+
+`BubblewrapSandbox` wraps another workspace capability and runs its commands in a
+[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox on that workspace's host.
+Wrap `SSHWorkspace` to sandbox commands on the remote host, or `LocalWorkspace` to sandbox them on
+this one:
+
+```python {title="bubblewrap_workspace.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import BubblewrapSandbox, SSHWorkspace
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[BubblewrapSandbox(SSHWorkspace('dev@build-box', working_dir='/srv/app'))],
+)
+```
+
+Inside the sandbox, commands see the host's files read-only, a private `/tmp` and no network, and
+can write only to the working directory. Pass `network=True` to allow the network, and add `bwrap`
+arguments with `bwrap_args=`: they come after the defaults, so `['--bind', path, path]` makes
+another directory writable and `['--tmpfs', path]` hides one. The host must run Linux with `bwrap`
+installed and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`.
+
+Only commands are sandboxed. File methods such as `write_text` go to the wrapped workspace, so they
+see the host's `/tmp` rather than the sandbox's, and reach outside the working directory. To limit
+them too, use [`ReadOnlyWorkspace`](#read-only-access) or the harness
+[FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) root. The run's ref is the wrapped
+workspace's, and its [`backend`][pydantic_ai.workspaces.Workspace.backend] is the wrapped backend.
+
+The capability builds a [`BubblewrapWorkspace`][pydantic_ai.workspaces.BubblewrapWorkspace], a
+[`WrapperWorkspace`](#read-only-access) you can also use directly, around any workspace:
+
+```python {test="skip"}
+from pydantic_ai.workspaces import (
+    BubblewrapWorkspace,
+    CommandResult,
+    SSHWorkspaceBackend,
+    Workspace,
+)
+
+
+async def run_tests() -> CommandResult:
+    workspace = BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('dev@build-box')))
+    # `bwrap` runs `make test` on build-box
+    return await workspace.run(['make', 'test'])
+```
+
 ## Using the workspace in tools
 
 `ctx.workspace` has the same methods whatever the environment:
@@ -651,14 +730,15 @@ safety bounds.
 
 ## Security choices
 
-`LocalWorkspace` has the full authority of the host user. Neither `working_dir` nor a harness
-`FileSystem` root jails shell commands. Do not pass `os.environ` to untrusted workspaces:
+`LocalWorkspace` has the full authority of the host user, and `SSHWorkspace` of the remote user.
+Neither `working_dir` nor a harness `FileSystem` root jails shell commands; `BubblewrapSandbox`
+confines commands, but not file methods. Do not pass `os.environ` to untrusted workspaces:
 explicitly choose the variables the command needs. Arguments to workflow-side workspace calls,
 including `env=` and file contents, are stored in durable history; do not pass secrets there
 without a suitable payload codec.
 
-Agent run spans record `pydantic_ai.workspace.id` (the sandbox id, or the directory path for
-`LocalWorkspace`) even with `include_content=False`, because it identifies the environment, not content.
+Agent run spans record `pydantic_ai.workspace.id` (the sandbox id, the directory path for
+`LocalWorkspace`, or the host and directory for `SSHWorkspace`) even with `include_content=False`, because it identifies the environment, not content.
 
 ## Platforms
 

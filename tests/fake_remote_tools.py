@@ -1,0 +1,63 @@
+"""Stand-ins for the `ssh` and `bwrap` executables, so SSH and bubblewrap workspaces run without a host or Linux."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+# Runs the remote command on this machine, starting in `$HOME` like a login. Two destinations fail on purpose.
+_FAKE_SSH = """#!/bin/sh
+bin=$(dirname "$0")
+while [ "$1" != -- ]; do printf '%s\\n' "$1" >> "$bin/ssh-options"; shift; done
+destination=$2
+shift 2
+case $destination in
+unreachable) echo 'ssh: connect to host unreachable port 22: Connection refused' >&2; exit 255 ;;
+dropped) printf '__pydantic_ai_ssh_ready__\\n' >&2; exit 255 ;;
+esac
+cd "$HOME" && exec sh -c "$*"
+"""
+
+# Records its arguments and runs the command unsandboxed; `--fake-fail` fails like a denied user namespace.
+_FAKE_BWRAP = """#!/bin/sh
+bin=$(dirname "$0")
+printf '%s\\n' "$*" >> "$bin/bwrap-calls"
+for arg in "$@"; do
+    if [ "$arg" = --fake-fail ]; then echo 'bwrap: setting up uid map: Permission denied' >&2; exit 1; fi
+done
+while [ "$1" != -- ]; do shift; done
+shift
+exec "$@"
+"""
+
+
+class FakeRemoteTools:
+    def __init__(self, bin_dir: Path, home: Path) -> None:
+        self.bin_dir = bin_dir
+        self.home = home
+
+    @property
+    def ssh_options(self) -> list[str]:
+        return (self.bin_dir / 'ssh-options').read_text().splitlines()
+
+    @property
+    def bwrap_calls(self) -> list[str]:
+        path = self.bin_dir / 'bwrap-calls'
+        return path.read_text().splitlines() if path.exists() else []
+
+
+def install_fake_remote_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRemoteTools:
+    """Put fake `ssh` and `bwrap` first on `PATH`, and point `HOME` (the fake remote login directory) at a new directory."""
+    bin_dir = tmp_path / 'fake-bin'
+    home = tmp_path / 'fake-home'
+    bin_dir.mkdir()
+    home.mkdir()
+    for name, script in (('ssh', _FAKE_SSH), ('bwrap', _FAKE_BWRAP)):
+        path = bin_dir / name
+        path.write_text(script)
+        path.chmod(0o755)
+    monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
+    monkeypatch.setenv('HOME', str(home))
+    return FakeRemoteTools(bin_dir, home)

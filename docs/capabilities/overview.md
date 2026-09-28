@@ -38,6 +38,8 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | Capability | Package | What it does |
 |---|---|---|
 | [Local Workspace](../workspace.md) | Core | Gives your tools `ctx.workspace` to run commands and edit files on this machine; adds no tools itself; no isolation |
+| [SSH Workspace](../workspace.md#work-on-another-machine-over-ssh) | Core | The same, on a remote host reached with your `ssh` client; no isolation |
+| [Bubblewrap Sandbox](../workspace.md#sandbox-commands-with-bubblewrap) | Core | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
 | [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) | Harness | Read, write, edit, search files under a root; path-traversal and symlink safe, secrets read-only |
 | [Shell](https://pydantic.dev/docs/ai/harness/shell/) | Harness | Command execution with allowlists, denylists, timeouts, and credential-stripping |
 | [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
