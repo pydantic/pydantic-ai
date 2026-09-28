@@ -423,7 +423,8 @@ agent = Agent(model, capabilities=[Coder(), customization_guide()])
 asyncio.run(chat(agent, deps=None))
 ```
 
-Coder() here restricts file tools to the workspace, unlike the stock CLI's
+CLAI attaches the launch directory as the workspace, so Coder() needs none of
+its own. Here it restricts file tools to that directory, unlike the stock CLI's
 unrestricted Coder. A launcher gets no built-in plugins unless it passes them.
 Choose one source of coding tools, never both: either keep Coder() in
 capabilities as above, or drop it from capabilities and call chat(agent,

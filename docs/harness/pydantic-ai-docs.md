@@ -5,7 +5,7 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 # Pydantic AI Docs
 
-`PydanticAIDocs` gives an agent a single tool, `read_pyai_docs(topic)`, that locates a Pydantic AI documentation page and returns it verbatim. Nothing is bundled into context up front. Each call resolves the topic from a configured local checkout first, then falls back to fetching the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the remote fallback needs network access).
+`PydanticAIDocs` gives an agent a single tool, `read_pyai_docs(topic)`, that locates a Pydantic AI documentation page and returns it verbatim. Nothing is bundled into context up front. Each call resolves the topic from a configured checkout inside the run workspace first, then falls back to fetching the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pydantic_ai_docs/)
 
@@ -17,28 +17,31 @@ An agent that authors Pydantic AI capabilities, hooks, tools, or toolsets needs 
 
 ## The solution
 
-`PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and returns it verbatim. Each call resolves the topic from a configured local checkout first, then falls back to fetching the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the remote fallback needs network access).
+`PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and returns it verbatim. Each call resolves the topic from a configured checkout inside the run workspace first, then falls back to fetching the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
 
 The available topics are `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, and `agent`.
 
 ## Usage
 
-Construct an `Agent` with `PydanticAIDocs()` in its `capabilities`. Point `local_docs_path` at a local Pydantic AI docs checkout to read from disk first, or omit it to always fetch from the remote source:
+Construct an `Agent` with `PydanticAIDocs()` in its `capabilities`. Point `local_docs_path` at a Pydantic AI docs checkout inside the run workspace, or omit it to always fetch from the remote source. Relative paths use the workspace working directory:
 
 ```python
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import PydanticAIDocs
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[PydanticAIDocs(local_docs_path=Path('~/pydantic/ai/base/docs').expanduser())],
+    'anthropic:claude-sonnet-5',
+    capabilities=[LocalWorkspace('.'), PydanticAIDocs(local_docs_path=Path('docs'))],
 )
 
 result = agent.run_sync('Read the toolsets docs, then explain how to build a FunctionToolset.')
 print(result.output)
 ```
+
+A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. With no local path configured, every call goes to the remote source and no workspace is needed.
 
 The capability also adds a short static instruction telling the model that the `read_pyai_docs` tool exists and to read the relevant topic before authoring or modifying a Pydantic AI capability, hook, tool, or toolset, rather than relying on memory. The instruction is cache-stable, so it does not invalidate the prompt-cache prefix between turns.
 
@@ -46,22 +49,22 @@ The capability also adds a short static instruction telling the model that the `
 
 Each call resolves in this order:
 
-1. **Local checkout** -- when `local_docs_path` (or the `PYDANTIC_AI_HARNESS_DOCS_PATH` env var) is set and `{path}/{topic}.md` exists, that file is read and returned.
+1. **Workspace checkout** -- when `local_docs_path` (or the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable) is set and `{path}/{topic}.md` exists inside the run workspace, that file is read and returned.
 2. **Remote fetch** -- otherwise the page is fetched from `https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{topic}.md`.
 3. **Neither resolves** -- a descriptive error naming the local path tried and the URL.
 
 The capability never runs git. Keep the local checkout current yourself; the remote path always reads `main`, so it is the fresh fallback.
 
-`local_docs_path` takes precedence over the `PYDANTIC_AI_HARNESS_DOCS_PATH` env var. Both have `~` expanded, so a raw `~/...` path resolves to the local checkout instead of silently falling through to the remote source. With neither set, every call goes straight to the remote source.
+`local_docs_path` takes precedence over the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable. `~` is not expanded -- use an absolute workspace path or a path relative to its working directory. With neither path set, every call goes straight to the remote source.
 
 ## Configuration
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `local_docs_path` | `None` | Local pyai docs checkout to read first. Falls back to the `PYDANTIC_AI_HARNESS_DOCS_PATH` env var, then to the remote source. |
-| `cache` | `True` | Memoize each returned doc in-process for the capability's lifetime, so a topic is read or fetched at most once. |
+| `local_docs_path` | `None` | Pyai docs checkout inside the run workspace. Relative paths use the workspace working directory. Falls back to the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable, then to the remote source. |
+| `cache` | `True` | Memoize each returned doc for one agent run, so repeated reads within that run do not repeat workspace or network I/O. |
 
-Caching lives on the capability instance and is shared across the toolsets it builds, so a memoized topic survives multiple agent runs that reuse the same `PydanticAIDocs`. Set `cache=False` to re-read or re-fetch on every call -- useful when the local checkout changes underneath a long-lived capability.
+Caching is isolated per run so content read from one workspace is not reused in another. Set `cache=False` to re-read or re-fetch on every call within a run.
 
 ## Agent spec (YAML/JSON)
 
@@ -69,7 +72,7 @@ Caching lives on the capability instance and is shared across the toolsets it bu
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 capabilities:
   - PydanticAIDocs: {}
 ```

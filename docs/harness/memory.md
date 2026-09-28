@@ -27,15 +27,20 @@ The model gets four tools:
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Memory
 from pydantic_ai_harness.memory import FileStore
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[Memory(FileStore('.agent-memory'))],
+    'anthropic:claude-opus-5-5',
+    capabilities=[LocalWorkspace('.'), Memory(FileStore('.agent-memory'))],
     defer_model_check=True,
 )
 ```
+
+`FileStore.list_paths` skips symlinked directory prefixes, including links outside the store.
+
+`FileStore` keeps the notes as Markdown files in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so the model can also open them with its file tools. A run without a workspace fails at its start. With a read-only run workspace, the write and delete tools are hidden; a store with its own workspace follows that workspace's permissions instead. Workspace refusals during mutations become tool failures. To keep them on your machine while the agent works in a sandbox, pass a backend: `FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))`.
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 
@@ -78,7 +83,7 @@ Every `MemoryStore.read` call includes a finite `max_chars`, and every `list_pat
 | Store | Persistence and concurrency boundary |
 | --- | --- |
 | `InMemoryStore()` | Process lifetime; atomic across tasks using that store instance. |
-| `FileStore(directory)` | Local filesystem; atomic Markdown replacement plus a hidden SQLite journal provide recovery, cross-process compare-and-swap, and durable idempotency receipts. |
+| `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
 | `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. |
 | `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. The caller owns the pool lifecycle. |
 
@@ -92,7 +97,9 @@ sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 
 `SqliteMemoryStore` can instead use a caller-owned `sqlite3.Connection`. Because operations run off the event loop, create that connection with `check_same_thread=False` and manage its lifecycle in the application. The connection must be dedicated to the store and idle at the start of every operation; a call fails rather than commit or roll back an active caller transaction.
 
-`FileStore` keeps the journal at `.memory-store.sqlite3` inside its root. Keep it with the Markdown files when copying or backing up the store. Editing a Markdown file outside the capability changes its content version and can produce a conflict with a prepared operation; the journal recovers operations interrupted between transaction preparation and filesystem replacement.
+If a memory path resolves outside its store, the tool asks the model to correct the path. A corrupt receipts file produces a warning and starts a fresh operation journal; restore a backup if replay protection for earlier operations matters.
+
+`FileStore` keeps receipts for its most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict.
 
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
@@ -123,6 +130,7 @@ Use a namespace resolver when one `Agent` serves multiple users. It runs once pe
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory
 from pydantic_ai_harness.memory import FileStore
 
@@ -133,11 +141,11 @@ class AppDeps:
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-opus-5-5',
     deps_type=AppDeps,
     capabilities=[
         Memory(
-            FileStore('/var/lib/myapp/memory'),
+            FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')),
             namespace=lambda ctx: ctx.deps.user_id,
         )
     ],
@@ -157,14 +165,16 @@ An agent can carry several `Memory` capabilities at once, for example a personal
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory
 from pydantic_ai_harness.memory import FileStore
 
+store = FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-opus-5-5',
     capabilities=[
-        Memory(FileStore('/var/lib/myapp/memory'), heading='Your notes'),
-        Memory(FileStore('/var/lib/myapp/memory'), agent_name='org', heading='Org notes').prefix_tools('org'),
+        Memory(store, heading='Your notes'),
+        Memory(store, agent_name='org', heading='Org notes').prefix_tools('org'),
     ],
     defer_model_check=True,
 )
@@ -216,7 +226,7 @@ from pydantic_ai_harness import Memory
 
 agent = Agent.from_spec(
     {
-        'model': 'anthropic:claude-sonnet-4-6',
+        'model': 'anthropic:claude-opus-5-5',
         'capabilities': [
             {'Memory': {'backend': 'file', 'directory': '.agent-memory'}},
         ],
