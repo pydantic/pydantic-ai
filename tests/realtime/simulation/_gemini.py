@@ -48,7 +48,7 @@ from websockets.frames import Close
 
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.realtime import RealtimeModel
-from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelSettings
+from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelProfile, GoogleRealtimeModelSettings
 from pydantic_ai.realtime.settings import RealtimeModelSettings
 
 from ._machine import TICKS, SessionMachine
@@ -183,12 +183,15 @@ class GeminiBehavior:
 
     @property
     def talks_through_tool_calls(self) -> bool:
-        return self.async_tool_calls and not self.stalls_in_progress
+        # Vertex `gemini-live-2.5-flash` (`closes_tool_turn_separately`) doesn't run calls asynchronously.
+        return self.async_tool_calls and not self.stalls_in_progress and not self.closes_tool_turn_separately
 
     @property
     def model(self) -> str:
         if self.stalls_in_progress:
             return 'gemini-3.8-live-extended-thinking'
+        if self.closes_tool_turn_separately:
+            return 'gemini-live-2.5-flash'
         if self.handles_at_turn_start:
             return 'gemini-3.8-live'
         return 'gemini-2.5-flash-native-audio-latest'
@@ -660,7 +663,14 @@ class GeminiSimulation(Simulation):
         return self.server.truth
 
     def build_model(self) -> RealtimeModel:
-        return GoogleRealtimeModel(self.behavior.model, provider=self._provider)
+        # The model that closes its tool-call turn separately is a Vertex AI one; its profile flag is only
+        # on for a Vertex AI client, which the simulation doesn't have, so it's set explicitly.
+        profile = (
+            GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True)
+            if self.behavior.closes_tool_turn_separately
+            else None
+        )
+        return GoogleRealtimeModel(self.behavior.model, provider=self._provider, profile=profile)
 
     def model_settings(self) -> RealtimeModelSettings:
         settings: GoogleRealtimeModelSettings = {

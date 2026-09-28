@@ -325,6 +325,22 @@ def test_known_live_reply_split_by_a_delegated_round() -> None:
     reproduce('SIM-18', LiveSimulation(), scenario)
 
 
+@known('SIM-13')
+def test_known_gemini_cut_off_unstarted_turn_ends_the_wait_early() -> None:
+    """Two spoken turns the model hadn't started answering, then a typed one that cuts them off."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_audio()
+        sim.user_speaks(deliver=False)
+        sim.send_audio()
+        sim.user_speaks(deliver=False)
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+
+    reproduce('SIM-13', GeminiSimulation(), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -437,16 +453,18 @@ def test_gemini_parallel_calls_are_one_response_answered_once() -> None:
     run_clean(GeminiSimulation(), scenario)
 
 
-@known('8766')
-def test_known_gemini_tool_turn_boundary_ends_the_wait_early() -> None:
+def test_gemini_tool_turn_boundary_does_not_end_the_wait() -> None:
+    """Vertex `gemini-live-2.5-flash` closes the tool-call turn before the answer (8766, fixed by #8766)."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.call_tools()
         sim.wait_for_reply()
         sim.finish_tool()
         sim.speak()
+        sim.finish()
 
-    reproduce('8766', GeminiSimulation(behavior=GeminiBehavior(closes_tool_turn_separately=True)), scenario)
+    run_clean(GeminiSimulation(behavior=GeminiBehavior(closes_tool_turn_separately=True)), scenario)
 
 
 @known('G6')

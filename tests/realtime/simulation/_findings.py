@@ -78,7 +78,7 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
         "response's content as stragglers: history records it empty, though the model said it and the provider kept it"
     ),
     tracked_by='per-response-id state: a cancel targets a response id, and is a no-op once that response is done; found by this simulator',
-    codes=frozenset({'response.truncated', 'response.missing'}),
+    codes=frozenset({'response.truncated', 'response.missing', 'wait.hang'}),
     providers=OPENAI_PROTOCOL,
     matches=_late_cancel,
 )
@@ -348,23 +348,11 @@ CUT_OFF_TURN_COMPLETE = Finding(
     ),
     tracked_by=(
         'turn boundaries mapped to the exchange they close, and obligations resolved only by their answer; '
-        'related to #8766; found by this simulator'
+        'the cut-off-turn case #8766 left; found by this simulator'
     ),
     codes=frozenset({'wait.early'}),
     providers=GEMINI,
     matches=_cut_off_by_the_input,
-)
-
-GEMINI_EARLY_TURN_COMPLETE = Finding(
-    id='8766',
-    title=(
-        'Vertex `gemini-live-2.5-flash` closes the tool-call turn before the answer, and the session takes that '
-        'boundary as the end of the exchange: `wait_for_reply()` returns before the answer'
-    ),
-    tracked_by='#8766',
-    codes=frozenset({'wait.early', 'wait.hang'}),
-    providers=GEMINI,
-    matches=lambda sim, violation: _gemini_behavior(sim, 'closes_tool_turn_separately'),
 )
 
 
@@ -601,7 +589,6 @@ KNOWN_FINDINGS.extend(
         LIVE_RAW_CLOSE_ERROR,
         LIVE_ABANDONED_CALL_RESERVATIONS,
         GEMINI_ASYNC_TOOL_ROUND,
-        GEMINI_EARLY_TURN_COMPLETE,
         CUT_OFF_TURN_COMPLETE,
         GEMINI_RESUMED_SESSION_FORGETS_CALLS,
         # The general reservation leaks last: a more specific finding explains a hang better.
