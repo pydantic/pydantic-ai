@@ -285,6 +285,12 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
     assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
 
 
+async def test_shell_realpath_keeps_a_non_utf8_filename(tmp_path: Path) -> None:
+    # `list_dir` returns such a name with surrogate escapes; `write_bytes` resolves it through `realpath`.
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    assert await workspace.realpath('file-\udcff') == f'{os.path.realpath(tmp_path)}/file-\udcff'
+
+
 async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> None:
     if os.geteuid() == 0:
         pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
@@ -299,6 +305,21 @@ async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> Non
     (tmp_path / 'unwritable').chmod(0o500)
     with pytest.raises(PermissionError):
         await workspace.make_dir('unwritable/child')
+
+
+async def test_shell_write_never_replaces_a_file_it_cannot_copy_the_mode_of(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
+    target = tmp_path / 'write-only'
+    target.write_bytes(b'original')
+    target.chmod(0o200)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(WorkspaceError):
+        await workspace.write_bytes('write-only', b'replacement')
+    assert target.stat().st_mode & 0o777 == 0o200
+    target.chmod(0o600)
+    assert target.read_bytes() == b'original'
+    assert not list(tmp_path.glob('.pydantic-ai-*'))
 
 
 async def test_shell_filesystem_refuses_to_remove_workspace_root(tmp_path: Path) -> None:

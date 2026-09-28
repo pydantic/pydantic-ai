@@ -88,7 +88,7 @@ _reject_workspace_in_workflow: RejectWorkspaceInContainer[Any] = RejectWorkspace
 - `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
 - `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
 - `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.
-- `workspace=` → unchanged.
+- `workspace=` → the same argument on the run methods; unlike this wrapper, the capability also accepts an attached workspace inside the workflow.
 Pass `register_legacy_workflows=True` to `DBOSDurability` and pin the DBOS application version so in-flight `DBOSAgent` workflows recover across the migration.""",
     category=PydanticAIDeprecationWarning,
 )
