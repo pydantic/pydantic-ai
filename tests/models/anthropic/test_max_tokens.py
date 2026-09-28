@@ -11,9 +11,13 @@ import pytest
 from pydantic_ai import Agent
 
 from ...conftest import RequestCapture, try_import
+from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModelSettings
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -32,6 +36,7 @@ class MaxTokensCase:
     model_settings: AnthropicModelSettings
     thinking: dict[str, object] | None
     max_tokens: int
+    streamed: bool = False
 
 
 MAX_TOKENS_CASES = {
@@ -52,7 +57,11 @@ MAX_TOKENS_CASES = {
     ),
     # Above the SDK's non-streaming limit, the request is streamed instead.
     'unified-extended-xhigh': MaxTokensCase(
-        'claude-sonnet-4-5', {'thinking': 'xhigh'}, {'type': 'enabled', 'budget_tokens': 32768}, 32768 + 4096
+        'claude-sonnet-4-5',
+        {'thinking': 'xhigh'},
+        {'type': 'enabled', 'budget_tokens': 32768},
+        32768 + 4096,
+        streamed=True,
     ),
     'explicit-max-tokens': MaxTokensCase(
         'claude-sonnet-4-5',
@@ -81,4 +90,37 @@ async def test_default_max_tokens(
 
     assert result.output == '391'
     body = request_capture.body('/v1/messages')
-    assert (body.get('thinking'), body['max_tokens']) == (case.thinking, case.max_tokens)
+    assert (body.get('thinking'), body['max_tokens'], body.get('stream', False)) == (
+        case.thinking,
+        case.max_tokens,
+        case.streamed,
+    )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'model_settings', 'max_tokens'),
+    [
+        pytest.param('claude-sonnet-4-20250514', {}, 4096, id='sonnet-4'),
+        pytest.param('us.anthropic.claude-sonnet-4-20250514-v1:0', {}, 4096, id='bedrock-sonnet-4'),
+        pytest.param('claude-opus-4-1@20250805', {}, 4096, id='vertex-opus-4-1'),
+        pytest.param('claude-sonnet-4-20250514', {'thinking': 'high'}, 16384 + 4096, id='sonnet-4-extended-thinking'),
+        pytest.param('claude-sonnet-4-5', {}, 16384, id='sonnet-4-5'),
+    ],
+)
+async def test_default_max_tokens_on_models_that_reject_overflowing_the_context_window(
+    allow_model_requests: None, model_name: str, model_settings: AnthropicModelSettings, max_tokens: int
+) -> None:
+    """Models older than Claude Sonnet 4.5 keep the lower default of 4096.
+
+    They answer a request whose input plus `max_tokens` exceeds the context window with a 400 (Bedrock's
+    `claude-sonnet-4-20250514` rejects 192K input tokens plus 16384, and accepts 192K plus 4096), so the higher
+    default would break conversations close to the window. This is mocked because these models can't be recorded
+    anymore: the Anthropic API has retired them, and Bedrock only serves them to accounts that used them recently.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='391', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
+    )
+    agent = Agent(AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client)))
+    await agent.run('What is 17 * 23?', model_settings=model_settings)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['max_tokens'] == max_tokens
