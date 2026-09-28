@@ -28,7 +28,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai._cost import best_effort_price, calculate_price_for_usage
+from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -37,8 +37,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
-
-pytestmark = pytest.mark.anyio
 
 
 def test_genai_prices():
@@ -581,6 +579,7 @@ def test_usage_pydantic_core_serialization_subclass():
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {},
             'cost': None,
             'custom_tokens': 7,
@@ -1316,7 +1315,7 @@ def test_best_effort_price_unexpected_error_warns(monkeypatch: pytest.MonkeyPatc
     def boom(*args: object, **kwargs: object) -> object:
         raise RuntimeError('kaboom')
 
-    monkeypatch.setattr('pydantic_ai._cost.calc_price', boom)
+    monkeypatch.setattr('pydantic_ai._genai_prices.calc_price', boom)
     with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost: RuntimeError: kaboom'):
         price = best_effort_price(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
     assert price is None

@@ -37,6 +37,7 @@ with try_import() as azure_imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
 
 if TYPE_CHECKING:
+    from pydantic_ai.models import AbstractModel
     from pydantic_ai.providers import Provider
 
 CASSETTES_DIR = Path(__file__).parent / 'cassettes'
@@ -217,7 +218,8 @@ def _ws_cassette(
         )
     cassette = RealtimeCassette.load(path) if plan == 'replay' else RealtimeCassette()
     try:
-        with patched_ws_connect(provider, cassette, plan):
+        hold_open = request.node.get_closest_marker('realtime_ws_hold_open') is not None  # pyright: ignore[reportUnknownMemberType]
+        with patched_ws_connect(provider, cassette, plan, hold_open=hold_open):
             yield cassette
     finally:
         # Persist recorded frames even if later assertions fail, so cassettes can be recorded first
@@ -235,6 +237,17 @@ def openai_ws_cassette(
     if not openai_imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai') as cassette:
+        yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
+def openai_live_ws_cassette(
+    request: pytest.FixtureRequest, openai_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """An `OpenAIProvider` whose GPT-Live WebSocket is backed by a cassette."""
+    if not openai_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'openai_live') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
 
 
@@ -386,6 +399,28 @@ def azure_ws_sideband_cassette(
 
 
 @pytest.fixture
+def blockbuster_enabled(realtime_recording: bool) -> bool:
+    """Leave the blocking-call detector on for replay, which is what CI runs.
+
+    Recording dials the provider for real, and building the TLS context reads CA bundles from disk
+    inside the event loop. That is the recording harness's own blocking call, not the library's, and
+    it cannot happen on the replay path, where nothing dials.
+    """
+    return not realtime_recording
+
+
+@pytest.fixture
+def realtime_recording(request: pytest.FixtureRequest) -> bool:
+    """Whether this run dials providers for real, rather than replaying recorded frames.
+
+    Audio-driven tests pace their microphone in real time only then: a provider hears a burst of audio
+    very differently from a live microphone, so a burst records behavior no real call has. Replay
+    keeps sending instantly, since the recorded frame order is what drives it.
+    """
+    return realtime_cassette_plan(cassette_exists=True, record_mode=_record_mode(request)) == 'record'
+
+
+@pytest.fixture
 def parity_ws_cassette(
     request: pytest.FixtureRequest,
     openai_api_key: str,
@@ -400,6 +435,10 @@ def parity_ws_cassette(
     if route == 'openai':
         provider = OpenAIProvider(api_key=openai_api_key)
         provider_name = 'openai'
+    elif route == 'openai-live':
+        # GPT-Live authenticates like OpenAI realtime but speaks its own protocol on its own endpoint.
+        provider = OpenAIProvider(api_key=openai_api_key)
+        provider_name = 'openai_live'
     elif route == 'azure':
         endpoint, api_key = azure_config
         # Same GA-form normalization as `azure_ws_cassette` above; replay's placeholder endpoint
@@ -424,3 +463,19 @@ def parity_ws_cassette(
 
     with _ws_cassette(request, provider_name) as cassette:
         yield case, provider, cassette
+
+
+@pytest.fixture
+def no_genai_prices_context_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the profile's `context_window` to `None` for whole-profile assertions.
+
+    The window is genai-prices data that changes with the pinned dataset, not a capability claim;
+    `tests/realtime/test_openai.py` covers the fill itself.
+    """
+
+    def unknown_window(
+        model: AbstractModel | str, *, provider_api_url: str | None = None, provider_name: str | None = None
+    ) -> None:
+        return None
+
+    monkeypatch.setattr('pydantic_ai.realtime.model.lookup_context_window', unknown_window)

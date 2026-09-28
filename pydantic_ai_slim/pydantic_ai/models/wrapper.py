@@ -140,6 +140,12 @@ class WrapperModel(Model):
         return self.wrapped.profile
 
     @property
+    def context_window(self) -> int | None:
+        # Forwarded rather than read off `profile`: a wrapped `FallbackModel` has no profile but does
+        # have a context window (the smallest among its candidates).
+        return self.wrapped.context_window
+
+    @property
     def settings(self) -> ModelSettings | None:
         """Get the settings from the wrapped model."""
         return self.wrapped.settings

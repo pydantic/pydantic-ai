@@ -1,3 +1,7 @@
+---
+description: "Chat with LLMs from your terminal using clai, the Pydantic AI command line interface, or serve your own Pydantic AI agents in a browser chat UI."
+---
+
 # Command Line Interface (CLI)
 
 **Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.
@@ -139,7 +143,7 @@ async def main():
     await agent.to_cli()
 ```
 
-_(You'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Both run the same chat interface as `clai`, so an agent with tools shows each call as it runs and
 marks it done when the result arrives, exactly as described under [CLI Usage](#cli-usage).

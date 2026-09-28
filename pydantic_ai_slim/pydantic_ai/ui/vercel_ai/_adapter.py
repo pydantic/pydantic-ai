@@ -16,6 +16,7 @@ from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
 from ...messages import (
+    _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -27,6 +28,7 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
@@ -51,11 +53,13 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from .._adapter import (
+    DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
     compaction_payload,
     resolve_allow_uploaded_files,
     tool_availability_delta_from_payload,
 )
+from .._utils import get_ui_message_id, set_ui_message_id
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     COMPACTION_DATA_TYPE,
@@ -126,13 +130,16 @@ _MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
 def _generate_message_id(
     msg: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], message_index: int
 ) -> str:
-    """Generate a deterministic message ID based on message content and position.
+    """Return the `UIMessage.id` the message was loaded from, else a deterministic ID from content and position.
 
     Priority order:
-    1. For `ModelResponse` with `provider_response_id` set, use '{provider_response_id}-{message_index}'.
-    2. For any message with run_id set, use '{run_id}-{message_index}'.
-    3. Fallback: UUID5 from 'timestamp-kind-role-message_index'.
+    1. The `UIMessage.id` kept by `load_messages`, so a history the client sent comes back with its own ids.
+    2. For `ModelResponse` with `provider_response_id` set, use '{provider_response_id}-{message_index}'.
+    3. For any message with run_id set, use '{run_id}-{message_index}'.
+    4. Fallback: UUID5 from 'timestamp-kind-role-message_index'.
     """
+    if (ui_message_id := get_ui_message_id(msg)) is not None:
+        return ui_message_id
     if isinstance(msg, ModelResponse) and msg.provider_response_id:
         return f'{msg.provider_response_id}-{message_index}'
     if msg.run_id:
@@ -185,6 +192,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
         preserve_file_data: bool | None = None,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters.
@@ -201,6 +209,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            allowed_content_types=allowed_content_types,
             **kwargs,
         )
 
@@ -234,6 +243,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
         preserve_file_data: bool | None = None,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> Response:
         """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters.
@@ -267,6 +277,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            allowed_content_types=allowed_content_types,
             **kwargs,
         )
 
@@ -605,12 +616,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             else:
                 assert_never(msg.role)
 
-            # Apply metadata to the role-corresponding `ModelMessage`: assistant UIMessages
-            # may also append a synthetic `ModelRequest` carrying tool-return parts, which we
-            # skip via the type filter so metadata lands on the response, not the tool returns.
+            # Apply metadata and the id to the role-corresponding `ModelMessage`: assistant UIMessages
+            # may also append a synthetic `ModelRequest` carrying tool-return parts, which we skip
+            # via the type filter so they land on the response, not the tool returns.
             target_type = ModelResponse if msg.role == 'assistant' else ModelRequest
             if (target := builder.last_modified(checkpoint, of_type=target_type)) is not None:
                 apply_message_metadata(target, msg.metadata)
+                set_ui_message_id(target, msg.id)
 
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
@@ -981,6 +993,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict]), so the raw string is
         no longer recoverable as args on reload.
 
+        Application keys in `ModelRequest.metadata` round-trip, but the reserved `__pydantic_ai__`
+        namespace and top-level `ModelResponse.provider_details` do not. `UIMessage.metadata` is
+        client-controlled, so framework and provider response state is not exposed or restored through
+        it; see `_PydanticAIMessageMetadata`. The `UIMessage.id` that `load_messages` keeps in that
+        namespace is the exception: the default `generate_message_id` restores it.
+
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the
         frontend can render approve/reject buttons on reload. On v5, such tool calls are emitted
@@ -1127,36 +1145,62 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
 def _validate_tool_output(output: Any) -> Any:
     """Rehydrate `ToolOutputAvailablePart.output` (typed `Any` on the wire) into `ToolReturnContent`.
 
-    `tool_return_content_ta` runs the lifted `Discriminator` on the union, so multimodal items
+    `tool_return_content_ta` resolves the `ToolReturnContent` union, so multimodal items
     (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
-    `BinaryContent` instances with image media types are narrowed to `BinaryImage`. JS-serialized
-    binary shapes are coerced to `bytes` first (see `_coerce_js_binary_data`).
+    `BinaryContent` instances with image media types are narrowed to `BinaryImage`. The file shapes a
+    browser tool is documented to return are completed first (see `_normalize_client_file_shapes`).
     """
-    return tool_return_content_ta.validate_python(_coerce_js_binary_data(output))
+    return tool_return_content_ta.validate_python(_normalize_client_file_shapes(output))
 
 
-def _coerce_js_binary_data(value: Any) -> Any:
-    """Convert `BinaryContent.data` shapes that JavaScript frontends commonly emit into `bytes`.
+_multi_modal_content_ta: TypeAdapter[MultiModalContent] = TypeAdapter(MultiModalContent)
+"""Builds a URL item from the client's own mapping, so `_normalize_client_file_shapes` can read back the
+media type the type itself infers rather than repeating that inference here."""
 
-    This is what lets a Vercel AI [client-side tool](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage)
-    (resolved server-side as an external/deferred tool call) return a file — an image, say — by putting a
-    `{kind: 'binary', media_type: ..., data: ...}` shape in its output, without base64-encoding the bytes
-    by hand. `JSON.stringify` serializes a `Uint8Array` as `{'0': N, '1': N, ...}` and a Node `Buffer` as
-    `{'type': 'Buffer', 'data': [N, ...]}`; pydantic's bytes validator rejects both, so we normalize them
-    (and pass base64 strings through untouched) at the wire boundary before validation. A file the agent
-    itself produced round-trips as base64 and never hits these shapes.
+
+def _normalize_client_file_shapes(value: Any) -> Any:
+    """Complete the file shapes a Vercel AI client-side tool is documented to return.
+
+    A [client-side tool](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage) (resolved server-side as
+    an external/deferred tool call) returns a file by putting a shape matching one of our multi-modal
+    types in its output, and `docs/ui/vercel-ai.md` documents two of those shapes in forms the
+    `ToolReturnContent` union cannot take as they stand:
+
+    - `{kind: 'binary', media_type: ..., data: ...}` with the raw bytes a JavaScript frontend produces:
+      `JSON.stringify` serializes a `Uint8Array` as `{'0': N, '1': N, ...}` and a Node `Buffer` as
+      `{'type': 'Buffer', 'data': [N, ...]}`, both of which pydantic's bytes validator rejects. Base64
+      strings pass through untouched, which is what a file the agent itself produced round-trips as.
+    - `{kind: 'image-url', url: ...}` and its three siblings with no `media_type`: the union requires
+      one of a URL item, so we infer it here the way the type itself would, by building the item and
+      reading back the media type it derived from the URL. A URL the type cannot derive one from is
+      left alone, and reaches the agent as the ordinary mapping it is rather than as a file that would
+      raise the moment the history is dumped.
+
+    Everything else is passed through, and a plain user mapping that merely reuses one of our `kind`
+    values keeps the values its tool put in it: the binary branch is gated on the `media_type` a real
+    `BinaryContent` carries, and the URL branch validates the mapping as it stands, so it writes a
+    media type only into a mapping that is already the file it claims to be.
     """
     if isinstance(value, list):
-        return [_coerce_js_binary_data(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+        return [_normalize_client_file_shapes(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
     if not isinstance(value, dict):
         return value
-    coerced: dict[str, Any] = {k: _coerce_js_binary_data(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
-    # Gate on `media_type` (the type-specific field a real `BinaryContent` carries) so this matches
-    # the core `ToolReturnContent` discriminator: a plain user mapping that merely reuses
-    # `kind: 'binary'` stays untouched instead of having its `data` rewritten to bytes.
-    if coerced.get('kind') == 'binary' and 'media_type' in coerced:
-        coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
-    return coerced
+    normalized: dict[str, Any] = {k: _normalize_client_file_shapes(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    kind = normalized.get('kind')
+    if kind == 'binary' and 'media_type' in normalized:
+        normalized['data'] = _js_binary_to_bytes(normalized.get('data'))
+    # Absent, `null` or `''` are the three ways a client leaves the media type open — `File.type` is
+    # `''` whenever the browser cannot tell — and are what `FileUrl` itself treats as "infer one". A
+    # `media_type` of any other shape is the client's own value and is left for validation to judge.
+    elif kind in _FILE_URL_KINDS and normalized.get('media_type') in (None, ''):
+        try:
+            normalized['media_type'] = _multi_modal_content_ta.validate_python(normalized).media_type
+        except ValueError:
+            # `Could not infer media type`, or a mapping the type rejects — a missing `url` included:
+            # leave it as the client sent it, rather than adding a key to something that stays a plain
+            # mapping anyway.
+            pass
+    return normalized
 
 
 def _js_binary_to_bytes(data: Any) -> Any:

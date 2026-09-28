@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate Claude Agent SDK to Pydantic AI"
+  short_description: "Migrate Claude Agent SDK applications safely"
+  default_prompt: "Use $migrating-claude-agent-sdk-to-pydantic-ai to migrate the smallest complete Claude Agent SDK slice to Pydantic AI while preserving its observed contracts with proportionate tests."

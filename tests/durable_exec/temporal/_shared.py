@@ -36,6 +36,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     ProcessEventStream,
 )
+from pydantic_ai.messages import CapabilityEvent
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -514,3 +515,22 @@ def _workflow_failure_cause(exc: WorkflowFailureError) -> ApplicationError:
 
 def _scheduled_activity_count(history: WorkflowHistory) -> int:
     return len([e for e in history.events if e.HasField('activity_task_scheduled_event_attributes')])
+
+
+@dataclass(kw_only=True)
+class DurableCheckpointEvent(CapabilityEvent, namespace='durability_test', name='checkpoint'):
+    """A capability event for the durability tests.
+
+    Defined here rather than in the test module so the worker sandbox, which re-executes the test
+    module, doesn't re-register a second copy of the class under the same tag. See
+    `test_durability_capability_event_reaches_event_stream_handler_activity`.
+    """
+
+    label: str
+
+
+@dataclass(kw_only=True)
+class DurableUnserializableEvent(CapabilityEvent, namespace='durability_test', name='unserializable'):
+    """A capability event whose payload can't cross an activity boundary."""
+
+    blob: Any

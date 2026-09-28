@@ -35,7 +35,7 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime import WebRTCSession
     from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
 
 
 async def test_text_output_modality_returns_text(
@@ -163,6 +163,7 @@ async def test_text_in_audio_out_turn(
     )
 
 
+@pytest.mark.usefixtures('no_genai_prices_context_window')
 async def test_audio_in_server_vad_turn(
     azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette], assets_path: Path
 ) -> None:
@@ -175,6 +176,7 @@ async def test_audio_in_server_vad_turn(
     # `azure_voice_live=True` selected Voice Live here.
     assert model.profile == RealtimeModelProfile(
         supports_image_input=True,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=True,
@@ -190,10 +192,14 @@ async def test_audio_in_server_vad_turn(
         supports_text_output=True,
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         emits_input_speech_events=True,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
+        response_usage_covers_context=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supports_thinking=False,
         supported_native_tools=frozenset(),
+        context_window=None,
     )
     agent = Agent(instructions='Reply in a few words.')
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()

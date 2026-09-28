@@ -42,7 +42,6 @@ if TYPE_CHECKING:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
