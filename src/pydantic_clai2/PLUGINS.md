@@ -514,7 +514,7 @@ show a "waiting for you" state) registers `@host.on(EventClass)` or
 
 `google_workspace` (`pydantic_clai2.google_workspace`) is a built-in that starts
 disabled. It gives the agent the tools of Google's hosted Workspace MCP servers
-through harness [`GoogleWorkspace`](../docs/google-workspace.md). It needs a
+through harness [`GoogleWorkspace`](../../docs/harness/google-workspace.md). It needs a
 Google OAuth access token whose scopes cover the products you select.
 
 Enable it, then open its settings menu:
