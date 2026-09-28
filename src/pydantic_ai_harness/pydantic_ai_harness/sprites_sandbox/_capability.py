@@ -51,8 +51,8 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
     client: AsyncSpritesClient | None = None
     """A caller-owned `sprites.AsyncSpritesClient`, which is never closed for you. When omitted,
     each run's backend creates one on first use from `SPRITE_TOKEN` and closes it when the run
-    ends; a backend used outside a run (under Temporal, one per activity) closes its client after
-    each operation. Supply one to share its connections across runs, on one event loop."""
+    ends; a backend this capability supplies outside a run (under Temporal, one per activity)
+    closes its client after each operation. A backend from `backend(ref)` needs `aclose()`. Supply one to share its connections across runs, on one event loop."""
 
     runtime: str | None = None
     """Runtime for a newly created Sprite; an unknown runtime fails on first use."""
