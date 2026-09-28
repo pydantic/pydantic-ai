@@ -33,7 +33,7 @@ def resolve_key(*, token: SecretStr | KeyReference) -> str:
     keys = load_keys()
     if token.name not in keys:
         raise UserError(
-            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through /add_model.'
+            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure the connection that uses it.'
         )
     return keys[token.name].get_secret_value()
 
@@ -42,7 +42,7 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     """Validate references and save atomically with respect to key renames and deletions."""
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again through /add_model.')
+            raise UserError('The selected API key no longer exists. Select a saved key again.')
         save_codex_credentials(account=account, value=value)
 
 
@@ -91,12 +91,32 @@ def _load_keys() -> dict[str, SecretStr]:
         raise UserError('Stored API keys are invalid. Repair the api-keys credential bundle.') from None
 
 
-def save_key(*, name: str, value: str) -> str:
-    """Save one key without touching unrelated credentials or SQLite."""
+def _entry(*, name: str, value: str) -> tuple[str, str]:
     name = normalize_name(name=name)
     value = value.strip()
     if not value:
         raise ValueError('An API key is required.')
+    return name, value
+
+
+def add_key(*, name: str, value: str) -> bool:
+    """Save a key only if no key has `name`, checked and written under one lock; `False` when one does.
+
+    A separate existence check would let another process's new key be replaced without asking.
+    """
+    name, value = _entry(name=name, value=value)
+    with key_transaction():
+        keys = _load_keys()
+        if name in keys:
+            return False
+        keys[name] = SecretStr(value)
+        _save_keys(keys=keys)
+    return True
+
+
+def save_key(*, name: str, value: str) -> str:
+    """Save one key without touching unrelated credentials or SQLite."""
+    name, value = _entry(name=name, value=value)
     with key_transaction():
         keys = _load_keys()
         keys[name] = SecretStr(value)
@@ -117,16 +137,20 @@ class _Credential(BaseModel):
     token: SecretStr | KeyReference = Field(default_factory=lambda: SecretStr(''))
 
 
+_KEY_ACCOUNTS = ('vllm', 'openrouter', 'ordinal')
+"""Credential accounts whose `token` may name a saved key, so a rename cannot strand them."""
+
+
 def key_users(*, name: str) -> list[str]:
-    """Find saved provider references without exposing their inline credentials."""
+    """Find saved provider and plugin references without exposing their inline credentials."""
     users: list[str] = []
-    for account in ('vllm', 'openrouter'):
+    for account in _KEY_ACCOUNTS:
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
                 credential = _Credential.model_validate_json(raw)
             except ValidationError:
-                raise UserError(f'Reconfigure the invalid {account} connection through /add_model first.') from None
+                raise UserError(f'Reconfigure the invalid {account} connection first.') from None
             if isinstance(credential.token, KeyReference) and credential.token.name == name:
                 users.append(account)
     return users

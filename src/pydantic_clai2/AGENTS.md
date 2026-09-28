@@ -89,7 +89,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   anywhere else; the agent from `create_agent()` has no coding tools of its
   own. `coder` is declared with `repo_context: false` because `repo_context`
   binds harness `RepoContext` itself; keep it that way or `AGENTS.md` reaches
-  the model twice.
+  the model twice. When a built-in takes the id of a row the former harness
+  catalog offered, add that old row to `RETIRED_PLUGINS` in `_app.py`, so a
+  user's saved toggle of it maps to the built-in instead of outranking it.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
