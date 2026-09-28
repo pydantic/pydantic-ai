@@ -53,7 +53,7 @@ from mcp.shared.exceptions import McpError
 from pydantic import ValidationError
 from tenacity import RetryCallState, retry_if_result, stop_after_delay, wait_random_exponential
 
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
@@ -204,13 +204,18 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
 NO_SAFE_OUTPUT_RETRIES = 3
 
 
-def require_safe_output(output: str) -> str:
-    """Send the model back to work when it ends the run before emitting any safe output."""
+def safe_output_pending() -> bool:
+    """Whether this is a gh-aw run whose safe-outputs sink is still empty."""
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        return output
+        return False
     sink = pathlib.Path(path)
-    if sink.is_file() and sink.read_text(encoding='utf-8').strip():
+    return not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+
+
+def require_safe_output(output: str) -> str:
+    """Send the model back to work when it ends the run before emitting any safe output."""
+    if not safe_output_pending():
         return output
     logger.warning('run ended with no safe output emitted; sending the model back')
     raise ModelRetry(
@@ -237,6 +242,20 @@ _LLM_MAX_RETRIES = 4
 RATE_LIMIT_RETRY_SECS = 60
 
 
+def _give_up_on_rate_limit(state: RetryCallState) -> httpx2.Response | None:
+    """Hand the last 429 to the SDK, marked so the SDK does not retry it again.
+
+    Without the mark, each of the SDK's own `_LLM_MAX_RETRIES` would open a fresh
+    retry window here, and a persistent 429 would hold one request for minutes.
+    Other errors keep the SDK's retries.
+    """
+    if state.outcome is None:
+        return None
+    response: httpx2.Response = state.outcome.result()
+    response.headers['x-should-retry'] = 'false'
+    return response
+
+
 async def _close_rate_limited_response(state: RetryCallState) -> None:
     """Release a 429 response's connection before the next attempt replaces it."""
     if state.outcome is not None and not state.outcome.failed:
@@ -255,7 +274,7 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
             wait=wait_random_exponential(multiplier=1, max=16),
             stop=stop_after_delay(RATE_LIMIT_RETRY_SECS),
             before_sleep=_close_rate_limited_response,
-            retry_error_callback=lambda state: state.outcome.result() if state.outcome else None,
+            retry_error_callback=_give_up_on_rate_limit,
         ),
         wrapped=wrapped,
     )
@@ -1075,6 +1094,18 @@ async def run(
         async with agent:
             result = await agent.run(RUN_TRIGGER, usage_limits=limits)
     except Exception as exc:
+        # The limit is checked before a request, so a safe-output tool called on the
+        # last one has already run: the task is done, only the closing turn is lost.
+        if isinstance(exc, UsageLimitExceeded) and not safe_output_pending():
+            logger.warning('request limit reached after the safe output was emitted: %s', exc)
+            emit_result(
+                'request limit reached after the safe output was emitted',
+                usage=None,
+                session_id=session_id,
+                duration_ms=round((time.perf_counter() - started) * 1000),
+            )
+            log_safe_outputs_state()
+            return 0
         # `%r` on an `ExceptionGroup` (e.g. the MCP `TaskGroup` failures seen in
         # CI) discards every frame and every nested sub-exception's stack, which
         # is what made the original incident so hard to root-cause. `exception()`

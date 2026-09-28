@@ -994,6 +994,34 @@ def test_run_fails_when_the_model_never_emits_a_safe_output(monkeypatch: pytest.
     assert any(e.get('type') == 'result' and e.get('is_error') is True for e in emitted)
 
 
+def test_run_succeeds_when_the_safe_output_takes_the_last_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from pydantic_ai.messages import TextPart, ToolCallPart
+
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 20)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    narrated = False
+
+    def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal narrated
+        if shim.REQUEST_BUDGET_NOTICE not in (info.instructions or ''):
+            return ModelResponse(parts=[ToolCallPart('probe', {})])
+        if not narrated:
+            # Spends request 19 of 20 narrating, so the retry's `noop` takes the last one.
+            narrated = True
+            return ModelResponse(parts=[TextPart('Let me wrap up.')])
+        return ModelResponse(parts=[ToolCallPart('noop', {'message': 'out of budget'})])
+
+    assert _run_shim(_respond, sink) == 0
+    assert sink.exists()
+    results = [e for e in emitted if e.get('type') == 'result']
+    assert [(r.get('is_error'), r.get('result')) for r in results] == [
+        (False, 'request limit reached after the safe output was emitted')
+    ]
+
+
 def test_run_warns_the_model_when_the_request_budget_is_nearly_spent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     from pydantic_ai.messages import TextPart, ToolCallPart
 
@@ -1933,8 +1961,12 @@ def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> Async
     transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
     transport.config['wait'] = wait_none()
     transport.config['stop'] = stop_after_attempt(4)
-    # `max_retries=0` isolates the transport's retries from the SDK's own.
-    return AsyncAnthropic(api_key='x', max_retries=0, http_client=httpx2.AsyncClient(transport=transport))
+    # The shim's own SDK retry count, so a test also sees any SDK retries stacked on top.
+    return AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
 
 
 def test_rate_limit_retry_transport_rides_out_a_429_burst():
