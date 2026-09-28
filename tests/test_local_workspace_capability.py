@@ -52,6 +52,12 @@ async def test_invalid_workspace_argument_fails_before_model_call(invalid: objec
         await agent.run('go', workspace=invalid)  # type: ignore[arg-type]
 
 
+async def test_a_capability_as_workspace_argument_points_to_capabilities(tmp_path: Path) -> None:
+    agent = Agent(TestModel())
+    with pytest.raises(TypeError, match=r'`LocalWorkspace` is a capability: pass it in `capabilities=\[\.\.\.\]`'):
+        await agent.run('go', workspace=LocalWorkspace(tmp_path))  # type: ignore[arg-type]
+
+
 async def test_resolver_cannot_substitute_a_different_workspace(tmp_path: Path) -> None:
     class MisleadingWorkspace(AbstractCapability[Any]):
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> LocalWorkspaceBackend | None:
