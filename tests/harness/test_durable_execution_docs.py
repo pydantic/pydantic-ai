@@ -45,8 +45,15 @@ def test_temporal_example(workspace: Path) -> None:
 @pytest.fixture
 def dbos_teardown() -> Iterator[None]:
     dbos = pytest.importorskip('dbos')
+    from dbos._dbos import _get_or_create_dbos_registry  # pyright: ignore[reportPrivateUsage]
+
+    registry = _get_or_create_dbos_registry()
+    workflows, types = dict(registry.workflow_info_map), dict(registry.function_type_map)
     yield
     dbos.DBOS.destroy()
+    # Drop only the example's workflows: their source was `exec`d, so a later `DBOS.launch()` could not hash
+    # it, while modules that register agents at import time still need theirs.
+    registry.workflow_info_map, registry.function_type_map = workflows, types
 
 
 def test_dbos_example(workspace: Path, dbos_teardown: None) -> None:
