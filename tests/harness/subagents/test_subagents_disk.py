@@ -30,11 +30,6 @@ from pydantic_ai_harness.subagents._disk import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def _delegate_then_finish(agent_name: str) -> FunctionModel:
     """A parent model that delegates to `agent_name` once, then replies with text."""
     calls = {'n': 0}

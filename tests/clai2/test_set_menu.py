@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import pytest
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
@@ -11,11 +10,6 @@ from pydantic_clai2.field_menu import FieldMenu, run_flow
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.set_menu import SettingsSource, open_settings_menu
 from tests.clai2.menu_script import Script, make_context, pick, typed
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def test_rows_details_and_validation(tmp_path: Path) -> None:

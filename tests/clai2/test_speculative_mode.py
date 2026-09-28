@@ -45,11 +45,6 @@ from pydantic_clai2.speculative_mode import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) -> FunctionModel:
     """Speculative runs stream, so replay each response as one delta per part."""
 

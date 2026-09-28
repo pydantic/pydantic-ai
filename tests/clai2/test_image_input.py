@@ -35,11 +35,6 @@ from pydantic_clai2.settings_store import SettingsStore
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture
 def image_path(tmp_path: Path) -> Path:
     path = tmp_path / 'screen shot.PNG'
     Image.new('RGB', (3, 2), color='red').save(path)

@@ -53,11 +53,6 @@ pytestmark = [
 ]
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 _EPOCH = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
 
 
