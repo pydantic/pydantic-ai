@@ -172,7 +172,7 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 
 ### What changed in the lifecycle
 
-- A run no longer terminates the sandbox. It runs until you terminate it or its `sandbox_timeout` ends it (see [Clean up](#clean-up)).
+- A run no longer terminates the sandbox. It runs until you terminate it or its `sandbox_timeout` ends it (see [Clean up](#clean-up)). Set `idle_timeout=` to have Modal stop an unused sandbox sooner, or call `await ModalSandbox().destroy(result.workspace.ref)` when you're done with it.
 - `sandbox_timeout` defaults to 24 hours instead of 5 minutes, so a later run can continue in the same sandbox.
 - A run that continues a `message_history` reattaches to the previous run's sandbox. Pass `workspace='new'` for a fresh one.
 - Reattaching to an expired or terminated sandbox raises `WorkspaceUnavailableError`. No empty replacement is created. If a command exits 137 because the sandbox was terminated mid-command, it raises the same error; a SIGKILLed command in a running sandbox returns exit 137.
@@ -181,20 +181,23 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 
 | Previous API | Now |
 | --- | --- |
+| Sandbox terminated when the run ends | No longer: it keeps running, and billing, until its `sandbox_timeout` (24 hours by default) ends it. Set `idle_timeout=`, or call `await ModalSandbox().destroy(result.workspace.ref)`. |
 | `image`, `app_name`, `create_app_if_missing`, `env` | Unchanged. `image` also takes a `modal.Image`, and its default now has `git` and `ripgrep`. |
 | `sandbox_timeout` | Unchanged name. The default is now `86_400` (24 hours) instead of `300`. |
 | `workdir` | Renamed `working_dir`. `workdir=` still works, with a deprecation warning. |
+| Default working directory | `/root` on the default image, where the old default image (`python:3.12-slim`) started commands in `/`. A custom image keeps its own `WORKDIR`. |
 | `sandbox_id` | Deprecated; still attaches to that sandbox when the run has no ref of its own. Use `agent.run(..., workspace=WorkspaceRef(provider='modal', id=sandbox_id))`. |
 | `session`, `ModalSandboxSession` | `session` is deprecated and ignored; `ModalSandboxSession` is removed. Use `agent.run(..., workspace=ModalSandboxBackend(sandbox=<modal.Sandbox>))`. |
 | `default_command_timeout` | Deprecated and ignored. Use `Shell(default_timeout=...)`. |
 | `max_command_timeout` | Deprecated and ignored, with no direct equivalent: nothing caps a timeout the model asks for. `Shell(default_timeout=...)` sets the timeout of commands that don't give one; `sandbox_timeout` limits the lifetime of a new sandbox and does not apply to attached sandboxes. |
-| `max_output_bytes`, `max_output_lines` | Deprecated and ignored. Use `Shell(max_output_chars=...)` or `ToolOutputLimits`. |
+| `max_output_bytes`, `max_output_lines` | Deprecated and ignored. Use `Shell(max_output_chars=...)` or `ToolOutputLimits`. A command whose combined stdout and stderr pass 10 MiB is stopped and raises `WorkspaceOutputLimitError`. |
 | `max_read_bytes` | Deprecated and ignored. Use `FileSystem(max_read_lines=..., max_read_chars=...)`. |
 | `instructions` | Deprecated and ignored. Use the agent's `instructions`. |
 | `run_command` tool | Removed. Use `Shell()`. |
-| `read_file`, `write_file`, `list_directory` tools | Removed. Use `FileSystem()`. It only reaches the working directory and below; `FileSystem(root_dir='/')` reaches the whole sandbox, as the old tools did. |
+| `read_file`, `write_file`, `list_directory` tools | Removed. Use `FileSystem()`. It only reaches the working directory and below; `FileSystem(root_dir='/')` reaches the whole sandbox, as the old tools did. `read_file`'s `offset` is now zero-based: the old tool counted lines from 1. |
+| `PrefixTools(ModalSandbox(...), prefix='modal')` next to `Shell()` or `FileSystem()` | The `modal_*` tools are gone, and the unprefixed `Shell` and `FileSystem` tools, which used to act on your machine, now run in the sandbox. Drop `PrefixTools`. |
 | `ModalSandboxExecResult` | Removed. Use `pydantic_ai.workspaces.CommandResult`. |
-| `ModalSandboxError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceError`. |
+| `ModalSandboxError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceError`. It doesn't cover a missing `modal` package (`UserError`), sandbox creation that doesn't finish within 10 minutes (`TimeoutError`), or transient Modal errors such as connection failures, which propagate unchanged so a durable engine can retry them. |
 | `ModalSandboxTerminalError`, `ModalSandboxUnavailableError`, `ModalSandboxAuthError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceUnavailableError`. |
 
 ## Durable execution
