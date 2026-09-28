@@ -301,6 +301,21 @@ async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> Non
         await workspace.make_dir('unwritable/child')
 
 
+async def test_shell_write_never_replaces_a_file_it_cannot_copy_the_mode_of(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
+    target = tmp_path / 'write-only'
+    target.write_bytes(b'original')
+    target.chmod(0o200)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+    with pytest.raises(WorkspaceError):
+        await workspace.write_bytes('write-only', b'replacement')
+    assert target.stat().st_mode & 0o777 == 0o200
+    target.chmod(0o600)
+    assert target.read_bytes() == b'original'
+    assert not list(tmp_path.glob('.pydantic-ai-*'))
+
+
 async def test_shell_filesystem_refuses_to_remove_workspace_root(tmp_path: Path) -> None:
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     (tmp_path / 'safe').write_bytes(b'safe')
