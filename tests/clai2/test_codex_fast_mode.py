@@ -18,11 +18,6 @@ from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_comman
 from tests.clai2.menu_script import Script, make_context, pick
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('name', ['gpt-6-astra', 'gpt-5.6-luna', 'gpt-5.4'])
 def test_codex_speed_labels_do_not_change_values(tmp_path: Path, name: str) -> None:
     context, _ = make_context(tmp_path)

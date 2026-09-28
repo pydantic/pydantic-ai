@@ -34,12 +34,6 @@ from pydantic_ai_harness.youdotcom import (
 from pydantic_ai_harness.youdotcom._toolset import default_client
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
-
 def _text(output: ToolReturn[str]) -> str:
     """The model-facing text of a tool result."""
     body = output.return_value

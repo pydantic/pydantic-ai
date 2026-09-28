@@ -21,11 +21,6 @@ from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
 from tests.clai2.menu_script import make_context
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('text', ['code', 'http://127.0.0.1:123/callback?code=code', '/callback?code=code'])
 def test_parse_code(text: str) -> None:
     assert authorization_code(text=text) == 'code'

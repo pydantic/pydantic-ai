@@ -56,11 +56,6 @@ async def test_enter_during_run_teardown_queues_follow_up(supplied_handler: bool
         assert not session.steer('finished')
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('sequence', ['\x1b\r', '\x1b[13;3u', '\x1b[27;3;13~'])
 async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
     accepted: list[str] = []

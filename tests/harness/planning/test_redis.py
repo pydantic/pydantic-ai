@@ -19,11 +19,6 @@ pytestmark = [
 ]
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 class FakeRedis:
     """A tiny redis.asyncio-compatible client backed by an in-memory dict.
 

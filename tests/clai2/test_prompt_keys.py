@@ -11,11 +11,6 @@ from prompt_toolkit.keys import Keys
 from pydantic_clai2.prompt_keys import PromptKeys
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_decoding_meta_paste_arrows_and_lone_escape() -> None:
     events: list[tuple[str, str]] = []
     with create_pipe_input() as pipe:

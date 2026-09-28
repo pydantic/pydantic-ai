@@ -32,11 +32,6 @@ from .._tool_calls import call_tool, call_tools
 pytestmark = [pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands and process groups')]
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def receive_exactly(stream: SocketStream, size: int) -> bytes:
     data = b''
     while len(data) < size:
