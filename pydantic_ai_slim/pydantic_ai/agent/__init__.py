@@ -1826,21 +1826,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     resolution_capture=resolutions,
                 )
             except BaseException as error:
-                if resolutions.layers is not None:
-                    assert len(resolutions.layers) == len(extra_capabilities) + 1
-                    resolved_base = replace_resolved_run_capabilities(base_capability, resolutions.layers[0])
-                    resolved_extras = [
-                        replace_resolved_run_capabilities(capability, layer_resolutions)
-                        for capability, layer_resolutions in zip(
-                            extra_capabilities, resolutions.layers[1:], strict=True
-                        )
-                    ]
-                    _, _, setup_capability = _compose_run_capabilities([resolved_base], resolved_extras)
-                else:
-                    setup_capability = pre_run_root
-                    if pre_run_root is base_capability and extra_capabilities:
-                        _, _, setup_capability = _compose_run_capabilities([base_capability], extra_capabilities)
-                    setup_capability = replace_resolved_run_capabilities(setup_capability, resolutions)
+                assert len(resolutions.layers) == len(extra_capabilities) + 1
+                resolved_base = replace_resolved_run_capabilities(base_capability, resolutions.layers[0])
+                resolved_extras = [
+                    replace_resolved_run_capabilities(capability, layer_resolutions)
+                    for capability, layer_resolutions in zip(extra_capabilities, resolutions.layers[1:], strict=True)
+                ]
+                _, _, setup_capability = _compose_run_capabilities([resolved_base], resolved_extras)
                 await _run_setup_error_hook(setup_capability, initial_ctx, error)
                 raise
         run_capability = resolved_caps.run_capability
@@ -3257,11 +3249,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for the native-tool validation error's `source`.
         """
         run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        layer_resolutions: list[_RunCapabilityResolutions] = []
+        if resolution_capture is not None:
+            # Install the cleanup shape before inspecting the tree, in case the inspection itself raises.
+            layer_resolutions = [_RunCapabilityResolutions() for _ in run_layers]
+            resolution_capture.layers = layer_resolutions
         setup_layer_start = 0
         # Prepend `Instrumentation` (outermost, so its spans wrap everything) unless the user already
         # added one themselves — mirroring the explicit-capability-wins precedence.
         if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
             run_layers.insert(0, instrumentation_cap)
+            if resolution_capture is not None:
+                layer_resolutions.insert(0, _RunCapabilityResolutions())
             setup_layer_start = 1
 
         # Resolve `for_run` per layer instead of composing a `CombinedCapability` first (which would
@@ -3276,7 +3275,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolution_capture is None:
             resolved_layers = await _utils.gather(*(resolve_capability_for_run(cap, ctx) for cap in run_layers))
         else:
-            layer_resolutions = [_RunCapabilityResolutions() for _ in run_layers]
             resolution_capture.layers = layer_resolutions[setup_layer_start:]
 
             async def resolve_layer(

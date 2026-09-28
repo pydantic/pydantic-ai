@@ -19,7 +19,7 @@ def _is_capability(value: object) -> TypeIs[AbstractCapability[AgentDepsT]]:
 class RunCapabilityResolutions:
     def __init__(self) -> None:
         self.resolved: dict[int, list[object | None]] = {}
-        self.layers: list[RunCapabilityResolutions] | None = None
+        self.layers: list[RunCapabilityResolutions] = []
 
     def reserve(self, capability: AbstractCapability[AgentDepsT]) -> int:
         occurrences = self.resolved.setdefault(id(capability), [])

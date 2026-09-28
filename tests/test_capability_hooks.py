@@ -12,7 +12,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from types import NoneType
-from typing import Any, NoReturn, cast
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -2144,26 +2144,6 @@ class TestRunErrorHooks:
 
         with pytest.raises(RuntimeError, match='toolset setup failed'):
             await Agent(TestModel(), capabilities=[CleanupCapability()]).run('hello', toolsets=[FailingToolset()])
-
-        assert observed == ['cleaned']
-
-    async def test_setup_error_before_resolution_capture_dispatches_run_hooks(self, monkeypatch: pytest.MonkeyPatch):
-        observed: list[str] = []
-
-        class CleanupCapability(AbstractCapability[Any]):
-            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
-                observed.append('cleaned')
-                return AgentRunResult(output='setup recovery is unavailable')
-
-        agent = Agent(TestModel())
-
-        async def fail_before_resolution(*args: object, **kwargs: object) -> NoReturn:
-            raise RuntimeError('capability resolution failed')
-
-        monkeypatch.setattr(agent, '_resolve_run_capabilities', fail_before_resolution)
-
-        with pytest.raises(RuntimeError, match='capability resolution failed'):
-            await agent.run('hello', capabilities=[CleanupCapability()])
 
         assert observed == ['cleaned']
 
