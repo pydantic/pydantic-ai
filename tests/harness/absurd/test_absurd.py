@@ -146,10 +146,16 @@ class TestDurability:
         assert tool_calls['calls'] == 1
         assert replayed.output == first.output == 'done'
 
-    async def test_same_toolset_instance_in_two_places_is_wrapped_once(self, absurd: AsyncAbsurd) -> None:
+    @pytest.mark.parametrize(
+        ('toolset_id', 'step'),
+        [('shared', 'a__function_toolset__shared.call_tool:echo'), (None, 'a__function_toolset.call_tool:echo')],
+    )
+    async def test_same_toolset_instance_in_two_places_is_wrapped_once(
+        self, absurd: AsyncAbsurd, toolset_id: str | None, step: str
+    ) -> None:
         # Both mounts checkpoint through the one wrapper, so the two calls take the same step name in
         # encounter order.
-        toolset = FunctionToolset[object](id='shared')
+        toolset = FunctionToolset[object](id=toolset_id)
 
         @toolset.tool_plain
         def echo(value: str) -> str:
@@ -175,10 +181,7 @@ class TestDurability:
             await agent.run('hi')
 
         stored = await checkpoints(absurd, ctx.task_id)
-        assert {k: v for k, v in stored.items() if 'call_tool' in k} == {
-            'a__function_toolset__shared.call_tool:echo': 'a',
-            'a__function_toolset__shared.call_tool:echo#2': 'b',
-        }
+        assert {k: v for k, v in stored.items() if 'call_tool' in k} == {step: 'a', f'{step}#2': 'b'}
 
     async def test_duplicate_toolset_id_raises(self) -> None:
         first = FunctionToolset[object](id='tools')
@@ -417,9 +420,10 @@ class TestDurability:
             toolsets=[MCPToolset[object](_calculator([]), id='calc')],
             capabilities=[AbsurdDurability()],
         )
-        async with running_task_context(absurd):
+        async with running_task_context(absurd) as ctx:
             result = await agent.run('add 2 and 3')
         assert result.output == 'done'
+        assert (await checkpoints(absurd, ctx.task_id))['calc__mcp_server__calc.call_tool'] == 5
 
     async def test_mcp_get_instructions_inside_context_with_include(self, absurd: AsyncAbsurd) -> None:
         server = MCPToolset[object](_calculator([]), id='calc', include_instructions=True)
@@ -1014,6 +1018,17 @@ class TestDynamicToolset:
             with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
                 await agent.run('greet ada', toolsets=[_dynamic_toolset(tool_calls, id='late')])
         assert tool_calls['n'] == 0
+
+    async def test_toolset_decorated_after_construction_rejected_inside_task(self, absurd: AsyncAbsurd) -> None:
+        agent = Agent(_make_model(), name='decorated', capabilities=[AbsurdDurability()])
+
+        @agent.toolset(id='decorated-tools')
+        def build(ctx: RunContext[object]) -> FunctionToolset[object]:  # pragma: no cover
+            return FunctionToolset[object](id='inner')
+
+        async with running_task_context(absurd):
+            with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
+                await agent.run('hi')
 
 
 class TestCodeMode:
