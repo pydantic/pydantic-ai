@@ -1060,7 +1060,6 @@ except UsageLimitExceeded as e:
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling. The request count, [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], counts the model responses the agent acts on, one per turn of the agent loop, rather than every request sent to the provider: attempts a [fallback model](models/overview.md#fallback-model) moved on from, the continuation requests that complete a turn a provider paused (Anthropic `pause_turn`, OpenAI background mode), and [provider SDK and transport retries](retries.md#retry-multiplication) aren't counted. The tokens and cost of a response a fallback model rejected, and of continuation requests, still count towards the token and cost limits.
 
-
 ```py
 from typing_extensions import TypedDict
 

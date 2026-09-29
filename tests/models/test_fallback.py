@@ -1861,13 +1861,11 @@ async def test_all_rejected_usage_counts_towards_the_run() -> None:
         FunctionModel(respond, model_name='rejected'),
         fallback_on=[ModelHTTPError, reject_all],
     )
-    agent = Agent(model)
+    usage = RunUsage()
     with pytest.raises(FallbackExceptionGroup) as exc_info:
-        async with agent.iter('test') as run:
-            async for _ in run:
-                pass
+        await Agent(model).run('test', usage=usage)
 
-    assert run.usage == snapshot(RunUsage(cost=Decimal('0.001'), input_tokens=100, output_tokens=10))
+    assert usage == snapshot(RunUsage(cost=Decimal('0.001'), input_tokens=100, output_tokens=10))
     assert exc_info.value.attempts == snapshot(
         [
             ModelRequestAttempt(
@@ -1905,6 +1903,41 @@ async def test_rejected_usage_counts_towards_token_limits() -> None:
 
     with pytest.raises(UsageLimitExceeded, match='Exceeded the input_tokens_limit of 100 \\(input_tokens=120\\)'):
         await Agent(model).run('test', usage_limits=UsageLimits(input_tokens_limit=100))
+
+
+@pytest.mark.parametrize('inner_outcome', ['answered', 'failed'])
+async def test_nested_fallback_keeps_the_inner_attempts(inner_outcome: str) -> None:
+    """An outer `FallbackModel` keeps the attempts an inner one made, so their billed usage still counts.
+
+    The inner model's rejected response is on the response the outer one then rejects, or on the
+    `FallbackExceptionGroup` the outer one falls back on.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('response')], usage=RequestUsage(input_tokens=10))
+
+    def reject_inner_a(response: ModelResponse) -> bool:
+        return response.model_name == 'inner_a'
+
+    def reject_inner(response: ModelResponse) -> bool:
+        return response.model_name in ('inner_a', 'inner_b')
+
+    inner = FallbackModel(
+        FunctionModel(respond, model_name='inner_a'),
+        FunctionModel(respond if inner_outcome == 'answered' else failure_response, model_name='inner_b'),
+        fallback_on=[ModelHTTPError, reject_inner_a],
+    )
+    outer = FallbackModel(
+        inner, FunctionModel(respond, model_name='outer'), fallback_on=[FallbackExceptionGroup, reject_inner]
+    )
+    result = await Agent(outer).run('test')
+
+    expected = {
+        'answered': ([('inner_a', 'rejected'), ('inner_b', 'rejected')], 30),
+        'failed': ([('inner_a', 'rejected'), ('inner_b', 'error'), ('fallback:inner_a,inner_b', 'error')], 20),
+    }
+    attempts = [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []]
+    assert (attempts, result.usage.input_tokens) == expected[inner_outcome]
 
 
 async def test_failed_attempts_survive_a_continuation() -> None:

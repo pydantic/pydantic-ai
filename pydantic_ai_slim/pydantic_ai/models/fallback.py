@@ -536,14 +536,18 @@ class FallbackModel(Model):
         failure: Exception | ModelResponse,
     ) -> None:
         """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
+        # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
+        if isinstance(failure, ModelResponse):
+            attempts.extend(failure.failed_attempts or [])
+        elif isinstance(failure, FallbackExceptionGroup):
+            attempts.extend(failure.attempts)
         attempt = failed_attempt(model, failure, started_at=started_at, ended_at=time_ns())
         attempts.append(attempt)
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
-        with suppress(Exception):
-            if (span := self._fallback_span()) and (policy := open_request_policy()):
-                record_attempt_span(
-                    attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
-                )
+        if (span := self._fallback_span()) and (policy := open_request_policy()):
+            record_attempt_span(
+                attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
+            )
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

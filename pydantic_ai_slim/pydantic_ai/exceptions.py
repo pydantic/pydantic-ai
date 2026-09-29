@@ -616,8 +616,9 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
     """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] made, in order.
 
     Unlike the grouped exceptions, this includes the usage of any response that was rejected by a
-    `fallback_on` response handler, which also counts towards the run's
-    [`RunUsage`][pydantic_ai.usage.RunUsage].
+    `fallback_on` response handler, which the agent also adds to the run's
+    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on the group a `FallbackModel` raised itself: it
+    doesn't survive a durable execution boundary, such as a Temporal activity.
     """
 
 
