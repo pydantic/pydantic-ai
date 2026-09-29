@@ -14712,7 +14712,14 @@ _ANTHROPIC_MESSAGE_START = (
         pytest.param('request', b'   ', 'application/json', id='request'),
         pytest.param(
             'stream',
-            (_ANTHROPIC_MESSAGE_START + 'event: content_block_delta\ndata: {not json\n\n').encode(),
+            (
+                _ANTHROPIC_MESSAGE_START
+                + 'event: content_block_start\ndata: {"type": "content_block_start", "index": 0, '
+                '"content_block": {"type": "text", "text": ""}}\n\n'
+                'event: content_block_delta\ndata: {"type": "content_block_delta", "index": 0, '
+                '"delta": {"type": "text_delta", "text": "Hello"}}\n\n'
+                'event: content_block_delta\ndata: {not json\n\n'
+            ).encode(),
             'text/event-stream',
             id='stream',
         ),
