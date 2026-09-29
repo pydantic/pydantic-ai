@@ -36,7 +36,8 @@ Authentication and base URL come from `provider`, mirroring
 reads the environment; pass an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for a
 custom key or base URL. The realtime WebSocket opens separately, so a custom provider `httpx` client
 is not used for it. Sessions run over a server-side WebSocket by default; for browser voice, the
-browser can exchange media directly over [WebRTC](#browser-webrtc) while your backend runs the agent (see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
+browser can exchange media directly over [WebRTC](#browser-webrtc) while your backend runs the agent
+(see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
 
 ## Model names
 

@@ -300,7 +300,7 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     """Whether OpenAI stores the session so it can later be forked or downloaded. Defaults to `False`."""
 
     openai_live_data_channel: DataChannelConfigParam
-    """Which Live events the browser on a [WebRTC call](https://ai.pydantic.dev/realtime/openai/#browser-webrtc)
+    """Which Live events the browser on a [WebRTC call](https://pydantic.dev/docs/ai/realtime/openai#browser-webrtc)
     may send and receive over its data channel.
 
     Defaults to none either way. The browser holds only the media: the server's sideband runs the session,
@@ -852,6 +852,9 @@ class OpenAILiveConnection(RealtimeConnection):
         user's turn, and the idle track between their words would cut one utterance into many. A longer
         quiet stretch is not forwarded: it is most likely the end of the reply, or a wait on delegated
         work, and forwarding it would end every reply with seconds of silence.
+
+        On a WebRTC sideband the browser plays the audio, so nothing is forwarded and voice only drives
+        the turn clock.
         """
         if _is_voiced(pcm):
             self._pause_ms = 0.0

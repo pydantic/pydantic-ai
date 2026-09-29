@@ -2205,12 +2205,13 @@ class AgentRealtime(Generic[AgentDepsT]):
         The resolved instructions and tool definitions are baked into the call, so the provider session
         is fully configured before (or without) a server sideband attaching. If a sideband later attaches
         with [`session(provider_session=...)`][pydantic_ai.agent.AgentRealtime.session], it resolves and
-        pushes the same configuration over the control channel again.
+        pushes the same configuration over the control channel again. (OpenAI GPT-Live can't be
+        reconfigured after it starts, so there the offer's configuration is final.)
 
         Resolution uses the same machinery as opening a session: dynamic `@agent.instructions` functions
         and capability `for_run` hooks run, and toolsets are set up (including starting MCP servers) to list
         their tools, then torn down. Bound `message_history` is not baked into the offer; a sideband session
-        seeds it when it attaches.
+        seeds it when it attaches, except on GPT-Live, which only takes history when it starts.
 
         This delegates to
         [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which is implemented
@@ -2256,9 +2257,8 @@ class AgentRealtime(Generic[AgentDepsT]):
         seeds it when it attaches.
 
         This delegates to [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret],
-        which is implemented by the OpenAI and Azure OpenAI realtime models. Other models raise
-        [`UserError`][pydantic_ai.exceptions.UserError]; branch on
-        [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] to check up front.
+        which is implemented by the OpenAI and Azure OpenAI realtime models. Other models, including OpenAI
+        GPT-Live, raise [`UserError`][pydantic_ai.exceptions.UserError].
 
         Args:
             expires_after_seconds: Requested lifetime of the client secret in seconds. The provider may
