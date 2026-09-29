@@ -92,6 +92,9 @@ class TestPylon:
         def unmarked() -> str:
             return 'unmarked'
 
+        unfiltered_agent = Agent(TestModel(), capabilities=[Pylon(client=server)])
+        assert (await unfiltered_agent.run('Use the tools')).output == '{"unmarked":"unmarked"}'
+
         agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
         with pytest.warns(UserWarning, match=r"`read_only=True` removed every tool from MCPToolset 'pylon'"):
             await agent.run('Use the tools')
