@@ -351,6 +351,8 @@ cleared. Framework-typed tool results -- core's `search_tools` and `load_capabil
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
 
+Set `idle_seconds` to clear when a conversation resumes after a pause. Providers expire an unused prompt cache after a few minutes (Anthropic's default is 5; OpenAI's in-memory cache lasts 5 to 10), so when the history's last model response is older than that, the next request re-writes the cache anyway and clearing costs no cache hit. Set it above the cache lifetime you use, including an extended one such as Anthropic's 1-hour cache. It combines with the size triggers (either one fires), and it clears once: the cleared history persists, and the new response is fresh.
+
 ## `WarnNearLimits` thresholds
 
 Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) and escalate to CRITICAL
@@ -393,7 +395,8 @@ anything valid). Any object with `async def compact(messages, ctx) -> list[Model
 
 Clearing or deduplicating rewrites message content, which invalidates the provider's prompt cache
 from the edit point onward -- the next request pays a cache-write. Use `ClearToolResults`'
-`min_clear_tokens` to skip clearing that reclaims too little to be worth busting the cache.
+`min_clear_tokens` to skip clearing that reclaims too little to be worth busting the cache, and
+`idle_seconds` to clear when the cache has already expired.
 
 ## Model inheritance
 

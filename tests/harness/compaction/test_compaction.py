@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import AsyncIterable, AsyncIterator
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -1723,7 +1724,9 @@ class TestIterToolPairs:
 
 class TestClearToolResults:
     def test_validation_no_trigger(self):
-        with pytest.raises(ValueError, match='At least one of max_messages, max_tokens, or max_fraction must be set'):
+        with pytest.raises(
+            ValueError, match='At least one of max_messages, max_tokens, max_fraction, or idle_seconds must be set'
+        ):
             ClearToolResults()
 
     def test_validation_negative_max_messages(self):
@@ -1741,6 +1744,57 @@ class TestClearToolResults:
     def test_validation_negative_min_clear_tokens(self):
         with pytest.raises(ValueError, match='min_clear_tokens must be non-negative'):
             ClearToolResults(max_messages=1, min_clear_tokens=-1)
+
+    @pytest.mark.parametrize('idle_seconds', [0, -1, float('inf'), float('nan')])
+    def test_validation_idle_seconds(self, idle_seconds: float):
+        with pytest.raises(ValueError, match='idle_seconds must be a positive finite number'):
+            ClearToolResults(idle_seconds=idle_seconds)
+
+    @pytest.mark.parametrize(
+        ('age', 'naive', 'cleared'),
+        [
+            (timedelta(hours=2), False, True),
+            (timedelta(hours=2), True, True),
+            (timedelta(minutes=1), False, False),
+        ],
+    )
+    async def test_idle_trigger_clears_when_the_last_response_is_old(self, age: timedelta, naive: bool, cleared: bool):
+        cap = ClearToolResults(idle_seconds=3600, keep_pairs=1)
+        messages: list[ModelMessage] = [*_pair('fn', 'tc1'), *_pair('fn', 'tc2')]
+        timestamp = datetime.now(timezone.utc) - age
+        messages[2] = dataclasses.replace(messages[2], timestamp=timestamp.replace(tzinfo=None) if naive else timestamp)
+        messages.append(ModelRequest(parts=[UserPromptPart(content='back again')]))
+        result = await cap.before_model_request(_make_ctx(), _make_request_context(messages))
+        first = '[tool result cleared]' if cleared else 'result content here'
+        assert _return_contents(result.messages) == [first, 'result content here']
+
+    async def test_idle_trigger_needs_a_response(self):
+        cap = ClearToolResults(idle_seconds=1, keep_pairs=0)
+        messages: list[ModelMessage] = [_user('first prompt')]
+        result = await cap.before_model_request(_make_ctx(), _make_request_context(messages))
+        assert result.messages == messages
+
+    async def test_idle_trigger_clears_a_resumed_conversation_once(self):
+        received: list[list[str]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            received.append(_return_contents(messages))
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[ClearToolResults(idle_seconds=3600, keep_pairs=0)])
+        stale = datetime.now(timezone.utc) - timedelta(hours=2)
+        history: list[ModelMessage] = [
+            _user('look it up'),
+            dataclasses.replace(_tool_call('fn', 'tc1'), timestamp=stale),
+            _tool_return('fn', 'tc1', 'x' * 400),
+            ModelResponse(parts=[TextPart(content='found it')], timestamp=stale),
+        ]
+
+        resumed = await agent.run('and now?', message_history=history)
+        again = await agent.run('one more', message_history=resumed.all_messages())
+
+        assert received == [['[tool result cleared]'], ['[tool result cleared]']]
+        assert _return_contents(again.all_messages()) == ['[tool result cleared]']
 
     async def test_no_clear_below_threshold(self):
         cap = ClearToolResults(max_messages=100, keep_pairs=0)

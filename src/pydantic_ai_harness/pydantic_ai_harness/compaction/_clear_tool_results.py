@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import timezone
 from typing import TYPE_CHECKING
 
 from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
@@ -94,6 +97,17 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     clear_tool_inputs: bool = False
     """When `True`, also blank the arguments of the cleared tool calls."""
 
+    idle_seconds: float | None = field(default=None, kw_only=True)
+    """Trigger clearing when the history's last model response is at least this many seconds old. `None` disables.
+
+    Providers expire an unused prompt cache after a few minutes (Anthropic's default is 5, and
+    OpenAI's in-memory cache lasts 5 to 10), so when a conversation resumes after a longer pause the
+    next request re-writes the whole cache anyway. Clearing then costs no cache hit it would
+    otherwise have had. Set it above the cache lifetime you use, including an extended one such as
+    Anthropic's 1-hour cache. It clears once: the response that request produces is fresh, and the cleared
+    history persists.
+    """
+
     min_clear_tokens: int | None = None
     """Only clear if doing so reclaims at least this many estimated tokens.
 
@@ -108,8 +122,15 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
-            raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
+        if (
+            self.max_messages is None
+            and self.max_tokens is None
+            and self.max_fraction is None
+            and self.idle_seconds is None
+        ):
+            raise ValueError('At least one of max_messages, max_tokens, max_fraction, or idle_seconds must be set.')
+        if self.idle_seconds is not None and not (math.isfinite(self.idle_seconds) and self.idle_seconds > 0):
+            raise ValueError('idle_seconds must be a positive finite number.')
         if self.max_messages is not None and self.max_messages < 1:
             raise ValueError('max_messages must be positive.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
@@ -157,7 +178,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         token_trigger = resolve_token_trigger(
             self.max_tokens, self.max_fraction, request_ctx.model, self.fallback_context_window, self.context_window
         )
-        if not exceeds(
+        if not self._idle(messages) and not exceeds(
             messages,
             self.max_messages,
             token_trigger,
@@ -179,3 +200,12 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         )
         request_context.messages = compacted
         return request_context
+
+    def _idle(self, messages: Sequence[ModelMessage]) -> bool:
+        if self.idle_seconds is None:
+            return False
+        last = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+        if last is None:
+            return False
+        timestamp = last.timestamp if last.timestamp.tzinfo is not None else last.timestamp.replace(tzinfo=timezone.utc)
+        return (now_utc() - timestamp).total_seconds() >= self.idle_seconds
