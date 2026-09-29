@@ -9643,6 +9643,43 @@ async def test_anthropic_output_tool_with_thinking(
     assert result.output == snapshot(6)
 
 
+async def test_anthropic_prompted_output_with_thinking(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """A model profile without JSON-schema output uses Prompted Output under extended thinking."""
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        profile={'supports_json_schema_output': False},
+        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
+    )
+
+    result = await Agent(model, output_type=int).run('What is 3 + 3?')
+    body = request_capture.body()
+    assert body['thinking'] == {'type': 'enabled', 'budget_tokens': 3000}
+    assert 'tool_choice' not in body
+    assert 'output_config' not in body
+    assert body['system'] == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': """\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"response": {"type": "integer"}}, "required": ["response"], "type": "object", "title": "int"}
+
+Don't include any text or Markdown fencing before or after.
+""",
+            }
+        ]
+    )
+    assert result.output == snapshot(6)
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts)
+
+
 async def test_anthropic_tool_with_thinking(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):

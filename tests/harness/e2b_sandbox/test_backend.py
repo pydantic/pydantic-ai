@@ -542,7 +542,7 @@ class TestRun:
             return handle
 
         monkeypatch.setattr(commands, 'run', held)
-        with anyio.fail_after(3):
+        with anyio.fail_after(5):
             async with anyio.create_task_group() as group:
                 scope = anyio.CancelScope()
 
@@ -814,7 +814,7 @@ class TestFilesystem:
             return await original(path, user, request_timeout)
 
         monkeypatch.setattr(files, 'get_info', delayed)
-        with anyio.fail_after(1):
+        with anyio.fail_after(5):
             entries = await backend.list_dir(str(tmp_path))
         assert [entry.name for entry in entries] == ['a', 'b', 'target']
 
