@@ -228,19 +228,12 @@ history nor waited for by [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSess
 split it, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
-was sent and recorded in history, not when the model took it in: as the warning below explains, that
-only happens once audio is flowing.
+was sent and recorded in history, not when the model took it in. Since Live can take text as context
+without answering it, bound [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
+with a timeout rather than relying on a reply always following.
 
-!!! warning "Text only lands while audio is flowing"
-    A Live session's timeline advances with its audio, so text sent to a session whose microphone is
-    not streaming is deferred rather than delivered. Keep
-    [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] running for the life of the
-    call, streaming silence if the user is not speaking. That is why a text-driven session with no
-    audio input, the shape the [text-to-audio example](../examples/realtime-text-to-audio.md) uses,
-    does not work on Live. It is also why
-    [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] after a `send()` waits
-    until audio is flowing, and, since Live can take text as context without answering it, bound
-    that wait with a timeout rather than relying on a reply always following.
+Live's timeline only advances while it receives audio, so a session with no microphone, like the
+[text-to-audio example](../examples/realtime-text-to-audio.md), needs `openai_live_idle_audio=True`.
 
 Seeding is text-only in the same spirit: [`message_history=`](history.md#seeding-a-session) replays
 text, transcripts, and thinking text, with tool rounds rendered as readable text because the protocol
@@ -345,6 +338,7 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier` |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI stores the session for later retrieval. Defaults to `False` |
+| `openai_live_idle_audio` | Stream silence while `send_audio()` is quiet, so text lands without a microphone. Live bills silence like speech. Defaults to `False` |
 
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is
 why these are session-start settings rather than things to change mid-call. (The Live API can append

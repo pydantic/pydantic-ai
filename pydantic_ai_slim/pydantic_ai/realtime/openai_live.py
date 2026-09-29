@@ -9,7 +9,8 @@ shape the adapter:
 - **Audio drives the session.** Live has no user-turn event for text: text arrives as *context*
   through `session.commentary.append` (speakable) and `session.thinking.append` (silent), each
   capped at 500 tokens. Both are placed on the session's audio timeline, which only advances while
-  audio flows — so a session whose microphone isn't streaming silently defers everything sent to it.
+  audio flows — so a session whose microphone isn't streaming defers everything sent to it, unless
+  `openai_live_idle_audio` has the connection stream silence in the microphone's place.
 - **There is no turn terminal.** Live has no `response.done` equivalent and no transcript-done
   event; transcripts arrive as timeline fragments. The connection synthesizes
   [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone] once the model has been quiet for
@@ -212,6 +213,11 @@ _live_error_adapter: TypeAdapter[_LiveErrorFrame] = TypeAdapter(_LiveErrorFrame)
 #: an ordinary end of the call.
 _ABNORMAL_CLOSE_REASONS = frozenset({'expired', 'content', 'connection_lost'})
 
+#: How long `send_audio()` must be quiet before the connection streams silence in its place, in seconds.
+_IDLE_AUDIO_GAP = 0.3
+#: How much silence each idle frame carries, in seconds: the 100 ms frames a microphone would send.
+_IDLE_AUDIO_FRAME = 0.1
+
 #: The PCM16 sample rates Live accepts. (It also takes 8 kHz G.711, which isn't PCM16.)
 _LIVE_PCM_RATES = frozenset({16000, 24000})
 _response_stream_event_adapter: TypeAdapter[ResponseStreamEvent] = TypeAdapter(ResponseStreamEvent)
@@ -286,6 +292,15 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
 
     openai_live_store: bool
     """Whether OpenAI stores the session so it can later be forked or downloaded. Defaults to `False`."""
+
+    openai_live_idle_audio: bool
+    """Whether to stream silence to Live while the application sends no audio. Defaults to `False`.
+
+    Live's timeline only advances while it receives audio, so text sent to a session with no microphone
+    streaming waits until audio flows again. With this on, the session streams silence in real time
+    whenever `send_audio()` has been quiet for a moment, and stops as soon as the application sends
+    audio again, so a text-only session works. Live bills the audio it receives by the second, silence
+    included, so this bills the whole time the session is open."""
 
 
 DEFAULT_LIVE_INSTRUCTIONS = (
@@ -471,6 +486,10 @@ class OpenAILiveConnection(RealtimeConnection):
         # continuations go out from the receive loop, which is where that terminal is seen.
         self._continuations_due: list[_Delegation] = []
         self._reported_seconds = 0.0
+        # The idle-audio pump, and when the application last sent audio, on the pump's clock.
+        self._idle_audio_task: asyncio.Task[None] | None = None
+        self._last_input_audio = 0.0
+        self._next_idle_frame = 0.0
 
     @property
     def model_name(self) -> str | None:
@@ -529,7 +548,38 @@ class OpenAILiveConnection(RealtimeConnection):
                 }
             )
             return
+        # Noted before the send, so the idle pump can't slip a frame of silence in ahead of this audio.
+        self._last_input_audio = _pump_clock()
         await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
+
+    def start_idle_audio(self) -> None:
+        """Stream silence whenever the application sends no audio, until the connection closes.
+
+        Live's timeline only advances while audio arrives, so without this, text sent to a session whose
+        microphone isn't streaming waits for audio that never comes.
+        """
+        self._last_input_audio = _pump_clock()
+        self._idle_audio_task = asyncio.create_task(self._pump_idle_audio(), name='openai-live-idle-audio')
+
+    async def _pump_idle_audio(self) -> None:
+        frame = _b64(bytes(int(self._audio_bytes_per_ms * _IDLE_AUDIO_FRAME * 1000) // 2 * 2))
+        with suppress(*self.transport_errors):
+            while True:
+                await self._wait_for_idle_frame()
+                await self._send_event({'type': 'session.input_audio.append', 'audio': frame})
+
+    async def _wait_for_idle_frame(self) -> None:
+        """Wait until the next frame of silence is due.
+
+        Frames go out at a microphone's pace, and none until the application's own audio has been quiet
+        for `_IDLE_AUDIO_GAP`: application audio arriving meanwhile pushes the next frame back.
+        """
+        while (delay := self._idle_frame_due() - _pump_clock()) > 0:
+            await asyncio.sleep(delay)
+        self._next_idle_frame = self._idle_frame_due() + _IDLE_AUDIO_FRAME
+
+    def _idle_frame_due(self) -> float:
+        return max(self._next_idle_frame, self._last_input_audio + _IDLE_AUDIO_GAP)
 
     async def _send_tool_result(self, result: ToolResult) -> None:
         """Return a tool result to the delegated Responses backend and let it continue."""
@@ -587,6 +637,8 @@ class OpenAILiveConnection(RealtimeConnection):
         self._closed = True
         task = self._recv_task
         self._cancel_read()
+        if self._idle_audio_task is not None:
+            await _utils.cancel_and_drain(self._idle_audio_task)
         if task is not None:
             with suppress(asyncio.CancelledError, websockets.WebSocketException):
                 await task
@@ -1012,6 +1064,11 @@ def _now() -> float:
     return time.monotonic()
 
 
+def _pump_clock() -> float:
+    """The idle-audio pump's clock, kept apart from the turn clock, which replayed recordings move."""
+    return time.monotonic()
+
+
 async def _recv(ws: ClientConnection) -> str | bytes:
     return await ws.recv()
 
@@ -1331,6 +1388,8 @@ class OpenAILiveModel(RealtimeModel):
                 provider_name=self.system,
                 provider_url=self._provider.base_url,
             )
+            if settings.get('openai_live_idle_audio'):
+                connection.start_idle_audio()
             yield connection
         finally:
             if connection is not None:

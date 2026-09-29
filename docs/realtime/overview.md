@@ -276,5 +276,5 @@ fit for a product, two alternatives sit outside it:
 | Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |
 | GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai.md#the-turn-boundary-is-inferred) |
 | GPT-Live bills audio duration rather than tokens, and no `UsageLimits` field caps a session by duration; a `cost_limit` bounds it once the duration is priced. | [#8371](https://github.com/pydantic/pydantic-ai/issues/8371) |
-| GPT-Live has no user-text turn: `send('...')` and `enqueue()` deliver text as context to the speaking model, and only while audio is flowing. | [GPT-Live text input](openai.md#text-is-context-not-a-user-turn) |
+| GPT-Live has no user-text turn: `send('...')` and `enqueue()` deliver text as context to the speaking model; a session with no microphone needs `openai_live_idle_audio=True`. | [GPT-Live text input](openai.md#text-is-context-not-a-user-turn) |
 | GPT-Live sessions do not reconnect automatically, so a dropped connection ends the session and the `reconnect` policy is ignored. | [GPT-Live feature support](openai.md#gpt-live-feature-support-and-limitations) |
