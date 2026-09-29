@@ -65,7 +65,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
-from pydantic_ai.settings import ToolOrOutput
+from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -76,6 +76,7 @@ with try_import() as imports_successful:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import ServerEvent, SessionConfig
+    from openai.types.shared import ReasoningEffort
     from pydantic import TypeAdapter
     from websockets.frames import Close
 
@@ -149,7 +150,8 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_webrtc=True,
         async_tool_call_mode='always',
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
-        supports_thinking=False,
+        # `thinking` sets the delegated backend's reasoning effort.
+        supports_thinking=True,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.
@@ -238,6 +240,50 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
     assert config['instructions'] == 'Speak slowly.'
     assert config['audio']['output'] == {'voice': 'cedar'}
     assert config['store'] is True
+
+
+@pytest.mark.parametrize(
+    'backend,thinking,expected',
+    [
+        pytest.param('gpt-5.6-sol', True, 'medium', id='on'),
+        pytest.param('gpt-5.6-sol', 'high', 'high', id='level'),
+        pytest.param('gpt-5.6-sol', False, 'none', id='off'),
+        # Resolved against the backend's profile, as a direct Responses request to it would be.
+        pytest.param('gpt-5.6-sol', 'minimal', 'low', id='no-minimal-effort'),
+        pytest.param('gpt-5', 'minimal', 'minimal', id='minimal-effort'),
+        # A backend that always reasons can't be turned off, so `False` leaves it at its default.
+        pytest.param('gpt-5', False, None, id='always-reasons'),
+        # A backend that doesn't reason is sent no effort at all.
+        pytest.param('gpt-4.1', 'high', None, id='does-not-reason'),
+    ],
+)
+def test_thinking_sets_the_backends_reasoning_effort(
+    model: OpenAILiveModel, backend: str, thinking: ThinkingLevel, expected: ReasoningEffort
+) -> None:
+    """The backend does the reasoning, so the shared `thinking` setting is its effort."""
+    settings = OpenAILiveModelSettings(thinking=thinking, openai_live_delegation={'model': backend})
+    responses = _config(model, settings=settings)['delegation']['responses']
+
+    assert responses.get('reasoning') == ({'effort': expected} if expected is not None else None)
+
+
+def test_delegation_settings_take_precedence_over_shared_ones(model: OpenAILiveModel) -> None:
+    settings = OpenAILiveModelSettings(
+        thinking='high',
+        parallel_tool_calls=True,
+        openai_live_delegation={'model': 'gpt-5.6-sol', 'reasoning_effort': 'low', 'parallel_tool_calls': False},
+    )
+    responses = _config(model, settings=settings)['delegation']['responses']
+
+    assert responses['reasoning'] == {'effort': 'low'}
+    assert responses['parallel_tool_calls'] is False
+
+
+def test_shared_parallel_tool_calls_reaches_the_backend(model: OpenAILiveModel) -> None:
+    """The backend is what calls the tools, so the shared setting applies to it."""
+    responses = _config(model, settings=OpenAILiveModelSettings(parallel_tool_calls=False))['delegation']['responses']
+
+    assert responses['parallel_tool_calls'] is False
 
 
 @pytest.mark.parametrize(

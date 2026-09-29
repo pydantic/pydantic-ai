@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -154,9 +155,35 @@ class TestDiskLoading:
         assert cap._by_name == {}  # pyright: ignore[reportPrivateUsage]
         assert cap.get_toolset() is None
 
+    async def test_default_does_not_load_from_the_workspace(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
+        cap: SubAgents[object] = SubAgents()
+        assert cap.agent_folders is None
+        with pytest.warns(HarnessDeprecationWarning, match='now defaults to `agent_folders=None`') as record:
+            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
+            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
+        assert len(record) == 1
+        assert str(tmp_path / '.agents' / 'agents') in str(record[0].message)
+        assert "Pass `agent_folders='agents'` to restore" in str(record[0].message)
+
+    async def test_default_is_silent_without_definitions(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'notes.txt', 'Not an agent.')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
+
+    async def test_loads_the_conventional_folder_when_requested(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert listing is not None and '- planner' in listing
+
     async def test_none_disables_loading(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
-        assert await _listing(SubAgents(agent_folders=None), LocalWorkspaceBackend(tmp_path)) is None
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            assert await _listing(SubAgents(agent_folders=None), LocalWorkspaceBackend(tmp_path)) is None
 
     async def test_loads_folders_from_the_workspace_in_order(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / 'project', 'worker.md', '---\nname: worker\ndescription: project\n---\nB')
@@ -177,7 +204,7 @@ class TestDiskLoading:
     async def test_own_workspace_replaces_the_runs(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / 'app' / '.agents' / 'agents', 'packaged.md', 'Ship it.')
         _write_agent(tmp_path / 'run' / '.agents' / 'agents', 'project.md', 'Project work.')
-        cap: SubAgents[object] = SubAgents(workspace=LocalWorkspaceBackend(tmp_path / 'app'))
+        cap: SubAgents[object] = SubAgents(agent_folders='agents', workspace=LocalWorkspaceBackend(tmp_path / 'app'))
         for workspace in (LocalWorkspaceBackend(tmp_path / 'run'), None):
             listing = await _listing(cap, workspace)
             assert listing is not None and '- packaged' in listing and 'project' not in listing
@@ -248,6 +275,23 @@ class TestToolResolver:
         assert listing is not None and '- w' in listing
 
 
+class TestInheritToolsDeprecation:
+    def test_true_warns(self) -> None:
+        worker = Agent(TestModel(), name='worker')
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match=r'inherit_tools=True\)` is deprecated.*Bind required tools directly.*include_self=True',
+        ):
+            cap: SubAgents[object] = SubAgents(agents=[SubAgent(worker)], inherit_tools=True)
+        assert cap.inherit_tools is True
+
+    def test_false_is_silent(self) -> None:
+        worker = Agent(TestModel(), name='worker')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            SubAgents(agents=[SubAgent(worker)], inherit_tools=False)
+
+
 class TestModelInheritance:
     async def test_disk_agent_inherits_parent_model(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'worker.md', '---\nname: worker\n---\nDo the work.')
@@ -297,7 +341,7 @@ class TestWorkspaceDiscovery:
         # Neither a non-markdown file nor a directory is a definition.
         _write_agent(tmp_path / '.agents' / 'agents', 'notes.txt', 'not an agent')
         (tmp_path / '.agents' / 'agents' / 'nested.md').mkdir()
-        cap: SubAgents[object] = SubAgents()
+        cap: SubAgents[object] = SubAgents(agent_folders='agents')
         assert cap._by_name == {}, 'nothing is read from the workspace before a run'  # pyright: ignore[reportPrivateUsage]
 
         seen: list[tuple[str | None, list[str]]] = []
@@ -311,28 +355,57 @@ class TestWorkspaceDiscovery:
         # later step sees the same listing and tool as its first.
         assert seen[2] == seen[0]
 
-    async def test_claude_fallback_and_stem_name(self, tmp_path: Path) -> None:
+    async def test_claude_folder_and_stem_name(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan things.')
         seen: list[tuple[str | None, list[str]]] = []
-        parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[SubAgents()])
+        parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[SubAgents(agent_folders='agents')])
         await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert seen[0][0] is not None and '- planner' in seen[0][0]
 
-    async def test_agents_root_without_the_leaf_folder(self, tmp_path: Path) -> None:
-        # `.agents/` exists, so `.claude/` is not consulted even though only it has the leaf.
+    async def test_claude_folder_loads_when_agents_root_exists(self, tmp_path: Path) -> None:
+        # A workspace that uses `.agents/` for something else still loads agents from `.claude/`.
         (tmp_path / '.agents').mkdir()
         _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan.')
         seen: list[tuple[str | None, list[str]]] = []
-        parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[SubAgents()])
+        parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[SubAgents(agent_folders='agents')])
         await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert seen[0] == (None, [])
+        assert seen[0][0] is not None and '- planner' in seen[0][0]
+
+    async def test_agents_folder_shadows_claude_folder(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'worker.md', '---\nname: worker\ndescription: agents\n---\nWork.')
+        _write_agent(tmp_path / '.claude' / 'agents', 'worker.md', '---\nname: worker\ndescription: claude\n---\nWork.')
+        _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan.')
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1
+        assert listing is not None
+        assert '- worker: agents' in listing and 'claude' not in listing
+        assert '- planner' in listing
+
+    async def test_claude_symlinked_to_agents_loads_once_without_warning(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
+        (tmp_path / '.claude').symlink_to(tmp_path / '.agents', target_is_directory=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert listing is not None and '- planner' in listing
+
+    async def test_explicit_folder_resolves_parent_segments_before_symlinks(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / 'agents', 'expected.md', 'Expected.')
+        (tmp_path / 'target' / 'child').mkdir(parents=True)
+        _write_agent(tmp_path / 'target' / 'agents', 'wrong.md', 'Wrong.')
+        (tmp_path / 'link').symlink_to(tmp_path / 'target' / 'child', target_is_directory=True)
+
+        listing = await _listing(SubAgents(agent_folders=['link/../agents']), LocalWorkspaceBackend(tmp_path))
+
+        assert listing is not None and '- expected' in listing and 'wrong' not in listing
 
     async def test_no_workspace_skips_convention_discovery(self) -> None:
         # Neither the home root nor the host's cwd stands in for a missing workspace, but a folder
         # earlier releases read is reported once per instance, not dropped without a word.
         _write_agent(Path.home() / '.agents' / 'agents', 'reviewer.md', 'Review.')
         _write_agent(Path.cwd() / '.agents' / 'agents', 'planner.md', 'Plan.')
-        cap: SubAgents[object] = SubAgents()
+        cap: SubAgents[object] = SubAgents(agent_folders='agents')
         with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions') as record:
             assert await _listing(cap, None) is None
             assert await _listing(cap, None) is None
@@ -342,32 +415,32 @@ class TestWorkspaceDiscovery:
     async def test_no_workspace_warns_about_the_home_folder(self) -> None:
         _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions') as record:
-            assert await _listing(SubAgents(), None) is None
+            assert await _listing(SubAgents(agent_folders='agents'), None) is None
         assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.home())!r}))`' in str(record[0].message)
 
-        # The fix the warning names reads the home folder with the default `agent_folders`.
-        listing = await _listing(SubAgents(workspace=LocalWorkspaceBackend(Path.home())), None)
+        # The fix the warning names reads the home folder with convention discovery enabled.
+        listing = await _listing(SubAgents(agent_folders='agents', workspace=LocalWorkspaceBackend(Path.home())), None)
         assert listing is not None and '- planner' in listing
 
     async def test_workspace_run_warns_about_the_home_folder(self, tmp_path: Path) -> None:
         # The run's workspace holds the project, not this machine's home folder.
         _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions'):
-            assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
+            assert await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path)) is None
 
         # A workspace at the home directory reads the folder, so there is nothing to report.
-        listing = await _listing(SubAgents(), LocalWorkspaceBackend(Path.home()))
+        listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(Path.home()))
         assert listing is not None and '- planner' in listing
 
-    async def test_no_workspace_warns_about_the_claude_fallback(self) -> None:
+    async def test_no_workspace_warns_about_the_claude_folder(self) -> None:
         _write_agent(Path.cwd() / '.claude' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'\.claude') as record:
-            assert await _listing(SubAgents(), None) is None
+            assert await _listing(SubAgents(agent_folders='agents'), None) is None
         assert f'LocalWorkspaceBackend({str(Path.cwd())!r})' in str(record[0].message)
 
     async def test_no_workspace_and_no_host_folder_is_silent(self) -> None:
         # Nothing was there to lose. `filterwarnings = error` turns any warning into a failure.
-        assert await _listing(SubAgents(), None) is None
+        assert await _listing(SubAgents(agent_folders='agents'), None) is None
 
     async def test_no_workspace_with_discovery_off_is_silent(self) -> None:
         _write_agent(Path.cwd() / '.agents' / 'agents', 'planner.md', 'Plan.')
@@ -375,7 +448,7 @@ class TestWorkspaceDiscovery:
 
     async def test_runs_over_unchanged_files_are_identical(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'w.md', '---\nname: w\n---\nB')
-        cap: SubAgents[object] = SubAgents()
+        cap: SubAgents[object] = SubAgents(agent_folders='agents')
         seen: list[tuple[str | None, list[str]]] = []
         parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[cap])
         await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
@@ -390,7 +463,8 @@ class TestWorkspaceDiscovery:
         explicit = Agent(TestModel(), name='worker', description='code')
         seen: list[tuple[str | None, list[str]]] = []
         parent: Agent[object, str] = Agent(
-            _recording_model(seen), capabilities=[SubAgents(agents=[SubAgent(explicit)])]
+            _recording_model(seen),
+            capabilities=[SubAgents(agents=[SubAgent(explicit)], agent_folders='agents')],
         )
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed"):
             await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
@@ -399,8 +473,12 @@ class TestWorkspaceDiscovery:
     async def test_merged_per_run_copies_keep_both_rosters(self, tmp_path: Path) -> None:
         # Run-level capabilities under the shared id are combined after `for_run`, on the per-run copies.
         _write_agent(tmp_path / '.agents' / 'agents', 'worker.md', '---\nname: worker\n---\nB')
-        first: SubAgents[object] = SubAgents(agents=[SubAgent(Agent(TestModel(), name='alpha'))])
-        second: SubAgents[object] = SubAgents(agents=[SubAgent(Agent(TestModel(), name='beta'))])
+        first: SubAgents[object] = SubAgents(
+            agents=[SubAgent(Agent(TestModel(), name='alpha'))], agent_folders='agents'
+        )
+        second: SubAgents[object] = SubAgents(
+            agents=[SubAgent(Agent(TestModel(), name='beta'))], agent_folders='agents'
+        )
         seen: list[tuple[str | None, list[str]]] = []
         parent: Agent[object, str] = Agent(_recording_model(seen))
         await parent.run('go', capabilities=[first, second], workspace=LocalWorkspaceBackend(tmp_path))

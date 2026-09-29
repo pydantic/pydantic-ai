@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import os
 import warnings
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TypeAlias, overload
 
 from pydantic_ai import ModelProfile
@@ -120,6 +121,12 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),
+            AnthropicModelProfile(
+                # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
+                # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
+                # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
+                default_cache_retention=timedelta(minutes=5)
+            ),
         )
 
     @overload
