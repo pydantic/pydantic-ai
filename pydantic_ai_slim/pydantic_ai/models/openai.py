@@ -2183,6 +2183,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 instructions=instructions,
                 previous_response_id=previous_response_id or OMIT,
             )
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ModelAPIError(model_name=self.model_name, message=f'Failed to decode response as JSON: {e}') from e
         except APIStatusError as e:  # pragma: no cover
             if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                 return model_response
@@ -2196,8 +2198,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise
         except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise ModelAPIError(model_name=self.model_name, message=f'Failed to decode response as JSON: {e}') from e
 
     async def request(
         self,
