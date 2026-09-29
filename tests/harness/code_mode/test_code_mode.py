@@ -2018,6 +2018,25 @@ class TestCodeMode:
             _warnings.simplefilter('error')
             await wrapper.get_tools(ctx)
 
+    async def test_tools_without_return_schema_share_one_warning(self) -> None:
+        """Many schema-less tools (typical of an MCP server) produce one warning, not one each."""
+        tool_defs = [
+            ToolDefinition(name=name, parameters_json_schema={'type': 'object', 'properties': {}})
+            for name in ('list_tags', 'search_code', 'search_issues')
+        ]
+        static = _StaticToolset(tool_defs)
+        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter('always')
+            await wrapper.get_tools(build_run_context(None))
+
+        assert [str(warning.message) for warning in caught] == [
+            "CodeMode: 3 tools have no return schema ('list_tags', 'search_code', 'search_issues'); "
+            'their signatures will show `-> Any`, which may reduce code mode effectiveness.'
+        ]
+
     async def test_tool_with_return_schema_does_not_warn(self) -> None:
         """A sandboxed tool WITH a return_schema does not trigger the warning."""
 
