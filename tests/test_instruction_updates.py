@@ -647,7 +647,7 @@ async def test_instruction_updates_realtime_history_uses_session_instructions(pr
             {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Hello'}]}
         ]
     else:
-        turns = await _seed_turns(messages, profile={}, provider_name='google')
+        turns = await _seed_turns(messages, profile={}, provider_name='google', function_parts=False)
         assert len(turns) == 1
         assert 'Prior state' not in str(turns)
 
