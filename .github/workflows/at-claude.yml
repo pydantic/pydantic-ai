@@ -33,7 +33,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       is_fork: ${{ steps.pr-info.outputs.is_fork }}
-      pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
       pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
       pr_base_sha: ${{ steps.pr-info.outputs.pr_base_sha }}
       pr_author_permission: ${{ steps.pr-info.outputs.pr_author_permission }}
@@ -44,7 +43,6 @@ jobs:
         run: |
           PR_NUMBER=${{ github.event.pull_request.number || github.event.issue.number }}
           PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
-          echo "pr_head_repo=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> $GITHUB_OUTPUT
           echo "pr_head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> $GITHUB_OUTPUT
           echo "pr_base_sha=$(echo "$PR_DATA" | jq -r '.base.sha')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
@@ -99,21 +97,34 @@ jobs:
     timeout-minutes: 60
     # Least privilege: on forks Claude may only read code and comment (see the
     # restricted --allowedTools below — no push / pr create), so this job runs
-    # with read-only `contents`. It never gets write access to repository code.
+    # with read-only `contents` and passes this job's token to the action (see
+    # `github_token` below). It never gets write access to repository code.
     permissions:
       contents: read
       pull-requests: write
       issues: write
-      id-token: write
       actions: read
     steps:
-      - name: Checkout fork repository
+      # Check out this repository, same as the job above. claude-code-action
+      # fetches the PR head itself (via `refs/pull/<n>/head`, which works for
+      # forks) and switches to it before starting Claude.
+      - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: ${{ needs.get-pr-info.outputs.pr_head_repo }}
-          ref: ${{ needs.get-pr-info.outputs.pr_head_sha }}
+          # Review events would otherwise check out the PR's merge ref, which
+          # doesn't exist while the PR has conflicts.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           persist-credentials: false
+
+      # The action fetches the PR into a local branch named after the fork's
+      # branch, which git refuses while a branch of that name exists here, so a
+      # fork PR from `main` would fail. Leave no local branch behind.
+      - name: Drop local branch
+        run: |
+          branch=$(git branch --show-current)
+          git checkout --detach
+          if [ -n "$branch" ]; then git branch -D "$branch"; fi
 
       - name: Check for modified config files
         # Maintainers are trusted to change agent config in their own PRs. Use
@@ -122,12 +133,11 @@ jobs:
         # membership. The API's `.permission` maps maintain and custom roles onto
         # their stable base access level.
         #
-        # Compare the exact immutable SHAs captured in get-pr-info (and checked
-        # out above) rather than the live PR head. Using `gh pr diff` would read
-        # whatever the PR points at now, so a force-push after get-pr-info could
-        # slip a modified CLAUDE.md/AGENTS.md past this guard while different
-        # code is what actually runs (TOCTOU). Pinning to BASE_SHA...HEAD_SHA
-        # ties the check to the code Claude will see.
+        # Compare the exact immutable SHAs captured in get-pr-info rather than
+        # the live PR head. Using `gh pr diff` would read whatever the PR points
+        # at now, so a force-push after get-pr-info could slip a modified
+        # CLAUDE.md/AGENTS.md past this guard while different code is what
+        # actually runs (TOCTOU).
         #
         # Use the diff media type, not the compare JSON: the JSON `.files` array
         # is capped at 300 entries (and `--paginate` only pages commits, not
@@ -156,10 +166,44 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get install -y bubblewrap
 
+      # The action fetches the live `refs/pull/<n>/head`, which can move after
+      # the check above ran on HEAD_SHA. This hook only lets local branches and
+      # a detached HEAD point at HEAD_SHA, so the action fails instead of
+      # running on code the check never saw. HEAD is checked too because the
+      # fork's branch name picks the ref the action fetches into, and a name
+      # like `tags/x` lands outside `refs/heads/`.
+      - name: Pin PR checkout to the checked commit
+        run: |
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected PR head SHA: $HEAD_SHA"; exit 1; }
+          hook="$(git rev-parse --git-path hooks)/reference-transaction"
+          cat > "$hook" <<EOF
+          #!/bin/sh
+          [ "\$1" = prepared ] || exit 0
+          while read -r old new ref; do
+            case "\$ref:\$new" in
+              refs/heads/*:$HEAD_SHA | HEAD:$HEAD_SHA | HEAD:ref:refs/heads/*) ;;
+              refs/heads/* | HEAD:*)
+                echo "::error::PR head changed after the @claude comment; comment again to run on the new code." >&2
+                exit 1
+                ;;
+            esac
+          done
+          EOF
+          chmod +x "$hook"
+        env:
+          HEAD_SHA: ${{ needs.get-pr-info.outputs.pr_head_sha }}
+
+      # `github_token` makes the action use this job's token and permissions
+      # instead of its App token. This job only reads code and comments, so
+      # `--setting-sources user` skips the repo's `.claude/settings.json` (and
+      # CLAUDE.md), whose allow list covers building and running the project,
+      # and `--disallowedTools` keeps those commands off. Searching uses the
+      # built-in Grep tool.
       - uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          additional_permissions: |
-            actions: read
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*)"
+            --setting-sources user
+            --disallowedTools "Bash(make:*),Bash(uv:*),Bash(rg:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(ls:*),Bash(tree:*),Bash(grep:*)"

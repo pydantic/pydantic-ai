@@ -1,0 +1,69 @@
+interactions:
+- request:
+    body: "--a0ca18404a1632a9610e1dfb53ec9563\r\nContent-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\nv=0\r\no=-
+      3994273045 3994273045 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=msid-semantic:WMS *\r\nm=audio 52793 UDP/TLS/RTP/SAVPF
+      96 9 0 8\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=extmap:2 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=mid:0\r\na=msid:cda87ff1-bd57-4be6-8238-24ebf04a7e60
+      4604f69d-c6d3-4c60-8962-b32090b818e7\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=rtcp-mux\r\na=ssrc:3066663412 cname:61ebdcf1-582c-4add-83f0-3361c4e2d79f\r\na=rtpmap:96
+      opus/48000/2\r\na=rtpmap:9 G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=candidate:709cc48ea914c3da3d670ec618fe0cb3
+      1 udp 2130706431 0.0.0.0 52793 typ host\r\na=candidate:ed965c56f4ffb96ff0b222854037f43e 1 udp 2130706431 0.0.0.0 33562
+      typ host\r\na=candidate:76a82f60bf1d31afeef555561d342574 1 udp 2130706431 :: 56992 typ host\r\na=end-of-candidates\r\na=ice-ufrag:wpPZ\r\na=ice-pwd:PzQWgAKb9apsfrjOrD86Kx\r\na=fingerprint:sha-256
+      D7:DC:CA:E8:76:EA:74:F7:8E:28:2A:F0:A9:02:AF:B5:0F:C1:24:6B:F0:80:04:38:97:5D:1A:28:CC:3C:A4:8B\r\na=fingerprint:sha-384
+      EA:8F:06:FD:49:B1:89:10:3B:02:BC:9F:76:C0:41:80:F0:34:33:08:AB:29:24:D5:B7:6B:92:34:0B:00:0A:FE:16:EF:48:07:75:D2:B1:07:E3:D7:43:02:0E:31:6C:1A\r\na=fingerprint:sha-512
+      47:2E:70:14:A9:A3:1B:28:80:7D:57:21:81:A8:94:69:7E:E4:78:D3:21:77:28:F2:17:8E:10:E3:DC:10:5E:9D:02:C3:D5:2F:23:CC:80:76:9A:CD:DA:64:42:A2:DF:D1:56:0E:7C:CC:93:B7:E8:1A:EF:36:10:A7:EC:6A:24:7A\r\na=setup:actpass\r\n\r\n--a0ca18404a1632a9610e1dfb53ec9563\r\nContent-Disposition:
+      form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{\"model\": \"gpt-realtime\", \"type\": \"realtime\",
+      \"instructions\": \"Answer in two words.\", \"output_modalities\": [\"audio\"], \"audio\": {\"input\": {\"format\":
+      {\"type\": \"audio/pcm\", \"rate\": 24000}, \"turn_detection\": {\"type\": \"server_vad\", \"create_response\": true,
+      \"interrupt_response\": true}, \"transcription\": {\"model\": \"gpt-realtime-whisper\"}}, \"output\": {\"format\": {\"type\":
+      \"audio/pcm\", \"rate\": 24000}}}}\r\n--a0ca18404a1632a9610e1dfb53ec9563--\r\n"
+    headers:
+      accept:
+      - application/sdp
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2105'
+      content-type:
+      - multipart/form-data; boundary=a0ca18404a1632a9610e1dfb53ec9563
+      host:
+      - api.openai.com
+    method: POST
+    uri: https://api.openai.com/v1/realtime/calls
+  response:
+    body:
+      string: "v=0\r\no=- 2432201517205382135 1785284245 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=msid-semantic:WMS *\r\na=fingerprint:sha-256
+        48:99:60:17:57:4F:A7:19:4D:FD:C4:D7:E4:04:C3:DD:00:72:A6:E9:10:16:58:E8:6A:87:80:23:B4:2E:9E:3B\r\na=ice-lite\r\na=group:BUNDLE
+        0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 96 0 8\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:0\r\na=ice-ufrag:iOreJB/u0/3oMK2r\r\na=ice-pwd:bndxxbmMM9g371gbpPAM6dCP5uUxFTez\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:96
+        opus/48000/2\r\na=fmtp:96 minptime=10;useinbandfec=1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ssrc:826030450
+        cname:realtimeapi\r\na=ssrc:826030450 msid:realtimeapi audio\r\na=ssrc:826030450 mslabel:realtimeapi\r\na=ssrc:826030450
+        label:audio\r\na=msid:realtimeapi audio\r\na=sendrecv\r\na=candidate:1352698770 1 udp 2130706431 68.155.152.41 3478
+        typ host ufrag iOreJB/u0/3oMK2r\r\na=candidate:2321888134 1 tcp 1671430143 68.155.152.41 443 typ host tcptype passive
+        ufrag iOreJB/u0/3oMK2r\r\na=candidate:727169150 1 udp 2130706431 4.151.200.38 3478 typ host ufrag iOreJB/u0/3oMK2r\r\na=candidate:1878291698
+        1 tcp 1671430143 4.151.200.38 443 typ host tcptype passive ufrag iOreJB/u0/3oMK2r\r\na=candidate:2832417414 1 udp
+        2130706431 20.168.48.117 3478 typ host ufrag iOreJB/u0/3oMK2r\r\na=candidate:3818869066 1 tcp 1671430143 20.168.48.117
+        443 typ host tcptype passive ufrag iOreJB/u0/3oMK2r\r\n"
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - Location, X-Request-Id
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1304'
+      content-type:
+      - text/plain; charset=utf-8
+      location:
+      - /v1/realtime/calls/rtc_u0_E6mH7YwmYXwYY0iVKLojm
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      timing-allow-origin:
+      - '*'
+    status:
+      code: 201
+      message: Created
+version: 1

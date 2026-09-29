@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 import pydantic_core
-from httpx import Timeout
 from pydantic import JsonValue
 from typing_extensions import assert_never
 
@@ -38,6 +37,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -59,6 +59,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -110,6 +111,10 @@ except ImportError as e:  # pragma: lax no cover
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
+
+# Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+from httpx import Timeout
 
 
 @contextmanager
@@ -510,9 +515,26 @@ class MistralModel(Model[Mistral]):
         """
         # 1) Handle anyOf first, because it's a different schema structure
         if any_of := value.get('anyOf'):
-            # Simplistic approach: pick the first option in anyOf
-            # (In reality, you'd possibly want to merge or union types)
-            return f'Optional[{cls._get_python_type(any_of[0])}]'
+            if all('const' in option for option in any_of):
+                # Described options (an `Enum` with member docstrings): the same type as a plain `enum`.
+                value = {key: val for key, val in value.items() if key != 'anyOf'}
+                if 'type' not in value:
+                    # An option's own `type` is what the schema says; fall back to the constant's Python type
+                    # only when it says nothing. `bool` is checked first, being a subclass of `int`.
+                    const = any_of[0]['const']
+                    value['type'] = any_of[0].get('type') or (
+                        'boolean'
+                        if isinstance(const, bool)
+                        else 'integer'
+                        if isinstance(const, int)
+                        else 'number'
+                        if isinstance(const, float)
+                        else 'string'
+                    )
+            else:
+                # Simplistic approach: pick the first option in anyOf
+                # (In reality, you'd possibly want to merge or union types)
+                return f'Optional[{cls._get_python_type(any_of[0])}]'
 
         # 2) If we have a top-level "type" field
         value_type = value.get('type')
@@ -602,6 +624,9 @@ class MistralModel(Model[Mistral]):
                     )
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:
@@ -637,6 +662,9 @@ class MistralModel(Model[Mistral]):
                     elif isinstance(part, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
                 if thinking_chunks:

@@ -11,14 +11,21 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import date, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Any, cast
 
 import pytest
-from httpx import AsyncClient as HttpxAsyncClient, MockTransport, Request, Response, Timeout
+from cassetter import Cassette
+from httpx import Timeout
+from httpx2 import (
+    AsyncClient as HTTPX2AsyncClient,
+    MockTransport as HTTPX2MockTransport,
+    Request as HTTPX2Request,
+    Response as HTTPX2Response,
+)
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -50,6 +57,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
     capture_run_messages,
@@ -81,7 +89,8 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..cassette_utils import request_json, single_request_body
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -130,7 +139,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -335,70 +343,6 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             ),
         ]
     )
-
-
-async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
-    provider = GoogleProvider(api_key=gemini_api_key, base_url='https://generativelanguage.googleapis.com')
-    model = GoogleModel('gemini-2.0-flash', provider=provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
-    async with agent.run_stream('What is the capital of France?') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content=IsStr())],
-                usage=IsInstance(RequestUsage),
-                model_name='gemini-2.0-flash',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com',
-                provider_response_id=IsStr(),
-                state='interrupted',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_google_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-2.0-flash',
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _provider_name='google',
-        _provider_url='https://generativelanguage.googleapis.com',
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
 
 
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
@@ -626,7 +570,13 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
 
     # Raises before any request is made.
-    with pytest.raises(ValueError, match=re.escape('labels parameter is not supported in Gemini API.')):
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            'labels parameter is only supported in Gemini Enterprise Agent Platform mode, '
+            'not in Gemini Developer API mode.'
+        ),
+    ):
         await agent.run('What is the capital of France?')
 
 
@@ -840,6 +790,54 @@ async def test_google_model_youtube_video_url_input(allow_model_requests: None, 
     )
 
 
+async def test_google_model_mobile_youtube_video_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """`m.youtube.com` share links resolve as a `file_uri`, like any other YouTube host.
+
+    What catches a regression here is the cassette itself, not the request-body snapshot: drop
+    the host from `VideoUrl.is_youtube` and `_resolve_file` falls through to `download_item`,
+    whose live GET has no recorded interaction, so replay fails before the snapshot is reached.
+    The recorded usage is what proves Gemini resolved the URL to the video rather than to the
+    watch page — it bills video and audio prompt tokens, which a `text/html` page could not.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video in a few sentences',
+            VideoUrl(url='https://m.youtube.com/watch?v=lCdaVNyHtjU'),
+        ]
+    )
+    assert single_request_body(vcr) == snapshot(
+        {
+            'contents': [
+                {
+                    'parts': [
+                        {'text': 'Explain me this video in a few sentences'},
+                        {
+                            'fileData': {
+                                'file_uri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU',
+                                'mime_type': 'video/mp4',
+                            }
+                        },
+                    ],
+                    'role': 'user',
+                }
+            ],
+            'generationConfig': {'responseModalities': ['TEXT']},
+            'systemInstruction': {'parts': [{'text': 'You are a helpful chatbot.'}], 'role': 'user'},
+        }
+    )
+    assert result.output == snapshot(
+        'This video showcases an AI assistant diagnosing recent HTTP 404 errors. The assistant queries a logging database (LogLine) to identify patterns in the error responses, such as common problematic endpoints, request patterns, and issues related to timeline queries or authentication. Finally, the AI provides a detailed analysis of the identified problems and offers specific recommendations for resolution, interactively highlighting relevant sections in the code editor.'
+    )
+    assert result.usage.details == snapshot(
+        {'thoughts_tokens': 1091, 'text_prompt_tokens': 16, 'video_prompt_tokens': 15780, 'audio_prompt_tokens': 1917}
+    )
+
+
 async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
@@ -997,6 +995,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {'text_prompt_tokens': 14},
                     'cost': '0.00000105',
                     'input_text_tokens': 14,
@@ -1053,6 +1052,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -2047,6 +2047,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3304,9 +3305,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert request_json(count_requests[0])['tools'] == snapshot([{'googleSearch': {}}])
     assert result.output == snapshot('The capital of France is Paris.')
 
 
@@ -3898,12 +3899,9 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
         model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_google_image_generation_tool_output_format(
-    mocker: MockerFixture, google_provider: GoogleProvider
-) -> None:
+async def test_google_image_generation_tool_output_format(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -3912,11 +3910,10 @@ async def test_google_image_generation_tool_output_format(
 
 
 async def test_google_image_generation_tool_unsupported_format_raises_error(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that unsupported output_format values raise an error on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     # 'gif' is not supported by Google
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # pyright: ignore[reportArgumentType]
 
@@ -3925,11 +3922,10 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
 
 
 async def test_google_image_generation_tool_output_compression(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Test explicit value
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=85)])
@@ -3944,11 +3940,10 @@ async def test_google_image_generation_tool_output_compression(
 
 
 async def test_google_image_generation_tool_compression_validation(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test compression validation on Vertex AI: range and JPEG-only."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
@@ -4010,10 +4005,9 @@ async def test_google_vertexai_image_generation_with_output_format(
     assert result.output.media_type == 'image/jpeg'
 
 
-async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, google_provider: GoogleProvider) -> None:
+async def test_google_image_generation_tool_all_fields(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(
         native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
@@ -4029,15 +4023,19 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
 
 
 def test_google_vertex_skips_include_server_side_tool_invocations(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+
+    The model is built the way #6792 reports: a
+    Vertex-backed `genai.Client` wrapped in `GoogleProvider`, whose `system` stays `'google'` —
+    the transport, not the provider name, must drive the skip.
 
     Not a VCR test: the field is dropped before the request is sent, and our cassette matchers don't
     inspect the request body, so a recording would stay green if it were reintroduced.
     """
-    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-preview', provider=vertex_client_google_provider)
+    assert model.system == 'google'
     # A function tool is included so `tool_config` is non-empty on both paths; the only field that
     # should differ is `include_server_side_tool_invocations`.
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
@@ -4085,8 +4083,8 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
 
     result = await agent.run('Look up the city I live in, then search the web for its weather today.')
 
-    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]
+    request_bodies = [request_json(request) for request in generate_requests]
     # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
     # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
     assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(
@@ -4702,6 +4700,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         _response=cast(Any, PeekableAsyncStream(response)),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
+        _model_id_namespace='test-provider',
         _provider_url='',
     )
 
@@ -4744,6 +4743,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
         _timestamp=IsDatetime(),
         _provider_name='google',
+        _model_id_namespace='google',
         _provider_url='',
     )
 
@@ -5476,6 +5476,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5519,6 +5520,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5767,13 +5769,13 @@ async def test_google_stream_api_non_http_error_is_wrapped(
 async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model_requests: None):
     model_name = 'definitely-missing'
     error_response = {'error': {'code': 404, 'message': 'Model not found', 'status': 'NOT_FOUND'}}
-    requests: list[Request] = []
+    requests: list[HTTPX2Request] = []
 
-    async def handler(request: Request) -> Response:
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
         requests.append(request)
-        return Response(404, json=error_response)
+        return HTTPX2Response(404, json=error_response)
 
-    async with HttpxAsyncClient(transport=MockTransport(handler)) as http_client:
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
         model = GoogleModel(
             model_name,
             provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
@@ -6319,7 +6321,7 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
     See https://github.com/pydantic/pydantic-ai/pull/4032#discussion_r2709797127
     """
     custom_timeout = 120
-    custom_http_client = HttpxAsyncClient(timeout=Timeout(custom_timeout))
+    custom_http_client = HTTPX2AsyncClient(timeout=custom_timeout)
     provider = GoogleProvider(api_key=gemini_api_key, http_client=custom_http_client)
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
@@ -6515,8 +6517,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': 'This is file report:'},
+                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -7404,3 +7407,66 @@ async def test_google_model_armor_config_is_sent_in_request(
 
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_google_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A documented enum renders as `anyOf` of `const`s; Gemini's transformer folds each into a one-value `enum`.
+
+    Asserted on the wire, since the shape a transformer produces is what the API has to accept, and the model
+    then has to call the tool with one of the options.
+    """
+
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider), instructions='Set the priority of the ticket.')
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body(':generateContent')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['functionDeclarations'][0] == snapshot(
+        {
+            'description': '',
+            'name': 'set_priority',
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+                'required': ['priority'],
+                'type': 'object',
+                '$defs': {
+                    'TicketPriority': {
+                        'description': """\
+How urgent the ticket is.
+low: Can wait a week.
+high: Needs attention today.\
+""",
+                        'type': 'string',
+                        'enum': ['low', 'high'],
+                    }
+                },
+            },
+        }
+    )

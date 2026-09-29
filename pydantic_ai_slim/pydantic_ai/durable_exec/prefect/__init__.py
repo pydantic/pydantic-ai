@@ -12,12 +12,14 @@ from ._durability import PrefectDurability
 from ._function_toolset import PrefectFunctionToolset  # pyright: ignore[reportDeprecated]
 from ._mcp_toolset import PrefectMCPToolset  # pyright: ignore[reportDeprecated]
 from ._model import PrefectModel
+from ._operation_names import PrefectOperationNamer
 from ._types import TaskConfig
 
 __all__ = [
     'PrefectAgent',
     'PrefectDurability',
     'PrefectModel',
+    'PrefectOperationNamer',
     'PrefectMCPToolset',
     'PrefectFunctionToolset',
     'TaskConfig',

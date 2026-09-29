@@ -10,4 +10,8 @@
             - PromptedOutput
             - TextOutput
             - StructuredDict
+            - Choice
+            - Choices
+            - BoolCriteria
             - DeferredToolRequests
+            - OutputObjectDefinition

@@ -169,7 +169,7 @@ jobs:
             DOCS_ONLY_STATUS="docs_only"
             while IFS= read -r changed_file; do
               case "$changed_file" in
-                docs/*|*.md|mkdocs.yml) ;;
+                docs/*|*.md) ;;
                 *) DOCS_ONLY_STATUS="not_docs"; return ;;
               esac
             done <<< "$changed_files"

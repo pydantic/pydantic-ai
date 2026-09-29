@@ -5,12 +5,16 @@
       members:
         - ModelProfile
         - ModelProfileSpec
+        - JsonSchemaTransformer
+        - InlineDefsJsonSchemaTransformer
         - merge_profile
         - DEFAULT_PROFILE
         - DEFAULT_PROMPTED_OUTPUT_TEMPLATE
         - DEFAULT_THINKING_TAGS
 
 ::: pydantic_ai.profiles.openai
+
+::: pydantic_ai.profiles.openai_codex
 
 ::: pydantic_ai.profiles.anthropic
 

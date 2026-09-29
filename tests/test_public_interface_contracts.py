@@ -9,13 +9,8 @@ from __future__ import annotations
 
 import ast
 import inspect
-import json
-import os
-import subprocess
-import sys
 import textwrap
 from collections.abc import Callable
-from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
@@ -26,6 +21,8 @@ from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.models.test import TestModel
 
 from .conftest import try_import
+
+pytest_plugins = ('tests.kw_only_walker',)
 
 with try_import() as temporal_imports:
     from pydantic_ai.durable_exec.temporal import TemporalAgent  # pyright: ignore[reportDeprecated]
@@ -99,7 +96,7 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def test_new_public_dataclasses_are_keyword_only():
+def test_new_public_dataclasses_are_keyword_only(public_dataclasses: dict[str, list[str]]):
     """New public dataclasses must not add a second positional `__init__` parameter.
 
     "Pretty much all plain dataclasses need `_: KW_ONLY`" is the most-repeated unenforced review
@@ -109,26 +106,13 @@ def test_new_public_dataclasses_are_keyword_only():
     trap lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer
     sign-off.
 
-    The walk runs out of process with the `COVERAGE_*` environment scrubbed -- see
-    `kw_only_walker.py` for why -- so failures arrive as the child's stderr rather than as an
-    exception here.
+    The fixture pauses coverage while importing optional modules. See `kw_only_walker.py` for why.
     """
-    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
-    process = subprocess.run(
-        [sys.executable, str(Path(__file__).parent / 'kw_only_walker.py')],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        env=env,
-    )
-    assert process.returncode == 0, f'dataclass walk failed:\n{process.stderr}'
+    offenders = set(public_dataclasses['offenders'])
+    skipped = public_dataclasses['skipped']
 
-    result: dict[str, list[str]] = json.loads(process.stdout)
-    offenders = set(result['offenders'])
-    skipped = result['skipped']
-
-    assert result['unreadable'] == [], (
-        f'could not read a constructor signature for: {result["unreadable"]}; '
+    assert public_dataclasses['unreadable'] == [], (
+        f'could not read a constructor signature for: {public_dataclasses["unreadable"]}; '
         'the walk cannot classify these, so they are neither gated nor grandfathered'
     )
     # Floor: a walk that collapses -- a renamed package, an import that stops resolving -- must
@@ -234,6 +218,26 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run_stream_events'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_stream_sync'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_sync'): frozenset({'infer_name'}),
+    # Stored rather than delegated: `realtime()` builds an `AgentRealtime` that holds the whole
+    # configuration until `session()` opens the connection, so every keyword lands on a private
+    # dataclass field (`_deps=deps`) rather than on a same-named parameter. The rename is what the
+    # walk sees; nothing is dropped, and `AgentRealtime` passing them on is covered by the realtime
+    # session tests.
+    ('AbstractAgent', 'realtime'): frozenset(
+        {
+            'deps',
+            'model_settings',
+            'instructions',
+            'toolsets',
+            'capabilities',
+            'usage',
+            'usage_limits',
+            'metadata',
+            'conversation_id',
+            'run_id',
+            'message_history',
+        }
+    ),
     # Same for `infer_name`, plus `event_stream_handler`, which these two consume rather than
     # delegate: they default it to `self.event_stream_handler` and then drive the event stream
     # themselves against each node's stream, so there is no inner run to hand it to.
@@ -336,7 +340,6 @@ def test_agent_implementation_forwarding_parity(implementation: type, method_nam
     )
 
 
-@pytest.mark.anyio
 async def test_wrapper_agent_override_metadata_reaches_the_run():
     """End-to-end pin for the forwarding the meta-tests above check structurally.
 

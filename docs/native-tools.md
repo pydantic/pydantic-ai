@@ -1,6 +1,10 @@
+---
+description: "Use provider-executed native tools (formerly builtin tools) in Pydantic AI: web search, code execution, web fetch, image generation, file search, MCP and more."
+---
+
 # Native Tools
 
-Native tools are native tools provided by LLM providers that can be used to enhance your agent's capabilities. Unlike [common tools](common-tools.md), which are custom implementations that Pydantic AI executes, native tools are executed directly by the model provider.
+Native tools are provided and executed by LLM providers, while [common tools](common-tools.md) are custom implementations executed by Pydantic AI.
 
 ## Overview
 
@@ -24,7 +28,7 @@ These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTo
     If a provider supports a native tool that is not currently supported by Pydantic AI, please file an issue.
 
 !!! tip "Provider-adaptive capabilities"
-    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation, so your agent works across providers without code changes.
+    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation you enable with `local=`, so your agent works across providers without code changes. Two work differently: `ImageGeneration` also enables built-in fallbacks with `fallback_image_model=` or `fallback_subagent_model=`, and `MCP` runs locally by default and opts into native MCP with `native=True`.
 
 ### Google tool combinations
 
@@ -72,10 +76,13 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+!!! note "Returning `None` under a `fallback_subagent_model`"
+    Omission is what `None` means everywhere the native tool is the only path. [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] are the exception: once `fallback_subagent_model` is set, their subagent tool is offered to the model whenever the factory returns `None`, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of running with default settings. See [X Search](capabilities/x-search.md) and [Image Generation](capabilities/image-generation.md).
+
 ## Web Search Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](capabilities/overview.md#provider-adaptive-tools).
+    For a model-agnostic approach with an optional local fallback via `local='duckduckgo'`, see the [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] allows your agent to search the web,
 making it ideal for queries that require up-to-date data.
@@ -89,7 +96,7 @@ making it ideal for queries that require up-to-date data.
 | Google | ✅ | No parameter support. No [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] is generated when streaming. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
-| OpenRouter | ✅ | Web search via [plugins](https://openrouter.ai/docs/features/web-search). Supports `search_context_size`. Uses native search for supported providers (OpenAI, Anthropic, Perplexity, xAI), Exa for others. |
+| OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. Search sources surface in `provider_details['annotations']`, but only when a non-native engine ran the search. |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
@@ -111,7 +118,9 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-With OpenAI, you must use their Responses API to access the web search tool.
+With Anthropic, the number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost].
+
+With OpenAI, you must use their Responses API to access the web search tool. The number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]. Pages the model opens or searches within don't count as searches.
 
 ```py {title="web_search_openai.py"}
 from pydantic_ai import Agent, WebSearchTool
@@ -166,11 +175,13 @@ _(This example is complete, it can be run "as is")_
 | Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
 |-----------|--------|-----------|-----|------|------------|
 | `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
-| `user_location` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
-| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `user_location` | ✅ | ✅ | ✅ | ❌ | ✅ |
+| `blocked_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+* Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
@@ -198,7 +209,7 @@ _(This example is complete, it can be run "as is")_
 !!! tip
     For a model-agnostic approach with a subagent fallback, see the [`XSearch`][pydantic_ai.capabilities.XSearch] [capability](capabilities/overview.md#provider-adaptive-tools).
 
-The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. Natively supported by xAI models; usable on other models via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with `fallback_model` set. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for more details.
+The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. Natively supported by xAI models; usable on other models via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with `fallback_subagent_model` set. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for more details.
 
 ### Usage
 
@@ -264,12 +275,13 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
+| OpenAI Responses | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | See [Google tool combinations](#google-tool-combinations). |
 | Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
+| OpenAI Chat Completions | ❌ | Not supported; use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. |
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
@@ -417,7 +429,10 @@ For details on file management, container lifecycle, and persistence behavior, s
 ## Image Generation Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/overview.md#provider-adaptive-tools).
+    For application-controlled generation and editing with dedicated image models, see the
+    [direct image-generation API](image-generation.md). For an agent tool that uses the model's native image
+    generation and falls back to that same API — through `local=ImageGenerator(...)` or `fallback_image_model=` — see
+    the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/image-generation.md).
 
 The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enables your agent to generate images.
 
@@ -592,7 +607,7 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 ## Web Fetch Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](capabilities/overview.md#provider-adaptive-tools).
+    For a model-agnostic approach with an optional local fallback via `local=True`, see the [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] enables your agent to pull URL contents into its context,
 allowing it to pull up-to-date information from the web.
@@ -1057,6 +1072,7 @@ async def main():
     store = await model.client.aio.file_search_stores.create(
         config={'display_name': 'my-docs'}
     )
+    assert store.name is not None
 
     with open('my_document.txt', 'rb') as f:
         await model.client.aio.file_search_stores.upload_to_file_search_store(

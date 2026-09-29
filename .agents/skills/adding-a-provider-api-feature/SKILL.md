@@ -71,6 +71,8 @@ Live-recorded **wire-contract cassette** asserting the exact outbound body (mode
 
 The new public symbol's docstring lists **which providers support it** and how each interprets the value. Add/refresh the `docs/**.md` section and any sibling docstrings that now under-claim ("only OpenAI" → the full provider list). Describe the mechanism only as far as the provider documents it — don't assert a mechanism a provider's docs leave unstated. Update the relevant agent skill.
 
+`ModelSettings`' `Supported by:` lists are enforced: `tests/models/test_model_settings_support.py` probes each model class's outgoing request and asserts every list names exactly the classes that send the field. Forwarding a new setting means editing its list, and a new `Model` class means adding a `Case` there. `tool_choice` and `thinking` are exempt via `HAND_MAINTAINED` and stay hand-maintained.
+
 ## Recurring maintainer principles (quoted)
 
 1. **Reuse the cross-provider abstraction over a provider knob** — *"this maps to what the Anthropic and OpenAI APIs call `strict`… already represented on `ToolDefinition`… a more complete, consistent, 'doesn't require the user to do something special' implementation would be to automatically use this mode."* ([#5366](https://github.com/pydantic/pydantic-ai/issues/5366#issuecomment-4909047000))

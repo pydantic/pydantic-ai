@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import copy
 import functools
 import inspect
 import re
 import sys
+import textwrap
 import time
 import uuid
 from collections.abc import (
@@ -23,7 +25,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
-from functools import partial
+from enum import Enum
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -73,6 +75,29 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
+_in_sync_callback: ContextVar[bool] = ContextVar('_in_sync_callback', default=False)
+# Any cancellation delivered while awaiting a worker thread abandons that thread, not just the one a
+# deadline schedules: `anyio` cannot tell them apart. That is acceptable only because this dial is set
+# tightly around calls that are already armed with a deadline, whose owner asked for a timeout.
+_abandon_on_cancel: ContextVar[bool] = ContextVar('_abandon_on_cancel', default=False)
+
+
+def check_no_nested_sync_run() -> None:
+    """Reject sync agent entry points inside sync callbacks dispatched by Pydantic AI.
+
+    Sync tools, output functions, and similar callbacks are dispatched through
+    [`run_in_executor`][pydantic_ai._utils.run_in_executor], which flags the callback's context —
+    whether the callback runs on a worker thread or inline under [`disable_threads`][pydantic_ai._utils.disable_threads].
+    On a worker thread, a nested sync run starts a second event loop that can deadlock against an async
+    resource bound to the parent run's loop; inline, it would drive the already-running loop and fail
+    anyway. Either way we fail fast with guidance instead.
+    """
+    if _in_sync_callback.get():
+        raise UserError(
+            '`Agent.run_sync()` and `Agent.run_stream_sync()` cannot be used inside a synchronous tool, '
+            'output function, or other function called during an agent run, as they can deadlock the run. '
+            'Make the function `async def` and use `await agent.run(...)` or `async with agent.run_stream(...)` instead.'
+        )
 
 
 def run_until_complete(coro: Awaitable[_R]) -> _R:
@@ -136,19 +161,46 @@ def using_thread_executor(executor: Executor) -> Generator[None]:
         _thread_executor.reset(token)
 
 
-async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if _disable_threads.get():
-        return func(*args, **kwargs)
+@contextmanager
+def abandon_threads_on_cancel() -> Generator[None]:
+    """Context manager to abandon worker threads running sync functions when they're cancelled.
 
-    wrapped_func = partial(func, *args, **kwargs)
+    Inside this context, a cancellation delivered while awaiting a worker thread abandons that thread
+    -- it runs to completion in the background and its result is discarded -- instead of waiting for it
+    to finish. Outside it, [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] shields the await, so
+    the cancellation is only delivered once the thread returns.
+
+    This is used around calls that carry a deadline, so that [`anyio.fail_after`][anyio.fail_after] can
+    actually raise `TimeoutError` when a sync function overruns it, rather than only after it returns.
+
+    Yields:
+        None
+    """
+    token = _abandon_on_cancel.set(True)
+    try:
+        yield
+    finally:
+        _abandon_on_cancel.reset(token)
+
+
+async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    def call_with_sync_agent_guard() -> _R:
+        token = _in_sync_callback.set(True)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _in_sync_callback.reset(token)
+
+    if _disable_threads.get():
+        return call_with_sync_agent_guard()
 
     executor = _thread_executor.get()
     if executor is not None:
         loop = asyncio.get_running_loop()
         ctx = copy_context()
-        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+        return await loop.run_in_executor(executor, ctx.run, call_with_sync_agent_guard)
 
-    return await run_sync(wrapped_func)
+    return await run_sync(call_with_sync_agent_guard, abandon_on_cancel=_abandon_on_cancel.get())
 
 
 def is_async_generator_already_running(exc: RuntimeError) -> bool:
@@ -161,7 +213,7 @@ def is_model_like(type_: Any) -> bool:
     These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
     function parameters.
     """
-    return (
+    return bool(
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
         and (
@@ -235,7 +287,12 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
     Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
     as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
     match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+
+    A single awaitable has nothing to run alongside, so it is awaited directly in the calling task.
     """
+    if len(coros) == 1:
+        return [await coros[0]]
+
     sentinel = Unset()
     results: list[T | Unset] = [sentinel] * len(coros)
 
@@ -520,6 +577,15 @@ def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, co
     message.conversation_id = message.conversation_id or conversation_id
 
 
+def validate_uploaded_file_provider(item: _messages.UploadedFile, *, system: str, model_type_name: str) -> None:
+    """Raise `UserError` if an `UploadedFile` references a different provider than the model it was passed to."""
+    if item.provider_name != system:
+        raise UserError(
+            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {model_type_name}. '
+            f'Expected `provider_name` to be `{system!r}`.'
+        )
+
+
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
@@ -692,6 +758,38 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
+def own_annotations(cls: type) -> dict[str, Any]:
+    """The annotations written on `cls` itself, without forcing lazy (PEP 649) evaluation.
+
+    On Python 3.14+ annotations are evaluated lazily, so a field referencing a class defined later in
+    the module must not be evaluated while the class is still being built — `@dataclass` defers it,
+    and anything inspecting a class from `__init_subclass__` has to as well. `Format.FORWARDREF`
+    never raises `NameError`, so an unresolvable annotation comes back as a `ForwardRef` instead.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        return dict(annotationlib.get_annotations(cls, format=annotationlib.Format.FORWARDREF))
+    return dict(inspect.get_annotations(cls))
+
+
+def declares_dataclass_fields(cls: type) -> bool:
+    """Whether `@dataclass` would give `cls` fields of its own, i.e. it annotates a non-`ClassVar` name.
+
+    Annotations are inspected without being evaluated (see [`own_annotations`][]), so a `ClassVar`
+    that can't be resolved yet is still recognized from the way it was written.
+    """
+    for annotation in own_annotations(cls).values():
+        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
+            continue
+        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
+            continue
+        return True
+    return False
+
+
 def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
     """Shared utility for typed-part narrowers — preserves base fields when promoting to a typed subclass.
 
@@ -733,6 +831,20 @@ def is_async_callable(obj: Any) -> Any:
         obj = obj.func
 
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
+
+
+async def await_maybe(value: T | Awaitable[T]) -> T:
+    """Await `value` if it is awaitable, otherwise return it unchanged.
+
+    Use this to resolve the result of calling a callback typed as `X | Awaitable[X]`, regardless of
+    how the awaitable is produced: an `async def`, or a plain `def` / callable object that *returns*
+    a coroutine. [`is_async_callable`][pydantic_ai._utils.is_async_callable] can't detect the latter
+    because it inspects the callable rather than its result, so dispatching on it alone drops such a
+    callback's coroutine un-awaited.
+    """
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def takes_run_context(callable_obj: Callable[..., Any]) -> bool:
@@ -951,7 +1063,7 @@ def strip_markdown_fences(text: str) -> str:
     return text
 
 
-def _unwrap_annotated(tp: Any) -> Any:
+def unwrap_annotated(tp: Any) -> Any:
     origin = get_origin(tp)
     while typing_objects.is_annotated(origin):
         tp = tp.__origin__
@@ -959,15 +1071,21 @@ def _unwrap_annotated(tp: Any) -> Any:
     return tp
 
 
-def get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
+def get_union_args(tp: Any, *, unwrap_members: bool = True) -> tuple[Any, ...]:
+    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple.
+
+    Each `Annotated[X, ...]` member is returned as `X`, which is what an `isinstance` check or a type's name needs.
+    With `unwrap_members=False` it is returned as written instead, keeping the validators and `Field(...)` a schema
+    built from that member has to carry.
+    """
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 
-    tp = _unwrap_annotated(tp)
+    tp = unwrap_annotated(tp)
     origin = get_origin(tp)
     if is_union_origin(origin):
-        return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
+        args = get_args(tp)
+        return tuple(unwrap_annotated(arg) for arg in args) if unwrap_members else args
     else:
         return ()
 
@@ -992,7 +1110,7 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
     """
     return (
         media_type.startswith('text/')
@@ -1001,6 +1119,8 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type == 'application/xml'
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
+        # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
+        or media_type == 'application/toml'
     )
 
 
@@ -1013,3 +1133,48 @@ def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> 
             f'-----END FILE id="{identifier}"-----',
         ]
     )
+
+
+_TOKEN_SPLIT_PATTERN = re.compile(r'[\s",.:]+')
+
+
+def estimate_string_tokens(text: str) -> int:
+    """Roughly estimate the number of tokens in a string by splitting on whitespace and punctuation.
+
+    Shared by the test models, which report a plausible usage count without pulling in a tokenizer.
+    Blank text counts as one token, so a caller that wants zero for it guards the call itself.
+    """
+    return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
+
+
+def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
+    """The docstring under each member of an `Enum`, by member name.
+
+    Pydantic reads a docstring under a model field with `use_attribute_docstrings`, but not one under an enum
+    member; this does the same for enums, so each option can be described where it is declared. Empty when the
+    source is not available, such as for a class defined in the REPL.
+    """
+    try:
+        source = inspect.getsource(cls)
+    except (OSError, TypeError):
+        return {}
+    class_def = ast.parse(textwrap.dedent(source)).body[0]
+    if not isinstance(class_def, ast.ClassDef):  # pragma: no cover
+        return {}
+    docstrings: dict[str, str] = {}
+    for previous, node in zip(class_def.body, class_def.body[1:]):
+        if not (
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        ):
+            continue
+        # A member is a plain or an annotated assignment; a string after anything else describes no option,
+        # and neither does one after a name that is not a member, such as `_ignore_`.
+        if isinstance(previous, ast.Assign):
+            targets = previous.targets
+        elif isinstance(previous, ast.AnnAssign):
+            targets = [previous.target]
+        else:
+            continue
+        for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
+            docstrings[name] = inspect.cleandoc(node.value.value)
+    return docstrings
