@@ -36,6 +36,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
+- [NVIDIA](nvidia.md)
 - [Ollama](openai.md#ollama)
 - [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
 - [Perplexity](openai.md#perplexity)
