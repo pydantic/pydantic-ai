@@ -11,7 +11,8 @@ from typing import Any
 
 import pytest
 from opentelemetry.trace import NoOpTracer
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic_core import ErrorDetails, PydanticCustomError
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
@@ -287,6 +288,59 @@ class TestOnOutputValidateError:
                 ),
             ]
         )
+
+    async def test_union_member_error_hook_preserves_error_details(self):
+        """The error hook sees member errors with their original context and documentation URL."""
+
+        class ErrorMember(BaseModel):
+            value: int = Field(gt=5)
+            name: str
+
+            @field_validator('name')
+            @classmethod
+            def validate_name(cls, value: str) -> str:
+                if value == 'invalid':
+                    raise PydanticCustomError('invalid_name', 'Invalid name: {reason}', {'reason': 'reserved'})
+                return value
+
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                text = '{"result": {"kind": "ErrorMember", "data": {"value": 3, "name": "invalid"}}}'
+            else:
+                text = '{"result": {"kind": "ErrorMember", "data": {"value": 6, "name": "valid"}}}'
+            return ModelResponse(parts=[TextPart(content=text)])
+
+        errors_seen: list[ErrorDetails] = []
+        hooks = Hooks()
+
+        @hooks.on.output_validate_error
+        async def capture_error(
+            ctx: RunContext[Any],
+            *,
+            output_context: OutputContext,
+            output: str | dict[str, Any],
+            error: ValidationError | ModelRetry,
+        ) -> Any:
+            assert isinstance(error, ValidationError)
+            errors_seen.extend(error.errors())
+            raise error
+
+        with pytest.raises(ValidationError) as exc_info:
+            ErrorMember.model_validate({'value': 3, 'name': 'invalid'})
+        expected_errors = [{**item, 'loc': ('result', 'data', *item['loc'])} for item in exc_info.value.errors()]
+
+        agent = Agent(
+            FunctionModel(model_fn), output_type=PromptedOutput([ErrorMember, MyOutput]), capabilities=[hooks]
+        )
+        result = await agent.run('hello')
+
+        assert errors_seen == expected_errors
+        assert result.output == ErrorMember(value=6, name='valid')
+        assert call_count == 2
 
 
 class TestOnOutputValidateErrorModelRetry:

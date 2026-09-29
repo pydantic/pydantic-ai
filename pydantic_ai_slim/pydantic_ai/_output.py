@@ -1252,16 +1252,21 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 e.title,
                 [
                     {
-                        'type': PydanticCustomError(
-                            # A runtime `str` from the original error, not the `LiteralString` the signature asks for.
-                            error['type'],  # pyright: ignore[reportArgumentType]
-                            '{message}',
-                            {'message': error['msg']},
+                        'type': (
+                            error['type']
+                            if 'url' in error
+                            else PydanticCustomError(
+                                # Runtime strings from the original error details are not the `LiteralString` the signature asks for.
+                                error['type'],  # pyright: ignore[reportArgumentType]
+                                error['msg'],  # pyright: ignore[reportArgumentType]
+                                error.get('ctx'),
+                            )
                         ),
                         'loc': ('result', 'data', *error['loc']),
                         'input': error['input'],
+                        **({'ctx': error['ctx']} if 'ctx' in error else {}),
                     }
-                    for error in e.errors(include_url=False, include_context=False)
+                    for error in e.errors()
                 ],
             ) from e
         # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers
