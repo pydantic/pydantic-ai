@@ -16,6 +16,11 @@ The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive wit
 token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
 entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
 [its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
+`/plugins enable logfire_mcp` lets the agent query your Logfire telemetry and opens
+a settings menu (region, tools, and a key picked from `/keys`, never stored in plugin
+settings; otherwise browser sign-in, which also signs new users up and works over SSH:
+`/logfire_mcp login`). Reopen it with `/plugins configure logfire_mcp`; see
+[Logfire MCP](PLUGINS.md#logfire-mcp-query-your-telemetry).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
