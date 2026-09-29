@@ -1,0 +1,246 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1004'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Prepare to clean up the maps.
+          type: text
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      system:
+      - text: On your first response, call reveal_cleanup and list_maps together in one parallel tool-use response. Do not
+          write any text before those calls. After both results, reply exactly DONE. Do not call delete_map.
+        type: text
+      temperature: 0
+      tool_choice:
+        disable_parallel_tool_use: false
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: reveal_cleanup
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: list_maps
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: delete_map
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '721'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b4b543208ac6b767d9d032206a708806-24241c9e77cdaa46-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - caller:
+          type: direct
+        id: toolu_01As5cxTC9aoBnAR5NiiSD6j
+        input: {}
+        name: reveal_cleanup
+        type: tool_use
+      - caller:
+          type: direct
+        id: toolu_01LjFqs4vLxdBK8ZxZUsCnwQ
+        input: {}
+        name: list_maps
+        type: tool_use
+      id: msg_011CehwN36Bhx8mBsEUbpnJf
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 819
+        output_tokens: 56
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1898'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Prepare to clean up the maps.
+          type: text
+        role: user
+      - content:
+        - id: toolu_01As5cxTC9aoBnAR5NiiSD6j
+          input: {}
+          name: reveal_cleanup
+          type: tool_use
+        - id: toolu_01LjFqs4vLxdBK8ZxZUsCnwQ
+          input: {}
+          name: list_maps
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: cleanup enabled
+            type: text
+          is_error: false
+          tool_use_id: toolu_01As5cxTC9aoBnAR5NiiSD6j
+          type: tool_result
+        - content:
+          - text: world
+            type: text
+          is_error: false
+          tool_use_id: toolu_01LjFqs4vLxdBK8ZxZUsCnwQ
+          type: tool_result
+        role: user
+      - content:
+        - id: pyd_ai_5a84e8a12081bef3
+          input:
+            queries:
+            - delete_map
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - tool_name: delete_map
+            type: tool_reference
+          is_error: false
+          tool_use_id: pyd_ai_5a84e8a12081bef3
+          type: tool_result
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      system:
+      - text: On your first response, call reveal_cleanup and list_maps together in one parallel tool-use response. Do not
+          write any text before those calls. After both results, reply exactly DONE. Do not call delete_map.
+        type: text
+      temperature: 0
+      tool_choice:
+        disable_parallel_tool_use: false
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: reveal_cleanup
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: list_maps
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: delete_map
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '498'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-94207494c4bfeb8c7ad6ead6b3abea4e-e300506fd9920baf-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: DONE
+        type: text
+      id: msg_011CehwN9PhWLdNd4ZpRcJvF
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 1055
+        output_tokens: 5
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

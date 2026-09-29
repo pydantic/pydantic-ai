@@ -13,13 +13,14 @@ module only depends on `messages`, `exceptions`, and `_utils`, so
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import Discriminator, StrictBool, Tag
 
 from . import _utils
-from .exceptions import ModelRetry
+from .exceptions import ModelRetry, ToolFailed, UserError
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 
@@ -44,7 +45,7 @@ class DeferredToolRequests:
     def build_results(
         self,
         *,
-        approvals: dict[str, bool | DeferredToolApprovalResult] | None = None,
+        approvals: Mapping[str, bool | DeferredToolApprovalResult] | None = None,
         calls: dict[str, DeferredToolCallResult | Any] | None = None,
         metadata: dict[str, dict[str, Any]] | None = None,
         approve_all: bool = False,
@@ -87,10 +88,13 @@ class DeferredToolRequests:
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
-        resolved_ids = set(results.approvals) | set(results.calls)
+        results = filter_deferred_results(self, results)
+        call_result_ids = set(results.calls)
+        approval_result_ids = set(results.approvals)
+        resolved_ids = call_result_ids | approval_result_ids
         remaining = DeferredToolRequests(
-            calls=[c for c in self.calls if c.tool_call_id not in resolved_ids],
-            approvals=[c for c in self.approvals if c.tool_call_id not in resolved_ids],
+            calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
+            approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
             metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
@@ -119,11 +123,16 @@ class ToolDenied:
 
 
 def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
-    if isinstance(x, dict):
-        if 'kind' in x:
-            return cast(str, x['kind'])
-        elif 'part_kind' in x:
-            return cast(str, x['part_kind'])
+    if isinstance(x, ToolFailed):
+        return 'tool-failed'
+    elif isinstance(x, ModelRetry):
+        return 'model-retry'
+    elif isinstance(x, dict):
+        x_dict = cast(dict[str, Any], x)
+        if 'kind' in x_dict:
+            return cast(str, x_dict['kind'])
+        elif 'part_kind' in x_dict:
+            return cast(str, x_dict['part_kind'])
     else:
         if hasattr(x, 'kind'):
             return cast(str, x.kind)
@@ -136,6 +145,7 @@ DeferredToolApprovalResult: TypeAlias = Annotated[ToolApproved | ToolDenied, Dis
 """Result for a tool call that required human-in-the-loop approval."""
 DeferredToolCallResult: TypeAlias = Annotated[
     Annotated[ToolReturn, Tag('tool-return')]
+    | Annotated[ToolFailed, Tag('tool-failed')]
     | Annotated[ModelRetry, Tag('model-retry')]
     | Annotated[RetryPromptPart, Tag('retry-prompt')],
     Discriminator(_deferred_tool_call_result_discriminator),
@@ -156,8 +166,8 @@ class DeferredToolResults:
 
     calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict[str, DeferredToolCallResult | Any])
     """Map of tool call IDs to results for tool calls that required external execution."""
-    approvals: dict[str, bool | DeferredToolApprovalResult] = field(
-        default_factory=dict[str, bool | DeferredToolApprovalResult]
+    approvals: dict[str, StrictBool | DeferredToolApprovalResult] = field(
+        default_factory=dict[str, StrictBool | DeferredToolApprovalResult]
     )
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
@@ -181,6 +191,11 @@ class DeferredToolResults:
                 approval = ToolApproved()
             elif approval is False:
                 approval = ToolDenied()
+            elif not isinstance(approval, (ToolApproved, ToolDenied)):
+                raise UserError(
+                    f'Invalid approval result for tool call {tool_call_id!r}: '
+                    'expected `bool`, `ToolApproved`, or `ToolDenied`'
+                )
             tool_call_results[tool_call_id] = approval
 
         call_result_types = _utils.get_union_args(DeferredToolCallResult)
@@ -189,3 +204,16 @@ class DeferredToolResults:
                 call_result = ToolReturn(call_result)
             tool_call_results[tool_call_id] = call_result
         return tool_call_results
+
+
+def filter_deferred_results(requests: DeferredToolRequests, results: DeferredToolResults) -> DeferredToolResults:
+    """Keep results whose IDs belong to the matching request category."""
+    approval_ids = {call.tool_call_id for call in requests.approvals}
+    call_ids = {call.tool_call_id for call in requests.calls}
+    return DeferredToolResults(
+        approvals={
+            tool_call_id: result for tool_call_id, result in results.approvals.items() if tool_call_id in approval_ids
+        },
+        calls={tool_call_id: result for tool_call_id, result in results.calls.items() if tool_call_id in call_ids},
+        metadata=results.metadata,
+    )

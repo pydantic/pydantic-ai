@@ -1,0 +1,134 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '429'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: The Eiffel Tower is in which city and country?
+        role: user
+      model: openai.gpt-5.6-luna
+      stream: false
+      text:
+        format:
+          name: City
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+          type: json_schema
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '1615'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784646208
+      created_at: 1784646208
+      error: null
+      frequency_penalty: 0.0
+      id: resp_k7acerw4pzsquik6falx3lsftcuowamgfxtz72ytz6j7kbwetogq
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: openai.gpt-5.6-luna
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '{"city":"Paris","country":"France"}'
+          type: output_text
+        id: msg_0eb167ae66f15a929dee87aab6bb2799
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: all_turns
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          description: null
+          name: City
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+          type: json_schema
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 44
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 16
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 60
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

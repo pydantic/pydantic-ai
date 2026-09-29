@@ -1,0 +1,192 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '360'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: In one sentence, what is the top news story in my country today?
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search
+        user_location:
+          city: Mexico City
+          country: MX
+          type: approximate
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '17966'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '34498'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1778276284
+      created_at: 1778276251
+      error: null
+      frequency_penalty: 0.0
+      id: resp_08dbeb3d47fa8ae30069fe579bb7548195a316d8c51ad5abe3
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - encrypted_content: gAAAAABp_le-fGGiXvsyykokPLqwXfnro3XN1UEgRuEU6CCRql7UxWi4Shxddzd6eEuWXF5cJ4CNW9Yi7eZRYgczIoQJX5lOxew35HMXVkpK_jvyzjydhVlvjT-qIRkShab5Ns7cLe8fti2nFsyGvzIMTxXRITRr6xpk2qUoIOnnbHuAban2E7S_RoYeqRyStzhxCyfGicDPgSc4S2GlKwFF-oo7M6npAIMjERlxAZWuO1ZhvhH8E18A23zDQAFQjt51QgJLatJiy3P-kY-38fHeM9mXdH6cNP6MXXjz5OmSiNHdgt_B2eiKGypX3j128WuFwpVlRw0QFBzuKP432qV7QPDASzi0-SDmuHA1U-6Ppnu7YAnq64suxTMxsydyd51-l4WN_SeqxQh_jqhPcVj_JYEIjuG2sOiVk2Kwn-CJ_iWjtwjrKOUbZnz5LYgrmkDTB6-sasNwlG6A9Kes2v_CVmxx_w2y3BpXD2h3_6gcSXyt-pY2YLAQtOlbNbgtVHkcSdLtn0-aUfZiUzgkMLbyRby8R-F5fjdFQnFrBKIsCa_eLRw71PGakKKaRklgUHdUIrfr1rNXuOdYRcWfc8FRQZrPGV2Q4w1Rh_BH0zHTWhkGCjNXLknFawvQ1Gnb58bHonw4wHRUq3RF9mJRSpwmFvuom3VXw01c9hUinsuDHXLIA237q1npl_c27aaZM_QaZzXzIaG7BK-di_UtJ1A0DOSGifGtZkq1P_k-dysiGj9C1Op4liA3rdwR9uHxcSmJj-SeDE7oyRS43wvrMALEao9G6qiPTcx6Tg_Hrk1TdJ0kalTrR6qYOn3oVYQjUoY7XsQRACxLcBrl0TdP7s6fLzLPoTvfKJk375m8avPuH79FAktnPZg8QbMghpuBrvba9uWGjX4sHlnp6onQK0mii0xgjaK_0wDryCm6Yd8u9QrvIjqAQ6LNWVw8njpYh27yLTUaUOaJT46BcWPFdIaFVGt7FMiiH4S-tXU8Vhu4HivtTz9U9fQ4t-YI8bqLg5Z_3AGWp3HcuKyXKqCN8EiNk-fxMGalUraT5xA2xip40NlZr7k_8ccRD_PVSxj_9-CgrMxISSwt303YII2F0V_rPCR0NrNY7IFZm5uhaFbl07_1e83-AE_tH0Ncp3azpSRGg6_y27b8WueMupqzZisv0qURu62umaTV17MCBu02yP8PuFtJ0asnm2LTW9q6zosN9LUwP3FyficUkrod2KAhXj3VTCN8hY70zLf222BrPB4gVbz_V9QJv90Gcvii-49R_TKi8VWfm_ZvIrdIJbjIqrU7hI5JJ-yNRhneWpdHCmaOYuP2t_2N-nts2J1HBI4m12Q41DtmlUq-Hx0o39wZDIYdqe80Vozbx2MjJG_HszTVRU6b9kUMOAwxMbX8d4xwmUKHgFJ1OkLD33KAfl5PYlHgfmDaZiD6ddRVX3nsjn-brNqPNSYB1qSE_MnKM9Qt0sHb3w3xKDMitSS-7ca-qnIT_uRww57c9yIWOKHikL1eUk512duD5mazJFaxtHIF8NGntuOK4vGokhZU8Oh8KWm-TYl4GsRrabfCV40_3mfzlvpBsBDrUJiyYwrNwcVHJbCTe4mmdzHDivqSBIPntVs-fyWcDLN6sxedfQXyNJ2l2VRSkOBf979XVkAVmPFHTAyrSat-iGZNxQxySN-ce2eGQFVLsyFZ015LMjkngp03VqEl3ifBcDGkUiGkYcS08LOeWLJt4PqfBNNfWcQNgRJ9B9kvgGc-BcNKDEfDo_qEWYP06HGCMO8_J6uWoixayUaEeodZ1NWQl3tlKEYsgF06ruo-KFy9Z9MDBflBYswl9SbtbJBX3Ip9KOR-E27w3xPBig2c8EzKVCHLGH0FjADCm9SJky3lZG5ysTQFXPOPHL1tB8IAq5D4LFT5ehJOm8W1MPc7uzTiUKZRsmnYykt9G2PYHbehCmpxMMaQLysMs8uMuAIr53ZusD76AilifNT4XV995L5rO_g8Hcl3cD_ZejzYWKhJqz_Jci3k0KjM3cewLUDGmixKzL3lfy51BBn-TU7Ye7tiZsuqa5yX2M5jqaexN90wNx4-2Lx2gHCyDNIqo_sIjxFndtYGR7jd_FRhYu7gkQCAYpx0yp0Tl7zTa6VkPeZxxnEp-gqkawU8cCYHmE4=
+        id: rs_08dbeb3d47fa8ae30069fe579c5b408195a4a002466b8c2c86
+        summary: []
+        type: reasoning
+      - action:
+          queries:
+          - Mexico top news today May 8, 2026 Mexico
+          - Noticias principales hoy México 8 de mayo de 2026
+          - Reuters Mexico May 8, 2026
+          - AP News Mexico May 8, 2026
+          query: Mexico top news today May 8, 2026 Mexico
+          type: search
+        id: ws_08dbeb3d47fa8ae30069fe579ec48881959bf8f531b0c2ab6e
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABp_le-o5oB75xtXPqmaoRlH55FcUElK1nwM9beT2i9eNzRSiJb-oIQDal0VlcYsQKDLVV0kgBOjLr-PH-zbBKx0sbAwjX0tXl-i7jP-WdrQPj_o8y4OipOLUzfTsx5BwwXWl4OQzsdVECQAIUbneWxHGNKeaYvgQU1DMBXB-XYKfWq4rxW-ntv4qLvgXn5HBwG4Ab-nmKKaQG8sABlILoRV8PoU0FPAOzI2uK7GwqkHmOF-wX0N3WCxQuqDlsOjX5rEa2GLkJlAfCb-SlwpwEqJ0zCCHbCnnqcJXZkWNZVIsf8ErKGj8FTXEOtgf1QSW2RDns-jEolbNKh4umtCdc4bm4imR1TycmiDAT8KiYdigfozQr5JIKtk2P2M1f4nOL0BPDrT0wTVeyKJwG8SoshwuCuFKKRjXYXcVqz87CCuncOboM0y_VLr62NPd3Fk91qZ-h50wuBPMioHmKIE_jZsOaVJ6igN4vV7aqWqXuL2ov0uyW75aGlqXKanGr4BBEavnx6s2UHhLiSvBdPhkrpye6aXAzfjEmZs0MQmJcJbPtuFhaqpdzfnDx9HNXkwu4JVLO60YZ-WIAQ0zpoeSoG-NwTk5dM_pbBcDi-8_pY7IMjVdnV3QJOlTR2Frp5vQ-XTwEQBo_1gRzW0GpxKkFw0e1XC54XSnmT_UtKO6BrfStjgtQWvh2CDl4QeMYT3PpkgOCM2sIRCQaBiAkJd_TYYFTWM6QuyPDsqWfZe09RQtQkowD1Pf3bsykCdeY8qRHPNSolbP_QogYoc7uL5ktotuGa467rN1G_aIDllttLWo7AiKBAQ3Lt6sFQFBjBMu5JxhGG03KBOcNu-q2gFeuf3rboInc4lIUUFoP1hMiVS6U5PhQec6rE1iWorYKIe_3qbWF9syKY4ctYCZhGe0_PxmtL26JNVGFdkU9hv88N2CqpCkzqEJ-SzGihqpNmOQHcQpPpbuJU-iXN9dxxryDoXmY9Xx_JoiWE8iQKmbINxTFspkOOBV43muQkRW2KbvYKRr03lLWWPKDipPEb5Ij0Z4Bs5U8O59EkPVof-cvcC59GX74VMWAjxqsXsOYcRcUuLZGVo4zyF29LJBEFlXQZAonlxGi-853Cjn9jy2Y__MiBsNO6TE9qYqCR4qeStSZRcsGcNOueQggs02lw8HN3Ut5A5mjBr8jYIzq1FuQEJ0jlGy_7tngQKnLXjmCd2tYtF7Ju4sStzE0ChSdqn2z6VH8CtXzi9581XnFtCebqB6ECy15eSgRWJoBeS5-wc-VefjDDbjI08PqDIDcvUr50xi0GeOhHkA6udZS5c9uJ5ANxsA4=
+        id: rs_08dbeb3d47fa8ae30069fe57a171c48195bd5e287611367837
+        summary: []
+        type: reasoning
+      - action:
+          queries:
+          - Reuters May 8, 2026 Mexico
+          - Mexico May 8, 2026 top story Sheinbaum Reuters
+          - El Universal 8 de mayo 2026 portada
+          - Milenio 8 de mayo 2026 portada hoy Mexico
+          query: Reuters May 8, 2026 Mexico
+          type: search
+        id: ws_08dbeb3d47fa8ae30069fe57a1e06c8195908418c70f9ac1f1
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABp_le-x50D2I0sLb3C05ZY_m7Np_0XL67i1kw700Nm5XUrbO3UMghOQ004uNPqJFYljARTbX9tjqwK9E5dU3ghCJGkBpxJPXMYG9hwADTrQwlEyR8sDiLxAhRagNInQKPfL7wMTNp-plduAXFUaJXboazuqARz6Oel4dg0c8fWGyuBnOu6FZC_VGgzFYj-XbuIV4gD5OLax-les25V3zW7HVHJh4lypQongWiiDvPfszTaTilM_XhXC0zSZLZK3MU2b1hR3SMPMXgkowkVYX7-CkgXiW-waRIPPAkrnF2OB_QIfXAKz-qp7JR5xZvPpCZ6DDp9dQkWjLgMc6ol0dqOD_wPa_ss5luWYSGSeBUT4o6afmTeR7ByQM5Q50DsgZ4iCPnaiWGdxXdkzSCqla9U0Jsy8Cy0tOHsr4H6mZVPs398rOYTQNzHaagBfXC6bbD7qB1km-LeSaYofp4avy_16n4iM-JpOuf89YTI60faGa4yPs9NaULMPurkgStfJuXBtasG86lnnTmNeEJq7hjd2sTDaELftvAKayXtK_DcRsdaT-tJKeAgZfF38Lg8zpVyUZUSBmKuPs_mf1cdeEWjNWiPZ8IvTTpV22hX2wCUiyu49lrrhPh8ubyM-ecEQaCmUamlJtcwzuaB7sksO8XZo4PzB34ABr-cqEneBhKZjBuHM9x6cwfAWUmBDefBO7WEDgUagMjK_mjVM17P2ZvsINa5jlfnDTO4qJruz1WnyjXpsb9hogFBojt5Aw39dfnn5WhYAqf2P1oDw-Qr5yi8oZ-QPtJLIPG3i4ku3EsnBwA3j4ndYTrx5wUuAU2mItStaPVkr_zHVEd1wwv9rP-0FXkLrZGKkyeJlbS3snoc7KGvYXW6mJ1VUzI2Mnrt7_ySsE3wGi38Zmbt4uZI08Monisg0xWhUIzGie1KuetO0irbGbdFHT0lROa_U_9p7sr8qICdDJG6uXv9RfYa2je0hbNS7fSjVVINlYCVSFa2b1GAGzne-kezt_UUONcLoz8BjGM-iqi-c4GmialGuUT81I8nhNmBsgGHOefZrIqoctFWFvnvCpCvyupPgBvLrpRyw9GBC6DBCtZHTui-MhOjfAKgpi5vfPzAYrp7jLVZWVmOBupy0Mvo4Qm3QmgYDZr8M4xZjZ2a7eN46xFxogoE3u2583BeZfH-MwBe2QCaPSbd3db-BVF0Ha_RelCZ_1em0Q_QpjBxkzoH38c6jw-PCs-0W1cpMfX6nJcqje74tbuYkHYs3_aV97sstsu-damaGw_NUdJUinr2-ha_dZBBvIa9o_g9mBzE12Il1Qb3rFjlyekTHX_wZOKqfyLinaTR1qlBqFZc6KsfyTY7WPVixTh1ibGr6R1DEIVzd20i5uO8Ux-fr1o3uxkZPVdsYjtYUixUwMxNNztFmZY4QAS-0QdOGsf_3_KUTnW_nXyNrQPnE0HbnGHqdlOvWciEjJk8gc_IFafwGJcdIkz-LicDcK6NOIb_GtuWyvAJjR3bsdGP2_x2bHt5dnHHBZehHmt3vhCeBZwfEJty3Sc40wYbzJEcx30DiccPUCzWExhC-vpaRAgQkuha8aopWvH2-jVXhNo2TXGYQCyGDCRZTxEB8b1XgwgkjLPKQPdoSRO-ef_6ZGsGybM2xp_5D_lR1U5_56PMA9HlViLxixzRc-Ozt9XbzqbYbPCw3HAppQmG_rzvkgXB4MqXIs_O67-xHC34ijp9nMyCiAfnCaPjnEdDEWokAymywIrzmK_G1puyCv6Kmu_gaLZ0-M61knbp3jHjT1ebi-1GhJpfOAAJJwKzyIYfb5F8s7EED_-NpDEW_w1ea4gv7-2CVDV14zQD-a0hZaUBAJU3x_RDuQeZt2BioxkdDIapkvfTwikTGikPQNbfBl7sMT_b_SpxC5Xs0BI20DdQr8kv_Tc_vlHry_c9J5UI2mOKGIidVybQoQWr4qw45ralg35paPsHWbQVxlaUbFxF1jivpl5L1RpfYELZzZXXytx4Bo5dtMhaYlT5GG1IWraHhKlfbKn278ZGNvuNhCeC3rXfd2X2rHH4pLz5aBhW2WtJquTu8gifiUAs0CSX5gU=
+        id: rs_08dbeb3d47fa8ae30069fe57a4be388195bf767689b349fb8a
+        summary: []
+        type: reasoning
+      - action:
+          queries:
+          - Banxico recorta tasa 6.50% 7 de mayo 2026 El Financiero
+          - Banxico recorta 25 puntos base 6.50 7 de mayo 2026 El Economista
+          - Banco de México recorta tasa hoy 7 de mayo 2026 noticia Mexico
+          query: Banxico recorta tasa 6.50% 7 de mayo 2026 El Financiero
+          type: search
+        id: ws_08dbeb3d47fa8ae30069fe57a64e1c8195a8173134eaa2cc43
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABp_le-KTnsOYWYonnz701L1PAFgjomRx-vnfO9nJlGq3nfZZ6bs_FCzLB-IKVVAHARhh2lNmjYVdV--A2uQUs_dpTckcHgV34hFrd8ygZ6aFyd99SV22MLahpQuxftpuPOys0heaXV8zxvxK8nHTY0NoiQywq60fETeX_WBgumM_TYPwgL5x1xEcYRlu7bFTbwasA8sIKt0ZXY9t6lH1eIvvF6fubnFpeE7dWAx3ldUH49WJQxdq-q3kttLfcIcOL1rzrcgvoNPSLDa9AtXUwhspQFzImCZl_XlZSTPc5NxBFUJC39lVZHe7PY7N_tyhiB5kliioEqFItPZlch_tk0AFpxyiaQ6p7l23JspWBYWSuNggiwbK4mnWAmyhI9njaqexUu6VA3sguaqryt0MdOPCR9IZ7zPe_J5d9TRZSy_WWDE3Vif3vviP4vlikYYJvk3a7oP5thl74kh2WD189iwXX-mTmiQdPZMkGlq0qw_8rtveRn59CsFmTFK8Zb7hAaUadFyKhFGBR7fn6CvdFc_poBO4O29qDXvmj8pEQ8KAynUJ6qX6uvCxb69X-ten2TRyjEpzFNFGd2jfVir9RfQk4qmyTUTnan8Es7gJpMJ9g8iCCMgHycFIi89FpKrBgSDhelXK8wKPJSkk6wzssJMdggDdq9p2xBVCp7idd2VV1dXxAXwODLRTJypzHKr1pL9Dh21NoBP1TuUhy1YMaaGXQKWQQy6gjXifE9nHT6M7yBBxCjUDegXsZPvokJOvrrJFeUiMdBhCrx8q9GvoE5CA2Ywr4yPsd2Z0n5hxqx-djhIBp8K2_ihochxKmWYlgk_Dh4Jcv1HzRTIrMO33i-joMHXyN92uOa1Lh5d-_xbsfRaTxTH2a6p9GPyEjwgFmaUzY4X-ZmUBbUZ4_cgRSI5pyrpY5Oy4kcSMAtEk9SI_ZjIho74T8AVG8P901iQEWWq2Ldi45x1txcN6NtQIer4dFhNoLbvJWEuz11aLlCXwl7sHKSoT-IUE7qV0ugB7egrrd5Fogx1Xle2PpYg8QY6BoaG8p6Ox8pjFTeYbMRC_50wHYCijq-uRXUoy2sO0p4HZNV3mp6wssxzsc6poRhAqMFbuCdNS1vB9nT0h6os-3-HgVOP-LXOTH5fwuc1SfnRvEsis059kNGEQNV0I1ZHXK2Dd_sVgCV08ERkstY-C6usaD3p3mXMydt8OW0yc-Mzl8uWgm8Kc41JYb2hs0h1zlf46Sxc13WCo3_D2Zj_2VfRhSCkrTZ56beVxQwtk0tk4VcyBVNhOl9XF7UBAJjF65xuGKC1BjfJKXXHEJPldQXHVQhcGdd9Sqh5LbYsuqlHZN6X3-a-nSXDhGD6ZBvD9Ok3sjfVkHphqG4fYc6IfGawzE50pnL-f8HAJkXsR2ySOeqUG5DlNkP9JX7cS1-CYVmqkDF1pqOKTfSCdU120o0batc1zlLOEz_hfgobsP-4Z6NgpjRsiaDpMJgAR4aKX8juj9_IjpJDRfVpBs84hRIW5ITdkAnLZwQgPsyObKeFpmnwq7h56uto8E9zUz03riZtgA-YcN4PenqN-a9qKLMr5Rh3Cp1Cm6Rgt3o4Exumuu6vLQzpEfQnxHvyDA0p11zhCueoJjRgEnf2RaaHRPNXvmjbNVyzdAP8X6LIjwSI-My
+        id: rs_08dbeb3d47fa8ae30069fe57a9e17c8195bbc2be23b29aaaef
+        summary: []
+        type: reasoning
+      - action:
+          queries:
+          - Isabel Díaz Ayuso México 8 de mayo 2026 Sheinbaum expulsa acusa noticia Mexico
+          - Ayuso cancela viaje en México acusa a Sheinbaum 8 mayo 2026 Milenio
+          - CBS News Mexico consulates influence midterms Rubio 2026 May 7 Mexico reaction Sheinbaum May 8
+          query: Isabel Díaz Ayuso México 8 de mayo 2026 Sheinbaum expulsa acusa noticia Mexico
+          type: search
+        id: ws_08dbeb3d47fa8ae30069fe57aa6d748195a8824bd376784f68
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABp_le-pBFb7rvhKqhWh9Ml-orlRZ5nWUamgFWiXt_jryUatDPH49yHD6rscLNvytrRoefdC6XLTgkUdGEIE6eI-ifoo8_nyAflAinTyoIQoF01TsGNf2P6wiglG1Y6a9Tp8FH4g8PlO3mJMPZHh9hdUvV72nBFP2JOa3IPchXAIgp9NJO-MDSvU_vmmgbndDr3YIM-dYLCapp-Fa9wd_Iw25nWnIHCHHfg3-ZLOQJm1Q2izdAyWn1412xZuYenD7IyrknQrpWiCmSteFD8-31q3Vwbg60iSWKBNmoFxJvKEK2-vTv3tTX6duXO2_ss7Pv_r5WsQy_iuiTqwXmmB9BiRcdvef3mT11JX5ybWQz9mfkJ91OAQ0B10QIXxSCHjuqWHD9AU4uUbajZ4brfS0O-CugCzN9zFTslguhrqaqqkcuyie__pU_CdWUKpBZKAPDNaH2xQ58BDhIOkOTEdJKZ2rPDG1ZV356L58UuEjcE2MjY-Lfec2ThEQzc5J5rRSULx1QBalap8zFSxytVavUKy9sGSDCkv6hUOLnlxoh0sOPsPdVTwWjWfFBkmhCL2c1L6v_wGG9Y5Fxroy7himiV6b5Afd42e9Uk8_4FDcpXcp2IF_WNHnSq6xzGHeoKC0nwIPRNSSOucJ-yKZmkCVakdPQ0hm_DWmhChAyYHDyb-WMRXr9ncxfawdCTEJKZap1_mb37u5IbsVFiSYgO9EF-y0qMidfhcib2uAQDlTBFf3HIoulFy8fLc5UzpTkXIwX7sK_zYF45FDBZ9r7-ynOdNACNu0nAzKXIZeBMslucquTLZmVEu5HNIscM0OiwjICZEjvFOG5yCB0AIMM2NEipcAE2wHTTiGdchhUupPnFib5ClLNATXJL58NVdihSB0_d-lclXXUOSBgB0yqWxCTc0o3koP18pU721054idX1Fcu80jgybbk2vXK3buJuL54W-xXupPJbIozUu9JokeqValIQBCs_MCTJz26iALYhIzxs6_NGrJlTbw4-dIZTIHVD7o56XOKngfPv4ISVlhHRoev8eaeyWOBMOyiJV5CXkFg_49-VXW3ExawkHvEKGml5gO1Cp6f3ibNQV4oX_w_-SOXKKobbTU_3vXxhIe8QxZFLeRqJgWq7Hw3J-0y0quN5kc0jV-B8289d1yh9oxWIL2fvj2a6hbPhpjXlycxA700mnMWEs5PLFB6okda1eNflmT8tPQvRFN_L7DO3ECayflud8lStwCiW9x8SV4JQtigi2VeINGI4zFo2koNFBr3vB7Z8826tSfEPVjnz25GesLHhJpgv5lw4Q1pW5WI8NOqlRCTTfxztox9X-47z1l_L5vP1iT1HudqqJvVq0PHYUFxp2MUx7CTUTPE2B7hNENSKSLAeP0uyqV5Wn0vP6DLfIeCpXlyvQg2lDZld7YexxFjTy-acrIr0W4fxoUbKXTNIBomNvt4qlGLQ8aV_R1R38EbMW-mFpblTjewSbEO-ngS5mOrdK2HL9gKCpIbBoh1LLYCO8FSiL5LV8OP8SF1pr0qFOzuxmrSFF0KKOZFigmR26GVFj-YFQI_nXOWzXYw0rf5RjI3l95uSqt_TwRrjGgk5XfvfhdOJIuAJXaaHBYw_OTHy5ZccQhAzyRLJlQlcaRnTPWhFOtUhAeG4CocWsS5PL6XU5PuSTx4Xu6yiRatvGB0zC8gB-di-QskMvdUJoukTDJOchycuyvI7BZhm8N1I68Nlva53z-6db4kJosDlqkmiaRVqVyfrcnqDMvs3gbi6sHlWULxWB-SHMN0z-tu-lndYBJI3TucWNAB1eMzuCmY_B9LwmxVUXSMlY_96FZvs9ySR1cBvgTl8wfl4c8Qrub3XRCrrrehSxNLJyADw9N7dkqGpEVgjmCQAdoetI26GTYX_sWvM6PI7YFLL13P35BLEMB-rm0AhCI4iKifp3l5jY34Oh9znvScGh56NmzXcJGbKbvz50qwgieb0LZvjte0V00qwdfq9s-jTjD2GGxHl99CKJ6Kj0GidLYJGRjIRxI5uZYljZd6kE6tXIPurqIaizw76LNVeA-Xd_oHfFtjJmHqe6Nc51TDSDJaYxImj9LPGxplLAwdRO_x2z5U-NjhKfcNfu5Sl7b7dKmCxVVELSuQNpNUzs2fDvGrlPre7rTBFg06o5DplTWXziaQwQeJVosiZHstAa-PSzoGKAQ59QCI1mtqr1YEw2FomKQEyCf1a7ooakdFsr46dlghfwX4RzEeLwC6csqSaX1611lMbP1dPaWu-QK3Jd-dBgfvVG1AGO3I8vZ2_WjsuDnqsslD5CJ7t22qT7vJQ56DjxfbQAUVllG08IdhXZ4toaBd9NHXF4wbnIkQ3J8BARE2NHwqs5E7zxJqzStRA2yTQLQiQFWzOsAd55Fx4yD5Ifi-04jdLLc1tq5-pjcrFjX3Kb70CPQ2JWhTGwTeURcTHMItdWV5i7RkJJM9uuXo6KjQo5NWtx4AbXiwSnao06cGAlW1S-qtOYSscfUPQm_KrHf_cPbRNK4ra4UVogYJjt96_gtuADeem492teQsFlZsNHhoVIbAENTyxCwbudNZLNC_fYSgjJcXhnJhGUJDneXgUgsTnhnoErDvjSfDzGPQ9xpuZ-5UTSYu3FBXzocL08C0ydJUaePHEvPukhkUcwwbWDNfakWuquvbmKVVv8O9pKJBjfjyIC9E2nT66TaEXdULrVRRWWKqnLIpLP7Pfzk3xtn9JxB_RQ68J3e8JCEoO2LWN1I0ERcjDLM4pkatQbTdfZj0bITL7SV7WYC35v9f7Ydyv3oa0cfR8EHU-wsrZskqcjHr9w7OPH32_eCylpX1lEyWjmDP3NdvhV1Cfek9dM-ebjwdS0NoS_5nLab1tgd6zYK_D5ZYQAD-8YGAvo4_adjTrRWcfNNG8MN_WQ1mWS-89ND-ZUayUQ68sbqYP1ktvoALUYpbduwcb9hwsVijUVHBW3j0HQPLzi9QybfOCmA7djm2BCV2n-yeMcEMmeoOEbz8wfNjEGPc_jT5AqdMZtA5NJ2HPlIsI2dqyGQJMfbdXqW5fJG-R2DvcnkVSV-RDAbkdSzC3B7MQCQF2RbIF5ce1MBkqbJq_errX7N1GsruNcgL5LG-pwkdLKB2nTMvH2MVyD-zkPwqABlBrdKwsFM5ly01JZS56mlbypjxskWQBuLXGi09T5VUFJBPh86E2X9JWmkB_wxQLUKFMN5bOc6XIg_zya3onNlclvzVZ3Whsoyrpt7zy_MiuDZNkRvLBxGp7uzMGlsHrM4lmu1kdK3SB4NYx8ZtoIbPCdSHA0lHjS61CW5lX6Yy8QyWl6UNjMR3FkoXD8iIaR_Yg-ewZH3DJAlJv_cNPHQF27oIQux9N1525JjAX4v0n9JSt3k6NNqJfEojVwTE19MOOJyhvC2cUtBCxyl0VjYKmjaIv4fRiDDdG0qQahkjc7MgU8I7WSiexDq1NjQ_g2K8N7iCl4Z2cPcKvzvmJ3K_Ns8QmTjkleY4DTcPq4YU6EF7RYFoxuYgLHrpE33jk5CdRAF9vT5vG06HLvpV0mHrP6Bf0rx8RSoJPXdcotsyYv9838X9Yu6Tb2eumrlhDfIwEzM1d0Wy6jRbpaVXKkygNcYeyzFbXoJrMOc3FLd934RAt8Vu62JNMSF9K7-ZcFBNrIAA_lp2yumbefqCwBbK9dwuqt_dAnok9b-hz3hs_KUiY5BEd8KSA5yBaNosL8YkpayMbRFKjfLi7rtrPZBMOm_f0bRwxXRep9Gj8-98jx3fH6LC27N-Zb3rp81ZqMBxKU-l83xj13E_ZpxRiCFLmOyJ9uR5_3vlNOfAGoUDXrionI9PAUxOAAT8hv_VFcdnHp3detN2NfriXNM7gJgekGgZ6H9_phzeClE-3-MwLSgBBcBj23zBOYnwACJdSwSNSTEz0M0afnAlWZh6JLFRRbhajswa2wz2uCVe8iHqSNfVGni3qaF2mUOJu59K-4ZrVC4_tx-Khv577-CSGYJOm59MupWbpfbJ69oFbn67iHFocKNiq4scZUtRgjKBWCPJfSJTbaVDej83chDIuqaZfcBEHkEH9Z6xoDg2gizAO8iCDoQGKLaXcrGyvV4R60zdYL9yCU8nrwprP1PTi_WUFRCeB_rg9pTMtrGfW8b9cT6XBofSrkaJ6eRpPAOdRHQx_yBNomFYli6W49NWVHfJyvbJ48c4eYR_pF5IlW4u_-VplnM504UR_BtszyFpOcH_CmJXB6dcLnU2v_NY2MQ975MsFluwm56wkmpXcu2Vt1TtLWLVCJkbr3QQ-Ly9ppIim46I5XaIjCs9eDAqMU0Y3GJi8vPMztEHf-irl0ePNgAzTsSIMO_Ve_-O4qrsrUYrslx8WtIPK2265baX9nX1tIX8D2ka-D2UDDwFnrFteE_KdTRXI9jRvXR9IKLuMvz7MqZ47KNfDrwMBdUipr8c_-B1ulcvA4n3KYs0q-SNNpsKe63pvbgeH7iB6ddI3_kWMZGrFPDQfEY8RiSIozPhd9-M9xM2qh5EdsBwJXHsOhUEEprqnJLU9LgYeTg-ChOQhe42E1orrxUeDHC4C3TSEORou3Ys1ZkUhYahWhq3h3K4h8WMI22VkbmiCB2BnxuPiaXsngDfTLwBhmkqDbFlt8buN4V3zosoBlMgoDwUkx3QNJ9ND8ZCfLPUWDgLXSx7oHh4xwGjOMbBxRo0DK5yZG2LmP9_0t5fnZQmKOgUVkySTUmXt4iPgWdMd8Alv1a8DGEaIxzY7QS3NiBw0rst7Cjd_r0SnHr8wqkWU0ELZOKTrGzlNS-yf6ARrMR4Jlfg74W5ekfDb0Hnw0RLl5UeHBABT7fX9mvLIFu86XiohZ_C2E7GbOVA-fDce0bgxCH9uXe5gL3GZchJWjg5jIZXR-iG90ovkZ3Cfcb2M9Iq4VQxzymKCmoh_ib_WRONjn88rXDwVhYTaygBXyd6CmwkVtb6-8OKcdEUyx0bHU7iAZw39636FtcHYFpdA_e75rOs_6dAcZtDeod1NdnAfenvVhQkVpoM-5r4UaRmF6tPczfikAxH6igLohf3CkjISGi8QtGFMLBEpeXH7p2hGJ3PQDK-3CWY3rnECYhnjcemcoe9l0ywaF_-W-2D-whmLRlIMA6k4gC-9SQIs4L0THyl6PkLmDIdUYwLUgtZBPKzxhOm_2psvtMiawpOU0WzQ5xnXkOsnIXjp0evZcBvldV64QGmdZZEJrJBdNBER3qUQ1ZsXvC9fGd1Z2zSfQXI4YUMYmaetHo_41-OKv181q29ah-86gUHeN5U1YOU-FKVZabczFNud5EDLwy10y-aLC0Zctw1xltgqvdKIiZ6E9mHP53kAECDRc7J1DkLE3eU9_feDzJ3iNoMv8I-4M5nGDIpT4Rfv323HU3tA5NT0zmrYfscpfRy2ceJW6tS03wqG1SFcDGhY86p-hi-oaCDk39twaEmqAGCUFZzaemwHW3z5e-nxuYf3czXsp4TPbvmyKIMGHrsx93QPtVg8xfCnyNK5RfAIA3w7dljZ_IZQXI67FWOQJdrxlPnHaWlZl9BunbJsuSrUGmWELSxzC9M-dTvFuSdopnjJIt3YUXiDW4G1bQPOlGmlU7o-cdQsqHlJDi3j-v6ag2gFXZlvgG_pQryWBIGhbXzywfUCS1y1L-_k4NPYd9DeOw0eL52nkQ-uyAqn9lxmtxRSEEAkvPri86EWNfXqHbaO3jfst7uq-SYEmGBqn9rq68WYrMA5u2Ne1ox-Eee0PPeoDwCtnqDzFPZ-E-nGEXCajG9c38BlRCstkfTC7zS9DnK1ASshK9gEt1RySVSqcXfbb75B5X6r9XuCGmqRoS8AmVA7HSrzrnCDO4ZHYYDVJhYJxadwR3l-4KLrXQH4sUGAVCKKEPwo5-PsER12ZkxA5kh2ZVQiLpcsHXqW45iGla7a2kuu5BEfla5Aad0jtnQRCDxbHQgvbo8ZX8EWIY7p-xyZjrWk_M6w5qKgeNOvFI7ef6u8mn-m5JdhbWdXWpgcKkNQEYkxcbn6E2EyqmIvppVlFeUSanjj7eLuG52mEV4T5ZSYEUd_0gupuFVodpc4IsX2mc_tu3-ogblGEnlgbcwovF9kunNjYjBLACTInvBqBgItX3lgRwuGk_nt-2ypUDyifyT779FK5zvJDK2CN-vbtmGUPAHf72e-jM-MuCMs6OTmqGt_h4jb4VuMzCX8kjrXw5ON5flbKNi17rN5vHAksPvMFM9_wDo=
+        id: rs_08dbeb3d47fa8ae30069fe57ad97c08195a6df9bcfe1f8b669
+        summary: []
+        type: reasoning
+      - content:
+        - annotations:
+          - end_index: 335
+            start_index: 152
+            title: 7 de mayo de 2026
+            type: url_citation
+            url: https://www.banxico.org.mx/publicaciones-y-prensa/anuncios-de-las-decisiones-de-politica-monetaria/%7B8A05C722-0A97-4527-2166-0CE802CE6838%7D.pdf?utm_source=openai
+          logprobs: []
+          text: Mexico's central bank cut its benchmark interest rate by 25 basis points to 6.50%--effective today, May 8,
+            2026--signaling the end of its rate‐cut cycle. ([banxico.org.mx](https://www.banxico.org.mx/publicaciones-y-prensa/anuncios-de-las-decisiones-de-politica-monetaria/%7B8A05C722-0A97-4527-2166-0CE802CE6838%7D.pdf?utm_source=openai))
+          type: output_text
+        id: msg_08dbeb3d47fa8ae30069fe57bb370c81959aa8737f8acb229a
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - return_token_budget: default
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: Mexico City
+          country: MX
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 21174
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 1844
+        output_tokens_details:
+          reasoning_tokens: 1600
+        total_tokens: 23018
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

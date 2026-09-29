@@ -1,0 +1,193 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1057'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      mcp_servers:
+      - name: deepwiki
+        type: url
+        url: https://mcp.deepwiki.com/mcp
+      messages:
+      - content:
+        - text: Look up the 10-year Treasury duration, then add 2 and 2.
+          type: text
+        role: user
+      - content:
+        - id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
+          input:
+            question: What is pydantic-ai?
+            repoName: pydantic/pydantic-ai
+          name: ask_question
+          server_name: deepwiki
+          type: mcp_tool_use
+        - id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+          input:
+            a: 2
+            b: 2
+          name: add
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '4'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: Add two numbers.
+        input_schema:
+          additionalProperties: false
+          properties:
+            a:
+              type: integer
+            b:
+              type: integer
+          required:
+          - a
+          - b
+          type: object
+        name: add
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '9504'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-58e4b7f40312c265860d60b18e67b44f-b6ed32f2deb68a48-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - content:
+        - text: "Pydantic AI is a Python agent framework and LLM library designed for building production-grade Generative
+            AI applications.   It aims to bring the ergonomic design of FastAPI to GenAI development, leveraging Pydantic
+            V2 for robust validation and full type safety.  The framework is model-agnostic, supporting various LLM providers
+            like OpenAI, Anthropic, and Google, and emphasizes type safety, observability, and extensibility.  \n\n## Core
+            Purpose and Features\n\nPydantic AI simplifies the development of reliable AI applications by providing a structured,
+            type-safe, and extensible framework.  It abstracts away the complexities of interacting with different LLM providers
+            and managing agent workflows. \n\nKey features include:\n*   **Type-Safe Agents**: Agents are designed with generic
+            types for compile-time validation, leveraging Pydantic for output validation and dependency injection. \n*   **Model-Agnostic
+            Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between
+            different models and providers. \n*   **Structured Outputs**: The framework provides powerful streaming of structured
+            data with immediate Pydantic validation. \n*   **Seamless Observability**: It integrates with Pydantic Logfire
+            and OpenTelemetry for real-time debugging, tracing, and cost tracking. \n*   **Durable Execution**: Pydantic AI
+            supports preserving agent progress across restarts and handling long-running workflows via systems like Temporal
+            or DBOS. \n*   **Composable Capabilities**: You can build agents from reusable units that bundle tools, hooks,
+            instructions, and model settings. \n*   **Graph Support**: It provides a way to define graphs using type hints
+            for complex applications, managed by `pydantic-graph`.  \n\n## Monorepo Package Structure\n\nPydantic AI is organized
+            as a `uv` workspace monorepo containing several distinct Python packages. \n\n```mermaid\ngraph TD\n    subgraph
+            \"Main Packages\"\n        PYDANTIC_AI[\"pydantic-ai<br/>(Metapackage)\"]\n        SLIM[\"pydantic-ai-slim<br/>Core
+            Framework\"]\n        GRAPH[\"pydantic-graph<br/>State Machine\"]\n        EVALS[\"pydantic-evals<br/>Evaluation
+            Framework\"]\n        CLAI[\"clai<br/>CLI Tool\"]\n        EXAMPLES[\"pydantic-ai-examples<br/>Usage Examples\"]\n
+            \   end\n    \n    subgraph \"Package Relationships\"\n        PYDANTIC_AI -->|\"bundles\"| SLIM\n        PYDANTIC_AI
+            -->|\"bundles\"| GRAPH\n        PYDANTIC_AI -->|\"bundles\"| EVALS\n        PYDANTIC_AI -->|\"bundles\"| CLAI\n
+            \       PYDANTIC_AI -->|\"bundles\"| EXAMPLES\n        \n        SLIM -->|\"depends on\"| GRAPH\n        EVALS
+            -->|\"depends on\"| SLIM\n        CLAI -->|\"depends on\"| SLIM\n        EXAMPLES -->|\"depends on\"| SLIM\n        EXAMPLES
+            -->|\"depends on\"| EVALS\n    end\n    \n    subgraph \"Core Dependencies (pydantic-ai-slim)\"\n        ANYIO[\"anyio>=4.7.0\"]\n
+            \       GRIFFELIB[\"griffelib>=2.0\"]\n        HTTPX[\"httpx>=0.27\"]\n        PYDANTIC[\"pydantic>=2.12\"]\n
+            \       OPENTELEMETRY_API[\"opentelemetry-api>=1.28.0\"]\n        TYPING_INSPECTION[\"typing-inspection>=0.4.0\"]\n
+            \       GENAI_PRICES[\"genai-prices>=0.1.0\"]\n    end\n    \n    SLIM -->|\"requires\"| ANYIO\n    SLIM -->|\"requires\"|
+            GRIFFELIB\n    SLIM -->|\"requires\"| HTTPX\n    SLIM -->|\"requires\"| PYDANTIC\n    SLIM -->|\"requires\"| OPENTELEMETRY_API\n
+            \   SLIM -->|\"requires\"| TYPING_INSPECTION\n    SLIM -->|\"requires\"| GENAI_PRICES\n``` \n\n*   `pydantic-ai-slim`:
+            The core agent framework with minimal base dependencies. \n*   `pydantic-graph`: A typed graph and state machine
+            library used for agent loops and workflows. \n*   `pydantic-evals`: A framework for systematic testing and evaluation
+            of LLM performance. \n*   `clai`: A command-line interface for interacting with agents and models. \n*   `pydantic-ai-examples`:
+            A collection of examples demonstrating Pydantic AI capabilities. \n*   `pydantic-ai`: A metapackage that bundles
+            all features and common providers. \n\n## Core Architecture Components\n\nThe architecture bridges the gap between
+            high-level natural language intent and structured code execution. \n\n```mermaid\ngraph TD\n    subgraph \"Natural
+            Language Space\"\n        USER_PROMPT[(\"User Prompt\")]\n        INSTRUCTIONS[(\"Instructions\")]\n        THINKING[(\"Thinking
+            Process\")]\n        MESSAGE_HISTORY[(\"Conversation History\")]\n    end\n\n    subgraph \"Code Entity Space
+            (pydantic_ai)\"\n        AGENT_CLASS[\"Agent Class\"]\n        MODEL_ABSTRACT[\"Model (Abstract Base Class)\"]\n
+            \       TOOL_DEFINITION[\"ToolDefinition\"]\n        RUN_CONTEXT[\"RunContext\"]\n        MODEL_REQUEST_PARAMS[\"ModelRequestParameters\"]\n
+            \       MODEL_MESSAGE_TYPES[\"ModelMessage Types\"]\n        PYDANTIC_VALIDATION[\"Pydantic Validation\"]\n    end\n\n
+            \   subgraph \"Execution Flow\"\n        AGENT_EXEC_LOOP[\"Agent Execution Loop\"]\n    end\n\n    USER_PROMPT
+            -->|becomes| MODEL_MESSAGE_TYPES\n    INSTRUCTIONS -->|configures| AGENT_CLASS\n    THINKING -->|influences| MODEL_REQUEST_PARAMS\n
+            \   MESSAGE_HISTORY -->|managed by| AGENT_CLASS\n\n    AGENT_CLASS -->|orchestrates| AGENT_EXEC_LOOP\n    AGENT_EXEC_LOOP
+            -->|uses| MODEL_ABSTRACT\n    AGENT_EXEC_LOOP -->|executes| TOOL_DEFINITION\n    AGENT_EXEC_LOOP -->|provides
+            context via| RUN_CONTEXT\n    AGENT_EXEC_LOOP -->|builds| MODEL_REQUEST_PARAMS\n    MODEL_ABSTRACT -->|processes|
+            MODEL_REQUEST_PARAMS\n    MODEL_ABSTRACT -->|returns| MODEL_MESSAGE_TYPES\n    MODEL_MESSAGE_TYPES -->|validated
+            by| PYDANTIC_VALIDATION\n    TOOL_DEFINITION -->|uses| PYDANTIC_VALIDATION\n``` \n\nKey code entities include:\n*
+            \  `Agent` (`pydantic_ai.Agent`): The central orchestrator managing tools, instructions, and model interaction.
+            \n*   `Model` (`pydantic_ai.models.Model`): An abstract base class defining how to communicate with LLM providers.
+            \n*   `ModelMessage` (`pydantic_ai.messages.ModelMessage`): The core abstraction for conversation history. \n*
+            \  `RunContext` (`pydantic_ai.RunContext`): Provides access to dependencies and state within tools and dynamic
+            instructions. \n\n## Installation\n\nPydantic AI offers flexible installation options:\n*   **Standard**: `pip
+            install pydantic-ai` includes core packages and libraries for major providers like OpenAI, Anthropic, and Google.
+            \n*   **Slim**: `pip install pydantic-ai-slim` provides a minimal footprint, allowing you to add specific providers
+            or features via extras (e.g., `[openai]`). \n*   **Examples**: `pip install pydantic-ai[examples]` includes the
+            `pydantic-ai-examples` package for easy exploration. \n\n## Example Usage\n\nHere's a minimal example of using
+            Pydantic AI to create an agent:\n```python\nfrom pydantic_ai import Agent\n\nagent = Agent(\n    'anthropic:claude-sonnet-4-6',\n
+            \   instructions='Be concise, reply with one sentence.',\n)\n\nresult = agent.run_sync('Where does \"hello world\"
+            come from?')\nprint(result.output)\n``` \n\nYou can also add capabilities like `Thinking` and `WebSearch` to an
+            agent:\n```python\nfrom pydantic_ai import Agent\nfrom pydantic_ai.capabilities import Thinking, WebSearch\n\nagent
+            = Agent(\n    'anthropic:claude-sonnet-4-6',\n    instructions='Be concise, reply with one sentence.',\n    capabilities=[Thinking(),
+            WebSearch()],\n)\n\nresult = agent.run_sync('What was the mass of the largest meteorite found this year?')\nprint(result.output)\n```
+            \n\n## Notes\n\nThe `AGENTS.md` file provides insights into the project's philosophy, emphasizing modern Python,
+            type safety, and thoughtful API design.  The `SKILL.md` file in `pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md`
+            further details when to use Pydantic AI for building agents, adding tools, and handling structured output. \n\nWiki
+            pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n- [Additional
+            Model Providers (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#4.6)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai_008f6e73-bd1a-4a1f-9e5f-0fbee7cae4e3\n"
+          type: text
+        is_error: false
+        tool_use_id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
+        type: mcp_tool_result
+      - text: |-
+          I apologize, but I don't have the ability to look up the 10-year Treasury duration. The tools available to me are limited to asking questions about GitHub repositories and performing basic mathematical operations.
+
+          However, I can tell you that **2 + 2 = 4**.
+
+          Regarding the 10-year Treasury duration, typically the duration of a 10-year U.S. Treasury bond is approximately 8-9 years (it's less than the maturity because duration accounts for the present value of all cash flows including coupon payments). However, the exact duration varies based on the current yield and coupon rate. You would need to check current financial data sources like Bloomberg, the U.S. Treasury website, or financial news outlets for the most accurate current duration figure.
+        type: text
+      id: msg_011Ce8tUPDquRYCpsqXRJWFM
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 3443
+        output_tokens: 169
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

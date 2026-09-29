@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1592'
+      - '771'
       content-type:
       - application/json
       host:
@@ -30,13 +30,13 @@ interactions:
         role: user
       toolConfig:
         functionCallingConfig:
-          mode: AUTO
+          mode: VALIDATED
       tools:
       - functionDeclarations:
         - description: Load a capability to access its full instructions and tools.
           name: load_capability
           parameters_json_schema:
-            description: Typed arguments for a `load_capability` call.
+            description: Typed arguments for a `load_capability` tool call.
             properties:
               id:
                 description: The id of the capability to load.
@@ -44,35 +44,17 @@ interactions:
             required:
             - id
             type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
-          name: search_tools
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: List of search queries to match against tool names and descriptions. Use specific words likely
-                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                  matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1071'
+      - '1051'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1629
+      - gfet4t7; dur=3446
       transfer-encoding:
       - chunked
       vary:
@@ -86,24 +68,24 @@ interactions:
           - functionCall:
               args:
                 id: refunds
-              id: 5i7v9nsb
+              id: hq1dul8c
               name: load_capability
-            thoughtSignature: EvgCCvUCAQw51sczaJcxTTH1EcDyIHbMNOE+h1yLteUCBCZY/vEW8oQpqJL2RS8ZCrQUuhZHP2eUsGnboikpRtZy3wt68tdq0uRGbPkzusR5TME3M3DYirzZ1xRCd2TT3eAh0OT+HBmBcvf8g9lFl906YZVFS2jMabSsJlF/iexlowTnqShbh/PMbNb6b+4cHguzW0mSYRNtFI5VquOGnAC8kyCM7zQompQ8pjEveDZJRvrZbbrMuXOqin1mZDGqr/LaqASud5SYnUav/htq9II3omxzoFXOFlllFuxbyasL4oCF0B3RN0eu9v851a7enMpFb5aLxyKlmT0dog2i70YDEC65VX98+swwtADcX7CnLOb3h/BgtulqTuquShYb970n9OARQAEoy82hQ61xk4R8/I6ejaXiM5qZerwdaJkPKxvwm4j7tt2wZm7ZuIChsWWb8gdqMA/u3HBv2DWC7rB7u9ohvR/y0x0OEv6IykGvoz+X9nkUXVwwKA==
+            thoughtSignature: EusCCugCARFNMg/xhLV/lRD/+24wsqFpEuoTL+43PbyawHKfmEGlu3TtqxhIckL+C4P/qka/G2eJPGK/V+LdBVbfS/y08LQ/rUfAqZjpCqzAySrji811ssroGMMtboR8oz802JhPjtpTE35bSdSvkxXURqOHgSugH5L0iXOo39z/iLj9YEf7wqlCS8UKDcGKRKfsE1+5nzpkAKkih7IDrHJfw1bcp6S0PiID7fDaK8IsI/KUhBXKWJwsOFvSkcYPT4zXK0oVr15yP/c5SRlCKvT73Za9cxqrKzojOIrT83fRyKE5Z7jCaTIIWAzRUG2mEdO9u4CvE+3LiEkmftU+5lXOGspoURhLD7SQb2CVJBRYpprPNkMgQz6Dtq9iiTDhp7q74LRxSOA9kuP4tJlbN4WIXMTXQs8k8xduJhSirr5JzGVs8qWymq9GMxUyUPLuKwrmzIBPQiA6UKirTGoQQZ61urfxSupV+TN/sIzS
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: LVYQasS1K4O-0-kPkLnJ-QM
+      responseId: hbFrapf2Lt6QmtkPxPab2Q0
       usageMetadata:
         candidatesTokenCount: 17
-        promptTokenCount: 280
+        promptTokenCount: 118
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 280
+          tokenCount: 118
         serviceTier: standard
         thoughtsTokenCount: 69
-        totalTokenCount: 366
+        totalTokenCount: 204
     status:
       code: 200
       message: OK
@@ -112,11 +94,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '3135'
+      - '2220'
       content-type:
       - application/json
       host:
@@ -131,34 +113,31 @@ interactions:
         - functionCall:
             args:
               id: refunds
-            id: 5i7v9nsb
+            id: hq1dul8c
             name: load_capability
-          thoughtSignature: EvgCCvUCAQw51sczaJcxTTH1EcDyIHbMNOE-h1yLteUCBCZY_vEW8oQpqJL2RS8ZCrQUuhZHP2eUsGnboikpRtZy3wt68tdq0uRGbPkzusR5TME3M3DYirzZ1xRCd2TT3eAh0OT-HBmBcvf8g9lFl906YZVFS2jMabSsJlF_iexlowTnqShbh_PMbNb6b-4cHguzW0mSYRNtFI5VquOGnAC8kyCM7zQompQ8pjEveDZJRvrZbbrMuXOqin1mZDGqr_LaqASud5SYnUav_htq9II3omxzoFXOFlllFuxbyasL4oCF0B3RN0eu9v851a7enMpFb5aLxyKlmT0dog2i70YDEC65VX98-swwtADcX7CnLOb3h_BgtulqTuquShYb970n9OARQAEoy82hQ61xk4R8_I6ejaXiM5qZerwdaJkPKxvwm4j7tt2wZm7ZuIChsWWb8gdqMA_u3HBv2DWC7rB7u9ohvR_y0x0OEv6IykGvoz-X9nkUXVwwKA==
+          thoughtSignature: EusCCugCARFNMg_xhLV_lRD_-24wsqFpEuoTL-43PbyawHKfmEGlu3TtqxhIckL-C4P_qka_G2eJPGK_V-LdBVbfS_y08LQ_rUfAqZjpCqzAySrji811ssroGMMtboR8oz802JhPjtpTE35bSdSvkxXURqOHgSugH5L0iXOo39z_iLj9YEf7wqlCS8UKDcGKRKfsE1-5nzpkAKkih7IDrHJfw1bcp6S0PiID7fDaK8IsI_KUhBXKWJwsOFvSkcYPT4zXK0oVr15yP_c5SRlCKvT73Za9cxqrKzojOIrT83fRyKE5Z7jCaTIIWAzRUG2mEdO9u4CvE-3LiEkmftU-5lXOGspoURhLD7SQb2CVJBRYpprPNkMgQz6Dtq9iiTDhp7q74LRxSOA9kuP4tJlbN4WIXMTXQs8k8xduJhSirr5JzGVs8qWymq9GMxUyUPLuKwrmzIBPQiA6UKirTGoQQZ61urfxSupV-TN_sIzS
         role: model
-      - parts:
-        - functionResponse:
-            id: 5i7v9nsb
-            name: load_capability
-            response:
-              instructions: Use the refund policy tool before answering refund questions.
-        role: user
       - parts:
         - functionCall:
             args:
               queries:
-              - refunds
-            id: auto_load_0f10f8b659c3c105
+              - lookup_refund_policy
+            id: auto_load_97d4a2341e6817ea
             name: search_tools
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: auto_load_0f10f8b659c3c105
+            id: hq1dul8c
+            name: load_capability
+            response:
+              instructions: Use the refund policy tool before answering refund questions.
+        - functionResponse:
+            id: auto_load_97d4a2341e6817ea
             name: search_tools
             response:
               discovered_tools:
-              - description: Look up the refund policy for an order.
-                name: lookup_refund_policy
+              - name: lookup_refund_policy
         role: user
       generationConfig:
         responseModalities:
@@ -171,13 +150,13 @@ interactions:
         role: user
       toolConfig:
         functionCallingConfig:
-          mode: AUTO
+          mode: VALIDATED
       tools:
       - functionDeclarations:
         - description: Load a capability to access its full instructions and tools.
           name: load_capability
           parameters_json_schema:
-            description: Typed arguments for a `load_capability` call.
+            description: Typed arguments for a `load_capability` tool call.
             properties:
               id:
                 description: The id of the capability to load.
@@ -195,35 +174,17 @@ interactions:
             required:
             - order_id
             type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
-          name: search_tools
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: List of search queries to match against tool names and descriptions. Use specific words likely
-                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                  matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '836'
+      - '856'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1227
+      - gfet4t7; dur=1073
       transfer-encoding:
       - chunked
       vary:
@@ -237,24 +198,24 @@ interactions:
           - functionCall:
               args:
                 order_id: order-123
-              id: 3moy6l4l
+              id: m71ii1s7
               name: lookup_refund_policy
-            thoughtSignature: EsABCr0BAQw51scJk0h4LYgsOiGsCrP8PB3edo6xhJe1GInthR1Y/G174EO5BHaIuPLvzOhdbYe+RBPJ3QthG5/+XEPtXjzzYsdGXvP1KW3ZwOD1u1VncrTqK9WtPZqwrj+C1Dhbfi9OkSc/rB4P2WqofrHO4v32MmcRC7Lr0Z9Us46Eb1xCbyQIgNppQL7pACwziRgCN3xZcJlDULw2a+Q9lNAd+lfbZcymHGhQQVJxVBl0UJBXenjwoe+Jt0ncerf2
+            thoughtSignature: Es8BCswBARFNMg9GG0RgQw5otNIt//HMVMqPO20WQ8R995TICryTgQ+uGCexwVjeDaEfgHOmwIEwLzkuhxK68ZsmMFDOfWt896Jry+oe3Hcw1QK1IZF6OsWPC/IMEdYekSCzyppCqrxFuJSxmvHa49bsp3P+hvFGIVGOEDza+DAAzhsyDTTYKRF3/tY0hLGeR12W21igUlfJgQBhpZL6jbzAIjqcV2sX6iw0bq2LqnRwbyBGwKvcVV2fJUxhTUOckkf6G1m5uGKAWSzVNbPyEB3K
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: L1YQapudG-af0-kPueqrmAc
+      responseId: ibFraqr0BcWJqtsP4eLHyAI
       usageMetadata:
         candidatesTokenCount: 24
-        promptTokenCount: 495
+        promptTokenCount: 321
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 495
+          tokenCount: 321
         serviceTier: standard
-        thoughtsTokenCount: 36
-        totalTokenCount: 555
+        thoughtsTokenCount: 39
+        totalTokenCount: 384
     status:
       code: 200
       message: OK
@@ -263,11 +224,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '3728'
+      - '2833'
       content-type:
       - application/json
       host:
@@ -282,46 +243,43 @@ interactions:
         - functionCall:
             args:
               id: refunds
-            id: 5i7v9nsb
+            id: hq1dul8c
             name: load_capability
-          thoughtSignature: EvgCCvUCAQw51sczaJcxTTH1EcDyIHbMNOE-h1yLteUCBCZY_vEW8oQpqJL2RS8ZCrQUuhZHP2eUsGnboikpRtZy3wt68tdq0uRGbPkzusR5TME3M3DYirzZ1xRCd2TT3eAh0OT-HBmBcvf8g9lFl906YZVFS2jMabSsJlF_iexlowTnqShbh_PMbNb6b-4cHguzW0mSYRNtFI5VquOGnAC8kyCM7zQompQ8pjEveDZJRvrZbbrMuXOqin1mZDGqr_LaqASud5SYnUav_htq9II3omxzoFXOFlllFuxbyasL4oCF0B3RN0eu9v851a7enMpFb5aLxyKlmT0dog2i70YDEC65VX98-swwtADcX7CnLOb3h_BgtulqTuquShYb970n9OARQAEoy82hQ61xk4R8_I6ejaXiM5qZerwdaJkPKxvwm4j7tt2wZm7ZuIChsWWb8gdqMA_u3HBv2DWC7rB7u9ohvR_y0x0OEv6IykGvoz-X9nkUXVwwKA==
+          thoughtSignature: EusCCugCARFNMg_xhLV_lRD_-24wsqFpEuoTL-43PbyawHKfmEGlu3TtqxhIckL-C4P_qka_G2eJPGK_V-LdBVbfS_y08LQ_rUfAqZjpCqzAySrji811ssroGMMtboR8oz802JhPjtpTE35bSdSvkxXURqOHgSugH5L0iXOo39z_iLj9YEf7wqlCS8UKDcGKRKfsE1-5nzpkAKkih7IDrHJfw1bcp6S0PiID7fDaK8IsI_KUhBXKWJwsOFvSkcYPT4zXK0oVr15yP_c5SRlCKvT73Za9cxqrKzojOIrT83fRyKE5Z7jCaTIIWAzRUG2mEdO9u4CvE-3LiEkmftU-5lXOGspoURhLD7SQb2CVJBRYpprPNkMgQz6Dtq9iiTDhp7q74LRxSOA9kuP4tJlbN4WIXMTXQs8k8xduJhSirr5JzGVs8qWymq9GMxUyUPLuKwrmzIBPQiA6UKirTGoQQZ61urfxSupV-TN_sIzS
         role: model
-      - parts:
-        - functionResponse:
-            id: 5i7v9nsb
-            name: load_capability
-            response:
-              instructions: Use the refund policy tool before answering refund questions.
-        role: user
       - parts:
         - functionCall:
             args:
               queries:
-              - refunds
-            id: auto_load_0f10f8b659c3c105
+              - lookup_refund_policy
+            id: auto_load_97d4a2341e6817ea
             name: search_tools
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: auto_load_0f10f8b659c3c105
+            id: hq1dul8c
+            name: load_capability
+            response:
+              instructions: Use the refund policy tool before answering refund questions.
+        - functionResponse:
+            id: auto_load_97d4a2341e6817ea
             name: search_tools
             response:
               discovered_tools:
-              - description: Look up the refund policy for an order.
-                name: lookup_refund_policy
+              - name: lookup_refund_policy
         role: user
       - parts:
         - functionCall:
             args:
               order_id: order-123
-            id: 3moy6l4l
+            id: m71ii1s7
             name: lookup_refund_policy
-          thoughtSignature: EsABCr0BAQw51scJk0h4LYgsOiGsCrP8PB3edo6xhJe1GInthR1Y_G174EO5BHaIuPLvzOhdbYe-RBPJ3QthG5_-XEPtXjzzYsdGXvP1KW3ZwOD1u1VncrTqK9WtPZqwrj-C1Dhbfi9OkSc_rB4P2WqofrHO4v32MmcRC7Lr0Z9Us46Eb1xCbyQIgNppQL7pACwziRgCN3xZcJlDULw2a-Q9lNAd-lfbZcymHGhQQVJxVBl0UJBXenjwoe-Jt0ncerf2
+          thoughtSignature: Es8BCswBARFNMg9GG0RgQw5otNIt__HMVMqPO20WQ8R995TICryTgQ-uGCexwVjeDaEfgHOmwIEwLzkuhxK68ZsmMFDOfWt896Jry-oe3Hcw1QK1IZF6OsWPC_IMEdYekSCzyppCqrxFuJSxmvHa49bsp3P-hvFGIVGOEDza-DAAzhsyDTTYKRF3_tY0hLGeR12W21igUlfJgQBhpZL6jbzAIjqcV2sX6iw0bq2LqnRwbyBGwKvcVV2fJUxhTUOckkf6G1m5uGKAWSzVNbPyEB3K
         role: model
       - parts:
         - functionResponse:
-            id: 3moy6l4l
+            id: m71ii1s7
             name: lookup_refund_policy
             response:
               return_value: 'order-123: refund allowed for 30 days'
@@ -337,13 +295,13 @@ interactions:
         role: user
       toolConfig:
         functionCallingConfig:
-          mode: AUTO
+          mode: VALIDATED
       tools:
       - functionDeclarations:
         - description: Load a capability to access its full instructions and tools.
           name: load_capability
           parameters_json_schema:
-            description: Typed arguments for a `load_capability` call.
+            description: Typed arguments for a `load_capability` tool call.
             properties:
               id:
                 description: The id of the capability to load.
@@ -361,35 +319,17 @@ interactions:
             required:
             - order_id
             type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
-          name: search_tools
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: List of search queries to match against tool names and descriptions. Use specific words likely
-                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                  matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1089'
+      - '488'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1588
+      - gfet4t7; dur=968
       transfer-encoding:
       - chunked
       vary:
@@ -400,636 +340,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - functionCall:
-              args:
-                queries:
-                - order details
-                - order status
-              id: acj33las
-              name: search_tools
-            thoughtSignature: EvMCCvACAQw51sfKdsHQ63w9soDjeBwgjcTYoalVa/QDV0gYzwKDpp5jGJ6JXiWgzv/MIkcSNKP+KZulp9WMJplW4jutbkg9Py1xfCe0toKM5LB0Fk6S18AXge0qcLwlvn6e1Ds1mWIPBdP8XvsMjL8qws1/jD0mDrmhb95ildZxM6L10rVkn91m8cwTi6V0P/YXPsd57MGnCsOwBXoS6tm2VaT9smV7eLt+gxa5lm8z8MnQlTfG3k/DxPUoUfBuv3KDRvlSgBTDeYMYP+XXl3rQBUI2atKfe5hyjVeYrXSY1l4KdnFjaySw5XbMt/a5ZK2Z7ThTcekjVrWM4Cu4I4W8mKwhRGXSECE24hhQYT0ne5GmlV2ZDnV7rWSVizF4Fc5cIC+OUpZKCNrDRNaZ9BFOMGcX08bOVFNj2cnzxP9A7mo56xG/Wvf8vimDiQ3qa8U41lwKLcmRveoscZ/TvSZpBx5JdU4hw6OqHl4z4wN3canqHEA=
-          role: model
-        finishMessage: Model generated function call(s).
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-3-flash-preview
-      responseId: MVYQaumHBbukvr0P0oPKwAo
-      usageMetadata:
-        candidatesTokenCount: 22
-        promptTokenCount: 585
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 585
-        serviceTier: standard
-        thoughtsTokenCount: 83
-        totalTokenCount: 690
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '4613'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Can I get a refund on order-123?
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              id: refunds
-            id: 5i7v9nsb
-            name: load_capability
-          thoughtSignature: EvgCCvUCAQw51sczaJcxTTH1EcDyIHbMNOE-h1yLteUCBCZY_vEW8oQpqJL2RS8ZCrQUuhZHP2eUsGnboikpRtZy3wt68tdq0uRGbPkzusR5TME3M3DYirzZ1xRCd2TT3eAh0OT-HBmBcvf8g9lFl906YZVFS2jMabSsJlF_iexlowTnqShbh_PMbNb6b-4cHguzW0mSYRNtFI5VquOGnAC8kyCM7zQompQ8pjEveDZJRvrZbbrMuXOqin1mZDGqr_LaqASud5SYnUav_htq9II3omxzoFXOFlllFuxbyasL4oCF0B3RN0eu9v851a7enMpFb5aLxyKlmT0dog2i70YDEC65VX98-swwtADcX7CnLOb3h_BgtulqTuquShYb970n9OARQAEoy82hQ61xk4R8_I6ejaXiM5qZerwdaJkPKxvwm4j7tt2wZm7ZuIChsWWb8gdqMA_u3HBv2DWC7rB7u9ohvR_y0x0OEv6IykGvoz-X9nkUXVwwKA==
-        role: model
-      - parts:
-        - functionResponse:
-            id: 5i7v9nsb
-            name: load_capability
-            response:
-              instructions: Use the refund policy tool before answering refund questions.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - refunds
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-            response:
-              discovered_tools:
-              - description: Look up the refund policy for an order.
-                name: lookup_refund_policy
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              order_id: order-123
-            id: 3moy6l4l
-            name: lookup_refund_policy
-          thoughtSignature: EsABCr0BAQw51scJk0h4LYgsOiGsCrP8PB3edo6xhJe1GInthR1Y_G174EO5BHaIuPLvzOhdbYe-RBPJ3QthG5_-XEPtXjzzYsdGXvP1KW3ZwOD1u1VncrTqK9WtPZqwrj-C1Dhbfi9OkSc_rB4P2WqofrHO4v32MmcRC7Lr0Z9Us46Eb1xCbyQIgNppQL7pACwziRgCN3xZcJlDULw2a-Q9lNAd-lfbZcymHGhQQVJxVBl0UJBXenjwoe-Jt0ncerf2
-        role: model
-      - parts:
-        - functionResponse:
-            id: 3moy6l4l
-            name: lookup_refund_policy
-            response:
-              return_value: 'order-123: refund allowed for 30 days'
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - order details
-              - order status
-            id: acj33las
-            name: search_tools
-          thoughtSignature: EvMCCvACAQw51sfKdsHQ63w9soDjeBwgjcTYoalVa_QDV0gYzwKDpp5jGJ6JXiWgzv_MIkcSNKP-KZulp9WMJplW4jutbkg9Py1xfCe0toKM5LB0Fk6S18AXge0qcLwlvn6e1Ds1mWIPBdP8XvsMjL8qws1_jD0mDrmhb95ildZxM6L10rVkn91m8cwTi6V0P_YXPsd57MGnCsOwBXoS6tm2VaT9smV7eLt-gxa5lm8z8MnQlTfG3k_DxPUoUfBuv3KDRvlSgBTDeYMYP-XXl3rQBUI2atKfe5hyjVeYrXSY1l4KdnFjaySw5XbMt_a5ZK2Z7ThTcekjVrWM4Cu4I4W8mKwhRGXSECE24hhQYT0ne5GmlV2ZDnV7rWSVizF4Fc5cIC-OUpZKCNrDRNaZ9BFOMGcX08bOVFNj2cnzxP9A7mo56xG_Wvf8vimDiQ3qa8U41lwKLcmRveoscZ_TvSZpBx5JdU4hw6OqHl4z4wN3canqHEA=
-        role: model
-      - parts:
-        - functionResponse:
-            id: acj33las
-            name: search_tools
-            response:
-              discovered_tools: []
-              message: No matching tools found. The tools you need may not be available.
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      systemInstruction:
-        parts:
-        - text: |-
-            The following capabilities are deferred and can be loaded using the `load_capability` tool:
-            - refunds: Refund policy tools.
-        role: user
-      toolConfig:
-        functionCallingConfig:
-          mode: AUTO
-      tools:
-      - functionDeclarations:
-        - description: Load a capability to access its full instructions and tools.
-          name: load_capability
-          parameters_json_schema:
-            description: Typed arguments for a `load_capability` call.
-            properties:
-              id:
-                description: The id of the capability to load.
-                type: string
-            required:
-            - id
-            type: object
-        - description: Look up the refund policy for an order.
-          name: lookup_refund_policy
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              order_id:
-                type: string
-            required:
-            - order_id
-            type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
-          name: search_tools
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: List of search queries to match against tool names and descriptions. Use specific words likely
-                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                  matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '793'
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=1487
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - functionCall:
-              args:
-                queries:
-                - get order
-                - order information
-              id: c929rooh
-              name: search_tools
-            thoughtSignature: EpUBCpIBAQw51seIiEuh2xkqCDbxthjcluJ7LPNjGFpXVOAnelSFgr8Sa/ddg0MHypqLKyajxt1Uawaf2Wb5+Tewy6lDOGevzOcYkHFLJ0SqGFrAQFxzzv7WZqWC9pdikQiT821CtkMOVdmHepe9IhchRZW+Z8BLEyA9L9MO1Dl/eievYDLRUwsFkA0a0kR5p4yr/C6GC24=
-          role: model
-        finishMessage: Model generated function call(s).
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-3-flash-preview
-      responseId: MlYQar_yMMHMrfcP982EeA
-      usageMetadata:
-        candidatesTokenCount: 22
-        promptTokenCount: 722
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 722
-        serviceTier: standard
-        thoughtsTokenCount: 25
-        totalTokenCount: 769
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '5203'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Can I get a refund on order-123?
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              id: refunds
-            id: 5i7v9nsb
-            name: load_capability
-          thoughtSignature: EvgCCvUCAQw51sczaJcxTTH1EcDyIHbMNOE-h1yLteUCBCZY_vEW8oQpqJL2RS8ZCrQUuhZHP2eUsGnboikpRtZy3wt68tdq0uRGbPkzusR5TME3M3DYirzZ1xRCd2TT3eAh0OT-HBmBcvf8g9lFl906YZVFS2jMabSsJlF_iexlowTnqShbh_PMbNb6b-4cHguzW0mSYRNtFI5VquOGnAC8kyCM7zQompQ8pjEveDZJRvrZbbrMuXOqin1mZDGqr_LaqASud5SYnUav_htq9II3omxzoFXOFlllFuxbyasL4oCF0B3RN0eu9v851a7enMpFb5aLxyKlmT0dog2i70YDEC65VX98-swwtADcX7CnLOb3h_BgtulqTuquShYb970n9OARQAEoy82hQ61xk4R8_I6ejaXiM5qZerwdaJkPKxvwm4j7tt2wZm7ZuIChsWWb8gdqMA_u3HBv2DWC7rB7u9ohvR_y0x0OEv6IykGvoz-X9nkUXVwwKA==
-        role: model
-      - parts:
-        - functionResponse:
-            id: 5i7v9nsb
-            name: load_capability
-            response:
-              instructions: Use the refund policy tool before answering refund questions.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - refunds
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-            response:
-              discovered_tools:
-              - description: Look up the refund policy for an order.
-                name: lookup_refund_policy
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              order_id: order-123
-            id: 3moy6l4l
-            name: lookup_refund_policy
-          thoughtSignature: EsABCr0BAQw51scJk0h4LYgsOiGsCrP8PB3edo6xhJe1GInthR1Y_G174EO5BHaIuPLvzOhdbYe-RBPJ3QthG5_-XEPtXjzzYsdGXvP1KW3ZwOD1u1VncrTqK9WtPZqwrj-C1Dhbfi9OkSc_rB4P2WqofrHO4v32MmcRC7Lr0Z9Us46Eb1xCbyQIgNppQL7pACwziRgCN3xZcJlDULw2a-Q9lNAd-lfbZcymHGhQQVJxVBl0UJBXenjwoe-Jt0ncerf2
-        role: model
-      - parts:
-        - functionResponse:
-            id: 3moy6l4l
-            name: lookup_refund_policy
-            response:
-              return_value: 'order-123: refund allowed for 30 days'
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - order details
-              - order status
-            id: acj33las
-            name: search_tools
-          thoughtSignature: EvMCCvACAQw51sfKdsHQ63w9soDjeBwgjcTYoalVa_QDV0gYzwKDpp5jGJ6JXiWgzv_MIkcSNKP-KZulp9WMJplW4jutbkg9Py1xfCe0toKM5LB0Fk6S18AXge0qcLwlvn6e1Ds1mWIPBdP8XvsMjL8qws1_jD0mDrmhb95ildZxM6L10rVkn91m8cwTi6V0P_YXPsd57MGnCsOwBXoS6tm2VaT9smV7eLt-gxa5lm8z8MnQlTfG3k_DxPUoUfBuv3KDRvlSgBTDeYMYP-XXl3rQBUI2atKfe5hyjVeYrXSY1l4KdnFjaySw5XbMt_a5ZK2Z7ThTcekjVrWM4Cu4I4W8mKwhRGXSECE24hhQYT0ne5GmlV2ZDnV7rWSVizF4Fc5cIC-OUpZKCNrDRNaZ9BFOMGcX08bOVFNj2cnzxP9A7mo56xG_Wvf8vimDiQ3qa8U41lwKLcmRveoscZ_TvSZpBx5JdU4hw6OqHl4z4wN3canqHEA=
-        role: model
-      - parts:
-        - functionResponse:
-            id: acj33las
-            name: search_tools
-            response:
-              discovered_tools: []
-              message: No matching tools found. The tools you need may not be available.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - get order
-              - order information
-            id: c929rooh
-            name: search_tools
-          thoughtSignature: EpUBCpIBAQw51seIiEuh2xkqCDbxthjcluJ7LPNjGFpXVOAnelSFgr8Sa_ddg0MHypqLKyajxt1Uawaf2Wb5-Tewy6lDOGevzOcYkHFLJ0SqGFrAQFxzzv7WZqWC9pdikQiT821CtkMOVdmHepe9IhchRZW-Z8BLEyA9L9MO1Dl_eievYDLRUwsFkA0a0kR5p4yr_C6GC24=
-        role: model
-      - parts:
-        - functionResponse:
-            id: c929rooh
-            name: search_tools
-            response:
-              discovered_tools: []
-              message: No matching tools found. The tools you need may not be available.
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      systemInstruction:
-        parts:
-        - text: |-
-            The following capabilities are deferred and can be loaded using the `load_capability` tool:
-            - refunds: Refund policy tools.
-        role: user
-      toolConfig:
-        functionCallingConfig:
-          mode: AUTO
-      tools:
-      - functionDeclarations:
-        - description: Load a capability to access its full instructions and tools.
-          name: load_capability
-          parameters_json_schema:
-            description: Typed arguments for a `load_capability` call.
-            properties:
-              id:
-                description: The id of the capability to load.
-                type: string
-            required:
-            - id
-            type: object
-        - description: Look up the refund policy for an order.
-          name: lookup_refund_policy
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              order_id:
-                type: string
-            required:
-            - order_id
-            type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
-          name: search_tools
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: List of search queries to match against tool names and descriptions. Use specific words likely
-                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                  matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '1267'
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=1987
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - functionCall:
-              args:
-                queries:
-                - refund order
-                - process refund
-              id: tvn723pr
-              name: search_tools
-            thoughtSignature: EvcDCvQDAQw51sd3aiWwBpmE9PAX0HownBKdxXi4dwj1GFyQ0Qib8Wq3SWRWTyngqLklb/z4ZU8skLqXqWjHCKypnXCgN8cdtSFeEE3FlqLRG+kNfcVToFYMb0xtYoNkQqbTQq8wQHpLvRJct4N2J8GipBfIa8yA9T3r0+yXTUB/CHqnOtY+VP0OhOSf5SWRfj0fmQnPFU+ygjQgf3gxcRabAq69E2srllThL2c7KT6cgxgMTmTy9Lt0Bcz5Gw3uCPGrLRlabLHMSLCdZiL6OIaVjyX59TqhlSZM/CXK/9kGK25vIgU7BYFc7DDwClH+T6CMHQWe82YUIXpCNvv/dwHvQWLoib0FMLqSInhfR/Pkb5cv5g+DbOUeNSwcgYd1KTigkE4FKIelo7kFBnLK266Ws1HPyVw+oQDTn0H0T3dtjOyBLwZrIh5DzdKAR+buRjBNeu7geGLLz/b2TTsXohU5KyjFyiVnrGXStpUUI8ZoPID28ID89IJ6Bs6BkhTxgqBTeDTh6k05l9eJuAmTAJQlaRhgdFbgiVz9t0DSuGD0h/xBU68+9eShxmNBvU56MfyiPsicntADhCWNthrLWxHEA5N4mqeif6Wb/X89qfbYnjqaDecVQkrAhbO0013XjzoVy7tRYIycPZEa2lO1p2XfvMLFxQrqPRc=
-          role: model
-        finishMessage: Model generated function call(s).
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-3-flash-preview
-      responseId: NFYQaprUGJHM2roPoYygmAc
-      usageMetadata:
-        candidatesTokenCount: 22
-        promptTokenCount: 801
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 801
-        serviceTier: standard
-        thoughtsTokenCount: 112
-        totalTokenCount: 935
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '6265'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Can I get a refund on order-123?
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              id: refunds
-            id: 5i7v9nsb
-            name: load_capability
-          thoughtSignature: EvgCCvUCAQw51sczaJcxTTH1EcDyIHbMNOE-h1yLteUCBCZY_vEW8oQpqJL2RS8ZCrQUuhZHP2eUsGnboikpRtZy3wt68tdq0uRGbPkzusR5TME3M3DYirzZ1xRCd2TT3eAh0OT-HBmBcvf8g9lFl906YZVFS2jMabSsJlF_iexlowTnqShbh_PMbNb6b-4cHguzW0mSYRNtFI5VquOGnAC8kyCM7zQompQ8pjEveDZJRvrZbbrMuXOqin1mZDGqr_LaqASud5SYnUav_htq9II3omxzoFXOFlllFuxbyasL4oCF0B3RN0eu9v851a7enMpFb5aLxyKlmT0dog2i70YDEC65VX98-swwtADcX7CnLOb3h_BgtulqTuquShYb970n9OARQAEoy82hQ61xk4R8_I6ejaXiM5qZerwdaJkPKxvwm4j7tt2wZm7ZuIChsWWb8gdqMA_u3HBv2DWC7rB7u9ohvR_y0x0OEv6IykGvoz-X9nkUXVwwKA==
-        role: model
-      - parts:
-        - functionResponse:
-            id: 5i7v9nsb
-            name: load_capability
-            response:
-              instructions: Use the refund policy tool before answering refund questions.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - refunds
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-            response:
-              discovered_tools:
-              - description: Look up the refund policy for an order.
-                name: lookup_refund_policy
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              order_id: order-123
-            id: 3moy6l4l
-            name: lookup_refund_policy
-          thoughtSignature: EsABCr0BAQw51scJk0h4LYgsOiGsCrP8PB3edo6xhJe1GInthR1Y_G174EO5BHaIuPLvzOhdbYe-RBPJ3QthG5_-XEPtXjzzYsdGXvP1KW3ZwOD1u1VncrTqK9WtPZqwrj-C1Dhbfi9OkSc_rB4P2WqofrHO4v32MmcRC7Lr0Z9Us46Eb1xCbyQIgNppQL7pACwziRgCN3xZcJlDULw2a-Q9lNAd-lfbZcymHGhQQVJxVBl0UJBXenjwoe-Jt0ncerf2
-        role: model
-      - parts:
-        - functionResponse:
-            id: 3moy6l4l
-            name: lookup_refund_policy
-            response:
-              return_value: 'order-123: refund allowed for 30 days'
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - order details
-              - order status
-            id: acj33las
-            name: search_tools
-          thoughtSignature: EvMCCvACAQw51sfKdsHQ63w9soDjeBwgjcTYoalVa_QDV0gYzwKDpp5jGJ6JXiWgzv_MIkcSNKP-KZulp9WMJplW4jutbkg9Py1xfCe0toKM5LB0Fk6S18AXge0qcLwlvn6e1Ds1mWIPBdP8XvsMjL8qws1_jD0mDrmhb95ildZxM6L10rVkn91m8cwTi6V0P_YXPsd57MGnCsOwBXoS6tm2VaT9smV7eLt-gxa5lm8z8MnQlTfG3k_DxPUoUfBuv3KDRvlSgBTDeYMYP-XXl3rQBUI2atKfe5hyjVeYrXSY1l4KdnFjaySw5XbMt_a5ZK2Z7ThTcekjVrWM4Cu4I4W8mKwhRGXSECE24hhQYT0ne5GmlV2ZDnV7rWSVizF4Fc5cIC-OUpZKCNrDRNaZ9BFOMGcX08bOVFNj2cnzxP9A7mo56xG_Wvf8vimDiQ3qa8U41lwKLcmRveoscZ_TvSZpBx5JdU4hw6OqHl4z4wN3canqHEA=
-        role: model
-      - parts:
-        - functionResponse:
-            id: acj33las
-            name: search_tools
-            response:
-              discovered_tools: []
-              message: No matching tools found. The tools you need may not be available.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - get order
-              - order information
-            id: c929rooh
-            name: search_tools
-          thoughtSignature: EpUBCpIBAQw51seIiEuh2xkqCDbxthjcluJ7LPNjGFpXVOAnelSFgr8Sa_ddg0MHypqLKyajxt1Uawaf2Wb5-Tewy6lDOGevzOcYkHFLJ0SqGFrAQFxzzv7WZqWC9pdikQiT821CtkMOVdmHepe9IhchRZW-Z8BLEyA9L9MO1Dl_eievYDLRUwsFkA0a0kR5p4yr_C6GC24=
-        role: model
-      - parts:
-        - functionResponse:
-            id: c929rooh
-            name: search_tools
-            response:
-              discovered_tools: []
-              message: No matching tools found. The tools you need may not be available.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - refund order
-              - process refund
-            id: tvn723pr
-            name: search_tools
-          thoughtSignature: EvcDCvQDAQw51sd3aiWwBpmE9PAX0HownBKdxXi4dwj1GFyQ0Qib8Wq3SWRWTyngqLklb_z4ZU8skLqXqWjHCKypnXCgN8cdtSFeEE3FlqLRG-kNfcVToFYMb0xtYoNkQqbTQq8wQHpLvRJct4N2J8GipBfIa8yA9T3r0-yXTUB_CHqnOtY-VP0OhOSf5SWRfj0fmQnPFU-ygjQgf3gxcRabAq69E2srllThL2c7KT6cgxgMTmTy9Lt0Bcz5Gw3uCPGrLRlabLHMSLCdZiL6OIaVjyX59TqhlSZM_CXK_9kGK25vIgU7BYFc7DDwClH-T6CMHQWe82YUIXpCNvv_dwHvQWLoib0FMLqSInhfR_Pkb5cv5g-DbOUeNSwcgYd1KTigkE4FKIelo7kFBnLK266Ws1HPyVw-oQDTn0H0T3dtjOyBLwZrIh5DzdKAR-buRjBNeu7geGLLz_b2TTsXohU5KyjFyiVnrGXStpUUI8ZoPID28ID89IJ6Bs6BkhTxgqBTeDTh6k05l9eJuAmTAJQlaRhgdFbgiVz9t0DSuGD0h_xBU68-9eShxmNBvU56MfyiPsicntADhCWNthrLWxHEA5N4mqeif6Wb_X89qfbYnjqaDecVQkrAhbO0013XjzoVy7tRYIycPZEa2lO1p2XfvMLFxQrqPRc=
-        role: model
-      - parts:
-        - functionResponse:
-            id: tvn723pr
-            name: search_tools
-            response:
-              discovered_tools: []
-              message: No matching tools found. The tools you need may not be available.
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      systemInstruction:
-        parts:
-        - text: |-
-            The following capabilities are deferred and can be loaded using the `load_capability` tool:
-            - refunds: Refund policy tools.
-        role: user
-      toolConfig:
-        functionCallingConfig:
-          mode: AUTO
-      tools:
-      - functionDeclarations:
-        - description: Load a capability to access its full instructions and tools.
-          name: load_capability
-          parameters_json_schema:
-            description: Typed arguments for a `load_capability` call.
-            properties:
-              id:
-                description: The id of the capability to load.
-                type: string
-            required:
-            - id
-            type: object
-        - description: Look up the refund policy for an order.
-          name: lookup_refund_policy
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              order_id:
-                type: string
-            required:
-            - order_id
-            type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
-          name: search_tools
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: List of search queries to match against tool names and descriptions. Use specific words likely
-                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                  matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '1081'
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=2181
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - text: "Based on the refund policy for **order-123**, you are eligible for a refund within **30 days** of the purchase
-              date. \n\nCould you please confirm when you placed the order? If you're within that 30-day window, I can help
-              you with the next steps."
-            thoughtSignature: EqsCCqgCAQw51sfnZcCnuICLMsKuZprQlFaST8LvL+E0Vsx/MYCcPdn52A0pvfv7lM2S1V7+WGtyJJgLLHLs8b0f2fyZwalgqIgON9N2tlhFsl9qKSX/INNhBbhGOZroy/A/wWo3sa6VVPXPKLjTlF3EUD0z2OPVzMZgCe4HQjw7GQeLQEb7ySJoKNZjQba48mo/pyOkp85MDYPZ20qSOD09sltZjl4qu1tzJDiz7CAnguwwhJj6eaZgiQDwA/oQczF/8p9kNzZcjd3Fv5DTq0sSvxwmWL0U1lZBqOwjJjNYF1h+YxP8GVynaeHD3oKybRi8uda/2rwE8zU/R6XFL5DOhwiklb58qwzJKohAheE1WkwHNYrZX9eh+jArC4Dm9dOnh6//BxDqtTyViOw=
+          - text: OK, I see that for order-123, a refund is allowed for up to 30 days. Do you know when the order was placed?
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: NlYQapeaHsmr0-kPqZ-PkAg
+      responseId: irFraojFCsW2qtsP-PTc8Q0
       usageMetadata:
-        candidatesTokenCount: 64
-        promptTokenCount: 967
+        candidatesTokenCount: 33
+        promptTokenCount: 414
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 967
+          tokenCount: 414
         serviceTier: standard
-        thoughtsTokenCount: 58
-        totalTokenCount: 1089
+        totalTokenCount: 447
     status:
       code: 200
       message: OK
@@ -1038,11 +362,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '3552'
+      - '1839'
       content-type:
       - application/json
       host:
@@ -1055,25 +379,15 @@ interactions:
       - content: Can I get a refund on order-123?
         role: user
       - arguments: '{"id":"refunds"}'
-        call_id: 5i7v9nsb
+        call_id: hq1dul8c
         name: load_capability
         type: function_call
-      - call_id: 5i7v9nsb
+      - call_id: hq1dul8c
         output: '{"instructions":"Use the refund policy tool before answering refund questions."}'
         type: function_call_output
-      - arguments:
-          queries:
-          - refunds
-        call_id: auto_load_0f10f8b659c3c105
-        execution: client
-        status: completed
-        type: tool_search_call
-      - call_id: auto_load_0f10f8b659c3c105
-        execution: client
-        status: completed
+      - role: developer
         tools:
-        - defer_loading: true
-          description: Look up the refund policy for an order.
+        - description: Look up the refund policy for an order.
           name: lookup_refund_policy
           parameters:
             additionalProperties: false
@@ -1085,57 +399,16 @@ interactions:
             type: object
           strict: true
           type: function
-        type: tool_search_output
+        type: additional_tools
       - arguments: '{"order_id":"order-123"}'
-        call_id: 3moy6l4l
+        call_id: m71ii1s7
         name: lookup_refund_policy
         namespace: lookup_refund_policy
         type: function_call
-      - call_id: 3moy6l4l
+      - call_id: m71ii1s7
         output: 'order-123: refund allowed for 30 days'
         type: function_call_output
-      - arguments:
-          queries:
-          - order details
-          - order status
-        call_id: acj33las
-        execution: client
-        status: completed
-        type: tool_search_call
-      - call_id: acj33las
-        execution: client
-        status: completed
-        tools: []
-        type: tool_search_output
-      - arguments:
-          queries:
-          - get order
-          - order information
-        call_id: c929rooh
-        execution: client
-        status: completed
-        type: tool_search_call
-      - call_id: c929rooh
-        execution: client
-        status: completed
-        tools: []
-        type: tool_search_output
-      - arguments:
-          queries:
-          - refund order
-          - process refund
-        call_id: tvn723pr
-        execution: client
-        status: completed
-        type: tool_search_call
-      - call_id: tvn723pr
-        execution: client
-        status: completed
-        tools: []
-        type: tool_search_output
-      - content: "Based on the refund policy for **order-123**, you are eligible for a refund within **30 days** of the purchase
-          date. \n\nCould you please confirm when you placed the order? If you're within that 30-day window, I can help you
-          with the next steps."
+      - content: OK, I see that for order-123, a refund is allowed for up to 30 days. Do you know when the order was placed?
         role: assistant
       - content: And what about order-456?
         role: user
@@ -1143,27 +416,16 @@ interactions:
         The following capabilities are deferred and can be loaded using the `load_capability` tool:
         - refunds: Refund policy tools.
       model: gpt-5.4
+      reasoning:
+        context: all_turns
       stream: false
       tool_choice: auto
       tools:
-      - description: Search for relevant tools.
-        execution: client
-        parameters:
-          additionalProperties: false
-          properties:
-            queries:
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        type: tool_search
       - description: Load a capability to access its full instructions and tools.
         name: load_capability
         parameters:
           additionalProperties: false
-          description: Typed arguments for a `load_capability` call.
+          description: Typed arguments for a `load_capability` tool call.
           properties:
             id:
               description: The id of the capability to load.
@@ -1173,34 +435,23 @@ interactions:
           type: object
         strict: true
         type: function
-      - defer_loading: true
-        description: Look up the refund policy for an order.
-        name: lookup_refund_policy
-        parameters:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        strict: true
-        type: function
     uri: https://api.openai.com/v1/responses
   response:
     headers:
       access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
       - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '2497'
+      - '2604'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1401'
+      - '1170'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -1211,11 +462,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1779455546
-      created_at: 1779455545
+      completed_at: 1785442700
+      created_at: 1785442699
       error: null
       frequency_penalty: 0.0
-      id: resp_005ec54bd57626b2006a105638f66c8196ba158f630e035396
+      id: resp_08782241a2a84a83006a6bb18b34648194a2e96fd1e835ca61
       incomplete_details: null
       instructions: |-
         The following capabilities are deferred and can be loaded using the `load_capability` tool:
@@ -1228,8 +479,8 @@ interactions:
       object: response
       output:
       - arguments: '{"order_id":"order-456"}'
-        call_id: call_rmj5ntosgrzbP4b4e7MaCNMH
-        id: fc_005ec54bd57626b2006a105639f4ac81969380c03b86faf622
+        call_id: call_BeEoWrEJdy4aTv0K1STfaGoz
+        id: fc_08782241a2a84a83006a6bb18c07948194b9988852d160ce6e
         name: lookup_refund_policy
         namespace: lookup_refund_policy
         status: completed
@@ -1238,9 +489,11 @@ interactions:
       presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
-      prompt_cache_retention: in_memory
+      prompt_cache_retention: 24h
       reasoning:
+        context: all_turns
         effort: none
+        mode: standard
         summary: null
       safety_identifier: null
       service_tier: default
@@ -1252,12 +505,26 @@ interactions:
           type: text
         verbosity: medium
       tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
       tools:
       - description: Load a capability to access its full instructions and tools.
         name: load_capability
+        output_schema: null
         parameters:
           additionalProperties: false
-          description: Typed arguments for a `load_capability` call.
+          description: Typed arguments for a `load_capability` tool call.
           properties:
             id:
               description: The id of the capability to load.
@@ -1267,24 +534,12 @@ interactions:
           type: object
         strict: true
         type: function
-      - description: Search for relevant tools.
-        execution: client
-        parameters:
-          additionalProperties: false
-          properties:
-            queries:
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        type: tool_search
       - description: Look up the refund policy for an order.
         name: lookup_refund_policy
         tools:
         - description: Look up the refund policy for an order.
           name: lookup_refund_policy
+          output_schema: null
           parameters:
             additionalProperties: false
             properties:
@@ -1300,13 +555,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 620
+        input_tokens: 381
         input_tokens_details:
+          cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 26
+        output_tokens: 32
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 646
+        total_tokens: 413
       user: null
     status:
       code: 200
@@ -1316,11 +572,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '3929'
+      - '2216'
       content-type:
       - application/json
       host:
@@ -1333,25 +589,15 @@ interactions:
       - content: Can I get a refund on order-123?
         role: user
       - arguments: '{"id":"refunds"}'
-        call_id: 5i7v9nsb
+        call_id: hq1dul8c
         name: load_capability
         type: function_call
-      - call_id: 5i7v9nsb
+      - call_id: hq1dul8c
         output: '{"instructions":"Use the refund policy tool before answering refund questions."}'
         type: function_call_output
-      - arguments:
-          queries:
-          - refunds
-        call_id: auto_load_0f10f8b659c3c105
-        execution: client
-        status: completed
-        type: tool_search_call
-      - call_id: auto_load_0f10f8b659c3c105
-        execution: client
-        status: completed
+      - role: developer
         tools:
-        - defer_loading: true
-          description: Look up the refund policy for an order.
+        - description: Look up the refund policy for an order.
           name: lookup_refund_policy
           parameters:
             additionalProperties: false
@@ -1363,94 +609,42 @@ interactions:
             type: object
           strict: true
           type: function
-        type: tool_search_output
+        type: additional_tools
       - arguments: '{"order_id":"order-123"}'
-        call_id: 3moy6l4l
+        call_id: m71ii1s7
         name: lookup_refund_policy
         namespace: lookup_refund_policy
         type: function_call
-      - call_id: 3moy6l4l
+      - call_id: m71ii1s7
         output: 'order-123: refund allowed for 30 days'
         type: function_call_output
-      - arguments:
-          queries:
-          - order details
-          - order status
-        call_id: acj33las
-        execution: client
-        status: completed
-        type: tool_search_call
-      - call_id: acj33las
-        execution: client
-        status: completed
-        tools: []
-        type: tool_search_output
-      - arguments:
-          queries:
-          - get order
-          - order information
-        call_id: c929rooh
-        execution: client
-        status: completed
-        type: tool_search_call
-      - call_id: c929rooh
-        execution: client
-        status: completed
-        tools: []
-        type: tool_search_output
-      - arguments:
-          queries:
-          - refund order
-          - process refund
-        call_id: tvn723pr
-        execution: client
-        status: completed
-        type: tool_search_call
-      - call_id: tvn723pr
-        execution: client
-        status: completed
-        tools: []
-        type: tool_search_output
-      - content: "Based on the refund policy for **order-123**, you are eligible for a refund within **30 days** of the purchase
-          date. \n\nCould you please confirm when you placed the order? If you're within that 30-day window, I can help you
-          with the next steps."
+      - content: OK, I see that for order-123, a refund is allowed for up to 30 days. Do you know when the order was placed?
         role: assistant
       - content: And what about order-456?
         role: user
       - arguments: '{"order_id":"order-456"}'
-        call_id: call_rmj5ntosgrzbP4b4e7MaCNMH
-        id: fc_005ec54bd57626b2006a105639f4ac81969380c03b86faf622
+        call_id: call_BeEoWrEJdy4aTv0K1STfaGoz
+        id: fc_08782241a2a84a83006a6bb18c07948194b9988852d160ce6e
         name: lookup_refund_policy
         namespace: lookup_refund_policy
         type: function_call
-      - call_id: call_rmj5ntosgrzbP4b4e7MaCNMH
+      - call_id: call_BeEoWrEJdy4aTv0K1STfaGoz
         output: 'order-456: refund allowed for 30 days'
         type: function_call_output
       instructions: |-
         The following capabilities are deferred and can be loaded using the `load_capability` tool:
         - refunds: Refund policy tools.
       model: gpt-5.4
+      reasoning:
+        context: all_turns
       stream: false
       tool_choice: auto
       tools:
-      - description: Search for relevant tools.
-        execution: client
-        parameters:
-          additionalProperties: false
-          properties:
-            queries:
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        type: tool_search
       - description: Load a capability to access its full instructions and tools.
         name: load_capability
         parameters:
           additionalProperties: false
-          description: Typed arguments for a `load_capability` call.
+          description: Typed arguments for a `load_capability` tool call.
           properties:
             id:
               description: The id of the capability to load.
@@ -1460,34 +654,23 @@ interactions:
           type: object
         strict: true
         type: function
-      - defer_loading: true
-        description: Look up the refund policy for an order.
-        name: lookup_refund_policy
-        parameters:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        strict: true
-        type: function
     uri: https://api.openai.com/v1/responses
   response:
     headers:
       access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
       - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '2535'
+      - '2630'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1274'
+      - '1354'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -1498,11 +681,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1779455547
-      created_at: 1779455546
+      completed_at: 1785442701
+      created_at: 1785442700
       error: null
       frequency_penalty: 0.0
-      id: resp_005ec54bd57626b2006a10563ab5608196aecb0b2157f60ca5
+      id: resp_08782241a2a84a83006a6bb18c80fc8194b87b91918c9a3754
       incomplete_details: null
       instructions: |-
         The following capabilities are deferred and can be loaded using the `load_capability` tool:
@@ -1517,9 +700,9 @@ interactions:
       - content:
         - annotations: []
           logprobs: []
-          text: Yes -- **order-456** is also eligible for a refund within **30 days**.
+          text: For order-456, refunds are also allowed for up to 30 days.
           type: output_text
-        id: msg_005ec54bd57626b2006a10563b2b9c819688bcde9c0917eeab
+        id: msg_08782241a2a84a83006a6bb18d42148194b31f83de53aec6fd
         phase: final_answer
         role: assistant
         status: completed
@@ -1528,9 +711,11 @@ interactions:
       presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
-      prompt_cache_retention: in_memory
+      prompt_cache_retention: 24h
       reasoning:
+        context: all_turns
         effort: none
+        mode: standard
         summary: null
       safety_identifier: null
       service_tier: default
@@ -1542,12 +727,26 @@ interactions:
           type: text
         verbosity: medium
       tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
       tools:
       - description: Load a capability to access its full instructions and tools.
         name: load_capability
+        output_schema: null
         parameters:
           additionalProperties: false
-          description: Typed arguments for a `load_capability` call.
+          description: Typed arguments for a `load_capability` tool call.
           properties:
             id:
               description: The id of the capability to load.
@@ -1557,24 +756,12 @@ interactions:
           type: object
         strict: true
         type: function
-      - description: Search for relevant tools.
-        execution: client
-        parameters:
-          additionalProperties: false
-          properties:
-            queries:
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        type: tool_search
       - description: Look up the refund policy for an order.
         name: lookup_refund_policy
         tools:
         - description: Look up the refund policy for an order.
           name: lookup_refund_policy
+          output_schema: null
           parameters:
             additionalProperties: false
             properties:
@@ -1590,13 +777,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 672
+        input_tokens: 433
         input_tokens_details:
+          cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 23
+        output_tokens: 20
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 695
+        total_tokens: 453
       user: null
     status:
       code: 200

@@ -3,8 +3,10 @@ from __future__ import annotations as _annotations
 import re
 
 import httpx
+import httpx2
 import pytest
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 
 from ..conftest import TestEnv, try_import
@@ -18,12 +20,18 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='mistral not installed')
 
 
-def test_mistral_provider():
+async def test_mistral_provider():
     provider = MistralProvider(api_key='api-key')
     assert provider.name == 'mistral'
     assert provider.base_url == 'https://api.mistral.ai'
     assert isinstance(provider.client, Mistral)
-    assert provider.client.sdk_configuration.security.api_key == 'api-key'  # pyright: ignore
+    assert provider.client.sdk_configuration.security.api_key == 'api-key'  # pyright: ignore[reportFunctionMemberAccess, reportOptionalMemberAccess]
+    assert isinstance(provider.client.sdk_configuration.async_client, httpx2.AsyncClient)
+
+    async with provider:
+        pass
+
+    assert provider.client.sdk_configuration.async_client.is_closed
 
 
 def test_mistral_provider_need_api_key(env: TestEnv) -> None:
@@ -38,16 +46,43 @@ def test_mistral_provider_need_api_key(env: TestEnv) -> None:
         MistralProvider()
 
 
-def test_mistral_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = MistralProvider(http_client=http_client, api_key='api-key')
-    assert provider.client.sdk_configuration.async_client == http_client
+async def test_mistral_provider_pass_httpx2_client() -> None:
+    async with httpx2.AsyncClient() as http_client:
+        provider = MistralProvider(http_client=http_client, api_key='api-key')
+        assert provider.client.sdk_configuration.async_client is http_client
+
+        async with provider:
+            pass
+
+        assert not http_client.is_closed
 
 
-def test_mistral_provider_pass_groq_client() -> None:
-    mistral_client = Mistral(api_key='api-key')
-    provider = MistralProvider(mistral_client=mistral_client)
-    assert provider.client == mistral_client
+async def test_mistral_provider_deprecates_legacy_httpx_client() -> None:
+    async with httpx.AsyncClient() as http_client:
+        with pytest.warns(
+            PydanticAIDeprecationWarning,
+            match=r'`httpx\.AsyncClient`.*removed in v3.*`httpx2\.AsyncClient`',
+        ) as warnings:
+            provider = MistralProvider(http_client=http_client, api_key='api-key')
+
+        assert warnings[0].filename == __file__
+        assert provider.client.sdk_configuration.async_client is http_client
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+async def test_mistral_provider_pass_mistral_client() -> None:
+    async with httpx.AsyncClient() as http_client:
+        mistral_client = Mistral(api_key='api-key', async_client=http_client)
+        provider = MistralProvider(mistral_client=mistral_client)
+        assert provider.client is mistral_client
+
+        async with provider:
+            pass
+
+        assert provider.client.sdk_configuration.async_client is http_client
+        assert not http_client.is_closed
 
 
 def test_mistral_provider_with_base_url() -> None:

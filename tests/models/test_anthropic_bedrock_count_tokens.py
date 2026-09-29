@@ -34,7 +34,7 @@ from ..cassette_utils import single_request_body
 from ..conftest import TestEnv, try_import
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, AsyncAnthropicBedrock, BadRequestError, omit as OMIT
@@ -46,7 +46,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -68,7 +67,7 @@ def bedrock_client() -> AsyncAnthropicBedrock:
     )
 
 
-async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
+async def test_anthropic_bedrock_count_tokens_unexpected_response(allow_model_requests: None, env: TestEnv):
     """Pins the defensive `UnexpectedModelBehavior` branch for a malformed Bedrock response.
 
     Mocks `client.post` to return a body without `inputTokens` — a shape no real Bedrock
@@ -127,7 +126,7 @@ async def test_anthropic_bedrock_count_tokens_real_api(
 
     assert result.input_tokens == snapshot(18)
 
-    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens')  # pyright: ignore[reportUnknownMemberType]
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens')
     envelope = single_request_body(vcr)
     body = json.loads(base64.b64decode(envelope['input']['invokeModel']['body']))
     assert body == snapshot(
@@ -179,6 +178,28 @@ async def test_anthropic_bedrock_count_tokens_before_request(
 
     with pytest.raises(UsageLimitExceeded, match='input_tokens_limit of 10'):
         await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=10, count_tokens_before_request=True))
+
+
+@pytest.mark.vcr('test_anthropic_bedrock_count_tokens_real_api.yaml')
+async def test_anthropic_bedrock_per_request_count_tokens_before_request(
+    allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock
+):
+    """The per-request variant of the pre-request guard: `per_request_input_tokens_limit`.
+
+    Reuses the `..._real_api` cassette (a single `/count-tokens` interaction returning 18 tokens).
+    With a per-request limit below that count, the pre-request check raises `UsageLimitExceeded`
+    before any message request, so only the count-tokens call is played back.
+    """
+    model = AnthropicModel(
+        'anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=AnthropicProvider(anthropic_client=bedrock_client),
+    )
+    agent = Agent(model)
+
+    with pytest.raises(UsageLimitExceeded, match='per_request_input_tokens_limit of 10'):
+        await agent.run(
+            'hello', usage_limits=UsageLimits(per_request_input_tokens_limit=10, count_tokens_before_request=True)
+        )
 
 
 @pytest.mark.vcr()

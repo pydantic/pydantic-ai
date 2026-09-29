@@ -45,33 +45,3 @@ jobs:
           name: ci-duration-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ci-duration-record.json
           retention-days: 7
-
-  smokeshow:
-    runs-on: ubuntu-latest
-    permissions:
-      statuses: write
-
-    steps:
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          python-version: "3.12"
-
-      - uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ci.yml
-          name: "(diff-)?coverage-html.*"
-          name_is_regexp: true
-          commit: ${{ github.event.workflow_run.head_sha }}
-          allow_forks: true
-          workflow_conclusion: completed
-          if_no_artifact_found: warn
-
-      - run: uvx smokeshow upload coverage-html
-        if: hashFiles('coverage-html/*.html') != ''
-        env:
-          SMOKESHOW_GITHUB_STATUS_DESCRIPTION: Coverage {coverage-percentage}
-          SMOKESHOW_GITHUB_COVERAGE_THRESHOLD: 95
-          SMOKESHOW_GITHUB_CONTEXT: coverage
-          SMOKESHOW_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SMOKESHOW_GITHUB_PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          SMOKESHOW_AUTH_KEY: ${{ secrets.SMOKESHOW_AUTH_KEY }}

@@ -1,0 +1,580 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: event_E4AmeSKqIZ89RWnYjSPVj
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_E4AmetRvO55exoVXHzUuQ
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1784667072
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Answer in two or three words.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-realtime-whisper
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  data:
+    type: session.updated
+    event_id: event_E4AmeRNlKKMY2NvZ6USz6
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_E4AmetRvO55exoVXHzUuQ
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Answer in two or three words.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1784667072
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-realtime-whisper
+            language: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_E4Ame0ayc3Au6XIvKEqhG
+    previous_item_id: null
+    item:
+      id: item_E4Ame0SgAs1MasF932TCe
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_E4AmeJvwgyxLlWafvvEZV
+    previous_item_id: null
+    item:
+      id: item_E4Ame0SgAs1MasF932TCe
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_E4AmewbeE62csHgt9rf3z
+    response:
+      object: realtime.response
+      id: resp_E4AmexTcfhrLsJgxHePcZ
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_E4Ame66SYK5zLj9vNvc1p
+      output_modalities:
+      - audio
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_E4AmeHzN2gQdNax86tN8M
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    output_index: 0
+    item:
+      id: item_E4AmeR6T4h9LkwrfSTCJu
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_E4Ame4cJ6Ss20sOr48LVb
+    previous_item_id: item_E4Ame0SgAs1MasF932TCe
+    item:
+      id: item_E4AmeR6T4h9LkwrfSTCJu
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_E4Ameu9BVvvM6k78u2inF
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      transcript: ''
+    content:
+      type: audio
+      transcript: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E4AmeZUMaOfDkvGZp5t2B
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: Hello
+    obfuscation: CF0cf6XVjRV
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E4AmeEpJB1lXfVHyVLaIw
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: ' there'
+    obfuscation: VfapyZOOgO
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E4AmeqnhoXrmrjyCyifjS
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: '!'
+    obfuscation: Ukz1Y7pPd2xZHUF
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmejT5HUcn7t8cuPYtR
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: AgACAAkAAwAAAAgAAwAEAAEABAAFAAIAAgD//wgAAQAE
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmeWSSbbLY3JK0FyAvD
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: jdGZ1eXYmt3b4KPljuuz8KT0dfmG/fj/FQLkAb8CSgOn
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmejWH7vn3HUKlQCjhm
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: SQ7nBucAUgAfBOoIdQ0AEAURihRJFooVxBHcEFIQTw2n
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E4AmeSIaDLKw4BZx8H9Hj
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: ' Great'
+    obfuscation: 7LlnIW0ceA
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E4AmeQ8SQTYEu9UvwuFPX
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: ' to'
+    obfuscation: 1PumZXtov49YE
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E4Ame7cQKHQuIAapOL3zI
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: ' meet'
+    obfuscation: PW2aiX1FhQz
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E4Ame3DhKM1GHeBYSLL28
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: ' you'
+    obfuscation: gJQNJfyOVSQu
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E4AmeQk09O9C4SKy15D5r
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: '!'
+    obfuscation: kaHSCCe00UmwDgm
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4Amekj4f8dg49tF02GSG
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: Wg0lDuIRaxN1FmIWpRVBGGcc7iQIKAQm0RjbBsHyAeJV
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmeA0Fr1Nk06NROfHrW
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: LQErASIBNQEjAS8BJgEmASMBJAEjAR0BHAEcARgBGAEN
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4Ame3SDIvRCf7zkaK4V7
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: FwAYABcAHAAPAB4AEAAXABQADQARABcABgAQAAwAEAAK
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4Amf2QFifKVIYQXzYjrD
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: HxhGHKgb6hoRFywWRROiEIcN4gtZDQ0QJA/NDBIJ1wTV
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmfCzcxWw2lDPdTmdOO
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: xujT6Jnrw/Bu+KH+vgORBskIqgzOD9wTmRZxGMAbYh1g
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmfXL5qgS0XtNDOh2Yc
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: twhOCScJ4gl2CW8JaQj0B0gH7waFBggGqAUfBdYEDgSO
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmfBuBcbLFcPuhkW79n
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAD//wAAAAAAAAAAAAAAAAAAAAD///////8A
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmfQVFGvn7QvKUTHi6c
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmfXaHDPklWggylHVOI
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: /////wAAAAAAAAAAAAAAAP//////////AAAAAAAAAAAA
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmfzrjzO34o1CcoZiBs
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAA/////////////////////wAAAAAAAP//////
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4AmfFDUeyMD9Y9QdjmmO
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: /////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///7//v//
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4Amf0zwfOQDSuxWrQTi3
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAA/////wAAAAAAAAAAAAAAAP//AAAA
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: event_E4Amf1Y4LrT2zyVmaCyqr
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    delta: ///+//7/////////AAD//wAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: event_E4AmfAuSvEdAPXi8JD7aT
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: event_E4Amf9pBuHT5ivhRxCMyV
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    transcript: Hello there! Great to meet you!
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_E4AmfyAbOzVdWCIaMs4zU
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    item_id: item_E4AmeR6T4h9LkwrfSTCJu
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      transcript: Hello there! Great to meet you!
+    content:
+      type: audio
+      transcript: Hello there! Great to meet you!
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_E4AmfhWpdp4bBAa7BMOFY
+    previous_item_id: null
+    item:
+      id: item_E4AmeR6T4h9LkwrfSTCJu
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        transcript: Hello there! Great to meet you!
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_E4AmfHBUn7OO7COdAK7sf
+    response_id: resp_E4AmexTcfhrLsJgxHePcZ
+    output_index: 0
+    item:
+      id: item_E4AmeR6T4h9LkwrfSTCJu
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        transcript: Hello there! Great to meet you!
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_E4Amf2nlyhQbVjWHm9n40
+    response:
+      object: realtime.response
+      id: resp_E4AmexTcfhrLsJgxHePcZ
+      status: completed
+      status_details: null
+      output:
+      - id: item_E4AmeR6T4h9LkwrfSTCJu
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          transcript: Hello there! Great to meet you!
+      conversation_id: conv_E4Ame66SYK5zLj9vNvc1p
+      output_modalities:
+      - audio
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 114
+        input_tokens: 16
+        output_tokens: 98
+        input_token_details:
+          text_tokens: 16
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 16
+          audio_tokens: 82
+      metadata: null

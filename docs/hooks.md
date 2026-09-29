@@ -1,9 +1,13 @@
+---
+description: "Add lifecycle hooks to a Pydantic AI agent to log, modify, retry or skip model requests, tool calls, output and stream events, without subclassing."
+---
+
 
 # Hooks
 
 Hooks let you intercept and modify agent behavior at every stage of a run — model requests, tool calls, streaming events — using simple decorators or constructor arguments. No subclassing needed.
 
-The [`Hooks`][pydantic_ai.capabilities.Hooks] capability is the recommended way to add [lifecycle hooks](capabilities.md#hooking-into-the-lifecycle) for application-level concerns like logging, metrics, and lightweight validation. For reusable capabilities that combine hooks with tools, instructions, or model settings, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] instead — see [Building custom capabilities](capabilities.md#building-custom-capabilities).
+The [`Hooks`][pydantic_ai.capabilities.Hooks] capability is the recommended way to add [lifecycle hooks](capabilities/custom.md#hooking-into-the-lifecycle) for application-level concerns like logging, metrics, and lightweight validation. For reusable capabilities that combine hooks with tools, instructions, or model settings, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] instead — see [Building custom capabilities](capabilities/custom.md).
 
 ## Quick start
 
@@ -70,7 +74,10 @@ print(result.output)
 #> success (no tool calls)
 ```
 
-Both sync and async hook functions are accepted. Sync functions are automatically wrapped for async execution.
+Both sync and async hook functions are accepted. Sync functions are run in a thread pool, so a slow one won't hold up the rest of the run.
+
+!!! note "Sync hooks run on a separate thread"
+    Pydantic AI assumes that a sync hook contains blocking code (if it didn't, it could be async), so it runs sync hooks on a worker thread to keep the rest of the run responsive. Two things follow: a value the hook sets on a [`contextvars.ContextVar`][contextvars.ContextVar] is not visible outside the hook, and asyncio APIs like `asyncio.get_running_loop()` raise an error, since the worker thread has no event loop. Reading context variables still works, but the write limitation also applies to libraries that use them internally, such as tracing and logging integrations. If your hook needs any of these, make it async.
 
 ### On-demand hooks
 
@@ -89,7 +96,7 @@ request_logging_hooks = Hooks(
 
 @request_logging_hooks.on.before_model_request
 async def log_request(
-    ctx: RunContext[None],
+    ctx: RunContext,
     request_context: ModelRequestContext,
 ) -> ModelRequestContext:
     print(f'Model request at step {ctx.run_step}: {len(request_context.messages)} messages')
@@ -116,6 +123,8 @@ Use on-demand hooks for optional behavior that only applies after the capability
 
 Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wraps the entire run and supports error recovery.
 
+A [realtime session](realtime/capabilities.md) is a run: the same four hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes.
+
 ### Node hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
@@ -125,10 +134,12 @@ Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wr
 | `node_run` | `node_run=` | `wrap_node_run` |
 | `node_run_error` | `node_run_error=` | `on_node_run_error` |
 
-Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.UserPromptNode], [`ModelRequestNode`][pydantic_ai.ModelRequestNode], [`CallToolsNode`][pydantic_ai.CallToolsNode]).
+Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.agent.UserPromptNode], [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode], [`CallToolsNode`][pydantic_ai.agent.CallToolsNode]).
+
+Node hooks fire no matter how the run is driven: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter] all advance the run the same way.
 
 !!! note
-    `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but **not** when iterating with bare `async for node in agent_run:`.
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] is the exception: it hands you the result as soon as the final output is found mid-stream, so the model request that produced it gets `before_node_run` but not `wrap_node_run` or `after_node_run`. The hooks fire in full for every other node, including the one that ends the run.
 
 ### Model request hooks
 
@@ -146,6 +157,8 @@ To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_a
 !!! note
     These hooks fire **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode) and the agent transparently continues it. `before_model_request` runs before the turn starts, `wrap_model_request` wraps the whole turn including any continuations, and `after_model_request` receives the single completed [`ModelResponse`][pydantic_ai.messages.ModelResponse].
 
+    When a run resumes a suspended turn from [`message_history`](message-history.md), `before_model_request` and `wrap_model_request` see that suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] as the last entry in `request_context.messages`: it's the continuation seed that will be echoed back to the provider, mirroring what actually goes over the wire.
+
 ### Tool validation hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
@@ -162,6 +175,8 @@ Validation hooks fire when the model's JSON arguments are parsed and validated. 
 
 To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `tool_validate` (wrap).
 
+A tool call can only be [deferred](deferred-tools.md) once its arguments have been validated, since whoever resolves the deferral is shown those arguments. So [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] can be raised from `after_tool_validate` (and from `tool_validate` after its `handler()` has returned), but raising them from `before_tool_validate`, from `tool_validate` before it calls `handler()`, or from `tool_validate_error` is a [`UserError`][pydantic_ai.exceptions.UserError]. To decide per tool rather than per capability, use the tool's [`args_validator`](tools-advanced.md#args-validator).
+
 ### Tool execution hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
@@ -174,6 +189,8 @@ To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.Sk
 Execution hooks fire when the tool function runs. `args` is always the validated `dict[str, Any]`.
 
 To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `tool_execute` (wrap).
+
+Every execution hook can [defer](deferred-tools.md) the call — the arguments are validated by this point — but raise `ApprovalRequired`/`CallDeferred` from `before_tool_execute` (or from `tool_execute` before it calls `handler()`). A deferral from `after_tool_execute`, or from `tool_execute` after `handler()` has returned, is accepted but happens too late to be useful: the tool function already ran, so its side effects happened and its result is discarded.
 
 ### Output validation hooks
 
@@ -200,7 +217,7 @@ Output validation hooks fire when structured output is parsed against the output
 
 Output processing hooks fire when the output is processed — extracting values, calling output functions, and running output validators.
 
-See [Output hooks](capabilities.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
+See [Output hooks](capabilities/custom.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
 
 ### Tool preparation
 
@@ -252,25 +269,74 @@ For pure application-level handler registration without other hooks, the dedicat
 | `run_event_stream` | `run_event_stream=` | `wrap_run_event_stream` |
 | `event` | `event=` | _(per-event convenience)_ |
 
-`run_event_stream` wraps the full event stream as an async generator. `event` is a convenience — it fires for each individual event during a streamed run. Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when queued messages enter run history:
+`run_event_stream` wraps the full event stream as an async generator. `event` observes individual events at the same dispatch point as capability [`on_event`][pydantic_ai.capabilities.on_event] listeners. Callbacks can be synchronous or asynchronous and return `None`.
+
+Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when messages [injected mid-run](message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] enter run history, application [custom events](agent.md#custom-events), and the [capability events](capabilities/overview.md#capability-events) published by capabilities. Because an `event` callback belongs to the application rather than to a capability, it is also a place to [emit](agent.md#custom-events) a [`CustomEvent`][pydantic_ai.messages.CustomEvent] of your own, which is how you [republish a capability's internal event](capabilities/overview.md#capability-events) to a frontend. An `event` callback also participates in [immediately dispatched](capabilities/overview.md#reacting-to-events) capability decision events, so application code can set decision fields before the emitter continues. During a [realtime session](realtime/capabilities.md), both hooks fire, and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members flow through the same stream.
+
+Pass event classes to filter the callback:
 
 ```python {title="hooks_event.py"}
-from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai import Agent, PartStartEvent, RunContext
 from pydantic_ai.capabilities import Hooks
 
 hooks = Hooks()
 event_count = 0
 
 
-@hooks.on.event
-async def count_events(ctx: RunContext, event: AgentStreamEvent) -> AgentStreamEvent:
+@hooks.on.event(PartStartEvent)
+async def count_events(ctx: RunContext, event: PartStartEvent) -> None:
     global event_count
     event_count += 1
-    return event
 
 
 agent = Agent('test', capabilities=[hooks])
 ```
+
+Or use it bare to observe every event, with `event` typed as the full [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] union:
+
+```python {title="hooks_event_bare.py"}
+from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai.capabilities import Hooks
+
+hooks = Hooks()
+event_log: list[str] = []
+
+
+@hooks.on.event
+async def log_events(ctx: RunContext, event: AgentStreamEvent) -> None:
+    event_log.append(event.event_kind)
+
+
+agent = Agent('test', capabilities=[hooks])
+```
+
+Prefer naming the classes. Filtering by type isn't only about narrowing the `event` argument for the type checker: the classes are what let dispatch skip a capability entirely for events it doesn't listen to, so in a run with many capabilities a bare callback anywhere in the tree means every event is offered to everything.
+
+Returning a replacement event from `hooks.on.event` is deprecated. Use `hooks.on.run_event_stream` to transform, replace, or filter events.
+
+#### Listening without a `Hooks` capability
+
+When events are all you want to observe, [`@agent.on_event`][pydantic_ai.agent.Agent.on_event] registers a listener straight on the agent, with the same filtering, typing and `timeout=`:
+
+```python {title="agent_on_event.py"}
+from pydantic_ai import Agent, FunctionToolCallEvent, RunContext
+
+agent = Agent('test')
+called_tools: list[str] = []
+
+
+@agent.on_event(FunctionToolCallEvent)
+async def track_tools(ctx: RunContext, event: FunctionToolCallEvent) -> None:
+    called_tools.append(event.part.tool_name)
+```
+
+Bare works the same way: `@agent.on_event` on its own sees every event.
+
+Listeners registered on the agent join after its own capabilities, so they see the events those emitted, and they survive an overridden root capability. Capability ordering still applies: one asking for `position='innermost'` keeps that position and its listeners run after these. An agent that never calls `on_event` is unaffected: with nothing registered, the listener capability is never added to the run at all.
+
+Like `hooks.on.event`, they dispatch *upstream* of `run_event_stream`: a listener sees each event as emitted, not as finally delivered, so a capability that rewrites or drops events in its stream wrapper does so after every listener has run — and a listener can see an event no consumer ever receives. When you need the delivered stream, wrap it with `run_event_stream` or consume [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+Only events can be registered this way. The other hook families are interceptors — they sit in a wrap chain, take and return the value, and where they sit relative to the other capabilities is a choice you need to make — so they go on a `Hooks` capability whose position in `capabilities=` is yours to pick.
 
 ## Tool hook filtering
 
@@ -374,17 +440,13 @@ print(wrap_log)
 
 ## Hook ordering
 
-When multiple hooks are registered for the same event (either on the same `Hooks` instance or across multiple capabilities):
+Within a single [`Hooks`][pydantic_ai.capabilities.Hooks] instance, `before_*`, `after_*`, and `on_*_error` fire in **registration order** (the order they were defined or passed to the constructor). `wrap_*` nests as middleware, with the first-registered wrapper as the outermost layer.
 
-* **`before_*`** hooks fire in registration/capability order
-* **`after_*`** hooks fire in reverse order
-* **`wrap_*`** hooks nest as middleware — the first registered hook is the outermost layer
+Across multiple capabilities, the [composition rules](capabilities/custom.md#composition-and-middleware-semantics) apply: `before_*` fires in capability order, `after_*` fires in reverse capability order, and `wrap_*` nests as middleware with the first capability outermost.
 
 Hook timing also affects what is populated on [`RunContext`][pydantic_ai.tools.RunContext]. Early run and node hooks can fire before the current step's tool manager and model request parameters have been assembled. At that point `ctx.available_tool_names` can still include tool-search discoveries reconstructed from history, but `ctx.tools` and current request parameters may be empty or reflect the previous step. `before_model_request` and later model-request hooks see the request about to be sent, including the current function tools, native tools, and model settings. Tool and output hooks see the state for the call or output currently being processed.
 
-For on-demand capabilities, `ctx.loaded_capability_ids` updates as soon as the `load_capability` tool runs. Function tools, native tools, and model settings from the loaded capability appear on the next model request, while hooks owned by that capability can only run for hook points reached after the capability has loaded.
-
-See [Composition and middleware semantics](capabilities.md#composition-and-middleware-semantics) for details on how hooks from multiple capabilities interact.
+For on-demand capabilities, `ctx.loaded_capability_ids` is derived from message history before each model request, so a capability loaded during a step appears from the *next* step onwards — the same step that first carries its instructions to the model, and therefore the first on which its tools can be called. Function tools, native tools, and model settings from the loaded capability appear on that request too, and hooks owned by the capability run for hook points reached from then on. A hook that looks for a capability in the very turn it was loaded will not find it.
 
 ## Error hooks
 
@@ -394,9 +456,9 @@ Error hooks (`*_error` in the `hooks.on` namespace, `on_*_error` on `AbstractCap
 - **Raise a different exception** — transforms the error
 - **Return a result** — suppresses the error
 
-See [Error hooks](capabilities.md#error-hooks) for the full pattern and recovery types.
+See [Error hooks](capabilities/custom.md#error-hooks) for the full pattern and recovery types.
 
-## Triggering retries with `ModelRetry`
+## Triggering retries with `ModelRetry` and failures with `ToolFailed` {#triggering-retries-with-modelretry}
 
 Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools-advanced.md#tool-retries) and output validators.
 
@@ -418,7 +480,9 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 - For tool output, retries count against the tool's `max_retries` limit
 - For text output, retries count against the output side of the agent's retry budget
 
-`ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_process` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
+[`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from `wrap_model_request`, `wrap_tool_execute`, or `wrap_output_process` is control flow and bypasses the corresponding `on_*_error` hook. [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] is control flow only at the tool boundary, so it bypasses `on_tool_execute_error`. From model-request and output-process hooks, `ToolFailed` is an ordinary exception and is passed to `on_model_request_error` or `on_output_process_error`.
+
+Tool validation and execution hooks can also raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a failed tool result without consuming the tool's retry budget. This has the same model-visible outcome and retry-budget behavior as raising `ToolFailed` from the tool function itself, and is useful when an error hook converts a third-party exception into a failure the model can see.
 
 ```python {title="hooks_model_retry.py"}
 from pydantic_ai import Agent, RunContext
@@ -447,6 +511,82 @@ result = agent.run_sync('Hello')
 print(result.output)
 #> success (no tool calls)
 ```
+
+By default, any exception other than `ModelRetry` or `ToolFailed` raised inside a tool escapes the
+tool boundary and aborts the entire run. A tool-execution hook lets you intercept these in one
+place — without editing every tool — and choose how each surfaces to the model. The distinction is
+the semantic one between [requesting a retry](tools-advanced.md#tool-retries) and
+[reporting a failure](tools-advanced.md#tool-failed):
+
+- raise `ModelRetry` for **transient** errors, where the same call might succeed if tried again;
+- raise `ToolFailed` for **definitive** failures, where retrying won't help and the model should
+  see the result and adapt (choose another approach, tell the user, etc.).
+
+The hook below makes that call based on an upstream status code — the per-error analogue of the
+MCP [`tool_error_behavior`](mcp/client.md#tool-errors) setting:
+
+```python {title="hooks_convert_tool_errors.py"}
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolCallPart, ToolDefinition, ToolReturnPart
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+class UpstreamError(Exception):
+    """Stand-in for an HTTP client error that carries the response status code."""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+hooks = Hooks()
+
+
+@hooks.on.tool_execute_error
+async def convert_upstream_errors(
+    ctx: RunContext,
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: dict[str, Any],
+    error: Exception,
+) -> Any:
+    if isinstance(error, UpstreamError):
+        if error.status_code >= 500 or error.status_code == 429:
+            # Transient: the same call might succeed, so ask the model to try again.
+            raise ModelRetry(f'Upstream returned {error.status_code}, please try again.')
+        # Definitive (e.g. 404, 403): retrying won't help — report it so the model can adapt.
+        raise ToolFailed(f'Upstream returned {error.status_code}: {error}')
+    raise error  # unrelated errors still abort the run
+
+
+def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    last_part = messages[-1].parts[-1]
+    if isinstance(last_part, ToolReturnPart):
+        return ModelResponse(parts=[TextPart(f'Could not fetch the document ({last_part.content}).')])
+    return ModelResponse(parts=[ToolCallPart('get_document', {'doc_id': 42}, tool_call_id='call-1')])
+
+
+agent = Agent(FunctionModel(model_fn), capabilities=[hooks])
+
+
+@agent.tool_plain
+def get_document(doc_id: int) -> str:
+    raise UpstreamError(404, f'document {doc_id} not found')
+
+
+result = agent.run_sync('Fetch document 42')
+print(result.output)
+#> Could not fetch the document (Upstream returned 404: document 42 not found).
+```
+
+Because the failure was raised as `ToolFailed` rather than `ModelRetry`, the model receives it as a
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'` and decides what to
+do next, instead of burning a retry on a call that can't succeed.
 
 ## When to use `Hooks` vs `AbstractCapability`
 

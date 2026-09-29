@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
@@ -32,10 +32,14 @@ with try_import() as google_imports:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
+with try_import() as mistral_imports:
+    from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.providers.mistral import MistralProvider
+
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # Per-provider skip mark, keyed by a case's `provider`. A case naming a provider missing from this
 # map fails loudly at collection (KeyError) rather than silently skipping on the wrong SDK's presence.
@@ -43,6 +47,7 @@ _PROVIDER_SKIP_MARKS: dict[str, pytest.MarkDecorator] = {
     'groq': pytest.mark.skipif(not groq_imports(), reason='groq not installed'),
     'cerebras': pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),
     'google': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
+    'mistral': pytest.mark.skipif(not mistral_imports(), reason='mistral not installed'),
 }
 
 
@@ -63,11 +68,21 @@ class WireCase:
     """Keys that must NOT appear in the request body."""
     expect_warning: str | None = None
     """If set, a `UserWarning` matching this regex must be emitted during the run."""
+    match_body: bool = False
+    """Make the request body part of the cassette match.
+
+    Without it the default matchers ignore the body, so `present`/`absent` assert against the frozen
+    recording and stay green even when the code starts sending something else. With it, a drifted body
+    fails to match its cassette, so the case pins the wire rather than describing it.
+    """
 
     @property
     def marks(self) -> tuple[pytest.MarkDecorator, ...]:
         """Skip mark gating this case on its provider's SDK — derived from `provider`, the single source of truth."""
-        return (_PROVIDER_SKIP_MARKS[self.provider],)
+        marks = (_PROVIDER_SKIP_MARKS[self.provider],)
+        if self.match_body:
+            marks += (pytest.mark.vcr(additional_matchers=['body']),)
+        return marks
 
 
 CASES = [
@@ -217,16 +232,79 @@ CASES = [
         thinking=False,
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
     ),
+    WireCase(
+        id='google-gemini-38-flash-disable',
+        provider='google',
+        model_name='gemini-3.8-flash',
+        thinking=False,
+        # Gemini 3+ takes `thinking_level` rather than a budget, and 3.8 Flash rejects `MINIMAL`,
+        # so the disable signal folds to the lowest level it accepts.
+        present={'generationConfig.thinkingConfig.thinking_level': 'LOW'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-31-flash-lite-image-low-snaps-down',
+        provider='google',
+        model_name='gemini-3.1-flash-lite-image',
+        thinking='low',
+        # Documented levels are `minimal, high` only (#8022): `low` snaps down to `minimal`.
+        present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-31-flash-lite-image-medium-snaps-up',
+        provider='google',
+        model_name='gemini-3.1-flash-lite-image',
+        thinking='medium',
+        # `medium` snaps up to `high`, the higher of the model's two documented levels.
+        present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
+        match_body=True,
+    ),
+    # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
+    # always-on magistral must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
+    WireCase(
+        id='mistral-small-thinking-high',
+        provider='mistral',
+        model_name='mistral-small-latest',
+        thinking='high',
+        present={'reasoning_effort': 'high'},
+    ),
+    WireCase(
+        id='mistral-small-disable',
+        provider='mistral',
+        model_name='mistral-small-latest',
+        thinking=False,
+        present={'reasoning_effort': 'none'},
+    ),
+    WireCase(
+        id='mistral-small-unset-omits-effort',
+        provider='mistral',
+        model_name='mistral-small-latest',
+        # No thinking config: the SDK must serialize UNSET as the field omitted from the body.
+        absent=('reasoning_effort',),
+    ),
+    WireCase(
+        id='mistral-magistral-always-on-no-effort',
+        provider='mistral',
+        model_name='magistral-small-latest',
+        thinking=True,
+        # magistral reasons always-on; `reasoning_effort` must stay off the wire.
+        absent=('reasoning_effort',),
+    ),
 ]
 
 
-def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str) -> Model:
+def _build_model(
+    case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str, mistral_api_key: str
+) -> Model:
     if case.provider == 'groq':
         return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
     if case.provider == 'cerebras':
         return CerebrasModel(case.model_name, provider=CerebrasProvider(api_key=cerebras_api_key))
     if case.provider == 'google':
         return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
+    if case.provider == 'mistral':
+        return MistralModel(case.model_name, provider=MistralProvider(api_key=mistral_api_key))
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
 
@@ -237,12 +315,17 @@ async def test_reasoning_wire_contract(
     groq_api_key: str,
     cerebras_api_key: str,
     gemini_api_key: str,
+    mistral_api_key: str,
     vcr: Cassette,
 ):
     """Reasoning settings produce the correct request wire body: a `thinking` disable signal where the model
     supports it, its absence where reasoning is always on, and `groq_reasoning_effort` mapped to `reasoning_effort`."""
     model = _build_model(
-        case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key, gemini_api_key=gemini_api_key
+        case,
+        groq_api_key=groq_api_key,
+        cerebras_api_key=cerebras_api_key,
+        gemini_api_key=gemini_api_key,
+        mistral_api_key=mistral_api_key,
     )
     if case.groq_reasoning_effort is not None:
         settings = GroqModelSettings(groq_reasoning_effort=case.groq_reasoning_effort)

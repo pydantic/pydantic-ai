@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -22,6 +22,15 @@ class RaiseContentFilterError(AbstractCapability[AgentDepsT]):
     [`ModelResponse`][pydantic_ai.messages.ModelResponse] is serialized into
     [`ContentFilterError.body`][pydantic_ai.exceptions.UnexpectedModelBehavior.body] so callers
     can inspect any partial content.
+    """
+
+    _: KW_ONLY
+
+    id: str | None = 'raise_content_filter_error'
+    """One-off: the capability takes no configuration, so a second instance can only duplicate the first, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
     async def after_model_request(

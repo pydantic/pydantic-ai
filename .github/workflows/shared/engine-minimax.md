@@ -26,6 +26,17 @@
 #     - shared/engine-minimax.md
 runtimes:
   uv: {}
+# No `models.providers` pricing overlay for `MiniMax-M3`, deliberately. gh-aw compiles
+# that block into `apiProxy.providers`, which is the AWF API proxy's *AI-credits
+# accounting* table rather than a reporting field: pricing a model there starts charging
+# it credits. AWF then enforces a hard cap of 10,000 credits per run that nothing in this
+# frontmatter can lift — `max-ai-credits` only omits gh-aw's own budget, and the schema
+# types it `exclusiveMinimum: 0`. One ordinary request costs tens of thousands, so every
+# agent job 403s on its first call with `ai_credits_limit_exceeded`.
+#
+# Nothing here needs that overlay: the weekly spend report reads token counts from each
+# run's `agent_usage.json` artifact, never a pricing table.
+max-ai-credits: -1
 engine:
   id: claude
   model: ${{ vars.GH_AW_MODEL }}
@@ -33,4 +44,18 @@ engine:
   env:
     ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    # The custom shim is stateless, so an outer retry repeats the whole task.
+    GH_AW_HARNESS_MAX_RETRIES: "0"
+safe-outputs:
+  threat-detection:
+    # Detection has an independent budget and the same unknown-model constraint.
+    max-ai-credits: -1
+    # Detection uses the stateful Claude CLI, so it retains normal recovery.
+    engine:
+      id: claude
+      model: ${{ vars.GH_AW_MODEL }}
+      env:
+        ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        GH_AW_HARNESS_MAX_RETRIES: "3"
 ---

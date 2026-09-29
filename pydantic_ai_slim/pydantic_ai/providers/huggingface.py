@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from httpx import AsyncClient
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -23,6 +21,10 @@ except ImportError as _import_error:
         'Please install the `huggingface_hub` package to use the HuggingFace provider, '
         "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`"
     ) from _import_error
+
+# Below the guard on purpose: `huggingface_hub` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+from httpx import AsyncClient
 
 from . import Provider
 
@@ -126,6 +128,6 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             raise ValueError('Cannot provide both `base_url` and `provider_name`.')
 
         if hf_client is None:
-            self._client = AsyncInferenceClient(api_key=api_key, provider=provider_name, base_url=base_url)  # type: ignore
+            self._client = AsyncInferenceClient(api_key=api_key, provider=provider_name, base_url=base_url)  # pyright: ignore[reportArgumentType]
         else:
             self._client = hf_client

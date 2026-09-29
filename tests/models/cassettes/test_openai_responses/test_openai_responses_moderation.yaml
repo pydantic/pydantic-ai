@@ -1,0 +1,250 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '204'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-5
+      moderation:
+        model: omni-moderation-latest
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5716'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '14571'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784652624
+      created_at: 1784652612
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0c5e65dbb250a5fc006a5fa3445384819ca105df50ff405b9a
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      moderation:
+        input:
+          categories:
+            harassment: false
+            harassment/threatening: false
+            hate: false
+            hate/threatening: false
+            illicit: false
+            illicit/violent: false
+            self-harm: false
+            self-harm/instructions: false
+            self-harm/intent: false
+            sexual: false
+            sexual/minors: false
+            violence: false
+            violence/graphic: false
+          category_applied_input_types:
+            harassment:
+            - text
+            harassment/threatening:
+            - text
+            hate:
+            - text
+            hate/threatening:
+            - text
+            illicit:
+            - text
+            illicit/violent:
+            - text
+            self-harm:
+            - text
+            self-harm/instructions:
+            - text
+            self-harm/intent:
+            - text
+            sexual:
+            - text
+            sexual/minors:
+            - text
+            violence:
+            - text
+            violence/graphic:
+            - text
+          category_scores:
+            harassment: 1.5598027633743823e-05
+            harassment/threatening: 2.212566909570261e-06
+            hate: 2.7803096387751555e-05
+            hate/threatening: 1.0783312222985275e-06
+            illicit: 0.005284363395662242
+            illicit/violent: 3.514382632807918e-05
+            self-harm: 2.4682904407607285e-06
+            self-harm/instructions: 5.955139348629957e-07
+            self-harm/intent: 2.627477314480822e-06
+            sexual: 9.818326983657703e-07
+            sexual/minors: 1.9333584585546466e-07
+            violence: 6.814872211615988e-06
+            violence/graphic: 7.889262586245034e-07
+          flagged: false
+          model: omni-moderation-latest
+          type: moderation_result
+        output:
+          categories:
+            harassment: false
+            harassment/threatening: false
+            hate: false
+            hate/threatening: false
+            illicit: false
+            illicit/violent: false
+            self-harm: false
+            self-harm/instructions: false
+            self-harm/intent: false
+            sexual: false
+            sexual/minors: false
+            violence: false
+            violence/graphic: false
+          category_applied_input_types:
+            harassment:
+            - text
+            harassment/threatening:
+            - text
+            hate:
+            - text
+            hate/threatening:
+            - text
+            illicit:
+            - text
+            illicit/violent:
+            - text
+            self-harm:
+            - text
+            self-harm/instructions:
+            - text
+            self-harm/intent:
+            - text
+            sexual:
+            - text
+            sexual/minors:
+            - text
+            violence:
+            - text
+            violence/graphic:
+            - text
+          category_scores:
+            harassment: 5.0333557545281144e-05
+            harassment/threatening: 1.2533751425646102e-05
+            hate: 3.740956047302422e-05
+            hate/threatening: 1.6187581436151335e-06
+            illicit: 3.077430764601415e-05
+            illicit/violent: 1.442598644847886e-05
+            self-harm: 1.0391067562761452e-05
+            self-harm/instructions: 1.2805474213228684e-06
+            self-harm/intent: 1.6442494559854523e-06
+            sexual: 0.00012448433020883747
+            sexual/minors: 3.120191139396651e-06
+            violence: 0.0005852836038915696
+            violence/graphic: 1.2339457598623173e-05
+          flagged: false
+          model: omni-moderation-latest
+          type: moderation_result
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqX6NScxwxJqmOhW51oC7x1SFIfGFySjXjFXwh7dXyDKJ62Ba1eJhcto1elSxsB3Jiu8lZArzuSszFxcn-1kLa5gWMh6z4Wg2i-71ev1Koo5NTe_JeKI-yb5yIFUS69bHaKP3KLN6sSg2mP_eyfavFOizgtELF5GU-gPVkm9FFwwmb5oJGECicQ6u8qlgq-SrMuhQUMh6CST4e4rHK1bLogfV-5ZjRiJM1ix8AZXmFOI1jLGTa2-xDmaaDipYgYPwu5ETOv2d6ukXGhzHs78l0cSyqBSYfhzX2qD7jyCEn_KKoHn_kdgGjCsQphp0vrihojeekYn4XriJay8xHIz7QuM72SeJSmL-ezNKQ1eDESbnDUcC_mbtXa2VNSLWpDFAo9b7gHz0AaqH3k05uP8fLYmaNuqR2yByLhqqt_FKpbLVC14nlM6mwW6g4_m6_I67LBBHDlcJQ-P4mz8TjQmdDTXlpTM0AbmG37D7yTc6KXcMl_VV3uKYvPCiHUYOe942BZtwejCCjLV4vCMAPwyXnD6UTc4-MBxaLslDe_Y4Jz5hXNqtTwpBMwbNKdOM6oVXLB59KRYr-m_YaCU__t05sNvydmusuvpE_6LdplVHjltqSci6Mi2AeON6Uj1TnEBkq31A0BB9h_RxCBkkvVDJMGr_lgb0-E0xmFy3gmw9yVrbqM85-MyontIIdlx0Y9NIhzRI0SUzVENFsHH_NJ3imrheURZS9M4C4wor6RsNZnsBMXjTK8NOMC19V5lwAQq3FFDPJbs8TgLQed_EvoSzvteSre-PMGRAm8Vly7QlQPkRdnluSyubMDpDRFAjd_iNXxTY-PuUavf6fSupIjoB39609BjY3JpeOuABhGJ6fNEal70X62JjJ-FF2H8UNCeDWAZl1bB8MxWaWxueIxpwUW7VZu5f2PtNdmgnxjflYDhaVdlHn1VZ4wTRJA4fO7LkFVkZ6PSKFI6Z-YKTXMWOkVy5g_oRsvULs1TSAL6MaY9xaXFsDYSzMRQZFhlfsCwwsehaxBJlQ9TZQ5TktIyLZUVyiHJBkGm9cAZwWBaJT9K7diIuxjN7RDRSy5ZkOLlZlAy6i474sEnsl6jw0en9qNuwomS8zVKBVUvwfMjwlXtXt3nGXY45T9p0nw2Kn5uEsx6kENmrcSn9oLp1FqJtvIdrZt4FElNpSLHuvC6xEpSxDHnJQJy9Td5jRbfAi-mzYwlgcg2JQJ-mHiDWrt0ULuhOTsz1icjW_NsB_VWN-WrVNFEJR0KYuV_KoDw--p0fnRR6G
+        id: rs_0c5e65dbb250a5fc006a5fa345c5bc819c81953ff8dd08a1f5
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Paris.
+          type: output_text
+        id: msg_0c5e65dbb250a5fc006a5fa34b70e8819c811802f572f52d7d
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 13
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 63
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 76
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -11,14 +11,18 @@ from pydantic_ai.native_tools._tool_search import (
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
+from ._on_event import on_event
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
+    AgentModel,
     AgentNode,
     CapabilityDescription,
     CapabilityOrdering,
     CapabilityPosition,
     CapabilityRef,
+    ModelSelection,
+    ModelSelector,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -35,10 +39,12 @@ from .capability import Capability
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
+from .durable_operation import durable_operation
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
+from .local_workspace import LocalWorkspace
 from .mcp import MCP
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
@@ -47,9 +53,11 @@ from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
 from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
+from .resolve_model_id import ModelIdResolver, ResolveModelId
+from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
-from .thread_executor import ThreadExecutor
+from .thread_executor import UseThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
@@ -72,6 +80,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
+        LocalWorkspace,
         MCP,
         PrefixTools,
         PrepareTools,
@@ -95,12 +104,16 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'AgentCapability',
+    'AgentModel',
     'AgentNode',
     'CapabilityDescription',
     'CapabilityFunc',
     'CapabilityOrdering',
     'CapabilityPosition',
     'CapabilityRef',
+    'ModelSelection',
+    'ModelSelector',
+    'ModelIdResolver',
     'NodeResult',
     'RawToolArgs',
     'ValidatedToolArgs',
@@ -113,6 +126,7 @@ __all__ = [
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
     'NativeTool',
+    'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
     'Capability',
@@ -120,6 +134,7 @@ __all__ = [
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',
+    'LocalWorkspace',
     'MCP',
     'PrefixTools',
     'PrepareOutputTools',
@@ -127,24 +142,38 @@ __all__ = [
     'ProcessEventStream',
     'ProcessHistory',
     'ReinjectSystemPrompt',
+    'ResolveModelId',
+    'SelectModel',
     'SetToolMetadata',
     'Thinking',
-    'ThreadExecutor',
     'ToolSearch',
     'ToolSearchFunc',
     'ToolSearchLocalStrategy',
     'ToolSearchNativeStrategy',
     'ToolSearchStrategy',
     'Toolset',
+    'UseThreadExecutor',
     'WebFetch',
     'WebSearch',
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',
     'DynamicCapability',
+    'durable_operation',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',
     'Hooks',
     'OutputContext',
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name == 'ThreadExecutor':
+        # The deprecated alias (and its warning) lives in the defining module, so
+        # `pydantic_ai.capabilities.thread_executor.ThreadExecutor` lookups -- including
+        # unpickling -- resolve too.
+        from . import thread_executor
+
+        return thread_executor.ThreadExecutor
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

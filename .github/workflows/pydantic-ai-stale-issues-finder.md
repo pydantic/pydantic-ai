@@ -49,6 +49,8 @@ engine:
   env:
     ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    # The custom shim is stateless, so an outer retry repeats the whole task.
+    GH_AW_HARNESS_MAX_RETRIES: "0"
 tools:
   github:
     mode: gh-proxy
@@ -69,7 +71,32 @@ safe-outputs:
     expires: 7d
     # Note: elastic uses 2d with twice-weekly schedule. Adjust 'expires'
     # and the schedule together if you change run frequency.
+  threat-detection:
+    # Detection's separate AWF config does not inherit the model pricing below.
+    max-ai-credits: -1
+    # Detection uses the stateful Claude CLI, so it retains normal recovery.
+    engine:
+      id: claude
+      model: ${{ vars.GH_AW_MODEL }}
+      env:
+        ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
+env:
+  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # so the agent stops itself and emits a result instead of being killed mid-flight.
+  # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
+  # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
+  # fails the build if the two ever diverge.
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
+# Fallback pricing in dollars per 1M tokens, read only if an AI-credits budget is ever
+# active — it is not, and no `models.providers` entry accompanies it. See
+# `shared/engine-minimax.md` for why pricing `MiniMax-M3` there is what stops the agent.
+models:
+  default-ai-credits-pricing:
+    input: 0.6
+    output: 2.4
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -81,7 +108,7 @@ pre-steps:
   # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
   # own installer (the same call it makes for non-custom-command jobs).
   - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.25.46
+    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.44
 
 pre-agent-steps:
   # Stage the committed launcher script at gh-aw's exec-able

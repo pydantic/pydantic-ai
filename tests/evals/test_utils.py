@@ -29,7 +29,7 @@ with try_import() as imports_successful:
         task_group_gather,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 def test_run_until_complete_cleans_up_own_task_on_interrupt():
@@ -161,7 +161,7 @@ def test_get_unwrapped_function_name_error():
         pass
 
     with pytest.raises(AttributeError) as exc_info:
-        get_unwrapped_function_name(InvalidCallable())  # type: ignore
+        get_unwrapped_function_name(InvalidCallable())  # pyright: ignore[reportArgumentType]
 
     assert str(exc_info.value) == "'InvalidCallable' object has no attribute '__name__'"
 

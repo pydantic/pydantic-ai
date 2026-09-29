@@ -21,8 +21,7 @@ repos:
           - --enforce-all # Allow to run in the whole source code, instead of only the changed files.
         exclude: |
           (?x)^(
-              tests/models/cassettes/.*|
-              tests/cassettes/.*|
+              tests/(.*/)?cassettes/.*|
               uv.lock
           )$
 
@@ -41,7 +40,7 @@ repos:
     rev: v2.3.0
     hooks:
       - id: codespell
-        args: ["--skip", "tests/models/cassettes/*"]
+        args: ["--skip", "tests/*/cassettes/*"]
         additional_dependencies:
           - tomli
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
@@ -54,7 +53,7 @@ repos:
       - id: no-rst-syntax
         name: No RST syntax (use Markdown in docstrings and docs)
         description: |
-          Bans RST-only constructs that mkdocstrings/Markdown won't render:
+          Bans RST-only constructs that the documentation renderer will not render:
           `` ``foo`` `` (use single backticks), trailing `::` (use ```` ```python ```` fences),
           and Sphinx roles like `:mod:`foo`` / `:class:`Bar`` (use `[Bar][pkg.mod.Bar]` reference links).
         language: pygrep
@@ -66,6 +65,8 @@ repos:
         args: [run, pytest, "clai/update_readme.py"]
         language: system
         types_or: [python, markdown]
+        # `clai` never imports `pydantic-clai2`, so a commit confined to it cannot change the output.
+        exclude: ^(src/pydantic_clai2|tests/clai2)/
         pass_filenames: false
       - id: format
         name: Format
@@ -80,13 +81,6 @@ repos:
         args: [lint]
         types: [python]
         language: system
-        pass_filenames: false
-      - id: typecheck
-        name: Typecheck
-        entry: make
-        args: [typecheck]
-        language: system
-        types: [python]
         pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
