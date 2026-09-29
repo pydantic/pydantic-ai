@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import anyio
 import anyio.to_thread
 
+from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
@@ -22,7 +23,11 @@ from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 try:
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import (
+        ClientError,
+        ConnectionError as BotocoreConnectionError,
+        HTTPClientError,
+    )
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use Bedrock embedding models, '
@@ -617,18 +622,16 @@ class BedrockEmbeddingModel(EmbeddingModel):
             raise UserError(f'bedrock_max_concurrency must be >= 1, got {max_concurrency}.')
         semaphore = anyio.Semaphore(max_concurrency)
 
-        results: list[tuple[Sequence[float], int]] = [None] * len(inputs)  # type: ignore[list-item]
-
-        async def embed_single(index: int, text: str) -> None:
+        async def embed_single(text: str) -> tuple[Sequence[float], int]:
             async with semaphore:
                 body = self._handler.prepare_request([text], input_type, settings)
                 response, input_tokens = await self._invoke_model(body, settings)
                 embeddings, _ = self._handler.parse_response(response)
-                results[index] = (embeddings[0], input_tokens)
+                return embeddings[0], input_tokens
 
-        async with anyio.create_task_group() as tg:
-            for i, text in enumerate(inputs):
-                tg.start_soon(embed_single, i, text)
+        # `gather` re-raises a sole failure directly, so a failed request surfaces as its `ModelHTTPError` or
+        # `ModelAPIError` rather than wrapped in an `ExceptionGroup`.
+        results = await gather(*(embed_single(text) for text in inputs))
 
         all_embeddings = [embedding for embedding, _ in results]
         total_input_tokens = sum(tokens for _, tokens in results)
@@ -671,6 +674,9 @@ class BedrockEmbeddingModel(EmbeddingModel):
                     body=e.response,
                     headers=metadata.get('HTTPHeaders'),
                 ) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        except (HTTPClientError, BotocoreConnectionError) as e:
+            # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         # Extract input token count from HTTP headers

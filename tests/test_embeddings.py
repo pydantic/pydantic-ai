@@ -63,7 +63,7 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as bedrock_imports_successful:
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import ClientError, EndpointConnectionError, ReadTimeoutError
 
     from pydantic_ai.embeddings.bedrock import (
         BedrockEmbeddingModel,
@@ -1371,11 +1371,9 @@ class TestBedrock:
             'invoke_model',
             side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
         ):
-            with pytest.raises(ExceptionGroup) as exc_info:
+            with pytest.raises(ModelHTTPError) as exc_info:
                 await model.embed(['test'], input_type='query')
-            assert len(exc_info.value.exceptions) == 1
-            exc = exc_info.value.exceptions[0]
-            assert isinstance(exc, ModelHTTPError)
+            exc = exc_info.value
             assert exc.status_code == 400
             assert exc.headers is not None
             assert exc.headers.get('retry-after') == '5'
@@ -1394,10 +1392,25 @@ class TestBedrock:
             'invoke_model',
             side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
         ):
-            with pytest.raises(ExceptionGroup) as exc_info:
+            with pytest.raises(ModelAPIError) as exc_info:
                 await model.embed(['test'], input_type='query')
-            assert len(exc_info.value.exceptions) == 1
-            assert isinstance(exc_info.value.exceptions[0], ModelAPIError)
+            assert type(exc_info.value) is ModelAPIError
+
+    @pytest.mark.parametrize(
+        'error',
+        [
+            pytest.param(ReadTimeoutError(endpoint_url='https://bedrock.example'), id='read-timeout'),
+            pytest.param(EndpointConnectionError(endpoint_url='https://bedrock.example'), id='endpoint-connection'),
+        ],
+    )
+    async def test_transport_error(self, bedrock_provider: BedrockProvider, error: Exception):
+        """botocore raises transport failures as `BotoCoreError`, which maps to `ModelAPIError` like `BedrockConverseModel`."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        with patch.object(model.client, 'invoke_model', side_effect=error):
+            with pytest.raises(ModelAPIError) as exc_info:
+                await model.embed(['test'], input_type='query')
+        assert exc_info.value.__cause__ is error
 
     async def test_count_tokens_not_implemented(self, bedrock_provider: BedrockProvider):
         """Test that count_tokens raises NotImplementedError (Bedrock doesn't support it)."""
