@@ -1,0 +1,53 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Return the number 42."}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"response":
+      {"type": "integer"}}, "required": ["response"], "type": "object"}}, "description": "The final response which ends this
+      conversation"}}], "toolChoice": {"any": {}}}, "additionalModelRequestFields": {"thinking": {"type": "adaptive"}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ODZlY2VkNTgtMDVjNi00M2MyLWFkZDItNzJjN2MyYzg3ZGI5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '465'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-5/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '402'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1989
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                response: 42
+              name: final_result
+              toolUseId: tooluse_11BNB69smpRoKfUAHXImtp
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        inputTokens: 559
+        outputTokens: 37
+        serverToolUsage: {}
+        totalTokens: 596
+    status:
+      code: 200
+      message: OK
+version: 1

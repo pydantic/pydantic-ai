@@ -1,3 +1,7 @@
+---
+description: "Keep long Pydantic AI conversations within the context window using OpenAI or Anthropic native compaction, or trim and summarize message history on any model."
+---
+
 # Compaction
 
 As a conversation grows, its message history can approach the model's context window. *Compaction* keeps it in check by shrinking older messages (trimming, clearing, or summarizing them) while preserving recent context and tool-call integrity. Pydantic AI supports this at several levels: [provider-native compaction APIs](#provider-native-compaction), [model-agnostic history editing](#model-agnostic-compaction) you write yourself, and [Pydantic AI Harness](#pydantic-ai-harness)'s menu of ready-made model-agnostic strategies.
@@ -27,7 +31,7 @@ Even then, a client can replay any compaction item the server's provider account
 
 ## Model-agnostic compaction
 
-To compact on any model, edit the message history yourself with a [history processor](../message-history.md#processing-message-history) wrapped as a [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability — this works with every provider. Common patterns:
+To compact on any model, edit the message history yourself with a [history processor](../message-history.md#processing-message-history) wrapped as a [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability — this works with every provider. To decide *when* to compact, check [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]: the fraction of the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] occupied as of the last response, or `None` when unknown. Common patterns:
 
 - [Keep only recent messages](../message-history.md#keep-only-recent-messages) — a zero-cost sliding window over the most recent turns.
 - [Summarize old messages](../message-history.md#summarize-old-messages) — use a (cheaper) model to condense older messages into a summary.

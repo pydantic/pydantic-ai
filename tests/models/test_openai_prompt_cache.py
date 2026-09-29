@@ -60,7 +60,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -559,7 +558,7 @@ async def test_openai_chat_stream_maps_cache_write_usage(allow_model_requests: N
         cache_write_tokens=30,
         cache_read_tokens=20,
         output_tokens=10,
-        cost=Decimal('0.0007475'),
+        cost=Decimal('0.000558'),
     )
 
 
@@ -654,7 +653,7 @@ async def test_openai_responses_stream_maps_cache_write_usage(allow_model_reques
         output_tokens=300,
         output_reasoning_tokens=10,
         details={'reasoning_tokens': 10},
-        cost=Decimal('0.01047'),
+        cost=Decimal('0.007176'),
     )
 
 

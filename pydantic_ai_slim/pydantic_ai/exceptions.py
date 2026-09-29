@@ -461,7 +461,7 @@ class UsageLimitExceeded(AgentRunError):
 
     _HINT = (
         'Consider raising the limit, or see the docs on usage limits '
-        'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+        'for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
     )
 
     def __init__(self, message: str):

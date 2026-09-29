@@ -1,3 +1,7 @@
+---
+description: "Evaluate Pydantic AI agents and functions in production with Pydantic Evals: score every call or a sample in the background and emit OpenTelemetry events."
+---
+
 # Online Evaluation
 
 Online evaluation lets you attach evaluators to production (or staging) functions so that every call (or a sampled subset) is automatically evaluated in the background. The same [`Evaluator`][pydantic_evals.evaluators.Evaluator] classes used with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate] work here; the difference is just in how they're wired up.

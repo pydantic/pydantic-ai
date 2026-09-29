@@ -99,15 +99,10 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     assert isinstance(unknown_profile, dict)
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
-    # Verify unsupported model settings are set for all profiles
+    # `logit_bias` is the only setting Cerebras leaves unapplied, so it's the only one stripped.
     for profile in [meta_profile, qwen_profile, harmony_profile, zai_profile, unknown_profile]:
         assert isinstance(profile, dict)
-        assert 'frequency_penalty' in profile.get('openai_unsupported_model_settings', ())
-        assert 'logit_bias' in profile.get('openai_unsupported_model_settings', ())
-        assert 'presence_penalty' in profile.get('openai_unsupported_model_settings', ())
-        assert 'parallel_tool_calls' in profile.get('openai_unsupported_model_settings', ())
-        assert 'service_tier' in profile.get('openai_unsupported_model_settings', ())
-        assert 'openai_service_tier' in profile.get('openai_unsupported_model_settings', ())
+        assert profile.get('openai_unsupported_model_settings') == ('logit_bias',)
 
 
 def test_infer_cerebras_model(env: TestEnv):

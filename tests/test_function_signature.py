@@ -25,8 +25,6 @@ from pydantic_ai.tools import Tool, ToolDefinition
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 
 # Module-level types for tests that need get_type_hints() resolution
 class _Color(str, Enum):
@@ -850,7 +848,112 @@ class User(TypedDict):
         },
     )
     assert sig_ref_nonobj.render('...', name='tool5') == snapshot("""\
-def tool5(*, x: StringAlias) -> Any:
+def tool5(*, x: str) -> Any:
+    ...\
+""")
+
+
+def test_non_object_type_refs_render_inline():
+    """Non-object `$defs` resolve inline; a bare alias name would never be defined.
+
+    Covers every shape pydantic emits for a PEP 695 alias — constrained scalar, enum, list,
+    mapping, union and formatted scalar — plus the nested-item and object-field paths.
+    """
+    sig = FunctionSignature.from_schema(
+        name='list_tasks',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'limit': {'$ref': '#/$defs/PageLimit'},
+                'status': {'$ref': '#/$defs/Status'},
+                'tags': {'$ref': '#/$defs/Tags'},
+                'meta': {'$ref': '#/$defs/Meta'},
+                'maybe': {'$ref': '#/$defs/MaybeInt'},
+                'stamp': {'$ref': '#/$defs/Stamp'},
+                'nested': {'type': 'array', 'items': {'$ref': '#/$defs/PageLimit'}},
+                'inner': {'$ref': '#/$defs/Inner'},
+            },
+            'required': ['limit', 'status', 'tags', 'meta', 'maybe', 'stamp', 'nested', 'inner'],
+            '$defs': {
+                'PageLimit': {'type': 'integer', 'minimum': 1, 'maximum': 100},
+                'Status': {'type': 'string', 'enum': ['open', 'done']},
+                'Tags': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1},
+                'Meta': {'type': 'object', 'additionalProperties': {'type': 'integer'}},
+                'MaybeInt': {'anyOf': [{'type': 'integer'}, {'type': 'null'}]},
+                'Stamp': {'type': 'string', 'format': 'date-time'},
+                'Inner': {
+                    'type': 'object',
+                    'title': 'Inner',
+                    'properties': {'limit': {'$ref': '#/$defs/PageLimit'}},
+                    'required': ['limit'],
+                },
+            },
+        },
+    )
+
+    rendered = sig.render('...', name='list_tasks')
+    assert rendered == snapshot("""\
+def list_tasks(*, limit: int, status: Literal['open', 'done'], tags: list[str], meta: dict[str, int], maybe: int | None, stamp: str, nested: list[int], inner: Inner) -> Any:
+    ...\
+""")
+    definitions = FunctionSignature.render_type_definitions([sig], frozenset())
+    assert definitions == snapshot(
+        [
+            """\
+class Inner(TypedDict):
+    limit: int\
+"""
+        ]
+    )
+
+    # Only object defs become TypedDicts, so no other alias name may survive anywhere.
+    emitted = '\n'.join([rendered, *definitions])
+    assert [name for name in ('PageLimit', 'Status', 'Tags', 'Meta', 'MaybeInt', 'Stamp') if name in emitted] == []
+    compile(rendered, '<test>', 'exec')
+
+
+def test_recursive_non_object_type_ref_renders_any():
+    """A self-referential non-object def has no TypedDict to name, so the cycle renders as `Any`."""
+    sig = FunctionSignature.from_schema(
+        name='dump',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'blob': {'$ref': '#/$defs/Json'}},
+            'required': ['blob'],
+            '$defs': {
+                'Json': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'integer'},
+                        {'type': 'array', 'items': {'$ref': '#/$defs/Json'}},
+                    ]
+                }
+            },
+        },
+    )
+    assert sig.render('...', name='dump') == snapshot("""\
+def dump(*, blob: str | int | list[Any]) -> Any:
+    ...\
+""")
+
+
+def test_ref_to_ref_def_keeps_alias_name():
+    """A def that is itself a `$ref` is left unresolved.
+
+    Pydantic flattens an alias of an alias into a full copy, so this shape only reaches us
+    from hand-written schemas; following the indirection is out of scope here.
+    """
+    sig = FunctionSignature.from_schema(
+        name='t',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'$ref': '#/$defs/Indirect'}},
+            'required': ['x'],
+            '$defs': {'Indirect': {'$ref': '#/$defs/PageLimit'}, 'PageLimit': {'type': 'integer'}},
+        },
+    )
+    assert sig.render('...', name='t') == snapshot("""\
+def t(*, x: Indirect) -> Any:
     ...\
 """)
 
@@ -1255,7 +1358,7 @@ def test_function_signature_root_model():
 
     td = Tool(func_with_root_model).tool_def
     assert td.render_signature('...') == snapshot("""\
-def func_with_root_model(*, x: _IntList, y: int) -> None:
+def func_with_root_model(*, x: list[int], y: int) -> None:
     ...\
 """)
     assert td.function_signature is not None
@@ -1429,6 +1532,19 @@ def test_function_with_enum_field_in_model():
     type_names = {rt.name for rt in td.function_signature.referenced_types}
     assert '_ConfigWithEnum' in type_names
     assert '_Color' not in type_names
+
+
+def test_function_with_enum_ref_parameter():
+    """Referenced enum values are visible in the rendered tool signature."""
+
+    def set_color(color: _Color) -> None:
+        pass  # pragma: no cover
+
+    td = Tool(set_color).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def set_color(*, color: Literal['red', 'green']) -> None:
+    ...\
+""")
 
 
 def test_schema_with_described_optional_fields():

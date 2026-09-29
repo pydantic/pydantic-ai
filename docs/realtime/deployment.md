@@ -1,3 +1,7 @@
+---
+description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, with keys and tools on your server."
+---
+
 # Connecting a frontend
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
@@ -12,12 +16,12 @@ client and the provider:
   media bridge.
 - **[SIP / telephony bridge](#siptelephony-bridge)** — for phone calls, via a telephony provider.
 
-In every shape the session — with its [tools](tools.md), [history](history.md), and
+In every setup the session — with its [tools](tools.md), [history](history.md), and
 [usage limits](observability.md#usage-and-limits) — runs on your backend. Wiring a browser straight
 to the provider with the provider's own SDK instead moves the agent loop into the client and gives
-up all of that; prefer the shapes above.
+up all of that; prefer one of the setups above.
 
-## Browser WebRTC + server sideband
+## Browser WebRTC + server sideband {#browser-webrtc-server-sideband}
 
 For browser voice agents on OpenAI and Azure OpenAI, the browser carries microphone and speaker
 audio directly over WebRTC while the backend attaches a control-plane **sideband** to the same call.
@@ -42,6 +46,7 @@ from pydantic_ai import Agent
 
 agent = Agent(instructions='You are a concise voice assistant.')
 realtime = agent.realtime('openai:gpt-realtime')
+sideband_tasks: set[asyncio.Task[None]] = set()
 
 
 async def handle_offer(sdp_offer: str) -> str:
@@ -52,9 +57,15 @@ async def handle_offer(sdp_offer: str) -> str:
             async for event in session:
                 print(event)
 
-    asyncio.create_task(run_sideband())
+    task = asyncio.create_task(run_sideband())
+    sideband_tasks.add(task)  # (1)!
+    task.add_done_callback(sideband_tasks.discard)
     return answer.sdp
 ```
+
+1. asyncio keeps only a weak reference to a task, so hold one yourself until the call ends; the done
+   callback also surfaces an error the sideband session raised instead of leaving it as a "never
+   retrieved" warning.
 
 The secure offer-relay flow never gives the browser a token. As an alternative,
 [`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] mints a
@@ -83,14 +94,14 @@ The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the f
 browser flow. Provider-specific setup (Azure's Microsoft Entra ID and `webrtcfilter`) lives on the
 [Azure](azure.md#browser-webrtc-and-microsoft-entra-id) page.
 
-## Browser → backend WebSocket relay
+## Browser → backend WebSocket relay {#browser-backend-websocket-relay}
 
 When the browser can't use WebRTC — or the provider is Gemini Live or xAI — build a WebSocket
 endpoint on your backend that accepts the browser's microphone audio and pumps it into
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio], while relaying
 [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] output back for playback. Here
 the backend owns the media bridge. The [realtime camera example](../examples/realtime-camera.md)
-demonstrates this shape end to end; a minimal FastAPI relay — the browser sends raw PCM16 binary
+demonstrates this setup end to end; a minimal FastAPI relay — the browser sends raw PCM16 binary
 frames and plays the frames it receives — is:
 
 ```python
@@ -107,19 +118,37 @@ app = FastAPI()
 @app.websocket('/voice')
 async def voice_socket(websocket: WebSocket):
     await websocket.accept()
+
+    async def microphone():
+        while True:
+            yield await websocket.receive_bytes()
+
     async with agent.realtime('openai:gpt-realtime').session() as session:
 
-        async def pump_input():
-            while True:
-                await session.send_audio(await websocket.receive_bytes())
-
-        input_task = asyncio.create_task(pump_input())
-        try:
+        async def playback():
             async for chunk in session.stream_audio():
                 await websocket.send_bytes(chunk)
+
+        playback_task = asyncio.create_task(playback())
+        try:
+            await session.send_audio(microphone())
         finally:
-            input_task.cancel()
+            playback_task.cancel()
 ```
+
+[`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] consumes the async iterator for the
+whole call, so when the browser disconnects, `receive_bytes()` raises, the `finally` stops playback,
+and leaving the `async with` block hangs up the provider session. Driving the input from a bare
+`asyncio.create_task` instead would swallow that error and leave the billed session open with nobody
+listening.
+
+`handle_barge_in=True` is a no-op for this relay: `played_audio_bytes` counts a chunk as played when
+the relay forwards it, before the browser has actually played it, so the session sees no unplayed
+audio to flush. The relay must obtain the browser's real playback position, call
+[`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] with that count, and
+tell the browser to stop playback and clear its own buffer: the session can only drop what it has
+not forwarded yet. Passing `played_ms=` records the provider-side cutoff but never flushes audio
+queued by the session or buffered in the browser.
 
 ## SIP/telephony bridge
 

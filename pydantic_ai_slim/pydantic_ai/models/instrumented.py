@@ -24,6 +24,7 @@ from pydantic_ai._instrumentation import (
     get_instructions,
     message_json_fragment,
     open_model_request_span,
+    response_cost,
     safe_to_json,
 )
 
@@ -69,7 +70,7 @@ class InstrumentationSettings:
     - [`Agent.instrument`][pydantic_ai.agent.Agent.instrument] / [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
     - [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
 
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     tracer: Tracer = field(repr=False)
@@ -322,9 +323,8 @@ class InstrumentationSettings:
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-        if price_calculation:
-            cost = float(price_calculation.total_price)
-            self.cost_histogram.record(cost, attributes)
+        if (cost := response_cost(response, price_calculation)) is not None:
+            self.cost_histogram.record(float(cost), attributes)
         if time_to_first_chunk is not None:
             self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 
@@ -333,7 +333,7 @@ class InstrumentationSettings:
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     instrumentation_settings: InstrumentationSettings

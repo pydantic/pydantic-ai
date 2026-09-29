@@ -24,3 +24,8 @@ fi
 echo "[harness-prewarm] using uv=${uv_bin} cache=${UV_CACHE_DIR}"
 "${uv_bin}" sync --script "${runner}" \
   || echo "::warning::harness uv pre-warm failed; agent will install under the firewall"
+# `uv sync --script` rewrites the adjacent lock when it is stale. Put the checkout
+# back, so later steps see the tree they checked out: CI Review's
+# `git checkout --detach` of the PR head aborts on the dirty lock whenever the
+# PR changes that file too.
+git -C "${GITHUB_WORKSPACE}" checkout -- "${runner}.lock" 2>/dev/null || true

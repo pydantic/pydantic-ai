@@ -60,17 +60,6 @@ class CerebrasProvider(_OpenAICompatibleProvider):
                 profile = profile_func(model_name_lower)
                 break
 
-        # According to https://inference-docs.cerebras.ai/resources/openai#currently-unsupported-openai-features,
-        # Cerebras doesn't support some model settings.
-        # openai_chat_supports_web_search=False is default, so not required here
-        unsupported_model_settings = (
-            'frequency_penalty',
-            'logit_bias',
-            'presence_penalty',
-            'parallel_tool_calls',
-            'service_tier',
-            'openai_service_tier',
-        )
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
         # gpt-oss reasons unconditionally on Cerebras: `disable_reasoning=True` is rejected with a 400,
         # so `thinking=False` must be silently ignored rather than emitted. zai-glm-4.7 can still disable.
@@ -83,7 +72,11 @@ class CerebrasProvider(_OpenAICompatibleProvider):
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
             OpenAIModelProfile(
-                openai_unsupported_model_settings=unsupported_model_settings,
+                # Cerebras accepts `logit_bias` and validates it — a map over 100 entries is a 400 — but
+                # never applies it: biasing a token by 100 in either direction leaves the returned logprobs
+                # bit-identical. Forwarding it would turn today's silent no-op into a hard error on large
+                # bias maps, so it stays stripped even though the API reference documents it as supported.
+                openai_unsupported_model_settings=('logit_bias',),
                 supports_thinking=is_reasoning,
                 thinking_always_enabled=is_always_on_reasoning,
                 openai_chat_send_back_thinking_parts=send_back_thinking_parts,

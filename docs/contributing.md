@@ -1,6 +1,10 @@
+---
+description: "How to contribute to Pydantic AI: agree an approach before opening a PR, what to expect in review, dev setup and tests, and rules for adding model providers."
+---
+
 We'd love you to contribute to Pydantic AI!
 
-## How we work — the short version
+## How we work — the short version {#how-we-work-the-short-version}
 
 Pydantic AI is maintained by a small team. We set our own priorities based on what benefits the most users, and we work through issues and PRs in that order — not in the order they arrive.
 
@@ -25,15 +29,15 @@ If the fix could reasonably go more than one way, or you're unsure it's actually
 
 ### Features, integrations, or API changes
 
-Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#what-goes-where) for the full distinction.
+Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness) for the full distinction.
 
-**If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable shape, we can talk about upstreaming to harness or core.
+**If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable API, we can talk about upstreaming to harness or core.
 
 If it does belong in core:
 
 1. **Search first.** If an existing issue covers your need, comment there. If the closest match is only related, open a new issue and link it.
 2. **Describe the problem, not just the solution.** Tell us what you're building, what's blocking you, and what you've tried. This context matters more than code.
-3. **Propose a plan before building.** Post the shape of the solution on the issue, or open a draft PR with just a `PLAN.md`. For larger features, we do short video calls with contributors to iterate on the design — a 20-minute call often saves weeks of async review cycles.
+3. **Propose a plan before building.** Post a short plan on the issue, or open a draft PR with just a `PLAN.md`. For larger features, we do short video calls with contributors to iterate on the design — a 20-minute call often saves weeks of async review cycles.
 4. **Wait for assignment.** A maintainer needs to agree on the approach and assign the issue to you before you open a PR. Unassigned PRs may be auto-closed.
 
 !!! warning
@@ -61,7 +65,7 @@ Even for PRs with code we've previously engaged with: we treat all contributed c
 
 ### We may rewrite or supersede your code
 
-We treat contributed code as illustrative: a starting point that shows the shape of the change and proves the approach works, not the final form we merge. The most useful thing you can give us for a non-trivial change is a plan plus a working example — not a polished, merge-ready implementation.
+We treat contributed code as illustrative: a starting point that shows the proposed change and proves the approach works, not the final form we merge. The most useful thing you can give us for a non-trivial change is a plan plus a working example — not a polished, merge-ready implementation.
 
 On any PR, we may push commits to your branch, open a follow-up PR that supersedes yours, or rewrite from scratch. For security reasons, we lean toward rewriting contributed code rather than merging as-is. You will still be credited as the original author.
 
@@ -103,18 +107,9 @@ git clone git@github.com:<your username>/pydantic-ai.git
 cd pydantic-ai
 ```
 
-Install `uv` (version 0.4.30 or later) and `pre-commit`:
+[Install `uv`](https://docs.astral.sh/uv/getting-started/installation/). The minimum supported `uv` version is set by `tool.uv.required-version` in the repository's [`pyproject.toml`](https://github.com/pydantic/pydantic-ai/blob/main/pyproject.toml).
 
-- [`uv` install docs](https://docs.astral.sh/uv/getting-started/installation/)
-- [`pre-commit` install docs](https://pre-commit.com/#install)
-
-To install `pre-commit` you can run the following command:
-
-```bash
-uv tool install pre-commit
-```
-
-Install `pydantic-ai`, all dependencies and pre-commit hooks
+Install `pydantic-ai`, all dependencies, and pre-commit hooks. If `pre-commit` is not available, this also installs it with `uv`:
 
 ```bash
 make install
@@ -136,6 +131,53 @@ To run code formatting, linting, static type checks, and tests with coverage rep
 make
 ```
 
+### Type checking
+
+`make typecheck` runs Pyright over every file in the project.
+
+The pre-commit hook runs `make typecheck-changed` instead, which checks only the files whose content
+changed since Pyright last passed plus everything that transitively imports them. It records what
+passed under your git directory, so the record is per-worktree and never committed.
+
+CI runs that same hook, and whenever it runs it checks everything: GitHub Actions always sets `CI`,
+and on seeing it `make typecheck-changed` narrows nothing and hands the whole project to
+`make typecheck-pyright`. A fresh runner has no record to narrow against in the first place. CI still
+skips the hook outright on a pull request that touches nothing Pyright reads, as it did before.
+
+Locally it follows the imports Pyright resolves statically, and never checks a file under `tests/`
+that did not itself change since the run it recorded. Tests are two thirds of the project's lines
+and most of them import `pydantic_ai`, so checking them here would put the whole project back on the
+command line for any change to the library; CI is the gate for a source change that breaks a test
+file's typing.
+
+It gives up on narrowing whenever something could leave that set incomplete: a first run; a new
+Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a change to
+`pyproject.toml`, `uv.lock` or the `Makefile`; an import that would now resolve to a different file
+or a new top-level module that could shadow an installed one; or a change reaching more than half the
+project. It then runs Pyright over every tracked file Pyright reports on, minus the `tests/` files
+that did not change; a first run has no record to compare them against, so it checks all of them.
+Only three things hand the whole project to `make typecheck-pyright`: `CI`, an interpreter older
+than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright configuration it
+cannot reproduce. Every other run considers tracked files only, so run `make typecheck` yourself
+before relying on a green hook for a file you have not added.
+
+A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
+The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
+wall time: `auto` is up to one worker per logical core, and a positive integer caps them. Only
+`make typecheck-pyright` reads it, so the hook picks it up only on a run that hands the whole
+project over: `CI`, an interpreter older than Python 3.11, or a Pyright configuration it cannot
+reproduce. A run it narrows, or runs itself over the reduced set, stays single-process.
+
+```bash
+export PYRIGHT_THREADS=auto
+```
+
+Export it rather than setting it per command, so every `make typecheck` picks it up. Every worker is
+a full Node process, so they pay for themselves only on a machine with the memory to hold them; one
+already near its limit swaps and comes out slower than the default. Unset the variable or set it to
+`1` to go back to a single process: anything Pyright cannot read as a positive integer, `0` and
+`off` included, means `auto`.
+
 ## Documentation Changes
 
 [`docs/navigation.yml`](https://github.com/pydantic/pydantic-ai/blob/main/docs/navigation.yml)
@@ -147,15 +189,21 @@ All routes in `docs/navigation.yml` are relative to the Pydantic AI documentatio
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
 either value with `/ai` or a leading slash.
 
-For the rendered site, use the documentation preview attached to a pull request after a maintainer
-adds the `trigger:docs` label.
+To validate navigation changes, ask a maintainer to add the `trigger:docs` label to the pull request.
+This checks the navigation manifest, referenced Markdown files, routes, aliases, and redirects in
+`pydantic/unified-docs` and posts the result on the PR. It does not build a rendered preview.
+
+CI checks that every link between doc pages resolves, anchor included, and fails on `Cannot find
+fragment`. A heading's anchor is generated from its text, so renaming one silently breaks every link
+pointing at it. Where a heading is linked to, pin its anchor with `{#custom-id}` — the heading text
+is then free to change without moving the anchor.
 
 ## Rules for adding new models to Pydantic AI {#new-model-rules}
 
 To avoid an excessive workload for the maintainers of Pydantic AI, we can't accept all model contributions, so we're setting the following rules for when we'll accept new models and when we won't. This should hopefully reduce the chances of disappointment and wasted work.
 
 - To add a new model with an extra dependency, that dependency needs > 500k monthly downloads from PyPI consistently over 3 months or more
-- To add a new model which uses another models logic internally and has no extra dependencies, that model's GitHub org needs > 20k stars in total
+- To add a new model which uses another model's logic internally and has no extra dependencies, that model's GitHub org needs > 20k stars in total
 - For any other model that's just a custom URL and API key, we're happy to add a one-paragraph description with a link and instructions on the URL to use
 - For any other model that requires more logic, we recommend you release your own Python package `pydantic-ai-xxx`, which depends on [`pydantic-ai-slim`](install.md#slim-install) and implements a model that inherits from our [`Model`][pydantic_ai.models.Model] ABC
 

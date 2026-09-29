@@ -4,6 +4,9 @@ changelog:
       - docs
       - chore
   categories:
+    - title: ⚠️ Compatibility Notes
+      labels:
+        - compatibility impact
     - title: 🚀 Features
       labels:
         - feature

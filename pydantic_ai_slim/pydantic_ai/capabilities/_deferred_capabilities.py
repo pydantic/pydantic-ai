@@ -17,13 +17,17 @@ def record_loaded_capability_tools(
     ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
 ) -> ModelRequestContext:
     """Record tools reconstructed from capability loads in pre-definition histories."""
-    loaded = tool_defs_from_pre_definition_load_returns(ctx, request_context.model_request_parameters.function_tools)
-    newly_loaded = [tool_def for name, tool_def in loaded.items() if name not in ctx.discovered_tool_names]
-    if not newly_loaded:
+    # `loaded` is the capability word; what these are is *tools* a load disclosed, so the set they
+    # join is `discovered_tool_names` and newness is measured against it.
+    reconstructed = tool_defs_from_pre_definition_load_returns(
+        ctx, request_context.model_request_parameters.function_tools
+    )
+    newly_discovered = [tool_def for name, tool_def in reconstructed.items() if name not in ctx.discovered_tool_names]
+    if not newly_discovered:
         return request_context
 
-    newly_loaded = sorted(newly_loaded, key=lambda tool_def: tool_def.name)
-    tools_added = [tool_def.name for tool_def in newly_loaded]
+    newly_discovered = sorted(newly_discovered, key=lambda tool_def: tool_def.name)
+    tools_added = [tool_def.name for tool_def in newly_discovered]
     request_context.messages.append(ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=tools_added)]))
     ctx.discovered_tool_names.update(tools_added)
     request_context.model_request_parameters = replace(

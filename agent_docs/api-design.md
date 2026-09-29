@@ -6,6 +6,19 @@
 
 ## Rules
 
+### Compatibility impacts
+
+- Treat previously valid user code that now needs modification as a compatibility impact.
+- Preserve compatibility unless the bridge retains incorrect behavior, creates a permanent legacy-only API, or makes the contract contradictory.
+- When no valid bridge exists, identify the exact exception in `docs/version-policy.md`.
+- Without an applicable exception, deprecate the old behavior before removal or wait for a major release.
+- Treat non-underscore symbols on public modules and classes as public by default. A missing docstring alone does not make a symbol internal.
+- Treat additions to released public unions as compatibility-relevant changes. Inspect attributes common to prior arms and exhaustive consumers.
+- Do not add semantically false fields only to preserve a union's previous structural shape.
+- For every permitted compatibility impact, add the `compatibility impact` label and a release note.
+- Add a `[!WARNING]` PR section that names affected code, the policy exception, and the migration.
+- Add an exact API-check waiver when the deterministic compatibility gate reports the permitted change.
+
 <!-- rule:146 -->
 - Prefix implementation details with underscore (`_`) and exclude from `__all__` — prevents accidental API surface expansion and signals internal-only usage — Keeps the public API surface minimal and clearly separates internal implementation from stable public interfaces, preventing backward compatibility obligations for internal code.
 <!-- rule:29 -->

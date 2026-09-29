@@ -25,7 +25,7 @@ InterfaceClient = TypeVar('InterfaceClient', default=Any)
 
 _KEYLESS_HINT = (
     "To try Pydantic AI without an API key, use the built-in test model: `Agent('test')`. "
-    'See https://ai.pydantic.dev/testing/'
+    'See https://pydantic.dev/docs/ai/guides/testing/'
 )
 
 
@@ -33,7 +33,7 @@ def missing_api_key_error(message: str) -> UserError:
     """Build a [`UserError`][pydantic_ai.exceptions.UserError] for missing provider credentials.
 
     The provider-specific `message` (which environment variable to set or how to pass the key) is followed by a
-    hint pointing newcomers to the keyless [test model](https://ai.pydantic.dev/testing/), so a missing key never
+    hint pointing newcomers to the keyless [test model](https://pydantic.dev/docs/ai/guides/testing/), so a missing key never
     dead-ends the getting-started experience.
     """
     return UserError(f'{message} {_KEYLESS_HINT}')
@@ -153,6 +153,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openai import OpenAIProvider
 
         return OpenAIProvider
+    elif provider == 'openai-codex':
+        from .openai_codex import OpenAICodexProvider
+
+        return OpenAICodexProvider
     elif provider == 'deepseek':
         from .deepseek import DeepSeekProvider
 
@@ -241,10 +245,18 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
         return GitHubProvider  # pyright: ignore[reportDeprecated]
+    elif provider == 'github-copilot':
+        from .github_copilot import GitHubCopilotProvider
+
+        return GitHubCopilotProvider
     elif provider == 'litellm':
         from .litellm import LiteLLMProvider
 
         return LiteLLMProvider
+    elif provider == 'vllm':
+        from .vllm import VLLMProvider
+
+        return VLLMProvider
     elif provider == 'nebius':
         from .nebius import NebiusProvider
 
@@ -269,6 +281,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .snowflake import SnowflakeProvider
 
         return SnowflakeProvider
+    elif provider == 'typesafe':
+        from .typesafe import TypeSafeProvider
+
+        return TypeSafeProvider
     elif provider == 'voyageai':
         from .voyageai import VoyageAIProvider
 

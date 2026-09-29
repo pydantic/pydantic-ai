@@ -1,3 +1,7 @@
+---
+description: "Install Pydantic AI with pip or uv on Python 3.10+, or install pydantic-ai-slim with only the optional extras for the model providers and integrations you use."
+---
+
 # Installation
 
 Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pydantic-ai/) so installation is as simple as:
@@ -16,7 +20,7 @@ To use any other models or integrations, add the relevant extras to your install
 Pydantic AI's own HTTP requests, and those of providers migrated to [`httpx2`](https://httpx2.pydantic.dev/), verify TLS certificates against the operating system trust store rather than shipping a `certifi` bundle.
 Minimal container images and corporate proxies that rely on a private CA therefore need those certificates installed in the image (for example the `ca-certificates` package, plus your proxy's root CA).
 Alternatively, pass such a provider an `httpx2.AsyncClient` you configured yourself through its `http_client` argument — see the [provider docs](models/overview.md) for the client each one accepts.
-Providers whose SDKs still use legacy `httpx` (such as Anthropic and Cohere) keep its `certifi`-based verification and take a legacy `httpx.AsyncClient` instead.
+Providers whose SDKs still use legacy `httpx` (such as Groq and Cohere) keep its `certifi`-based verification and take a legacy `httpx.AsyncClient` instead.
 
 ## Use with Pydantic Logfire
 
@@ -63,6 +67,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `snowflake` - installs the [Snowflake Cortex](models/snowflake.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `crusoe` - installs the [Crusoe](models/crusoe.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `cerebras` - installs the [Cerebras](models/cerebras.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
+* `typesafe` - installs the [TypeSafe (Jev)](models/typesafe.md) dependency `typesafe-sdk` [PyPI ↗](https://pypi.org/project/typesafe-sdk){:target="_blank"}
 * `huggingface` - installs [Hugging Face Model](models/huggingface.md) dependency `huggingface-hub` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
 * `sentence-transformers` - installs [Sentence Transformers Embedding Model](embeddings.md#sentence-transformers-local) dependency `sentence-transformers` [PyPI ↗](https://pypi.org/project/sentence-transformers){:target="_blank"}
 * `voyageai` - installs [VoyageAI Embedding Model](embeddings.md#voyageai) dependency `voyageai` [PyPI ↗](https://pypi.org/project/voyageai){:target="_blank"}
@@ -72,10 +77,11 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `web-fetch` - installs [Web Fetch Tool](common-tools.md#web-fetch-tool) dependency `markdownify` [PyPI ↗](https://pypi.org/project/markdownify){:target="_blank"}
 * `cli` - installs [CLI](cli.md) dependencies `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
 * `mcp` - installs [MCP](mcp/client.md) dependency `fastmcp-slim[client]` [PyPI ↗](https://pypi.org/project/fastmcp-slim){:target="_blank"}
+* `mcp-tasks` - installs the [MCP](mcp/client.md) FastMCP 4 tasks extension (`use_task=True`) dependency `fastmcp-tasks` [PyPI ↗](https://pypi.org/project/fastmcp-tasks){:target="_blank"}
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `web` - installs [Web UI](ui/overview.md) dependencies `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"} and `uvicorn` [PyPI ↗](https://pypi.org/project/uvicorn){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
-* `retries` - installs [HTTP Retries](models/http-request-retries.md) dependency `tenacity` [PyPI ↗](https://pypi.org/project/tenacity){:target="_blank"}, plus legacy `httpx` [PyPI ↗](https://pypi.org/project/httpx){:target="_blank"} support until Pydantic AI v3
+* `retries` - installs [transport retries](retries.md#transport-retries) dependency `tenacity` [PyPI ↗](https://pypi.org/project/tenacity){:target="_blank"}, plus legacy `httpx` [PyPI ↗](https://pypi.org/project/httpx){:target="_blank"} support until Pydantic AI v3
 * `temporal` - installs [Temporal Durable Execution](durable_execution/temporal.md) dependency `temporalio` [PyPI ↗](https://pypi.org/project/temporalio){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}

@@ -1,3 +1,7 @@
+---
+description: "Compute experiment-wide metrics with Pydantic Evals report evaluators: confusion matrices, precision-recall and ROC curves with AUC, accuracy and custom tables."
+---
+
 # Report Evaluators
 
 Report evaluators analyze entire experiment results rather than individual cases. Use them to compute
@@ -574,9 +578,8 @@ class AsyncAccuracy(ReportEvaluator):
 
 ## Serialization
 
-Report evaluators are serialized to and from YAML/JSON dataset files using the same format as
-case-level evaluators. This means datasets with report evaluators can be fully round-tripped
-through file serialization.
+Report evaluators use the same YAML/JSON format as case-level evaluators, so datasets containing
+them can be round-tripped through serialization.
 
 **Example YAML dataset with report evaluators:**
 

@@ -1,3 +1,7 @@
+---
+description: "Build voice agents with Pydantic AI realtime: live speech-to-speech conversations over the OpenAI Realtime API, Gemini Live, xAI and Azure, with your tools."
+---
+
 # Realtime (speech-to-speech)
 
 Pydantic AI's realtime support lets an agent hold a live, spoken conversation. It streams the
@@ -11,7 +15,7 @@ A realtime session uses the same agent [tools](tools.md), [dependencies](../depe
 agent can look up an order, check availability, or act on the logged-in user's data with the same
 tools and dependencies a text agent would use. The call itself becomes ordinary message history
 that you can [hand to `Agent.run()`](history.md#handing-off-to-a-text-agent) for summarization or
-structured follow-up, the same code runs against [four providers](#provider-support), and usage
+structured follow-up, the same code runs against [five providers](#provider-support), and usage
 limits and [Logfire](../logfire.md) tracing are built in. Your application owns the audio transport —
 bridged through your backend, or [browser-direct over WebRTC](deployment.md#browser-webrtc-server-sideband)
 on OpenAI and Azure — while Pydantic AI runs the provider-agnostic agent loop.
@@ -34,7 +38,6 @@ import contextlib
 from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import RealtimeSession
 
 agent = Agent(instructions='You take reservations for The Terrace. Keep replies short.')
 
@@ -45,8 +48,8 @@ async def check_availability(day: str, party_size: int) -> str:
     return f'One table for {party_size} is free at 7 pm {day}.'
 
 
-async def stream_microphone(session: RealtimeSession) -> None:
-    ...  # capture signed 16-bit mono PCM chunks and `await session.send_audio(chunk)`
+async def microphone_chunks() -> AsyncIterator[bytes]:
+    yield b'...'  # capture signed 16-bit mono PCM chunks from your microphone
 
 
 async def play_audio(chunks: AsyncIterator[bytes]) -> None:
@@ -56,7 +59,7 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 async def main():
     async with agent.realtime('openai:gpt-realtime').session() as session:
-        microphone = asyncio.create_task(stream_microphone(session))
+        microphone = asyncio.create_task(session.send_audio(microphone_chunks()))
         speaker = asyncio.create_task(play_audio(session.stream_audio()))
 
         async for part in session.stream_transcripts():
@@ -65,6 +68,8 @@ async def main():
             #> assistant: We do: 7 pm, table for two. Want me to book it?
             if part.speaker == 'assistant':
                 break  # keep listening in a real call; we stop after one exchange
+        # Let the speaker consume every generated chunk before closing the session.
+        await session.wait_for_playback()
 
     # Leaving the `async with` block closes the session, which ends the speaker's audio stream —
     # but the microphone reads an external source, so stop it explicitly.
@@ -84,7 +89,7 @@ which depend on your audio stack)_
 Capture and play at the sample rates the model expects — they're reported by the model's profile
 and can differ between input and output (see [Provider support](#provider-support) below). The
 [voice assistant example](../examples/realtime-voice.md) fills the placeholders in with
-`sounddevice` for a runnable microphone-and-speaker loop; the
+[`listentome`](https://github.com/Kludex/listentome) for a runnable microphone-and-speaker loop; the
 [text-to-audio example](../examples/realtime-text-to-audio.md) skips audio input entirely by
 sending a text prompt and saving the spoken reply to a WAV file.
 
@@ -108,7 +113,7 @@ device ↔ media bridge ↔ RealtimeSession ↔ provider
 
 The *media bridge* is whatever moves audio between the user's device and your backend — a browser
 WebSocket or a telephony bridge. It's how you deploy this beyond a local microphone; see
-[Connecting a frontend](deployment.md) for each shape. On OpenAI and Azure the browser can instead
+[Connecting a frontend](deployment.md) for each setup. On OpenAI and Azure the browser can instead
 exchange media with the provider directly over [WebRTC](deployment.md#browser-webrtc-server-sideband),
 with your backend running this same loop over a control-plane sideband rather than a media bridge.
 
@@ -126,7 +131,7 @@ with your backend running this same loop over a control-plane sideband rather th
   session.
 - [History and handoff](history.md) covers retained transcripts, audio and images, session seeding,
   and continuing with a standard text agent.
-- [Connecting a frontend](deployment.md) covers the transport shapes between user devices and your
+- [Connecting a frontend](deployment.md) covers the transport options between user devices and your
   backend.
 - [Connection lifecycle](lifecycle.md) covers the session lifecycle, reconnection, session limits,
   and errors.
@@ -145,9 +150,10 @@ and quirks:
 | Provider | Audio output | Image input | Text output | [Browser WebRTC](deployment.md#browser-webrtc-server-sideband) | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | [OpenAI](openai.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
+| [OpenAI GPT-Live](openai-live.md) | ✓ | ✗ | ✗ | ✗ | ✓ | ✗, set the [backend](openai-live.md#how-delegation-works) effort | ✗, open a new session |
 | [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
-| [Google Gemini](gemini.md) | ✓ | ✓ | ✗ | ✗ | Opt-in, native-audio models | ✓ | ✓, when enabled |
-| [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✗ | `grok-voice-latest` and `-think-` models | ✓ |
+| [Google Gemini](gemini.md) | ✓ | ✓ | ✗ | ✗ | Opt-in; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
+| [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✗ | `grok-voice-latest` and `-think-` models | ✓, with a `reconnect` policy |
 
 For portable branching, inspect [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]
 or [`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile]: the
@@ -199,8 +205,8 @@ models, with one deliberate exception:
 
 !!! note "Asking for text on a speech-only model fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
-    (Gemini Live and xAI) raises a `UserError` before connecting: silently answering with speech
-    would be worse than not starting.
+    (GPT-Live, Gemini Live, and xAI) raises a `UserError` before connecting: silently answering with
+    speech would be worse than not starting.
 
 ## Relationship to standard agent runs
 
@@ -267,5 +273,9 @@ fit for a product, two alternatives sit outside it:
 | Dynamic instructions are resolved once when the session connects. | [#7303](https://github.com/pydantic/pydantic-ai/issues/7303) |
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
 | Interactive human-in-the-loop tool approval is not supported: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves approvals [from policy, immediately](tools.md#deferred-and-approval-required-tools). | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
-| [`RunContext.enqueue()`][pydantic_ai.tools.RunContext.enqueue] accepts [one plain-text prompt per call](tools.md#enqueuing-prompts-from-tools), unlike its [standard-run form](../message-history.md#injecting-messages-mid-run). | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
-| Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises rather than being delivered. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |
+| Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text parts and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
+| Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |
+| GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai-live.md#the-turn-boundary-is-inferred) |
+| GPT-Live bills audio duration rather than tokens, and no `UsageLimits` field caps a session by duration; a `cost_limit` bounds it once the duration is priced. | [#8371](https://github.com/pydantic/pydantic-ai/issues/8371) |
+| GPT-Live has no user-text turn: `send('...')` and `enqueue()` deliver text as context to the speaking model, and only while audio is flowing. | [GPT-Live text input](openai-live.md#text-is-context-not-a-user-turn) |
+| GPT-Live sessions do not reconnect automatically, so a dropped connection ends the session and the `reconnect` policy is ignored. | [GPT-Live feature support](openai-live.md#feature-support-and-limitations) |

@@ -55,9 +55,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://ai.pydantic.dev/graph/tree/main/pydantic_graph"
+Homepage = "https://pydantic.dev/docs/ai/graph/graph/"
 Source = "https://github.com/pydantic/pydantic-ai"
-Documentation = "https://ai.pydantic.dev/graph"
+Documentation = "https://pydantic.dev/docs/ai/graph/graph/"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.build.targets.wheel]

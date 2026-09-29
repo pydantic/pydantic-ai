@@ -87,18 +87,6 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-@contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
-    try:
-        yield
-    except grpc.RpcError as e:
-        status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
-        details = e.details() or str(e)
-        if status_code is not None:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
-        raise ModelAPIError(model_name=model_name, message=details) from e
-
-
 _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.UNAUTHENTICATED: 401,
     grpc.StatusCode.PERMISSION_DENIED: 403,
@@ -109,12 +97,33 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
-XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest']
+
+@contextmanager
+def _map_api_errors(
+    model_name: str, *, status_map: dict[grpc.StatusCode, int] = _GRPC_STATUS_TO_HTTP
+) -> Generator[None]:
+    """Turn a gRPC error into the framework's HTTP-shaped errors.
+
+    `status_map` is a parameter because the image RPC maps one more status than chat does; it defaults
+    to the chat table so the chat call sites read unchanged.
+    """
+    try:
+        yield
+    except grpc.RpcError as e:
+        status_code = status_map.get(e.code())
+        details = e.details() or str(e)
+        if status_code is not None:
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
+        raise ModelAPIError(model_name=model_name, message=details) from e
+
+
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']
 """Possible xAI model names.
 
-`grok-4.5`/`grok-4.5-latest` are bridged with a local `Literal` because `xai_sdk`'s `ChatModel` doesn't
-list them yet (as of 1.17.0). Drop the literal once the `xai-sdk` floor is bumped past the release that
-adds them to `ChatModel`.
+The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the
+floor the `xai` extra declares: `grok-build-0.1` arrived in 1.15.0, `grok-4.5`/`grok-4.5-latest` in
+1.17.1, and `grok-4.6` in 1.18.0. Drop each once the floor is bumped past the release that adds it
+to `ChatModel`. https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
 """
 
 # `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
@@ -1124,7 +1133,7 @@ class XaiStreamedResponse(StreamedResponse):
                 # Handle text content (property filters for ROLE_ASSISTANT)
                 if chunk.content:
                     for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='content',
+                        vendor_part_id=None,
                         content=chunk.content,
                     ):
                         yield event

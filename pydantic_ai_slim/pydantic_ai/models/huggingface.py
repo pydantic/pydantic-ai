@@ -586,10 +586,11 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                         yield event
 
                 for dtc in choice.delta.tool_calls or []:
+                    # The SDK declares `function` as required, but the API can send chunks without it.
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=dtc.index,
-                        tool_name=dtc.function and dtc.function.name,  # pyright: ignore[reportArgumentType]
-                        args=dtc.function and dtc.function.arguments,
+                        tool_name=dtc.function.name if dtc.function is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+                        args=dtc.function.arguments if dtc.function is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
                         tool_call_id=dtc.id,
                     )
                     if maybe_event is not None:

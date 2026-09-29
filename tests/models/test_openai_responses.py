@@ -4,6 +4,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -55,8 +56,8 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
-from pydantic_ai.messages import INVALID_JSON_KEY, sanitize_messages
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -74,6 +75,7 @@ from ..conftest import (
     IsInt,
     IsNow,
     IsStr,
+    RequestCapture,
     TestEnv,
     message,
     try_import,
@@ -89,10 +91,11 @@ with try_import() as imports_successful:
         ResponseFunctionWebSearch,
         ResponseQueuedEvent,
     )
+    from openai.types.responses.response import IncompleteDetails
     from openai.types.responses.response_compaction_item import ResponseCompactionItem
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-    from openai.types.responses.response_output_text import ResponseOutputText
+    from openai.types.responses.response_output_text import AnnotationURLCitation, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -109,14 +112,15 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1291,12 +1295,12 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     parts=[
                         TextPart(
                             content='The capital of France is Paris.',
-                            id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
+                            id='msg_003440f5ba4dd7f1006a95f3e8cd9087d2b399f7145627ec79',
                             provider_name='openai',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=278, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                        input_tokens=62, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -1304,9 +1308,10 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     provider_url='https://api.openai.com/v1/',
                     provider_details={
                         'finish_reason': 'completed',
-                        'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
+                        'service_tier': 'default',
+                        'timestamp': IsDatetime(),
                     },
-                    provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
+                    provider_response_id='resp_003440f5ba4dd7f1006a95f3e7961887d2ae83dcea20d24a32',
                     finish_reason='stop',
                 )
             )
@@ -1429,6 +1434,7 @@ async def test_openai_responses_moderation(allow_model_requests: None, openai_ap
                     'type': 'moderation_result',
                 },
             },
+            'service_tier': 'default',
         }
     )
 
@@ -1549,6 +1555,7 @@ async def test_openai_responses_moderation_stream(allow_model_requests: None, op
                     'type': 'moderation_result',
                 },
             },
+            'service_tier': 'default',
         }
     )
 
@@ -1679,6 +1686,7 @@ async def test_openai_responses_moderation_block_policy(allow_model_requests: No
                     'type': 'moderation_result',
                 },
             },
+            'service_tier': 'default',
         }
     )
 
@@ -1757,6 +1765,112 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
             and 'annotations' in event.part.provider_details
         )
         for event in events3
+    )
+
+
+async def test_openai_include_raw_annotations_streaming_model_annotation(allow_model_requests: None):
+    """A streamed annotation that arrives as an SDK model, not a dict, still lands as the wire dict.
+
+    At the declared `openai` floor this is the only test that drives the `isinstance(..., BaseModel)`
+    side of that normalization: `ResponseOutputTextAnnotationAddedEvent.annotation` is typed `object`
+    there, so the VCR test above parses one into a plain dict and only ever takes the `else` side.
+    Coverage cannot show the difference — both sides of a one-line conditional converge on the same
+    arc, so the line reads as covered either way. `model_construct` skips validation, so the same
+    construction holds once 3.1 retypes that field into a discriminated union.
+
+    It pins the shape, not the regression. That retype makes the field a model union whose members are
+    distinct classes from the identically shaped ones `ResponseOutputText.annotations` uses, and
+    reverting the normalization leaves this test green at both 3.0.0 and 3.3.1 — the canary, which
+    resolves the real 3.1+ SDK, is what catches that.
+    """
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.6-terra',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Mount Columbia is the tallest.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseOutputTextAnnotationAddedEvent.model_construct(
+            annotation=AnnotationURLCitation(
+                end_index=30,
+                start_index=0,
+                title='Mount Columbia',
+                type='url_citation',
+                url='https://example.com/mount-columbia',
+            ),
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Mount Columbia is the tallest.',
+            type='response.output_text.done',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=5,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.6-terra', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+
+    async with agent.run_stream_events('What is the tallest mountain in Alberta?', model_settings=settings) as events:
+        annotated = [
+            event.delta.provider_details['annotations']
+            for event in [e async for e in events]
+            if isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, TextPartDelta)
+            and event.delta.provider_details
+            and 'annotations' in event.delta.provider_details
+        ]
+
+    assert annotated == snapshot(
+        [
+            [
+                {
+                    'end_index': 30,
+                    'start_index': 0,
+                    'title': 'Mount Columbia',
+                    'type': 'url_citation',
+                    'url': 'https://example.com/mount-columbia',
+                }
+            ]
+        ]
     )
 
 
@@ -1944,6 +2058,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 23, 19, 54, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0e3d55e9502941380068c4aa9a62f48195a373978ed720ac63',
                 finish_reason='stop',
@@ -2068,6 +2183,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 16, 20, 27, 26, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_028829e50fbcad090068c9c82e1e0081958ddc581008b39428',
                 finish_reason='stop',
@@ -2142,6 +2258,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 16, 20, 27, 39, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_028829e50fbcad090068c9c83b9fb88195b6b84a32e1fc83c0',
                 finish_reason='stop',
@@ -2226,6 +2343,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 23, 21, 23, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0b385a0fdc82fd920068c4aaf3ced88197a88711e356b032c4',
                 finish_reason='stop',
@@ -2381,7 +2499,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'service_tier': 'default'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2390,6 +2508,39 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
         ]
     )
     assert result.output == snapshot('14195730')
+
+
+async def test_openai_responses_model_web_search_tool_with_blocked_domains(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    model = OpenAIResponsesModel(
+        'gpt-5.6-luna',
+        provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client),
+    )
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    blocked_domains=['ai.pydantic.dev'],
+                )
+            )
+        ],
+    )
+
+    await agent.run('Search the web for Pydantic AI. Return one source URL.')
+
+    assert request_capture.body('/v1/responses')['tools'] == snapshot(
+        [
+            {
+                'type': 'web_search',
+                'filters': {
+                    'blocked_domains': ['ai.pydantic.dev'],
+                },
+                'search_context_size': 'medium',
+            }
+        ]
+    )
 
 
 async def test_openai_responses_model_web_search_tool_without_external_access(
@@ -2480,6 +2631,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 23, 21, 47, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0b4f29854724a3120068c4ab0b660081919707b95b47552782',
                 finish_reason='stop',
@@ -2575,6 +2727,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 16, 21, 13, 32, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_00a60507bf41223d0068c9d2fbf93481a0ba2a7796ae2cab4c',
                 finish_reason='stop',
@@ -2924,6 +3077,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 16, 21, 13, 57, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_00a60507bf41223d0068c9d31574d881a090c232646860a771',
                 finish_reason='stop',
@@ -3068,6 +3222,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 43, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
                 finish_reason='stop',
@@ -3111,6 +3266,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 44, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
                 finish_reason='stop',
@@ -3186,6 +3342,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 45, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
                 finish_reason='stop',
@@ -3227,6 +3384,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 46, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
                 finish_reason='stop',
@@ -3292,6 +3450,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 47, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
                 finish_reason='stop',
@@ -3333,6 +3492,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 47, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
                 finish_reason='stop',
@@ -3400,6 +3560,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 48, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
                 finish_reason='stop',
@@ -3441,6 +3602,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 49, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
                 finish_reason='stop',
@@ -3504,6 +3666,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 13, 11, 46, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
                 finish_reason='stop',
@@ -3545,6 +3708,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 13, 11, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
                 finish_reason='stop',
@@ -3612,6 +3776,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 13, 11, 57, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
                 finish_reason='stop',
@@ -3653,6 +3818,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 13, 12, 8, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
                 finish_reason='stop',
@@ -3823,6 +3989,78 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
         [
             ModelRequest(parts=[UserPromptPart(content='what is the first secret key?', timestamp=IsDatetime())]),
         ]
+    )
+
+
+async def test_response_scoped_tool_call_id_with_previous_response(allow_model_requests: None) -> None:
+    """The raw provider ID is restored when the qualifying response is held server-side."""
+    response_id = f'resp_{"x" * 83}'
+    qualified_call_id = f'{response_id}:call_0'
+    history: list[ModelRequest | ModelResponse] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='tool',
+                    args='{}',
+                    tool_call_id=qualified_call_id,
+                    id='fc_1',
+                    provider_name='openai',
+                )
+            ],
+            model_name='gpt-5.6-sol',
+            provider_name='openai',
+            provider_response_id=response_id,
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='tool', content='result', tool_call_id=qualified_call_id)]),
+    ]
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+    )
+
+    await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        ModelRequestParameters(),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert (request_kwargs['previous_response_id'], request_kwargs['input']) == snapshot(
+        (
+            'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+            [{'type': 'function_call_output', 'call_id': 'call_0', 'output': 'result'}],
+        )
+    )
+
+    compact_kwargs: dict[str, Any] = {}
+
+    async def fake_compact(**kwargs: Any) -> CompactedResponse:
+        compact_kwargs.update(kwargs)
+        return CompactedResponse(
+            id='resp_compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp_1', encrypted_content='encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = fake_compact
+    await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=history,
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+    assert (compact_kwargs['previous_response_id'], compact_kwargs['input']) == snapshot(
+        (
+            'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+            [{'type': 'function_call_output', 'call_id': 'call_0', 'output': 'result'}],
+        )
     )
 
 
@@ -4037,7 +4275,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4071,7 +4309,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4097,7 +4335,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4399,6 +4637,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 22, 8, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c42c902794819cb9335264c342f65407460311b0c8d3de',
                 finish_reason='stop',
@@ -4473,6 +4712,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 22, 43, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c42cb3d520819c9d28b07036e9059507460311b0c8d3de',
                 finish_reason='stop',
@@ -4615,6 +4855,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 23, 30, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
                 finish_reason='stop',
@@ -4695,6 +4936,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 24, 15, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff',
                 finish_reason='stop',
@@ -4797,6 +5039,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 24, 40, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6',
                 finish_reason='stop',
@@ -4840,6 +5083,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 25, 3, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6',
                 finish_reason='stop',
@@ -4921,6 +5165,85 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
             },
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('thinking_part', 'expected_input'),
+    [
+        pytest.param(
+            ThinkingPart(content='thinking', id='reasoning_content', provider_name='openai'),
+            {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
+            id='chat-reasoning-content-field-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='reasoning', provider_name='openai'),
+            {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
+            id='chat-reasoning-field-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='content', provider_name='openai'),
+            {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
+            id='chat-tagged-content-field-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='rs_123', provider_name='openai'),
+            {
+                'id': 'rs_123',
+                'summary': [{'text': 'thinking', 'type': 'summary_text'}],
+                'encrypted_content': None,
+                'type': 'reasoning',
+            },
+            id='openai-responses-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='compatible-api-id', provider_name='openai', signature='encrypted'),
+            {
+                'id': 'compatible-api-id',
+                'summary': [{'text': 'thinking', 'type': 'summary_text'}],
+                'encrypted_content': 'encrypted',
+                'type': 'reasoning',
+            },
+            id='compatible-responses-signature',
+        ),
+        pytest.param(
+            ThinkingPart(
+                content='summary',
+                id='compatible-api-id',
+                provider_name='openai',
+                provider_details={'raw_content': ['raw thinking']},
+            ),
+            {
+                'id': 'compatible-api-id',
+                'summary': [{'text': 'summary', 'type': 'summary_text'}],
+                'encrypted_content': None,
+                'type': 'reasoning',
+                'content': [{'text': 'raw thinking', 'type': 'reasoning_text'}],
+            },
+            id='compatible-responses-raw-cot',
+        ),
+    ],
+)
+async def test_openai_responses_does_not_replay_chat_reasoning_ids(
+    allow_model_requests: None, thinking_part: ThinkingPart, expected_input: object
+) -> None:
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    history: list[ModelMessage] = [ModelResponse(parts=[thinking_part], provider_name='openai')]
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == [expected_input]
 
 
 async def test_openai_responses_thinking_with_multiple_summaries(allow_model_requests: None):
@@ -5063,6 +5386,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 27, 43, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23',
                 finish_reason='stop',
@@ -5132,6 +5456,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 27, 48, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb',
                 finish_reason='stop',
@@ -5229,6 +5554,7 @@ If you intended different grouping with parentheses, let me know.\
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 17, 21, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68cdba511c7081a389e67b16621029c609b7445677780c8f',
                 finish_reason='stop',
@@ -5279,6 +5605,7 @@ If you intended different grouping with parentheses, let me know.\
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 17, 46, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68cdba6a610481a3b4533f345bea8a7b09b7445677780c8f',
                 finish_reason='stop',
@@ -5390,6 +5717,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 11, 22, 43, 36, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507',
                 finish_reason='stop',
@@ -6799,6 +7127,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 18, 18, 29, 57, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68cc4fa5603481958e2143685133fe530548824120ffcf74',
                 finish_reason='stop',
@@ -6844,6 +7173,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 18, 18, 29, 58, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985',
                 finish_reason='stop',
@@ -6977,6 +7307,7 @@ plt.show()\r
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 56, 34, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68cdc382bc98819083a5b47ec92e077b0187028ba77f15f7',
                 finish_reason='stop',
@@ -7137,6 +7468,7 @@ If you want different colors or a holographic gradient background, tell me your 
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 57, 1, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68cdc39da72481909e0512fef9d646240187028ba77f15f7',
                 finish_reason='stop',
@@ -7224,6 +7556,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 20, 47, 35, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_06c1a26fd89d07f20068dd9367869c819788cb28e6f19eff9b',
                 finish_reason='stop',
@@ -8703,6 +9036,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 57, 58, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -8776,6 +9110,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 59, 28, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -8861,6 +9196,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 20, 40, 2, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -9019,6 +9355,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 23, 49, 51, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68cdec1f3290819f99d9caba8703b251079003437d26d0c0',
                 finish_reason='stop',
@@ -9086,6 +9423,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 23, 50, 57, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68cdec61d0a0819fac14ed057a9946a1079003437d26d0c0',
                 finish_reason='stop',
@@ -9187,6 +9525,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 38, 16, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0360827931d9421b0068dd8328c08c81a0ba854f245883906f',
                 finish_reason='stop',
@@ -9235,6 +9574,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 39, 28, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0360827931d9421b0068dd8370a70081a09d6de822ee43bbc4',
                 finish_reason='stop',
@@ -9331,6 +9671,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 41, 59, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_09b7ce6df817433c0068dd8407c37881a0ad817ef3cc3a3600',
                 finish_reason='stop',
@@ -9414,6 +9755,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 55, 9, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0d14a5e3c26c21180068dd871d439081908dc36e63fab0cedf',
                 finish_reason='stop',
@@ -9477,6 +9819,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 20, 2, 36, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0481074da98340df0068dd88dceb1481918b1d167d99bc51cd',
                 finish_reason='stop',
@@ -9538,6 +9881,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 20, 2, 56, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0481074da98340df0068dd88f0ba04819185a168065ef28040',
                 finish_reason='stop',
@@ -9638,6 +9982,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 28, 22, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0b6169df6e16e9690068dd80d64aec81919c65f238307673bb',
                 finish_reason='stop',
@@ -9718,6 +10063,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 21, 28, 13, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
                 finish_reason='stop',
@@ -9814,6 +10160,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 13, 11, 30, 47, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_001fd29e2d5573f70068ece2e6dfbc819c96557f0de72802be',
                 finish_reason='stop',
@@ -10138,6 +10485,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 23, 23, 42, 57, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0083938b3a28070e0068fabd81970881a0a1195f2cab45bd04',
                 finish_reason='stop',
@@ -10199,6 +10547,7 @@ The monorepo is organized into these main packages:  \n\
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 23, 23, 43, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0083938b3a28070e0068fabd9d414881a089cf24784f80e021',
                 finish_reason='stop',
@@ -10435,6 +10784,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 23, 21, 40, 50, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4',
                 finish_reason='stop',
@@ -10977,7 +11327,7 @@ markdown with headings, code blocks, tables, and links preserved.\
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed', 'service_tier': 'default'},
                 provider_response_id='resp_034c5e93e2fa45ad006a2c2b74c2e4819dafbd93fcd1b49697',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -11194,6 +11544,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 23, 21, 41, 13, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0558010cf1416a490068faa0f945bc81a0b6a6dfb7391030d5',
                 finish_reason='stop',
@@ -11514,6 +11865,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 11, 27, 17, 43, 31, tzinfo=timezone.utc),
+                    'service_tier': 'auto',
                 },
                 provider_response_id='gen-1764265411-Fu1iEX7h5MRWiL79lb94',
                 finish_reason='stop',
@@ -11997,7 +12349,11 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -12055,7 +12411,11 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -12202,7 +12562,11 @@ async def test_openai_responses_model_file_search_tool_stream(
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -12361,7 +12725,11 @@ async def test_openai_responses_model_file_search_tool_with_results(
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -12709,8 +13077,11 @@ async def test_openai_responses_refusal_non_streaming(allow_model_requests: None
     assert response_msg['provider_details']['refusal'] == "I can't help with that request."
 
 
-async def test_openai_responses_refusal_streaming(allow_model_requests: None):
-    """Test that ResponseRefusalDeltaEvent/DoneEvent in streaming triggers ContentFilterError."""
+@pytest.mark.parametrize('terminal_status', ['completed', 'incomplete', 'failed'])
+async def test_openai_responses_refusal_streaming(
+    allow_model_requests: None, terminal_status: Literal['completed', 'incomplete', 'failed']
+):
+    """A streamed refusal takes precedence over the terminal finish reason."""
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',
@@ -12721,6 +13092,26 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
         tool_choice='auto',
         tools=[],
     )
+    terminal_response = base_response.model_copy(update={'status': terminal_status})
+    if terminal_status == 'completed':
+        terminal_event = resp.ResponseCompletedEvent(
+            response=terminal_response,
+            type='response.completed',
+            sequence_number=6,
+        )
+    elif terminal_status == 'incomplete':
+        terminal_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
+        terminal_event = resp.ResponseIncompleteEvent(
+            response=terminal_response,
+            type='response.incomplete',
+            sequence_number=6,
+        )
+    else:
+        terminal_event = resp.ResponseFailedEvent(
+            response=terminal_response,
+            type='response.failed',
+            sequence_number=6,
+        )
 
     stream: list[resp.ResponseStreamEvent] = [
         resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
@@ -12761,11 +13152,7 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
             type='response.refusal.done',
             sequence_number=5,
         ),
-        resp.ResponseCompletedEvent(
-            response=base_response.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=6,
-        ),
+        terminal_event,
     ]
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
@@ -12782,6 +13169,7 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
+    assert 'finish_reason' not in response_msg['provider_details']
 
 
 async def test_stream_cancel(allow_model_requests: None):
@@ -12992,6 +13380,101 @@ async def test_background_marker_stamped_from_terminal_event_only(allow_model_re
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert (response.provider_details or {}).get('background') is True
+
+
+async def test_stream_response_incomplete_finish_reason_length(allow_model_requests: None):
+    """A terminal `response.incomplete` maps `max_output_tokens` to 'length', like the non-streaming path."""
+
+    incomplete_response = response_message([])
+    incomplete_response.status = 'incomplete'
+    incomplete_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    response = streamed.get()
+
+    assert response.finish_reason == 'length'
+    assert (response.provider_details or {}).get('finish_reason') == 'max_output_tokens'
+
+
+async def test_stream_response_failed_finish_reason_error(allow_model_requests: None):
+    """A terminal `response.failed` maps to 'error' and keeps the raw reason, like the non-streaming path."""
+
+    failed_response = response_message([])
+    failed_response.status = 'failed'
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseFailedEvent(
+                response=failed_response,
+                type='response.failed',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    response = streamed.get()
+
+    assert response.finish_reason == 'error'
+    assert (response.provider_details or {}).get('finish_reason') == 'failed'
+
+
+async def test_stream_response_incomplete_content_filter_finish_reason(allow_model_requests: None):
+    """A terminal `response.incomplete` maps `content_filter` to 'content_filter', like the non-streaming path."""
+
+    incomplete_response = response_message([])
+    incomplete_response.status = 'incomplete'
+    incomplete_response.incomplete_details = IncompleteDetails(reason='content_filter')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    response = streamed.get()
+
+    assert response.finish_reason == 'content_filter'
+    assert (response.provider_details or {}).get('finish_reason') == 'content_filter'
 
 
 async def test_cancel_suspended_response_only_cancels_background_jobs(allow_model_requests: None):
@@ -13436,8 +13919,6 @@ async def test_openai_responses_compact_replants_standing_prompt(allow_model_req
         )
 
     model.client.responses.compact = fake_compact
-    from pydantic_ai.models import ModelRequestContext
-
     response = await model.compact_messages(
         ModelRequestContext(
             model=model, messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
@@ -14573,7 +15054,12 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': IsDatetime(),
+                    'background': True,
+                    'service_tier': 'default',
+                },
                 provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -14625,13 +15111,18 @@ async def test_background_mode_reasoning_vcr(allow_model_requests: None, openai_
                     output_tokens=12,
                     output_reasoning_tokens=0,
                     details={'reasoning_tokens': 0},
-                    cost=Decimal('0.00043'),
+                    cost=Decimal('0.000296'),
                 ),
                 model_name='gpt-5.6-sol',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': IsDatetime(),
+                    'background': True,
+                    'service_tier': 'default',
+                },
                 provider_response_id='resp_047f9036fb333784006a5fe9db456c819095d041b89bf6629e',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -14695,7 +15186,12 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': IsDatetime(),
+                    'background': True,
+                    'service_tier': 'default',
+                },
                 provider_response_id='resp_01b4d93abce33afe00698b9df44be4819bb99fff16d77a0236',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -14733,7 +15229,12 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': IsDatetime(),
+                    'background': True,
+                    'service_tier': 'default',
+                },
                 provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -14788,7 +15289,12 @@ async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'timestamp': IsDatetime(), 'background': True, 'finish_reason': 'completed'},
+                provider_details={
+                    'timestamp': IsDatetime(),
+                    'background': True,
+                    'finish_reason': 'completed',
+                    'service_tier': 'default',
+                },
                 provider_response_id='resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -15346,6 +15852,45 @@ async def test_background_streaming_continuation_without_created_event(allow_mod
     assert retrieve_kwargs[0]['starting_after'] == 5
 
 
+async def test_forced_stream_request_handles_model_response_from_responses_create(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """The stream-only drain in `request()` must return a handled `ModelResponse`, not enter it as a stream."""
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAIResponsesModel(
+        'gpt-5.6-luna',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_requires_streaming=True),
+    )
+
+    returned_response = ModelResponse(
+        parts=[],
+        model_name='gpt-5.6-luna',
+        provider_name='azure',
+        finish_reason='content_filter',
+        provider_details={'finish_reason': 'content_filter'},
+    )
+
+    async def mock_responses_create(
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        assert stream is True
+        return returned_response
+
+    monkeypatch.setattr(model, '_responses_create', mock_responses_create)
+
+    response = await model.request(
+        messages=[ModelRequest(parts=[UserPromptPart(content='bad prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert response is returned_response
+    assert response.finish_reason == 'content_filter'
+
+
 async def test_request_stream_handles_model_response_from_responses_create(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ):
@@ -15731,6 +16276,589 @@ async def test_openai_responses_web_search_tool_external_web_access_default_omit
     assert response_kwargs['tools'] == snapshot([{'type': 'web_search', 'search_context_size': 'medium'}])
 
 
+async def _replay_input(
+    history: list[ModelMessage],
+    *,
+    group_function_calls: bool,
+    model_request_parameters: ModelRequestParameters | None = None,
+    model_settings: 'OpenAIResponsesModelSettings | None' = None,
+) -> list[dict[str, object]]:
+    """Test the ordering matrix directly; DeepSeek VCR tests already cover the public request boundary.
+
+    The profile is built bare rather than merged onto `openai_model_profile(...)` on purpose: an
+    empty profile leaves `openai_supports_encrypted_reasoning_content` unset, so `send_item_ids`
+    stays `False` and the cases that turn on IDs never reaching the wire keep testing that. Merging
+    a full profile in would silently change what those cases prove.
+    """
+    model = OpenAIResponsesModel(
+        'custom-model',
+        provider=OpenAIProvider(api_key='not-used'),
+        profile=OpenAIModelProfile(openai_responses_supports_interleaved_function_calls=not group_function_calls),
+    )
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        history,
+        model_settings or OpenAIResponsesModelSettings(),
+        model_request_parameters or ModelRequestParameters(),
+    )
+    return [dict(item) for item in items]
+
+
+async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
+    """The opt-in profile changes only settled portable Responses wire order."""
+    history = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='inspect inputs'),
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
+                ThinkingPart(content='inspect views'),
+                ToolCallPart('view', {'path': 'b'}, tool_call_id='call-b'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                ToolReturnPart('view', 'contents', tool_call_id='call-b'),
+            ]
+        ),
+    ]
+
+    disabled = await _replay_input(history, group_function_calls=False)
+    enabled = await _replay_input(history, group_function_calls=True)
+
+    assert disabled == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+            {'role': 'assistant', 'content': '<think>\ninspect views\n</think>'},
+            {'name': 'view', 'arguments': '{"path":"b"}', 'call_id': 'call-b', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call-a',
+                'output': 'read failed\n\nFix the errors and try again.',
+            },
+            {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
+        ]
+    )
+    assert enabled == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+            {'role': 'assistant', 'content': '<think>\ninspect views\n</think>'},
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+            {'name': 'view', 'arguments': '{"path":"b"}', 'call_id': 'call-b', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call-a',
+                'output': 'read failed\n\nFix the errors and try again.',
+            },
+            {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
+        ]
+    )
+
+
+async def test_openai_responses_function_call_grouping_preserves_active_tool_search() -> None:
+    """Active tool search uses its specialized client-executed protocol, whose order is preserved."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-a'),
+                ThinkingPart(content='inspect local results'),
+            ]
+        ),
+        ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='search-a')]),
+    ]
+    model_request_parameters = ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)])
+
+    expected = await _replay_input(
+        history, group_function_calls=False, model_request_parameters=model_request_parameters
+    )
+    assert expected == snapshot(
+        [
+            {
+                'type': 'tool_search_call',
+                'execution': 'client',
+                'arguments': {'queries': ['weather']},
+                'call_id': 'search-a',
+                'status': 'completed',
+            },
+            {'role': 'assistant', 'content': '<think>\ninspect local results\n</think>'},
+            {
+                'type': 'tool_search_output',
+                'execution': 'client',
+                'tools': [],
+                'call_id': 'search-a',
+                'status': 'completed',
+            },
+        ]
+    )
+    assert (
+        await _replay_input(history, group_function_calls=True, model_request_parameters=model_request_parameters)
+        == expected
+    )
+
+
+async def test_openai_responses_function_call_grouping_around_active_tool_search() -> None:
+    """Active tool search is a delimiter; settled ordinary calls still group within their segment."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
+                ThinkingPart(content='inspect ordinary result'),
+                ToolCallPart('search_tools', {'queries': ['weather']}, tool_call_id='search-a'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('read', 'contents', tool_call_id='call-a'),
+                ToolReturnPart('search_tools', {'discovered_tools': []}, tool_call_id='search-a'),
+            ]
+        ),
+    ]
+
+    assert await _replay_input(
+        history,
+        group_function_calls=True,
+        model_request_parameters=ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)]),
+    ) == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect ordinary result\n</think>'},
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+            {
+                'type': 'tool_search_call',
+                'execution': 'client',
+                'arguments': {'queries': ['weather']},
+                'call_id': 'search-a',
+                'status': 'completed',
+            },
+            {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'search-a',
+                'output': '{"discovered_tools":[]}',
+            },
+        ]
+    )
+
+
+async def test_openai_responses_function_call_grouping_ignores_active_tool_search_settlement() -> None:
+    """A colliding tool-search return or retry cannot settle an ordinary call."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='shared-id'),
+                ThinkingPart(content='ordinary call remains unsettled'),
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='shared-id'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='shared-id'),
+                RetryPromptPart('search again', tool_name='search_tools', tool_call_id='shared-id'),
+            ]
+        ),
+    ]
+    model_request_parameters = ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)])
+
+    assert await _replay_input(
+        history, group_function_calls=True, model_request_parameters=model_request_parameters
+    ) == await _replay_input(history, group_function_calls=False, model_request_parameters=model_request_parameters)
+
+
+async def test_openai_responses_function_call_grouping_includes_local_tool_search_fallback() -> None:
+    """Inactive local tool search is an ordinary settled portable function call and is grouped."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-a'),
+                ThinkingPart(content='inspect local results'),
+            ]
+        ),
+        ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='search-a')]),
+    ]
+
+    assert await _replay_input(history, group_function_calls=True) == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect local results\n</think>'},
+            {
+                'name': 'search_tools',
+                'arguments': '{"queries":["weather"]}',
+                'call_id': 'search-a',
+                'type': 'function_call',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': 'search-a',
+                'output': '{"discovered_tools":[]}',
+            },
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'history,model_settings',
+    [
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='native item follows'),
+                        NativeToolCallPart('web_search', {}, tool_call_id='native-a', provider_name='other'),
+                        NativeToolReturnPart('web_search', 'result', tool_call_id='native-a', provider_name='other'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            None,
+            id='native',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        CompactionPart(content='provider summary', provider_name='other'),
+                        ThinkingPart(content='compaction follows'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            None,
+            id='compaction',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='unsettled call follows'),
+                    ]
+                ),
+                ModelRequest.user_text_prompt('continue'),
+            ],
+            None,
+            id='unsettled-frontier',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='only one of these calls gets answered'),
+                        ToolCallPart('view', {}, tool_call_id='call-b'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            None,
+            id='partially-settled-frontier',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='duplicate-call-id'),
+                        ThinkingPart(content='one duplicate remains unsettled'),
+                        ToolCallPart('view', {}, tool_call_id='duplicate-call-id'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='duplicate-call-id')]),
+            ],
+            None,
+            id='duplicate-id-unsettled-frontier',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='next response follows'),
+                    ]
+                ),
+                ModelResponse(parts=[TextPart(content='boundary')]),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            None,
+            id='following-response-boundary',
+        ),
+    ],
+)
+async def test_openai_responses_function_call_grouping_preserves_protected_boundaries(
+    history: list[ModelMessage], model_settings: 'OpenAIResponsesModelSettings | None'
+) -> None:
+    """Provider-owned and unsettled histories serialize identically with the profile on or off.
+
+    What makes a turn off-limits is a native or compaction item the provider owns, or a call still
+    waiting on its result — never an item ID, which
+    `test_openai_responses_function_call_grouping_ignores_item_ids` pins as irrelevant either way.
+
+    Leaving an unanswered call alone costs nothing: DeepSeek rejects such a turn whichever order it
+    arrives in (measured — interleaved names the first call, grouped names the second), so there is
+    no order for the serializer to reach for.
+    """
+    assert await _replay_input(
+        history, group_function_calls=True, model_settings=model_settings
+    ) == await _replay_input(history, group_function_calls=False, model_settings=model_settings)
+
+
+@pytest.mark.parametrize(
+    'history,model_settings,expected',
+    [
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(content='inspect inputs', id='rs-a', provider_name='openai'),
+                        ToolCallPart('read', {}, tool_call_id='call-a', id='fc-a', provider_name='openai'),
+                        TextPart(content='and now the view', id='msg-a', provider_name='openai'),
+                        ToolCallPart('view', {}, tool_call_id='call-b', id='fc-b', provider_name='openai'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart('read', 'contents', tool_call_id='call-a'),
+                        ToolReturnPart('view', 'rendered', tool_call_id='call-b'),
+                    ]
+                ),
+            ],
+            None,
+            snapshot(
+                [
+                    {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+                    {'role': 'assistant', 'content': 'and now the view'},
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'name': 'view', 'arguments': '{}', 'call_id': 'call-b', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                    {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'rendered'},
+                ]
+            ),
+            id='same-provider-ids-not-sent',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='inspect inputs',
+                            id='rs-a',
+                            provider_name='google',
+                            provider_details={'raw_content': ['deliberate']},
+                        ),
+                        ToolCallPart('read', {}, tool_call_id='call-a', id='fc-a', provider_name='google'),
+                        ThinkingPart(content='inspect views', id='rs-b', provider_name='google'),
+                        ToolCallPart('view', {}, tool_call_id='call-b', id='fc-b', provider_name='google'),
+                    ],
+                    provider_name='google',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart('read', 'contents', tool_call_id='call-a'),
+                        ToolReturnPart('view', 'rendered', tool_call_id='call-b'),
+                    ]
+                ),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+                    {'role': 'assistant', 'content': '<think>\ninspect views\n</think>'},
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'name': 'view', 'arguments': '{}', 'call_id': 'call-b', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                    {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'rendered'},
+                ]
+            ),
+            id='cross-provider-ids',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        FilePart(
+                            content=BinaryContent(b'\x89PNG', media_type='image/png'),
+                            id='file-a',
+                            provider_name='openai',
+                        ),
+                        ThinkingPart(content='inspect the file'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {'role': 'assistant', 'content': '<think>\ninspect the file\n</think>'},
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='file-id-never-sent',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a', id='fc-a', provider_name='openai'),
+                        ThinkingPart(content='provider-owned item follows'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'content': """\
+<think>
+provider-owned item follows
+</think>\
+""",
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call', 'id': 'fc-a'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='sent-function-call-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a|fc-a', provider_name='openai'),
+                        ThinkingPart(content='provider-owned item follows'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a|fc-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'content': """\
+<think>
+provider-owned item follows
+</think>\
+""",
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call', 'id': 'fc-a'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='sent-legacy-combined-function-call-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        TextPart(content='provider-owned message follows', id='msg-a', provider_name='openai'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'id': 'msg-a',
+                        'content': [
+                            {'text': 'provider-owned message follows', 'type': 'output_text', 'annotations': []}
+                        ],
+                        'type': 'message',
+                        'status': 'completed',
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='sent-message-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='provider-owned item follows', id='reasoning-a'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {
+                        'id': 'reasoning-a',
+                        'summary': [{'text': 'provider-owned item follows', 'type': 'summary_text'}],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='sent-reasoning-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(
+                            content='provider-owned item follows',
+                            id='reasoning-a',
+                            provider_name='openai',
+                            provider_details={'raw_content': ['deliberate']},
+                        ),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            None,
+            snapshot(
+                [
+                    {
+                        'id': 'reasoning-a',
+                        'summary': [{'text': 'provider-owned item follows', 'type': 'summary_text'}],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                        'content': [{'text': 'deliberate', 'type': 'reasoning_text'}],
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='raw-content-reasoning-id',
+        ),
+    ],
+)
+async def test_openai_responses_function_call_grouping_ignores_item_ids(
+    history: list[ModelMessage],
+    model_settings: 'OpenAIResponsesModelSettings | None',
+    expected: list[dict[str, object]],
+) -> None:
+    """Item IDs never suppress grouping, whether or not the renderer puts them on the wire.
+
+    An endpoint that clears `openai_responses_supports_interleaved_function_calls` merges each item
+    into the assistant message beside it, so position comes from the sequence and an ID anchors
+    nothing. The `sent-*` cases carry IDs the renderer does emit and are grouped anyway, with every
+    ID still present on the wire — only the order changes.
+    """
+    original_history = deepcopy(history)
+
+    assert await _replay_input(history, group_function_calls=True, model_settings=model_settings) == expected
+    assert history == original_history
+
+
 async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
     """Malformed tool-call args are sent to the Responses API as the `INVALID_JSON` wrapper.
 
@@ -15786,3 +16914,412 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
         }
     )
     assert json.loads(function_call['arguments']) == {INVALID_JSON_KEY: bad_args}
+
+
+# --- OpenAI Codex wire dialect through the model's request path ---
+# These pin the request/stream semantics of `OpenAICodexModel` against the shared mock; the
+# OAuth/credential unit tests stay in `tests/providers/codex/`.
+
+
+async def test_codex_count_tokens_raises_user_error(allow_model_requests: None):
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    with pytest.raises(UserError, match='Server-side token counting is not available'):
+        await model.count_tokens([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+
+
+_MINIMAL_RESPONSE: dict[str, Any] = {
+    'id': 'resp_123',
+    'object': 'response',
+    'created_at': 0,
+    'status': 'completed',
+    'model': 'gpt-5.6-luna',
+    'output': [
+        {
+            'type': 'message',
+            'id': 'm1',
+            'status': 'completed',
+            'role': 'assistant',
+            'content': [{'type': 'output_text', 'text': 'hi there', 'annotations': []}],
+        }
+    ],
+    'usage': {
+        'input_tokens': 3,
+        'input_tokens_details': {'cached_tokens': 0, 'cache_write_tokens': 0},
+        'output_tokens': 2,
+        'output_tokens_details': {'reasoning_tokens': 0},
+        'total_tokens': 5,
+    },
+    'parallel_tool_calls': False,
+    'tool_choice': 'none',
+    'tools': [],
+}
+
+
+def _codex_stream(*, slim_completed: bool) -> list[resp.ResponseStreamEvent]:
+    """The SSE sequence observed live against the Codex backend (2026-08-25).
+
+    With `slim_completed=True` this reproduces the real Codex shape: `response.completed` carries an
+    EMPTY `output` array, and content exists only in the incremental events. `slim_completed=False`
+    is the api.openai.com shape, where the terminal event repeats the full output.
+    """
+    completed = resp.Response.model_validate(_MINIMAL_RESPONSE)
+    in_progress = completed.model_copy(update={'status': 'in_progress', 'usage': None, 'output': []})
+    if slim_completed:
+        completed = completed.model_copy(update={'output': []})
+    message_done = resp.ResponseOutputMessage(
+        id='m1',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[resp.ResponseOutputText(type='output_text', text='hi there', annotations=[])],
+    )
+    return [
+        resp.ResponseCreatedEvent(type='response.created', response=in_progress, sequence_number=0),
+        resp.ResponseInProgressEvent(type='response.in_progress', response=in_progress, sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            type='response.output_item.added',
+            item=message_done.model_copy(update={'status': 'in_progress', 'content': []}),
+            output_index=0,
+            sequence_number=2,
+        ),
+        resp.ResponseContentPartAddedEvent(
+            type='response.content_part.added',
+            part=resp.ResponseOutputText(type='output_text', text='', annotations=[]),
+            item_id='m1',
+            output_index=0,
+            content_index=0,
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent(
+            type='response.output_text.delta',
+            delta='hi ',
+            item_id='m1',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            sequence_number=4,
+        ),
+        resp.ResponseTextDeltaEvent(
+            type='response.output_text.delta',
+            delta='there',
+            item_id='m1',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            sequence_number=5,
+        ),
+        resp.ResponseContentPartDoneEvent(
+            type='response.content_part.done',
+            part=resp.ResponseOutputText(type='output_text', text='hi there', annotations=[]),
+            item_id='m1',
+            output_index=0,
+            content_index=0,
+            sequence_number=6,
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            type='response.output_item.done', item=message_done, output_index=0, sequence_number=7
+        ),
+        resp.ResponseCompletedEvent(type='response.completed', response=completed, sequence_number=8),
+    ]
+
+
+def _codex_model_with_stream(
+    events: list[resp.ResponseStreamEvent],
+) -> tuple['OpenAICodexModel', MockOpenAIResponses]:
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    return model, cast(MockOpenAIResponses, mock_client)
+
+
+async def test_forced_stream_aggregates_codex_slim_completed(allow_model_requests: None):
+    """REGRESSION (live-verified 2026-08-25): Codex sends `response.completed` with an EMPTY `output`.
+
+    Content exists only in the incremental events, so trusting the terminal event's `response`
+    produced `ModelResponse(parts=[])` with billed tokens. The forced stream must be drained through
+    the streamed-response machinery, which builds parts from the incremental events.
+    """
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+    assert response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='hi there', id='m1', provider_name='openai-codex')],
+            usage=RequestUsage(
+                details={'reasoning_tokens': 0}, input_tokens=3, output_reasoning_tokens=0, output_tokens=2
+            ),
+            model_name='gpt-5.6-luna',
+            timestamp=IsDatetime(),
+            provider_name='openai-codex',
+            provider_url='https://chatgpt.com/backend-api/codex',
+            provider_details={'finish_reason': 'completed'},
+            provider_response_id='resp_123',
+            finish_reason='stop',
+        )
+    )
+    # `stream=True` itself is proven by the mock: it refuses to serve a non-streaming create call
+    # when only stream events are configured.
+    assert mock.response_kwargs[0]['store'] is False  # cannot be omitted under Codex subscription auth
+
+
+async def test_forced_stream_aggregates_full_completed_output(allow_model_requests: None):
+    # api.openai.com repeats the full output on `response.completed`; the profile flag must keep
+    # working there too if some other streaming-only endpoint ever sets it.
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=False))
+    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+    assert response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='hi there', id='m1', provider_name='openai-codex')],
+            usage=RequestUsage(
+                details={'reasoning_tokens': 0}, input_tokens=3, output_reasoning_tokens=0, output_tokens=2
+            ),
+            model_name='gpt-5.6-luna',
+            timestamp=IsDatetime(),
+            provider_name='openai-codex',
+            provider_url='https://chatgpt.com/backend-api/codex',
+            provider_details={'finish_reason': 'completed'},
+            provider_response_id='resp_123',
+            finish_reason='stop',
+        )
+    )
+    assert mock.response_kwargs[0]['store'] is False
+
+
+async def test_forced_stream_preserves_explicit_openai_settings(allow_model_requests: None):
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    settings: OpenAIResponsesModelSettings = OpenAIResponsesModelSettings(
+        max_tokens=128,
+        temperature=0.5,
+        top_p=0.9,
+        openai_top_logprobs=3,
+        openai_truncation='auto',
+        openai_user='user-1',
+        openai_store=True,
+        # Isolate the Codex profile from the standard reasoning-related sampling exclusions.
+        openai_reasoning_effort='none',
+    )
+
+    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], settings, ModelRequestParameters())
+
+    assert response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='hi there', id='m1', provider_name='openai-codex')],
+            usage=RequestUsage(
+                details={'reasoning_tokens': 0}, input_tokens=3, output_reasoning_tokens=0, output_tokens=2
+            ),
+            model_name='gpt-5.6-luna',
+            timestamp=IsDatetime(),
+            provider_name='openai-codex',
+            provider_url='https://chatgpt.com/backend-api/codex',
+            provider_details={'finish_reason': 'completed'},
+            provider_response_id='resp_123',
+            finish_reason='stop',
+        )
+    )
+    kwargs = mock.response_kwargs[0]
+    assert {
+        name: kwargs[name]
+        for name in ('max_output_tokens', 'temperature', 'top_p', 'top_logprobs', 'user', 'truncation', 'store')
+        if name in kwargs
+    } == snapshot({'top_logprobs': 3, 'user': 'user-1', 'truncation': 'auto', 'store': False})
+
+
+async def test_forced_stream_without_events_raises(allow_model_requests: None):
+    # The nested-list form is how the shared mock represents a single, empty stream.
+    mock_client = MockOpenAIResponses.create_mock_stream([[]])
+    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    with pytest.raises(UnexpectedModelBehavior, match='without content'):
+        await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+
+
+# --- Session affinity (mirrors the official Codex client's session/thread identifiers) ---
+
+
+def _codex_model_with_streams(count: int) -> tuple['OpenAICodexModel', MockOpenAIResponses]:
+    events = [_codex_stream(slim_completed=True) for _ in range(count)]
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    return model, cast(MockOpenAIResponses, mock_client)
+
+
+def _turn(conversation_id: str | None, run_id: str | None) -> ModelRequest:
+    return ModelRequest(parts=[UserPromptPart('hi')], conversation_id=conversation_id, run_id=run_id)
+
+
+async def test_session_affinity_stable_within_conversation(allow_model_requests: None):
+    """Runs sharing a conversation are turns on one root thread: all three headers stay stable.
+
+    Mirrors the official client's root thread, which keeps `session-id`, `thread-id`, and
+    `x-client-request-id` equal across turns (child threads, which get fresh thread ids, are
+    modeled via explicit `extra_headers` instead).
+    """
+    model, mock = _codex_model_with_streams(2)
+    await model.request([_turn('conv-1', 'run-1')], None, ModelRequestParameters())
+    await model.request([_turn('conv-1', 'run-1'), _turn('conv-1', 'run-2')], None, ModelRequestParameters())
+
+    first, second = mock.response_kwargs
+    for kwargs in (first, second):
+        assert kwargs['extra_headers']['session-id'] == 'conv-1'
+        assert kwargs['extra_headers']['thread-id'] == 'conv-1'
+        assert kwargs['extra_headers']['x-client-request-id'] == 'conv-1'
+        assert kwargs['prompt_cache_key'] == 'conv-1'
+
+
+async def test_session_affinity_isolated_between_conversations(allow_model_requests: None):
+    model, mock = _codex_model_with_streams(2)
+    await model.request([_turn('conv-1', 'run-1')], None, ModelRequestParameters())
+    await model.request([_turn('conv-2', 'run-2')], None, ModelRequestParameters())
+
+    first, second = mock.response_kwargs
+    assert first['extra_headers']['session-id'] == 'conv-1'
+    assert second['extra_headers']['session-id'] == 'conv-2'
+    assert first['prompt_cache_key'] != second['prompt_cache_key']
+
+
+async def test_session_affinity_explicit_overrides_win(allow_model_requests: None):
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    settings = OpenAIResponsesModelSettings(
+        openai_prompt_cache_key='my-key',
+        # `Thread-Id` is a case-variant override: HTTP field names are case-insensitive.
+        extra_headers={'session-id': 'my-session', 'Thread-Id': 'child-thread'},
+    )
+    await model.request([_turn('conv-1', 'run-1')], settings, ModelRequestParameters())
+
+    kwargs = mock.response_kwargs[0]
+    assert kwargs['extra_headers']['session-id'] == 'my-session'  # the explicit header wins
+    assert kwargs['extra_headers']['Thread-Id'] == 'child-thread'  # a case-variant override also wins
+    assert 'thread-id' not in kwargs['extra_headers']  # no duplicate of the same case-insensitive field
+    assert kwargs['extra_headers']['x-client-request-id'] == 'conv-1'  # unspecified headers are still derived
+    assert kwargs['prompt_cache_key'] == 'my-key'  # the explicit cache key only affects the body
+    assert 'my-key' not in kwargs['extra_headers'].values()  # and is never copied into headers
+
+
+async def test_no_affinity_without_conversation_identity(allow_model_requests: None):
+    """Direct model use outside an agent run leaves the wire shape unchanged."""
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+
+    kwargs = mock.response_kwargs[0]
+    assert 'prompt_cache_key' not in kwargs
+    for header in ('session-id', 'thread-id', 'x-client-request-id'):
+        assert header not in kwargs['extra_headers']
+
+
+async def test_codex_suspended_continuation_is_rejected(allow_model_requests: None):
+    """Continuation retrieves the suspended response server-side, which `store=false` never persisted.
+
+    Without the guard the retrieve fails at resume time as a misleading `SuspendedResponseExpired`
+    on 404; the codex profile's convention for unsupported features is an explicit `UserError`.
+    """
+    model, _ = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    suspended = ModelResponse(
+        parts=[],
+        model_name='gpt-5.6-luna',
+        provider_name='openai-codex',
+        provider_response_id='resp_bg_123',
+        state='suspended',
+    )
+    with pytest.raises(UserError, match='Resuming a suspended run is not supported'):
+        await model.request([ModelRequest(parts=[UserPromptPart('hi')]), suspended], None, ModelRequestParameters())
+
+
+async def test_responses_store_passthrough_on_standard_model(allow_model_requests: None):
+    """The False arm of the `openai_responses_requires_store_false` gate, pinned on behavior.
+
+    A standard Responses model must omit `store` by default and pass an explicit `openai_store`
+    through unchanged; only the codex profile forces it to `False`.
+    """
+    response = resp.Response.model_validate(_MINIMAL_RESPONSE)
+    mock_client = MockOpenAIResponses.create_mock([response, response])
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+    settings = OpenAIResponsesModelSettings(openai_store=True)
+    await model.request([ModelRequest(parts=[UserPromptPart('hi')])], settings, ModelRequestParameters())
+
+    first, second = get_mock_responses_kwargs(mock_client)
+    assert 'store' not in first  # omitted by default
+    assert second['store'] is True  # the explicit setting passes through unchanged
+
+
+async def test_no_session_affinity_on_standard_model(allow_model_requests: None):
+    """Session affinity is an `OpenAICodexModel` behavior, not an `OpenAIResponsesModel` one.
+
+    Every agent run carries a `conversation_id`, so a standard model request must not grow the
+    affinity headers or a derived `prompt_cache_key`.
+    """
+    mock_client = MockOpenAIResponses.create_mock(resp.Response.model_validate(_MINIMAL_RESPONSE))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    await model.request([_turn('conv-1', 'run-1')], None, ModelRequestParameters())
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert 'prompt_cache_key' not in kwargs
+    for header in ('session-id', 'thread-id', 'x-client-request-id'):
+        assert header not in kwargs['extra_headers']
+
+
+@pytest.mark.parametrize('unsupported', [False, True])
+async def test_unsupported_settings_cover_request_param_fields(allow_model_requests: None, unsupported: bool):
+    """`parallel_tool_calls`, `openai_truncation`, and `openai_context_management` ride on the
+    request params rather than the create call, so `openai_unsupported_model_settings` must be
+    honored in the builder itself: `_drop_unsupported_params` runs after the params are built."""
+    response = resp.Response.model_validate(_MINIMAL_RESPONSE)
+    mock_client = MockOpenAIResponses.create_mock(response)
+    profile = (
+        OpenAIModelProfile(
+            openai_unsupported_model_settings=('parallel_tool_calls', 'openai_truncation', 'openai_context_management')
+        )
+        if unsupported
+        else None
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    settings = OpenAIResponsesModelSettings(
+        parallel_tool_calls=True,
+        openai_truncation='auto',
+        openai_context_management=[{'type': 'compaction'}],
+    )
+    request_parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='tool', parameters_json_schema={'type': 'object', 'properties': {}})]
+    )
+    await model.request([ModelRequest(parts=[UserPromptPart('hi')])], settings, request_parameters)
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    if unsupported:
+        assert 'parallel_tool_calls' not in kwargs
+        assert 'truncation' not in kwargs
+        assert 'context_management' not in kwargs
+    else:
+        assert kwargs['parallel_tool_calls'] is True
+        assert kwargs['truncation'] == 'auto'
+        assert kwargs['context_management'] == [{'type': 'compaction'}]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('reason', ['max_output_tokens', 'content_filter'])
+async def test_codex_incomplete_response(allow_model_requests: None, stream: bool, reason: str):
+    events = _codex_stream(slim_completed=True)
+    response = resp.Response.model_validate(
+        {**_MINIMAL_RESPONSE, 'status': 'incomplete', 'incomplete_details': {'reason': reason}, 'output': []}
+    )
+    events[-1] = resp.ResponseIncompleteEvent(type='response.incomplete', response=response, sequence_number=8)
+    model, mock = _codex_model_with_stream(events)
+    messages: list[ModelRequest | ModelResponse] = [_turn('conv-test', 'run-test')]
+    settings = OpenAIResponsesModelSettings(temperature=0.5, top_p=0.8, openai_reasoning_effort='none')
+    if stream:
+        async with model.request_stream(messages, settings, ModelRequestParameters()) as streamed:
+            async for _ in streamed:
+                pass
+            result = streamed.get()
+    else:
+        result = await model.request(messages, settings, ModelRequestParameters())
+    assert result.finish_reason == ('length' if reason == 'max_output_tokens' else 'content_filter')
+    assert result.provider_details is not None
+    assert result.provider_details['finish_reason'] == reason
+    assert result.parts == [TextPart(content='hi there', id='m1', provider_name='openai-codex')]
+    kwargs = mock.response_kwargs[0]
+    assert kwargs['store'] is False
+    assert kwargs['extra_headers']['session-id'] == 'conv-test'
+    assert kwargs['extra_headers']['thread-id'] == 'conv-test'
+    assert kwargs['extra_headers']['x-client-request-id'] == 'conv-test'
+    assert kwargs['prompt_cache_key'] == 'conv-test'
+    assert 'temperature' not in kwargs
+    assert 'top_p' not in kwargs

@@ -233,7 +233,7 @@ async def test_anthropic_midstream_status_error(allow_model_requests: None):
     """APIStatusError during stream iteration is wrapped as ModelHTTPError."""
     error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx_response(529),
+        response=_httpx2_response(529),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     stream = [_anthropic_start_event(), error]
@@ -253,7 +253,7 @@ async def test_anthropic_midstream_status_error(allow_model_requests: None):
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 async def test_anthropic_midstream_connection_error(allow_model_requests: None):
     """APIConnectionError during stream iteration is wrapped as ModelAPIError."""
-    error = AnthropicConnectionError(request=httpx.Request('POST', 'https://api.anthropic.com'))
+    error = AnthropicConnectionError(request=httpx2.Request('POST', 'https://api.anthropic.com'))
     stream = [_anthropic_start_event(), error]
     mock_client = MockAnthropic.create_stream_mock(stream)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -272,7 +272,7 @@ async def test_anthropic_peek_error(allow_model_requests: None):
     """APIStatusError during peek is wrapped as ModelHTTPError."""
     error = AnthropicStatusError(
         message='Rate limited',
-        response=_httpx_response(429),
+        response=_httpx2_response(429),
         body={'type': 'error', 'error': {'type': 'rate_limit_error'}},
     )
     stream = [error]
@@ -292,12 +292,12 @@ async def test_anthropic_peek_error(allow_model_requests: None):
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: AnthropicStatusError(message='SSE error', response=_httpx_response(200), body={'type': 'error'}),
+            lambda: AnthropicStatusError(message='SSE error', response=_httpx2_response(200), body={'type': 'error'}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: AnthropicConnectionError(request=httpx.Request('POST', 'https://api.anthropic.com')),
+            lambda: AnthropicConnectionError(request=httpx2.Request('POST', 'https://api.anthropic.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -325,7 +325,7 @@ async def test_anthropic_midstream_sse_error_status_200(allow_model_requests: No
     """
     error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx_response(200),
+        response=_httpx2_response(200),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     stream = [_anthropic_start_event(), error]
@@ -833,11 +833,11 @@ async def test_gateway_model_name_suggestion_midstream(
                     'anthropic',
                     api_key='test-key',
                     base_url='https://gateway.example.com/proxy',
-                    http_client=http_client,
+                    http_client=httpx2_client,
                 )
                 error = AnthropicStatusError(
                     message='Model not found',
-                    response=_httpx_response(404),
+                    response=_httpx2_response(404),
                     body={'error': {'type': 'not_found_error', 'message': f'model: {model_name}'}},
                 )
                 start_event = _anthropic_start_event()
@@ -1148,7 +1148,7 @@ async def test_fallback_model_streaming_error_triggers_fallback(allow_model_requ
     # First model: Anthropic that errors on peek (first event is the error)
     anthropic_error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx_response(529),
+        response=_httpx2_response(529),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     anthropic_stream = [anthropic_error]

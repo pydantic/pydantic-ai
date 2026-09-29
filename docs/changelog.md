@@ -1,3 +1,7 @@
+---
+description: "Pydantic AI upgrade guide and changelog: the breaking changes in each release, how to install V2, and the recommended path to migrate your code from V1."
+---
+
 # Upgrade Guide
 
 In September 2025, Pydantic AI reached V1 and committed to API stability: no changes that break your code until V2. V2 is now available, collecting the breaking and behavior changes that stability guarantee didn't allow. This guide is the canonical place to learn what's in V2, how to install it, and how to upgrade; for the guarantees behind these version numbers, see the [Version Policy](version-policy.md).
@@ -127,7 +131,7 @@ These removals and behavior changes could not be announced via a V1 deprecation 
 - [`capture_run_messages()`][pydantic_ai.capture_run_messages] now also captures the partial `ModelRequest`/`ModelResponse` from an interrupted run, marked with `state='interrupted'` (a new `ModelRequest.state` field is added). Code that asserts on exact captured-message counts on error paths may need updating. See [#5364](https://github.com/pydantic/pydantic-ai/pull/5364).
 - Output tool calls and returns now emit dedicated `OutputToolCallEvent`/`OutputToolResultEvent` instead of `FunctionToolCallEvent`/`FunctionToolResultEvent`. Separately, native tool calls and returns no longer emit dedicated events at all — the `BuiltinToolCallEvent`/`BuiltinToolResultEvent` classes are removed and they surface only via the standard `PartStartEvent`/`PartDeltaEvent`. See [#5332](https://github.com/pydantic/pydantic-ai/pull/5332) and [#5476](https://github.com/pydantic/pydantic-ai/pull/5476).
 
-##### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
+##### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict` {#modelprofile-is-now-a-typeddict}
 
 See the [Model Profile guide](models/openai.md#model-profile) for an overview of what a model profile is and how to configure one.
 

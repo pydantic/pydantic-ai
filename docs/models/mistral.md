@@ -1,3 +1,7 @@
+---
+description: "Use Mistral models with Pydantic AI: install the mistral optional group, set your API key, and configure the Mistral provider for your agents."
+---
+
 # Mistral
 
 ## Install
