@@ -47,13 +47,15 @@ def dbos_teardown() -> Iterator[None]:
     dbos = pytest.importorskip('dbos')
     from dbos._dbos import _get_or_create_dbos_registry  # pyright: ignore[reportPrivateUsage]
 
-    registry = _get_or_create_dbos_registry()
-    workflows, types = dict(registry.workflow_info_map), dict(registry.function_type_map)
+    # `dbos` 3 dropped `function_type_map`, leaving `workflow_info_map` the only map keyed by workflow name:
+    # https://github.com/dbos-inc/dbos-transact-py/pull/850
+    registry = vars(_get_or_create_dbos_registry())
+    maps = {name: dict(registry[name]) for name in ('workflow_info_map', 'function_type_map') if name in registry}
     yield
     dbos.DBOS.destroy()
     # Drop only the example's workflows: their source was `exec`d, so a later `DBOS.launch()` could not hash
     # it, while modules that register agents at import time still need theirs.
-    registry.workflow_info_map, registry.function_type_map = workflows, types
+    registry.update(maps)
 
 
 def test_dbos_example(workspace: Path, dbos_teardown: None) -> None:
