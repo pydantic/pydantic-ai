@@ -31,12 +31,15 @@ if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
+    from .durable_exec._base import BaseDurabilityCapability
+    from .durable_exec._toolset import RunHeldToolset
     from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
     from .usage import RunUsage, UsageLimits
+    from .workspaces import Workspace, WorkspaceRef
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
@@ -106,6 +109,24 @@ async def dispatch_event_stream(
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
 
 
+def no_workspace() -> Workspace:
+    # Imported lazily to keep the run-context module independent of the workspace facade during
+    # package initialization. This factory runs only when a `RunContext` is constructed.
+    from .workspaces import Workspace
+    from .workspaces.unavailable import NO_WORKSPACE
+
+    return Workspace(NO_WORKSPACE)
+
+
+def recorded_workspace_ref(workspace: Workspace, carried: WorkspaceRef | None) -> WorkspaceRef | None:
+    """The `workspace_ref` a run records on its responses.
+
+    A run without an attached workspace (none selected, or an `UnavailableWorkspace`) records `carried`, the
+    conversation's ref, so a turn that couldn't touch the workspace doesn't lose it for the next one.
+    """
+    return workspace.ref if workspace.attached else carried
+
+
 @dataclasses.dataclass(frozen=True)
 class AnchoredEvidence:
     """Reveal and load evidence the provider that served a response could still see.
@@ -126,6 +147,21 @@ class AnchoredEvidence:
 
     loaded_capability_ids: frozenset[str] = frozenset()
     """Capabilities loaded inside the anchored window but not in `loaded_capability_ids`."""
+
+
+def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_window: int | None) -> float | None:
+    """The latest response's `total_tokens` over `context_window`, or `None` when it can't be calculated.
+
+    Shared by [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] and
+    [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
+    """
+    if context_window is None or context_window <= 0:
+        return None
+    for message in reversed(messages):
+        if isinstance(message, _messages.ModelResponse):
+            tokens = message.usage.total_tokens
+            return tokens / context_window if tokens else None
+    return None
 
 
 @dataclasses.dataclass(repr=False, kw_only=True)
@@ -218,6 +254,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
     with, for the whole session (realtime settings are fixed at connect time).
     """
+    workspace: Workspace = field(default_factory=no_workspace)
+    """The run's [`Workspace`](../workspace.md): the one passed as `workspace=`, else the first a capability supplies.
+
+    Without one, a placeholder whose operations explain how to attach one.
+    """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
 
@@ -272,6 +313,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
 
+    _run_held_toolsets: dict[str, RunHeldToolset[Any]] | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Toolsets the run holds entered, keyed by toolset `id`, attached by the durable-execution toolset
+    wrappers so their durable units reuse the toolset (and the MCP server session) the run already
+    holds instead of entering a fresh one each time. Holds live objects, so it only survives where
+    the durable unit runs in the same process as the durable container; engines that serialize the
+    run context across the boundary (Temporal) leave it `None` and the units fall back to entering
+    their own, which is what they have always done.
+    """
+
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -297,10 +349,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     realtime_session: RealtimeSession | None = field(default=None, repr=False)
     """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
 
-    `None` in classic runs, and during the parts of a realtime run that precede the connection:
-    `before_run`, `wrap_run` before `handler()` starts the session, and instruction resolution.
-    Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
-    stages. Tools and hooks that run during the live session can use it to e.g.
+    `None` in classic runs, during setup (`before_run` and instruction resolution), and throughout
+    `wrap_run`: that hook keeps the context copy captured before the session exists, including after
+    `handler()` returns. Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime
+    run in those stages. Tools and `on_event` hooks that run during the live session can use it to e.g.
     [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
     [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content, or call
     [`close()`][pydantic_ai.realtime.RealtimeSession.close] to hang up.
@@ -428,6 +480,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return realtime is not None and isinstance(self.model, realtime.RealtimeModel)
 
     @property
+    def in_durable_context(self) -> bool:
+        """Whether this code runs inside a durable container, like a Temporal workflow, DBOS workflow, or Prefect flow.
+
+        Code running there must be deterministic, since the engine replays it on recovery. This is `False`
+        inside a Temporal activity or DBOS step, where tools and model requests run, and when the agent has no
+        durability capability or is run outside a durable container. A Prefect task inherits its flow's
+        context, so it is `True` there.
+        """
+        # Looked up through `sys.modules` like `realtime`: without the module, no durability capability exists.
+        durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
+        if durable_exec is None or self.agent is None:
+            return False
+        base: type[BaseDurabilityCapability[object]] = durable_exec.BaseDurabilityCapability
+        durability = base.from_agent(self.agent)
+        return durability is not None and durability.in_durable_context
+
+    @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
@@ -449,20 +518,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         context window, usage, or message history is unavailable, or before the first model response.
         A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest
         of its candidates' windows.
+
+        Inside a [realtime session](https://pydantic.dev/docs/ai/realtime/history#context-window), this is
+        the session's [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
         """
+        if self.realtime_session is not None:
+            return self.realtime_session.context_window_used
         try:
             model, messages = self.model, self.messages
         except UserError:
             # A durable run context can omit live model state and message history at an activity boundary.
             return None
-        context_window = model.context_window
-        if context_window is None or context_window <= 0:
-            return None
-        for message in reversed(messages):
-            if isinstance(message, _messages.ModelResponse):
-                tokens = message.usage.total_tokens
-                return tokens / context_window if tokens else None
-        return None
+        return context_window_fraction(messages, model.context_window)
 
     def _emit_event(self, event: _messages.AgentStreamEvent) -> None:
         """Append an event to the run's event buffer for the agent graph to drain into the event stream.

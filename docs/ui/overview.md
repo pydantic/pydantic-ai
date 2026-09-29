@@ -1,3 +1,7 @@
+---
+description: "Connect a Pydantic AI agent to a chat frontend with UI event stream protocols such as AG-UI and the Vercel AI SDK, served from Starlette or FastAPI."
+---
+
 # UI Event Streams
 
 If you're building a chat app or other interactive frontend for an AI agent, your backend will need to receive agent run input (like a chat message or complete [message history](../message-history.md)) from the frontend, and will need to stream the [agent's events](../agent.md#streaming-all-events) (like text, thinking, and tool calls) to the frontend so that the user knows what's happening in real time.
@@ -105,6 +109,25 @@ async def chat(request: Request) -> Response:
    [the trust model](#trust-model-for-client-submitted-messages) for what it's for. Do it in your own
    framework's idiom, as here, whenever you read the body yourself.
 
+### Running the agent elsewhere
+
+The adapter assumes the agent runs inside the request that serves the frontend. It doesn't have to. If the agent runs on a [durable execution](../durable_execution/overview.md) worker, a background job, or another service, the adapter's two jobs simply split across that boundary: the request side builds the run input and transforms the events it receives back into protocol events, and whatever runs the agent builds the run arguments from the same request body.
+
+The request side never calls `run_stream()`. It hands [`UIAdapter.transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream] the agent's events as they arrive over your transport (the media-type and validation handling from the example above still applies, and is elided here):
+
+```py {title="remote_run_handler.py" test="skip" lint="skip"}
+async def chat(request: Request) -> Response:
+    body = await request.body()
+    events = start_the_run_somewhere_else(body)  # an async iterator of Pydantic AI events
+
+    adapter = VercelAIAdapter(agent=agent, run_input=VercelAIAdapter.build_run_input(body))
+    return adapter.streaming_response(adapter.transform_stream(events))
+```
+
+The transport has to deliver the run's [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] as well as its [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — that's what closes the protocol out and what `on_complete` receives — so it needs to carry what [`Agent.run_stream_events()`](../agent.md#running-agents) yields, not just the model's events.
+
+Temporal's [Workflow Streams](../durable_execution/temporal.md#streaming-events-to-a-frontend-with-workflow-streams) are one such transport, and are worth reading as a worked example: the workflow is the queue, the events are durable and offset-addressed, and a frontend that reconnects can be reattached to a run it didn't start.
+
 ### Encoding events without a request
 
 If the agent doesn't run inside the request that serves the frontend — its events reach your API edge over a transport of their own, like a [durable execution](../durable_execution/overview.md) workflow, a queue, or a websocket fan-out — there's no request body to build a run input from, and no `UIAdapter` to run the agent. Use the protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass on its own instead: it transforms and encodes [the agent's events](../agent.md#streaming-all-events) and takes no run input.
@@ -147,6 +170,7 @@ The adapters apply a few defaults so that the authoritative state stays on your 
 - **File URL schemes** — only `http` and `https` are accepted by default for [`FileUrl`][pydantic_ai.messages.FileUrl] parts in client-submitted messages. Non-HTTP schemes like `s3://` or `gs://` are dropped, since they cause the provider to fetch the object using your server's IAM role or service account. See [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
 - **File URL download mode** — [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values other than `False` are reset to `False` by default on client-submitted messages. This prevents clients from forcing the server to fetch a URL, or using `'allow-local'` to opt out of the SSRF private-IP block. After auditing your frontend, opt into additional values with [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
 - **Uploaded files** — client-submitted [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped by default, just like non-HTTP `FileUrl`s, since the server resolves them against the provider's file storage API using its own credentials. After auditing your frontend, honor them by setting [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] to `True`. This is a purely inbound security setting: file content the agent produces is always serialized on the way back out to the client.
+- **Workspace references** — [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref] is reset to `None` on client-submitted messages by default, so a client can't point your agent at another conversation's [workspace](../workspace.md) through your server's provider credentials. As a result, a sandbox capability starts a new sandbox on every request. To keep one per conversation, save `result.workspace.ref` in `on_complete` and pass it back as `workspace=` on the next request; see [Continuing in the same workspace](../workspace.md#continuing-in-the-same-workspace). The Vercel AI and AG-UI protocols do not carry workspace references, so `strip_workspace_refs=False` only affects `sanitize_messages` and custom adapters; it cannot round-trip a ref through those protocols. Keep the saved ref server-side and authorize it before passing `workspace=`.
 
 !!! warning "Tool approvals and results are submitted by the client"
     On the [human-in-the-loop resumption](../deferred-tools.md#human-in-the-loop-tool-approval) path, the [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] passed to the run method — approvals, denials, and externally-executed tool results — are submitted by the client along with the history, and the adapter does not verify that an approved tool call is one the server actually issued. A client that can reach the endpoint can therefore approve a tool call of its own making, including one for an approval-gated tool. Approval guards against the *model* acting without human sign-off; it is not an authorization boundary against the client.

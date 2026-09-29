@@ -6,13 +6,14 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
-from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, get_current_span
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
@@ -76,17 +77,85 @@ TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip
 
-include_content_ctx: ContextVar[bool | None] = ContextVar('include_content', default=None)
+
+@dataclass(frozen=True)
+class ContentPolicy:
+    """One span's `include_content`, tagged with the span it was set for.
+
+    The tag is what makes the variable safe to read. Restoring it is a plain `set` rather than a
+    `reset` (an interrupted streamed run finalizes the context manager in a different `Context`,
+    where `reset` raises), and a `set` lands only in the `Context` that runs it, so the `Context`
+    that opened the request can be left holding a finished request's value. Naming the span means a
+    reader can only honour a policy set for the span in front of it, and anything else fails closed.
+
+    It also carries the tracer the span was opened with, so that a span opened inside the request
+    (a decision model's `decide`) goes to the same tracer provider as the request's own span, even
+    when that is not the global one. Such a span reads the policy through `open_request_policy`.
+    """
+
+    span: Span
+    include_content: bool
+    tracer: Tracer
+
+
+include_content_ctx: ContextVar[ContentPolicy | None] = ContextVar('include_content', default=None)
 """Carries the open `chat` span's `include_content` to code that updates that span without holding
 the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
 model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
 instruction content of the model it picked the way the span was opened, rather than guessing from
-what is already recorded. `None` means no instrumented request is open.
+what is already recorded. Read it through `span_include_content`, never directly. `None` means no
+instrumented request is open.
 
 A context variable for the same reason as `time_to_first_chunk_ctx`: `ModelRequestContext` is public
 and holds only the inputs to `Model.request[_stream]`, and `FallbackModel` reaches the span through
 `get_current_span()` anyway, so it is already relying on the ambient context.
 """
+
+
+def span_include_content(span: Span) -> bool:
+    """Whether `span` was opened with content capture, defaulting to `False` when nothing says so.
+
+    Fails closed on every answer but "this span's own request wanted content": no request open, or a
+    policy belonging to a different span, both mean nothing vouches for exporting content here.
+    """
+    policy = include_content_ctx.get()
+    return (
+        policy is not None
+        and policy.span.get_span_context().span_id == span.get_span_context().span_id
+        and policy.include_content
+    )
+
+
+def open_request_policy() -> ContentPolicy | None:
+    """The policy of the instrumented request the caller runs inside, for a span opened beneath that request.
+
+    `span_include_content` answers for the one span a policy was set for. A span opened inside the
+    request -- a decision model's `decide` -- is not that span, and need not be its child either:
+    a durable engine's step, task or activity span can sit in between. So this asks whether the
+    request is still open around the caller, and still fails closed on a stale policy: the span the
+    policy was set for must not have ended, which a finished request's span has, and the current
+    span must be in its trace. `None` means no instrumented request is open here, and nothing
+    should be emitted.
+    """
+    policy = include_content_ctx.get()
+    if policy is None or not policy.span.is_recording():
+        return None
+    if get_current_span().get_span_context().trace_id != policy.span.get_span_context().trace_id:
+        return None
+    return policy
+
+
+@contextmanager
+def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
+    """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""
+    previous = include_content_ctx.get()
+    include_content_ctx.set(policy)
+    try:
+        yield
+    finally:
+        # A plain `set`, like `open_model_request_span`'s restore, so it can't fail across `Context`s.
+        include_content_ctx.set(previous)
+
 
 time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
 """Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
@@ -356,39 +425,37 @@ def model_request_parameters_attributes(
 ) -> dict[str, AttributeValue]:
     serialized = _serialize_model_request_parameters(model_request_parameters)
     if not include_content:
-        # Two fields here are prompt text the user wrote, which is the "proprietary prompts" half of
-        # what the setting withholds: the instructions (whose dynamic parts can be built from deps)
-        # and the prompted-output template. Instruction parts keep their origin and ids, so what the
-        # parts are and how they cache is still visible. Tool and output *schemas* stay: they are the
-        # request's structure, not message content, and `include_model_request_parameters=False`
-        # drops the attribute entirely for anyone who wants them gone too.
-        for part in instruction_parts_of(serialized):
-            part.pop('content', None)
-        _blank_prompted_output_template(serialized)
+        serialized = _redact_model_request_parameters(serialized)
+        if serialized is None:
+            return {}
     return {'model_request_parameters': safe_to_json(serialized).decode()}
 
 
-def _blank_prompted_output_template(serialized_parameters: Any) -> None:
-    """Blank the prompted-output template, which is prompt text the user wrote."""
-    if not isinstance(serialized_parameters, dict):
-        return  # pragma: no cover
-    parameters = cast('dict[str, Any]', serialized_parameters)
-    if parameters.get('prompted_output_template') is not None:
-        parameters['prompted_output_template'] = None
+def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
+    """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
+    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
+    the prompted-output template. Instruction parts keep their origin and ids, so what the parts are
+    and how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
+    structure rather than message content, and `include_model_request_parameters=False` drops the
+    whole attribute for anyone who wants them gone as well.
 
-def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
-    """The serialized `instruction_parts`, or nothing if the shape isn't what we expect.
-
-    `_serialize_model_request_parameters` falls back to inference when the declared schema can't
-    dump the value, so the shape isn't guaranteed.
+    `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
+    walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
+    representation, instructions and all. There is nothing to redact in a string, so that is reported
+    as unredactable rather than exported.
     """
     if not isinstance(serialized_parameters, dict):
-        return []  # pragma: no cover
-    parts = cast('Any', serialized_parameters).get('instruction_parts')
-    if not isinstance(parts, list):
-        return []
-    return [part for part in cast('list[Any]', parts) if isinstance(part, dict)]
+        return None
+    parameters = cast('dict[str, Any]', serialized_parameters)
+    parts = parameters.get('instruction_parts')
+    if isinstance(parts, list):
+        # Each part is `InstructionPart` dumped through its own schema, so a mapping with `content`.
+        for part in cast('list[dict[str, Any]]', parts):
+            part.pop('content', None)
+    if parameters.get('prompted_output_template') is not None:
+        parameters['prompted_output_template'] = None
+    return parameters
 
 
 def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
@@ -402,7 +469,7 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     """
     try:
         return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
-    except Exception:  # pragma: no cover
+    except Exception:
         # A tool definition carrying something unserializable must not take the span down with it.
         return serialize_any(model_request_parameters)
 
@@ -492,8 +559,8 @@ def response_attributes(
     attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
     if response_model is not None:
         attributes['gen_ai.response.model'] = response_model
-    if price_calculation is not None:
-        attributes['operation.cost'] = float(price_calculation.total_price)
+    if (cost := response_cost(response, price_calculation)) is not None:
+        attributes['operation.cost'] = float(cost)
     if response.provider_response_id is not None:
         attributes['gen_ai.response.id'] = response.provider_response_id
     if response.finish_reason is not None:
@@ -502,7 +569,14 @@ def response_attributes(
 
 
 def response_price_calculation(response: ModelResponse) -> PriceCalculation | None:
-    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`)."""
+    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`).
+
+    `None` too when the response already carries a cost, which `response_cost` then reports instead: whatever set it knew more than `model_name` does. OpenAI GPT-Live's
+    responses carry the tokens of the backend model it delegated to, priced at that model's rates,
+    while `model_name` names the Live model, so re-pricing from it would charge the wrong model.
+    """
+    if response.usage.cost is not None:
+        return None
     return best_effort_price(
         response.usage,
         model_name=response.model_name,
@@ -510,6 +584,11 @@ def response_price_calculation(response: ModelResponse) -> PriceCalculation | No
         provider_name=response.provider_name,
         genai_request_timestamp=response.timestamp,
     )
+
+
+def response_cost(response: ModelResponse, price_calculation: PriceCalculation | None) -> Decimal | None:
+    """The cost to report for a response: its calculated price, or the cost it already carries."""
+    return price_calculation.total_price if price_calculation is not None else response.usage.cost
 
 
 class _FinishModelRequestSpan(Protocol):
@@ -522,8 +601,15 @@ class _FinishModelRequestSpan(Protocol):
     def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
 
 
-def record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
-    """Record `error` on `span` as an `exception` event.
+def record_exception(
+    span: Span,
+    error: BaseException,
+    *,
+    include_content: bool,
+    escaped: bool = True,
+    attributes: Mapping[str, AttributeValue] | None = None,
+) -> None:
+    """Record `error` on `span` as an `exception` event, with any `attributes` beside the exception's own.
 
     With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
     only the exception type is kept: the message and stack trace of an exception raised around
@@ -539,7 +625,7 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
     if not span.is_recording():
         return
     if include_content:
-        span.record_exception(error, escaped=escaped)
+        span.record_exception(error, attributes=attributes, escaped=escaped)
         return
     error_type = type(error)
     type_name = (
@@ -548,7 +634,9 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
         else error_type.__qualname__
     )
     # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
+    span.add_event(
+        'exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped), **(attributes or {})}
+    )
 
 
 def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
@@ -565,19 +653,26 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
 
 
 @contextmanager
-def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[None]:
+def record_uncaught_errors(
+    span: Span,
+    *,
+    include_content: bool,
+    event_attributes: Callable[[Exception], Mapping[str, AttributeValue]] | None = None,
+) -> Generator[None]:
     """Record exceptions leaving `span`'s scope the way `use_span` would have.
 
     For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
     both jobs to the caller. `use_span` recorded the exception unescaped and described the ERROR
     status with it; both repeat the message, so both follow `include_content`. Enter this around
     the span's whole scope -- the scope `use_span` covered -- not just the call that may fail, so
-    that failures while finalizing the span still mark it.
+    that failures while finalizing the span still mark it. `event_attributes` adds attributes to the
+    exception event for an error, for what the event needs to say even when content is withheld.
     """
     try:
         yield
     except Exception as error:
-        record_exception(span, error, include_content=include_content, escaped=False)
+        attributes = event_attributes(error) if event_attributes else None
+        record_exception(span, error, include_content=include_content, escaped=False, attributes=attributes)
         set_error_status(span, error, include_content=include_content)
         raise
 
@@ -634,7 +729,7 @@ def open_model_request_span(
     attributes.update(model_settings_attributes(prepared_settings))
 
     record_metrics: Callable[[], None] | None = None
-    include_content_token = include_content_ctx.set(settings.include_content)
+    previous_include_content = include_content_ctx.get()
     try:
         with (
             settings.tracer.start_as_current_span(
@@ -646,6 +741,9 @@ def open_model_request_span(
             ) as span,
             record_uncaught_errors(span, include_content=settings.include_content),
         ):
+            # Set inside the `with`, because the policy names the span it speaks for.
+            include_content_ctx.set(ContentPolicy(span, settings.include_content, settings.tracer))
+
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
@@ -693,7 +791,7 @@ def open_model_request_span(
 
             yield finish, prepared_request_context
     finally:
-        include_content_ctx.reset(include_content_token)
+        include_content_ctx.set(previous_include_content)
         if record_metrics:
             record_metrics()
 
@@ -711,6 +809,11 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
     the composite enters it around each segment without depending on OpenTelemetry itself.
     """
     captured = otel_context.get_current()
+    # The span's redaction policy has to travel with it: a streaming segment reads
+    # `include_content_ctx` in the consumer task, which never saw the `set` in
+    # `open_model_request_span`, so without this a `FallbackModel` refresh there would fall back to
+    # the default and re-export instruction content the span was opened without.
+    captured_include_content = include_content_ctx.get()
 
     @contextmanager
     def attach_captured_context() -> Generator[None]:
@@ -722,11 +825,17 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
         # 'Failed to detach context' (surfaced verbatim in the Pyodide output panel). `attach()` is a plain
         # `set`, which never fails cross-context, so it restores `previous` silently. See #6569.
         previous = otel_context.get_current()
+        previous_include_content = include_content_ctx.get()
         otel_context.attach(captured)
+        # Restored with `set` rather than `reset` for the same reason as `previous` above: this CM is
+        # held across the `yield`, so an interrupted streamed run finalizes it in a different
+        # `Context`, where `ContextVar.reset` raises `ValueError: ... created in a different Context`.
+        include_content_ctx.set(captured_include_content)
         try:
             yield
         finally:
             otel_context.attach(previous)
+            include_content_ctx.set(previous_include_content)
 
     return attach_captured_context
 

@@ -180,7 +180,6 @@ with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
-pytestmark = pytest.mark.anyio
 
 MOCK_API_KEYS: dict[str, str] = {
     'OPENAI_API_KEY': 'mock-api-key',
