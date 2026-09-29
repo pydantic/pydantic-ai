@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import fields
 from os import environ
@@ -9,7 +10,8 @@ from typing import Any, TypeVar
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 
 CapabilityT = TypeVar('CapabilityT', bound=AbstractCapability[Any])
 
@@ -32,6 +34,23 @@ def is_read_only(tool: ToolDefinition) -> bool:
             return True
         case _:
             return False
+
+
+def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+    """Keep tools marked as read-only and warn when the filter removes every tool."""
+
+    def prepare_read_only(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        read_only_tools = [tool for tool in tool_defs if is_read_only(tool)]
+        if tool_defs and not read_only_tools:
+            warnings.warn(
+                f'`read_only=True` removed every tool from {toolset.label} because none was marked with '
+                '`readOnlyHint: true`. '
+                'Disable `read_only` or configure the server to publish read-only annotations.',
+                stacklevel=2,
+            )
+        return read_only_tools
+
+    return toolset.prepared(prepare_read_only)
 
 
 def one_connection(capabilities: Sequence[CapabilityT]) -> CapabilityT:

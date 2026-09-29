@@ -85,6 +85,22 @@ class TestPylon:
         agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=read_only)])
         assert (await agent.run('Use the tools')).output == expected
 
+    async def test_read_only_warns_when_it_removes_every_tool(self) -> None:
+        server = FastMCP('pylon-fake')
+
+        @server.tool()
+        def unmarked() -> str:
+            return 'unmarked'
+
+        agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
+        with pytest.warns(UserWarning, match=r"`read_only=True` removed every tool from MCPToolset 'pylon'"):
+            await agent.run('Use the tools')
+
+    async def test_read_only_does_not_warn_for_an_empty_server(self) -> None:
+        server = FastMCP('pylon-fake')
+        agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
+        await agent.run('Use the tools')
+
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
         server = FastMCP('pylon-fake', instructions='Pylon instructions.')
