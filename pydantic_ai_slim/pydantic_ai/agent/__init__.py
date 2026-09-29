@@ -267,6 +267,9 @@ async def _run_setup_error_hook(
         except Exception:
             # A partial tree can fail context preparation; cleanup still belongs to the setup error.
             pass
+    if run_ctx._run_capabilities_by_id is None:  # pyright: ignore[reportPrivateUsage]
+        # Realtime context preparation can fail before it creates the mapping used to scope dispatch.
+        run_ctx._run_capabilities_by_id = {}  # pyright: ignore[reportPrivateUsage]
     # There is no run result to recover here, so preserve the setup error if the hook returns.
     setup_traceback = error.__traceback__
     try:
@@ -4574,7 +4577,12 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # its `cancel()`/run-state accessors reach the run. The controller was already bound
                 # to this task above, before `wrap_run`/`before_run`.
                 self.binding.agent_run = agent_run
-            self.resolve_metadata(agent_run.ctx)
+            try:
+                self.resolve_metadata(agent_run.ctx)
+            except BaseException as error:
+                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                await _run_setup_error_hook(self.resolved_layers, run_ctx, error)
+                raise
 
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)

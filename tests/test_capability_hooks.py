@@ -2177,6 +2177,35 @@ class TestRunErrorHooks:
 
         assert observed == ['first', 'second']
 
+    async def test_metadata_failure_after_for_run_dispatches_cleanup(self):
+        metadata_calls = 0
+        observed: list[str] = []
+        setup_error = RuntimeError('metadata resolution failed')
+
+        def metadata(ctx: RunContext[None]) -> dict[str, str]:
+            nonlocal metadata_calls
+            metadata_calls += 1
+            if metadata_calls == 2:
+                raise setup_error
+            return {}
+
+        class Cleanup(AbstractCapability[None]):
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                observed.append('setup')
+                return self
+
+            async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[object]:
+                assert error is setup_error
+                observed.append('cleanup')
+                raise error
+
+        agent: Agent[None, str] = Agent(TestModel(), deps_type=type(None), metadata=metadata, capabilities=[Cleanup()])
+        with pytest.raises(RuntimeError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value is setup_error
+        assert metadata_calls == 2
+        assert observed == ['setup', 'cleanup']
+
     async def test_setup_on_run_error_continues_after_hook_error(self):
         hooks = Hooks()
         observed: list[str] = []

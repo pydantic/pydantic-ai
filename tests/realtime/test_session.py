@@ -7092,6 +7092,30 @@ async def test_agent_realtime_session_cleans_up_runtime_context_preparation_fail
     assert preparations == 1
 
 
+async def test_agent_realtime_session_cleans_up_before_capability_registry_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_error = RuntimeError('context preparation failed before registry assignment')
+    cleaned: list[BaseException] = []
+
+    def fail_preparation(capability: AbstractCapability[None], ctx: RunContext[None]) -> None:
+        raise setup_error
+
+    class Cleanup(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append(error)
+            raise error
+
+    monkeypatch.setattr('pydantic_ai.agent._prepare_run_capability_context', fail_preparation)
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[Cleanup()])
+    model = FakeRealtimeModel(FakeRealtimeConnection([]))
+    with pytest.raises(RuntimeError) as exc_info:
+        async with agent.realtime(model).session():
+            pass  # pragma: no cover
+    assert exc_info.value is setup_error
+    assert cleaned == [setup_error]
+
+
 async def test_agent_realtime_session_seeds_message_history() -> None:
     agent: Agent[None, str] = Agent()
     seed = [
