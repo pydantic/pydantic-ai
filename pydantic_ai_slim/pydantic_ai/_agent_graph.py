@@ -1340,6 +1340,74 @@ async def model_request_stream(
             await sr.aclose()
 
 
+@dataclasses.dataclass
+class _StreamOffer:
+    """An attempt's stream, offered by the attempt loop to the consuming task to be primed."""
+
+    stream: models.StreamedResponse
+    outcome: asyncio.Future[Exception | None]
+    """Resolved with the error priming raised, or `None` once the stream is open."""
+
+
+@dataclasses.dataclass
+class _StreamHandoff:
+    """How the attempt loop in the `wrap_model_request` task and the consuming task open a stream together."""
+
+    offers: asyncio.Queue[_StreamOffer] = dataclasses.field(default_factory=asyncio.Queue[_StreamOffer])
+    open_error: Exception | None = None
+    """The error the request step ended with when its last attempt failed to open a stream.
+
+    Surfaced to the consumer as a stream that raises it, rather than raised when the stream is
+    entered, so events emitted before the failure still reach the consumer first, as they did when
+    the stream was opened lazily.
+    """
+
+
+class _FailedStreamedResponse(CompletedStreamedResponse):
+    """An empty stream that raises the error its request failed to open with, once it's iterated."""
+
+    def __init__(self, error: Exception, *, model_request_parameters: models.ModelRequestParameters):
+        super().__init__(_messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters)
+        self._error = error
+
+    async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+        raise self._error
+        yield  # pragma: no cover
+
+
+async def _serve_stream_offers(
+    stream_offers: asyncio.Queue[_StreamOffer],
+    ready_waiter: asyncio.Task[Any],
+    wrap_task: asyncio.Task[Any],
+) -> None:
+    """Prime the streams the attempt loop offers until one is ready or the wrapped lifecycle finishes.
+
+    Runs in the consuming task: a segment's `model.request_stream(...)` context is entered and exited
+    by the task that iterates it, so the attempt loop in the `wrap_model_request` task can't open it
+    itself. Priming is only possible for the stitched continuation stream; a recovered response is
+    replayed from memory and isn't offered.
+    """
+    while True:
+        offer_getter = asyncio.create_task(stream_offers.get())
+        try:
+            await asyncio.wait({ready_waiter, offer_getter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            if not offer_getter.done():
+                await cancel_and_drain(offer_getter)
+        if offer_getter.cancelled():
+            return
+        offer = offer_getter.result()
+        error: Exception | None = None
+        try:
+            if isinstance(offer.stream, _ContinuationStreamedResponse):  # pragma: no branch
+                await offer.stream.prime()
+        except Exception as e:
+            error = e
+        if not offer.outcome.done():  # pragma: no branch
+            # Done only if the attempt loop was cancelled while this ran; its unwinding closes the stream.
+            offer.outcome.set_result(error)
+
+
 async def _after_streamed_model_request(
     root_capability: AbstractCapability[Any],
     run_context: RunContext[Any],
@@ -1420,7 +1488,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(
+    async def stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -1436,6 +1504,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 4. The handler resumes, the stream context manager closes, and the task completes.
         stream_ready = asyncio.Event()
         stream_done = asyncio.Event()
+        # Each attempt's stream is offered to this coroutine to be primed, since its first segment has
+        # to be opened in the task that consumes it; the outcome goes back to the attempt loop, which
+        # can still retry or fall back before anything has reached the consumer. See `_open_stream`.
+        handoff = _StreamHandoff()
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
@@ -1463,7 +1535,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             baseline = _AttemptBaseline.capture(req_ctx)
             async with AsyncExitStack() as stream_stack:
                 sr, req_ctx, request_start = await self._open_stream(
-                    ctx, run_context, req_ctx, baseline=baseline, stream_stack=stream_stack
+                    ctx, run_context, req_ctx, baseline=baseline, stream_stack=stream_stack, handoff=handoff
                 )
                 self._did_stream = True
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
@@ -1505,7 +1577,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
-            await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+            await _serve_stream_offers(handoff.offers, ready_waiter, wrap_task)
         except BaseException:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
@@ -1553,6 +1625,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 finally:
                     await agent_stream.aclose_events()
                 return
+            except Exception as error:
+                if error is not handoff.open_error:
+                    raise
+                # The stream failed to open. Hand the consumer a stream that raises the failure, so events
+                # emitted before it (e.g. by `before_model_request` hooks) reach the consumer first.
+                self._did_stream = True
+                failed_sr = _FailedStreamedResponse(
+                    error, model_request_parameters=wrap_request_context.model_request_parameters
+                )
+                agent_stream = self._build_agent_stream(ctx, failed_sr, wrap_request_context.model_request_parameters)
+                try:
+                    yield agent_stream
+                finally:
+                    await agent_stream.aclose_events()
+                # The consumer didn't iterate the stream far enough to see the failure.
+                raise error
             self._did_stream = True
             replay_sr = CompletedStreamedResponse(
                 model_response,
@@ -1580,6 +1668,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream_error = exc
             raise
         finally:
+            raw_stream = agent_stream_holder[0]._raw_stream_response  # pyright: ignore[reportPrivateUsage]
+            if isinstance(raw_stream, _ContinuationStreamedResponse):
+                # Close a primed segment the consumer never iterated here, in the task that opened it.
+                await raw_stream.release_primed_segment()
             stream_done.set()
 
             try:
@@ -2135,12 +2227,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         baseline: _AttemptBaseline,
         stream_stack: AsyncExitStack,
+        handoff: _StreamHandoff,
     ) -> tuple[models.StreamedResponse, ModelRequestContext, float]:
         """Open the stream for this request step, re-attempting while a hook asks for another attempt.
 
-        Only *opening* can be re-attempted: once events have reached the consumer there is nothing to
-        rewind, so a mid-stream failure propagates (tracked separately by #4140). Returns the open
-        stream, the context of the attempt that produced it, and the instant the request was issued.
+        Each attempt's stream is primed (its first segment opened and its first event received) before
+        it's handed over, so a failure to open it still reaches `on_model_request_error`, which can
+        recover it, or raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to try
+        again. Once events have reached the consumer there is nothing to rewind, so a mid-stream failure
+        propagates (tracked separately by #4140). Returns the open stream, the context of the attempt
+        that produced it, and the instant the request was issued.
         """
         while True:
             baseline.restore(request_context)
@@ -2156,23 +2252,36 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
             # the first-chunk instant; the delta is the client-side time to first token.
             request_start = time.perf_counter()
-            # `model_request_stream` stitches the (possibly suspended → complete) segments
-            # into one continuous stream, so the whole chain is presented as a single
-            # `AgentStream` and the model-request hooks wrap it once.
+            attempt_stack = AsyncExitStack()
             try:
-                sr = await stream_stack.enter_async_context(
+                # `model_request_stream` stitches the (possibly suspended → complete) segments
+                # into one continuous stream, so the whole chain is presented as a single
+                # `AgentStream` and the model-request hooks wrap it once.
+                sr = await attempt_stack.enter_async_context(
                     model_request_stream(
                         request_context.model, request_context=request_context, run_context=run_context
                     )
                 )
+                if ctx.deps.root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                    # Only worth opening early when a hook can act on a failure to open: otherwise the
+                    # stream keeps opening lazily, once the consumer starts iterating it.
+                    outcome: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
+                    handoff.offers.put_nowait(_StreamOffer(sr, outcome))
+                    if (error := await outcome) is not None:
+                        raise error
             except (exceptions.ModelRetry, exceptions.RetryModelRequest):
+                await attempt_stack.aclose()
                 raise
             except Exception as e:
+                await attempt_stack.aclose()
                 try:
                     recovered = await self._recover_model_request_error(ctx, run_context, request_context, e)
                 except exceptions.RetryModelRequest as retry:
                     await self._start_next_attempt(ctx, request_context, retry)
                     continue
+                except Exception as error:
+                    handoff.open_error = error
+                    raise
                 # A hook recovered the failure with a complete response; replay it as a stream so the
                 # consumer sees the same shape either way.
                 return (
@@ -2184,6 +2293,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     request_context,
                     request_start,
                 )
+            except BaseException:
+                await attempt_stack.aclose()
+                raise
+            stream_stack.push_async_exit(attempt_stack)
             return sr, request_context, request_start
 
     async def _start_next_attempt(

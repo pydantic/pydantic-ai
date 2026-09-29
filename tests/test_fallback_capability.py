@@ -82,13 +82,6 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
     yield 'hello'
 
 
-@pytest.mark.xfail(
-    reason=(
-        'The continuation composite opens its first segment lazily in the consumer task, so a '
-        'stream-open failure surfaces after the attempt loop has already handed the stream off.'
-    ),
-    strict=True,
-)
 @pytest.mark.anyio
 async def test_streaming_open_failure_falls_back():
     agent = Agent(
