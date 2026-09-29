@@ -9169,8 +9169,7 @@ async def test_event_stream_output_tool_input_error_with_status_return_part():
     `RetryPromptPart`). The v6 lifecycle must still complete with `tool-input-error`
     — not `tool-output-available` — since the call never actually executed.
 
-    Mirrors the `_make_output_status_part` + `_emit_output_tool_events(args_valid=False)`
-    sequence in `_agent_graph.py`."""
+    Mirrors the `_emit_output_tool_events(args_valid=False)` sequence in `_tool_execution.py`."""
 
     async def event_generator():
         part = ToolCallPart(

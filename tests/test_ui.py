@@ -1556,7 +1556,7 @@ async def test_reinject_system_prompt_capability_injects_when_history_missing():
 async def test_reinject_system_prompt_capability_reaches_model_and_all_messages():
     """Regression guard: the injected `SystemPromptPart` must appear in *both* the messages
     actually sent to the model AND the stored `result.all_messages()` — they're the same
-    list after `_agent_graph.py:835` syncs the hook's mutations back to canonical state.
+    list after `ModelRequestNode._prepare_request` syncs the hook's mutations back to canonical state.
     """
     captured: list[list[ModelMessage]] = []
 

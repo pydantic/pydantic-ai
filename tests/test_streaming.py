@@ -7307,7 +7307,7 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
             try:
                 started.set()
                 # Suspend before calling handler() so we sit inside the readiness wait at
-                # `_agent_graph.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
+                # `_agent_graph/model_request.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
                 return await never_finishes
             finally:
                 # Without the drain on the readiness wait, this finally never runs.

@@ -5,7 +5,7 @@ Use this guide for non-trivial changes to `pydantic-ai-slim`: public APIs, provi
 ## Ownership
 
 - `Agent` owns user-facing construction and run APIs. `Agent.iter()` is the graph-run facade: `_prepare_run()` resolves per-run inputs into a private `_PreparedAgentRun`, whose `open()` method owns resource entry, capability lifecycle, recovery, and cleanup. Prefer not to add constructor kwargs for behavior that can be modeled as a capability, toolset, model setting, or profile fact.
-- `_agent_graph.py` owns loop orchestration: prompt assembly, model requests, tool/output processing, retries, usage checks, and finalization.
+- `_agent_graph/` owns loop orchestration: prompt assembly, model requests, tool/output processing, retries, usage checks, and finalization. `state.py` holds run state, deps, IDs, and run/validation contexts; `history.py` captured messages and history repair; `model_call.py` the request/continuation loop; `user_prompt.py`, `model_request.py`, and `model_response.py` the three graph nodes; `graph.py` node primitives and graph construction.
 - `tool_manager.py`, `tools.py`, and `toolsets/` own tool discovery, validation, execution, retries, approval/deferral, wrapper composition, and stable tool identity.
 - `output.py` is the public output API; `_output.py` owns internal output schemas, processors, output tools, and output validation/processing.
 - `messages.py` owns the normalized protocol. Provider adapters, UI adapters, durable wrappers, and persisted histories should round-trip through this shape instead of encoding provider facts in strings or ad hoc fields.
@@ -51,7 +51,7 @@ Feature code emits typed `AgentStreamEvent`s into the buffer once the public eve
 
 `_cancel.RunCancellation` is the run-scoped first-party cancellation controller, held on `GraphAgentDeps.cancellation` and shared by reference into every `RunContext` as the private `_cancellation` field (same never-`replace` invariant as `_event_stream_buffer` — see the comment in `build_run_context`). First-party cancellation works by cancelling the asyncio task driving the run, so it reuses the entire external-cancellation teardown; the `CancelledError` is classified exactly once, at the outer edge of `_PreparedAgentRun.open()`'s exit stack (`_translate_cancellation`), after all history-producing teardown has committed.
 
-Three pieces of bookkeeping are load-bearing and easy to break from `_agent_graph.py` / `run.py`:
+Three pieces of bookkeeping are load-bearing and easy to break from `_agent_graph/` / `run.py`:
 
 - **Issuance counting** (`_issued` + `Task.uncancel()` in `resolve()`): the controller consumes exactly the cancellations it issued; if `Task.cancelling()` is still positive afterwards, an external cancellation raced in and wins (never translated). The arbitration is deliberately baseline-free — conservative in the "external wins" direction.
 - **Re-issue on `bind()`**: `bind()` runs at run start and every step boundary; it clamps the issued count to the task's live `cancelling()` (a caller that uncancelled took over the bookkeeping) and re-delivers a still-requested cancellation — this is what makes first-party cancellation sticky against hooks or callers that swallow/uncancel it, without per-site `cancel_requested` checks.

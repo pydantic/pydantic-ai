@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 import typing
-from typing import Protocol, cast
 
 import pydantic_ai
 import pydantic_ai.agent
 from pydantic_ai import _agent_graph
 from pydantic_ai._agent_graph import graph as _graph
-
-
-class _NodeClass(Protocol):
-    run: object
 
 
 def test_agent_graph_compatibility_surface() -> None:
@@ -50,6 +45,6 @@ def test_agent_graph_node_type_hints_are_resolvable() -> None:
         _agent_graph.ModelRequestNode,
         _agent_graph.CallToolsNode,
     ):
-        assert_type_hints_resolve(cast(_NodeClass, node_class).run)
+        assert_type_hints_resolve(vars(node_class)['run'])
 
     assert_type_hints_resolve(_graph.build_agent_graph)
