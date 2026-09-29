@@ -1693,7 +1693,7 @@ async def test_held_spoken_turn_is_recorded_after_what_was_sent_first(
     async with Agent().realtime(_model(settings)).session() as session:
         await session.send_audio(_AUDIO.data)
         async for event in session:  # pragma: no branch
-            if isinstance(event, RealtimeInputSpeechStartEvent):
+            if isinstance(event, RealtimeInputSpeechStartEvent):  # pragma: no branch
                 break
         await session.commit_audio()
         await session.send('Greet me by name.')
@@ -1722,7 +1722,8 @@ def _turns(messages: Sequence[ModelMessage]) -> list[str]:
         for part in message.parts:
             if isinstance(part, UserPromptPart):
                 turns.append(f'user: {part.content}')
-            elif isinstance(part, SpeechPart):
+            else:
+                assert isinstance(part, SpeechPart)
                 turns.append(f'{part.speaker} speech: {part.transcript}')
     return turns
 
