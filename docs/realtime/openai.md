@@ -404,8 +404,9 @@ On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSetti
 effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning off. The
 GA `gpt-realtime` ignores the setting.
 
-Neither family surfaces reasoning traces as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s:
-the Realtime API exposes effort as input only, and Live's reasoning happens on the backend.
+Neither family surfaces readable reasoning as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
+GPT-Live does record the backend's encrypted reasoning ahead of each web search, so the history can
+continue on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
 
 ## Browser WebRTC
 

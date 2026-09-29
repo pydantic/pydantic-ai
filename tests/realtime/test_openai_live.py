@@ -1218,8 +1218,12 @@ def test_a_search_is_recorded_with_the_reasoning_that_led_to_it() -> None:
         'NativeToolCallPart:ws_1',
         'NativeToolReturnPart:None',
     ]
-    # Reasoning before the answer is dropped when the answer arrives.
+    # Reasoning before a function call or the answer is dropped when that arrives.
     parts(_output_item_done(_reasoning('rs_2')))
+    call: dict[str, Any] = {'id': 'fc_1', 'type': 'function_call', 'call_id': 'c1', 'name': 'lookup', 'arguments': '{}'}
+    connection._map_event(_event(_output_item_done(call)))  # pyright: ignore[reportPrivateUsage]
+    assert parts(_output_item_done(_SEARCH_ITEM)) == ['NativeToolCallPart:ws_1', 'NativeToolReturnPart:None']
+    parts(_output_item_done(_reasoning('rs_2b')))
     message: dict[str, Any] = {
         'id': 'msg_1',
         'type': 'message',
