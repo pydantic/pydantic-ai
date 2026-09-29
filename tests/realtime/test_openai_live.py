@@ -655,14 +655,14 @@ async def test_a_call_abandoned_while_its_media_downloads_is_not_sent(monkeypatc
 
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
     _open_delegation(connection, call_ids=('c1',))
-    map_items = live_module._tool_result_items  # pyright: ignore[reportPrivateUsage]
+    map_items = live_module._tool_result_follow_up  # pyright: ignore[reportPrivateUsage]
 
     async def downloading(result: ToolResult, *, provider_name: str) -> Any:
         # The backend gives up while the download is in flight.
         connection._map_response_event(_backend_terminal('response.failed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
         return await map_items(result, provider_name=provider_name)
 
-    monkeypatch.setattr(live_module, '_tool_result_items', downloading)
+    monkeypatch.setattr(live_module, '_tool_result_follow_up', downloading)
     image = BinaryContent(data=b'png', media_type='image/png')
     await connection.send(ToolResult('c1', output='too late', content=[image]))
 
@@ -848,11 +848,11 @@ async def test_tool_result_text_content_types_reach_the_backend_as_text() -> Non
     )
 
 
-async def test_tool_result_media_goes_to_the_backend_in_the_output() -> None:
-    """Media rides in the function output itself, which is where the Responses backend reads a tool's files.
+async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
+    """Files a tool returns follow its output as a user message, as they do on the Realtime API.
 
-    The text goes with it, in order, so a file stays next to the text that introduces it. The mapping is
-    `OpenAIResponsesModel`'s, so a pinned payload is what catches it drifting: a cassette would still match.
+    Each item keeps its place among the text. The per-item mapping is `OpenAIResponsesModel`'s, so a pinned
+    payload is what catches it drifting: a cassette would still match.
     """
     sent: list[dict[str, Any]] = []
 
@@ -877,11 +877,14 @@ async def test_tool_result_media_goes_to_the_backend_in_the_output() -> None:
         [
             {
                 'type': 'response.item.create',
+                'item': {'type': 'function_call_output', 'call_id': 'c1', 'output': 'See the attachments.'},
+            },
+            {
+                'type': 'response.item.create',
                 'item': {
-                    'type': 'function_call_output',
-                    'call_id': 'c1',
-                    'output': [
-                        {'type': 'input_text', 'text': 'See the attachments.'},
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
                         {'type': 'input_text', 'text': 'The photo:'},
                         {'image_url': 'data:image/png;base64,cG5n', 'type': 'input_image', 'detail': 'auto'},
                         {'type': 'input_text', 'text': 'The invoice:'},
@@ -901,22 +904,6 @@ async def test_tool_result_media_goes_to_the_backend_in_the_output() -> None:
     )
 
 
-async def test_tool_result_media_with_no_text_output_is_sent_alone() -> None:
-    """An empty return value adds no empty text part in front of the media."""
-    sent: list[dict[str, Any]] = []
-
-    class _Sink(OpenAILiveConnection):
-        async def _send_event(self, event: dict[str, Any]) -> None:
-            sent.append(event)
-
-    connection = _Sink(object())  # pyright: ignore[reportArgumentType]
-    await connection.send(ToolResult('c1', output='', content=[BinaryContent(data=b'png', media_type='image/png')]))
-
-    assert sent[0]['item']['output'] == snapshot(
-        [{'image_url': 'data:image/png;base64,cG5n', 'type': 'input_image', 'detail': 'auto'}]
-    )
-
-
 @pytest.mark.parametrize(
     'item,match',
     [
@@ -930,7 +917,7 @@ async def test_tool_result_media_with_no_text_output_is_sent_alone() -> None:
     ],
 )
 async def test_tool_result_media_the_backend_cannot_read_is_refused(item: UserContent, match: str) -> None:
-    """A function output carries text, images, and documents only, so anything else fails with nothing sent."""
+    """The backend takes text, images, and documents only, so anything else fails with nothing sent."""
     sent: list[dict[str, Any]] = []
 
     class _Recorder(OpenAILiveConnection):

@@ -280,7 +280,7 @@ async def test_an_image_a_tool_returns_reaches_the_backend(
     image_content: BinaryImage,
     realtime_recording: bool,
 ) -> None:
-    """An image a tool returns goes to the delegated backend in the function output, and Live speaks for it.
+    """An image a tool returns follows its output to the delegated backend, and Live speaks for it.
 
     The session runs at 16 kHz, set through the profile, because that is the rate the recorded question is in.
     """

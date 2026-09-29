@@ -548,7 +548,7 @@ class OpenAILiveConnection(RealtimeConnection):
         """Return a tool result to the delegated Responses backend and let it continue."""
         # Mapped first: downloading media can wait, and the backend can give up on the call meanwhile,
         # which only the checks below, made after it, can see.
-        output, follow_up = await _tool_result_items(result, provider_name=self._provider_name)
+        follow_up = await _tool_result_follow_up(result, provider_name=self._provider_name)
         delegation_id = self._call_delegations.pop(result.tool_call_id, None)
         if result.tool_call_id in self._abandoned_calls:
             # The backend that asked for this call gave up before it was answered. Sending the output
@@ -561,7 +561,7 @@ class OpenAILiveConnection(RealtimeConnection):
         await self._send_event(
             {
                 'type': 'response.item.create',
-                'item': {'type': 'function_call_output', 'call_id': result.tool_call_id, 'output': output},
+                'item': {'type': 'function_call_output', 'call_id': result.tool_call_id, 'output': result.output},
             }
         )
         if follow_up is not None:
@@ -1035,35 +1035,29 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
-_ToolOutputPart = ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
+_UserContentPart = ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
 
 
-async def _tool_result_items(
-    result: ToolResult, *, provider_name: str
-) -> tuple[str | list[_ToolOutputPart], dict[str, Any] | None]:
-    """The backend `function_call_output.output` for a tool result, and the message to send after it, if any.
+async def _tool_result_follow_up(result: ToolResult, *, provider_name: str) -> dict[str, Any] | None:
+    """The backend input message carrying a tool result's `content`, sent after its output.
 
-    A result's text `content` goes in a user message after the output. A result that carries media goes
-    into the output instead, which a Responses function output takes as content parts, as
-    `OpenAIResponsesModel` sends it: the tool's own text, then each content item in order, images as
-    `input_image` and documents as `input_file`. The text goes with it, so each file stays next to the
-    text naming the call it came from, and the backend reads the file as the tool's output rather than as
-    something the user said.
+    As on the Realtime API, what a tool returns beyond its text output (a `ToolReturn`'s `content`, and
+    the files it returned) follows the output as a user message: text as `input_text`, images as
+    `input_image`, and documents as `input_file`, each mapped as `OpenAIResponsesModel` maps it.
 
     Mapped before anything is sent, so a result that can't be carried in full fails with nothing on the
     wire rather than reaching the backend without the material that explains it.
     """
     items = [item for item in result.content or [] if not isinstance(item, CachePoint)]
-    texts = [_text_part(item) for item in items if isinstance(item, (str, TextContent))]
-    if len(texts) == len(items):
-        return result.output, {'type': 'message', 'role': 'user', 'content': texts} if texts else None
-    output: list[_ToolOutputPart] = [_text_part(result.output)] if result.output else []
+    if not items:
+        return None
+    content: list[_UserContentPart] = []
     for item in items:
         if isinstance(item, (str, TextContent)):
-            output.append(_text_part(item))
+            content.append(_text_part(item))
         else:
-            output.append(await _tool_result_media(item, provider_name=provider_name))
-    return output, None
+            content.append(await _tool_result_media(item, provider_name=provider_name))
+    return {'type': 'message', 'role': 'user', 'content': content}
 
 
 def _text_part(text: str | TextContent) -> ResponseInputTextContentParam:
@@ -1075,7 +1069,7 @@ async def _tool_result_media(
 ) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
     """One media item of a tool result as a Responses content part, mapped as `OpenAIResponsesModel` maps it.
 
-    Only images and documents are carried: a Responses function output has no part for audio or video.
+    Only images and documents are carried: a Responses input message has no part for audio or video.
     """
     if isinstance(item, (AudioUrl, VideoUrl)):
         kind = f'`{type(item).__name__}` content'
@@ -1091,8 +1085,8 @@ async def _tool_result_media(
     else:
         return await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns')  # pyright: ignore[reportPrivateUsage]
     raise UserError(
-        f'OpenAI GPT-Live cannot send {kind} in a tool result to its delegated backend, whose function outputs '
-        'carry only text, images, and documents. Describe it in text instead.'
+        f'OpenAI GPT-Live cannot send {kind} in a tool result to its delegated backend, which takes only text, '
+        'images, and documents. Describe it in text instead.'
     )
 
 
