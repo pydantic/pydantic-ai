@@ -33,7 +33,7 @@ import asyncio
 import base64
 import sys
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, ClassVar, Literal, cast
@@ -57,6 +57,7 @@ from ..messages import (
     ModelRequestPart,
     ModelResponsePart,
     RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
     RetryPromptPart,
     SpeechPart,
     TextContent,
@@ -85,7 +86,7 @@ from ._openai_protocol import (
     realtime_websocket_url,
     tool_choice_config,
 )
-from ._utils import inject_trace_context, resolve_advertised_tools
+from ._utils import DEFAULT_MAX_RECONNECTS, inject_trace_context, reconnect_with_backoff, resolve_advertised_tools
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -106,7 +107,7 @@ from .codec import (
 )
 from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer, WebRTCSession
 from .profiles import RealtimeModelProfileSpec
-from .settings import RealtimeModelSettings
+from .settings import RealtimeModelSettings, ReconnectPolicy
 
 try:
     import tiktoken
@@ -194,6 +195,12 @@ _MAX_FORWARDED_PAUSE_MS = 500
 _CONTEXT_TOKEN_LIMIT = 500
 #: The tokenizer Live counts that limit in. Checked live: 500 `o200k_base` tokens are accepted, 501 refused.
 _CONTEXT_ENCODING = 'o200k_base'
+
+#: The most history items and tokens a session can start with (checked live: 129 items, or 20 items of 422
+#: tokens, are refused). Each item costs a few tokens beyond its text: 20 items of 402 text tokens start.
+_SEED_ITEM_LIMIT = 128
+_SEED_TOKEN_LIMIT = 8192
+_SEED_ITEM_TOKEN_OVERHEAD = 8
 
 #: The Responses model kinds whose `Model.system` is `'openai'`: the only agent models that can be a backend.
 _OPENAI_MODEL_KINDS = frozenset({'openai', 'openai-chat', 'openai-responses'})
@@ -307,7 +314,11 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     long silences."""
 
     openai_live_store: bool
-    """Whether OpenAI stores the session so it can later be forked or downloaded. Defaults to `False`."""
+    """Whether OpenAI stores the session so it can later be forked or downloaded. Defaults to `False`.
+
+    With a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy, a stored session
+    that drops is forked, so the new one has the whole conversation. An unstored one is replaced by a new
+    session seeded with the text of the history so far."""
 
     openai_live_data_channel: DataChannelConfigParam
     """Which Live events the browser on a [WebRTC call](https://pydantic.dev/docs/ai/realtime/openai#browser-webrtc)
@@ -354,7 +365,9 @@ def _seed_item(role: _SeedRole, text: str) -> dict[str, Any] | None:
     return {'role': role, 'content': [{'type': content_type, 'text': text}]}
 
 
-def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_SeedRole, str] | None:
+def _seed_request_part(
+    part: ModelRequestPart, *, provider_name: str, skip_media: bool = False
+) -> tuple[_SeedRole, str] | None:
     """The role and text a request part seeds as, or `None` when it carries nothing replayable.
 
     `SystemPromptPart`s are routed through `instructions` instead, exactly as on the Realtime
@@ -363,7 +376,7 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
     must not be replayed with more authority than it had as a tool result.
     """
     if isinstance(part, UserPromptPart):
-        return 'user', _prompt_text(part, provider_name=provider_name)
+        return 'user', _prompt_text(part, provider_name=provider_name, skip_media=skip_media)
     if isinstance(part, SpeechPart):
         return 'user', part.transcript or ''
     if isinstance(part, ToolReturnPart):
@@ -392,19 +405,23 @@ def _seed_response_part(part: ModelResponsePart) -> tuple[_SeedRole, str] | None
     return None
 
 
-def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) -> list[dict[str, Any]]:
+def seed_input_items(
+    messages: Sequence[ModelMessage], *, provider_name: str, skip_media: bool = False
+) -> list[dict[str, Any]]:
     """Map prior history to Live's startup `input` list.
 
     Live seeds from text only: user and assistant messages with one text part each. Tool
     rounds are rendered as readable text because the protocol has no place to put function parts in
     seeded history. Audio, images, and other media
     cannot be seeded at all, and the profile says so, which is what makes the session reject them
-    before we get here.
+    before we get here. `skip_media` leaves them out instead, for a replay of the session's own history.
     """
     items: list[dict[str, Any]] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
+            seeded_parts = [
+                _seed_request_part(part, provider_name=provider_name, skip_media=skip_media) for part in message.parts
+            ]
         else:
             seeded_parts = [_seed_response_part(part) for part in message.parts]
         for seeded in seeded_parts:
@@ -413,8 +430,8 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     return items
 
 
-def _prompt_text(part: UserPromptPart, *, provider_name: str) -> str:
-    """Extract the seedable text of a user prompt, refusing media Live cannot carry."""
+def _prompt_text(part: UserPromptPart, *, provider_name: str, skip_media: bool = False) -> str:
+    """Extract the seedable text of a user prompt, refusing (or with `skip_media`, leaving out) media Live cannot carry."""
     if isinstance(part.content, str):
         return part.content
     texts: list[str] = []
@@ -423,13 +440,39 @@ def _prompt_text(part: UserPromptPart, *, provider_name: str) -> str:
             texts.append(item)
         elif isinstance(item, TextContent):
             texts.append(item.content)
-        else:
+        elif not skip_media:
             raise UserError(
                 f'{provider_name} GPT-Live sessions can only be seeded with text: '
                 f'{type(item).__name__} cannot be replayed into a Live session. '
                 'Strip non-text content from `message_history`, or summarize it as text.'
             )
     return '\n'.join(texts)
+
+
+async def replay_input_items(messages: Sequence[ModelMessage], *, provider_name: str) -> list[dict[str, Any]]:
+    """Map a session's own history to the `input` of the Live session that replaces it after a drop.
+
+    Unlike seeding a new session, nothing here is the caller's to fix, so nothing raises: media is left
+    out, and a long call is cut to its most recent end within Live's seeding caps rather than refused.
+    """
+    items = seed_input_items(messages, provider_name=provider_name, skip_media=True)
+    encoding = await _utils.run_in_executor(tiktoken.get_encoding, _CONTEXT_ENCODING)
+    kept: list[dict[str, Any]] = []
+    tokens = 0
+    for item in reversed(items[-_SEED_ITEM_LIMIT:]):
+        text = item['content'][0]['text']
+        tokens += len(encoding.encode(text, allowed_special='all')) + _SEED_ITEM_TOKEN_OVERHEAD
+        if tokens > _SEED_TOKEN_LIMIT:
+            break
+        kept.append(item)
+    return kept[::-1]
+
+
+_LiveDial = Callable[[str | None, list[dict[str, Any]]], Awaitable[tuple['ClientConnection', str | None]]]
+"""Open a replacement Live session: fork the stored session with this id, or else start one seeded with these items.
+
+Returns the new socket and the new session's id.
+"""
 
 
 @dataclass
@@ -477,8 +520,21 @@ class OpenAILiveConnection(RealtimeConnection):
         provider_name: str = 'openai',
         provider_url: str = '',
         forwards_output_audio: bool = True,
+        session_id: str | None = None,
+        dial: _LiveDial | None = None,
+        reconnect: ReconnectPolicy | None = None,
+        forks: bool = False,
     ) -> None:
         self._ws = ws
+        # Re-opening the session after a drop: by forking it, which Live can only do for a stored
+        # session, or else by starting a new one seeded with the history so far.
+        self._session_id = session_id
+        self._dial = dial
+        self._reconnect = reconnect
+        self._forks = forks
+        self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
+        self._reconnects_used = 0
+        self._gave_up = False
         # A WebRTC sideband sees the call's output audio too, but the browser is what plays it, so it
         # only drives the turn clock here.
         self._forwards_output_audio = forwards_output_audio
@@ -508,6 +564,8 @@ class OpenAILiveConnection(RealtimeConnection):
         # Delegations whose results all came back before the response that asked for them ended. Their
         # continuations go out from the receive loop, which is where that terminal is seen.
         self._continuations_due: list[_Delegation] = []
+        # Calls asked for and not answered yet, which a replacement session wouldn't know.
+        self._open_calls: set[str] = set()
         self._reported_seconds = 0.0
 
     @property
@@ -521,8 +579,25 @@ class OpenAILiveConnection(RealtimeConnection):
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
-        """A redialed Live session starts empty: its history is re-seeded, not resumed."""
+        """Neither way of re-opening a Live session carries on what was in flight.
+
+        A fork has the conversation, but not the reply or the delegated work the drop cut off: it has no
+        record of the tool calls that work asked for (checked live). A replacement session has only the
+        history it was seeded with.
+        """
         return False
+
+    def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+        self._message_history = message_history
+
+    @property
+    def _can_reconnect(self) -> bool:
+        return (
+            not self._gave_up
+            and self._dial is not None
+            and self._reconnect is not None
+            and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
+        )
 
     # --- sending ----------------------------------------------------------------------------------
 
@@ -572,6 +647,7 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _send_tool_result(self, result: ToolResult) -> None:
         """Return a tool result to the delegated Responses backend and let it continue."""
         follow_up = _tool_result_follow_up(result)
+        self._open_calls.discard(result.tool_call_id)
         delegation_id = self._call_delegations.pop(result.tool_call_id, None)
         if result.tool_call_id in self._abandoned_calls:
             # The backend that asked for this call gave up before it was answered. Sending the output
@@ -657,6 +733,20 @@ class OpenAILiveConnection(RealtimeConnection):
                     for event in self._settle_open_turns():
                         yield event
                     return
+                except self.transport_errors as e:
+                    if self._reconnect is None or self._dial is None:
+                        raise
+                    self._cancel_read()
+                    if not await self._try_reconnect():
+                        self._gave_up = True
+                        yield RealtimeSessionErrorEvent(
+                            message=f'OpenAI GPT-Live connection dropped; reconnect failed: {e}', recoverable=False
+                        )
+                        return
+                    # Only a fork has the conversation; a replacement session knows what it was seeded with.
+                    yield RealtimeSessionReconnectEvent(state_restored=self._forks)
+                    pending = self._start_read()
+                    continue
                 for event in self._map_frame(raw):
                     yield event
                 await self._send_due_continuations()
@@ -664,6 +754,51 @@ class OpenAILiveConnection(RealtimeConnection):
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
             for event in self._expire_quiet_turn():
                 yield event
+
+    async def _try_reconnect(self) -> bool:
+        """Re-open the session with exponential backoff; return whether a replacement is connected."""
+        assert self._reconnect is not None
+        if not await reconnect_with_backoff(
+            self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
+        ):
+            return False
+        self._reconnects_used += 1
+        return True
+
+    async def _attempt_reconnect(self) -> bool:
+        assert self._dial is not None
+        if self._forks:
+            fork_from, seed = self._session_id, []
+        else:
+            history: Sequence[ModelMessage] = self._message_history() if self._message_history is not None else ()
+            fork_from, seed = None, await replay_input_items(history, provider_name=self._provider_name)
+        try:
+            ws, session_id = await self._dial(fork_from, seed)
+        except (websockets.WebSocketException, OSError, TimeoutError, RealtimeHandshakeError):
+            # A failed dial, or a start Live refused: a later attempt may still succeed.
+            return False
+        self._ws = ws
+        self._session_id = session_id
+        self._forget_session_state()
+        return True
+
+    def _forget_session_state(self) -> None:
+        """Drop what only the lost session knew; the `RealtimeSession` settles the turn it cut off.
+
+        The calls it asked for can't be answered on the new session, so their results go nowhere, and Live
+        restarts its usage count and its timeline with each session.
+        """
+        self._response_open = False
+        self._input_open = False
+        self._pause_ms = None
+        self._last_fragment = {'input': '', 'output': ''}
+        self._last_input_end_ms = None
+        self._abandoned_calls.update(self._open_calls)
+        self._open_calls.clear()
+        self._delegations.clear()
+        self._call_delegations.clear()
+        self._continuations_due.clear()
+        self._reported_seconds = 0.0
 
     def _start_read(self) -> asyncio.Task[str | bytes]:
         """Begin the next read, remembering it so it can be cancelled on the way out."""
@@ -926,6 +1061,7 @@ class OpenAILiveConnection(RealtimeConnection):
         if not isinstance(event, ResponseOutputItemDoneEvent) or not isinstance(event.item, ResponseFunctionToolCall):
             return []
         call = event.item
+        self._open_calls.add(call.call_id)
         if delegation is not None:
             delegation.pending_tool_calls.add(call.call_id)
             self._call_delegations[call.call_id] = delegation.id
@@ -1359,6 +1495,12 @@ class OpenAILiveModel(RealtimeModel):
     def _live_url(self) -> str:
         return realtime_websocket_url(self._provider.base_url, path=_LIVE_WEBSOCKET_PATH)
 
+    def _fork_url(self, session_id: str) -> str:
+        """The WebSocket that starts a new session from a stored one, with its conversation."""
+        return realtime_websocket_url(
+            self._provider.base_url, path=f'{_LIVE_WEBSOCKET_PATH}/{quote(session_id, safe="")}/fork'
+        )
+
     def _sideband_url(self, session_id: str) -> str:
         """The WebSocket a trusted server attaches to an existing Live session's control plane with."""
         return realtime_websocket_url(
@@ -1503,17 +1645,36 @@ class OpenAILiveModel(RealtimeModel):
 
         cm: AbstractAsyncContextManager[ClientConnection] | None = None
         connection: OpenAILiveConnection | None = None
+
+        async def open_session(url: str, session: dict[str, Any]) -> tuple[ClientConnection, dict[str, Any]]:
+            nonlocal cm
+            if cm is not None:
+                previous, cm = cm, None
+                await previous.__aexit__(None, None, None)
+            # The raw WebSocket bypasses the provider's `httpx` client, so the handshake carries freshly
+            # resolved authentication and the current trace context itself.
+            headers = await openai_websocket_auth_headers(self.client)
+            inject_trace_context(headers)
+            opening = websockets.connect(url, additional_headers=headers)
+            ws = await opening.__aenter__()
+            cm = opening
+            await ws.send(to_json({'type': 'session.start', 'session': session}).decode())
+            return ws, await expect_event(ws, _SESSION_STARTED_EVENT, timeout=handshake_timeout)
+
+        async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[ClientConnection, str | None]:
+            if fork_from is not None:
+                # A fork keeps the stored session's configuration, so it starts with none of its own.
+                ws, started = await open_session(self._fork_url(fork_from), {})
+            else:
+                replacement = {key: value for key, value in session_config.items() if key != 'input'}
+                if seed:
+                    replacement['input'] = seed
+                ws, started = await open_session(self._live_url(), replacement)
+            return ws, started.get('session', {}).get('id')
+
         try:
             with map_connect_errors(self.model):
-                # The raw WebSocket bypasses the provider's `httpx` client, so the handshake carries
-                # freshly resolved authentication and the current trace context itself.
-                headers = await openai_websocket_auth_headers(self.client)
-                inject_trace_context(headers)
-                opening = websockets.connect(self._live_url(), additional_headers=headers)
-                ws = await opening.__aenter__()
-                cm = opening
-                await ws.send(to_json({'type': 'session.start', 'session': session_config}).decode())
-                started = await expect_event(ws, _SESSION_STARTED_EVENT, timeout=handshake_timeout)
+                ws, started = await open_session(self._live_url(), session_config)
             connection = OpenAILiveConnection(
                 ws,
                 model_name=started.get('session', {}).get('model'),
@@ -1522,6 +1683,11 @@ class OpenAILiveModel(RealtimeModel):
                 turn_silence_ms=settings.get('openai_live_turn_silence_ms', DEFAULT_TURN_SILENCE_MS),
                 provider_name=self.system,
                 provider_url=self._provider.base_url,
+                session_id=started.get('session', {}).get('id'),
+                dial=dial,
+                reconnect=settings.get('reconnect'),
+                # Only a stored session can be forked. Storing it is the user's call, never made for them.
+                forks=bool(settings.get('openai_live_store')),
             )
             yield connection
         finally:

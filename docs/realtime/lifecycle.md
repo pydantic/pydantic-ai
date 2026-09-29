@@ -90,7 +90,10 @@ connections at the infrastructure layer rather than relying on the `reconnect` p
 ### State restoration
 
 OpenAI and Azure OpenAI have no cross-connection server state, so Pydantic AI replays local message
-history into the new session. Prior transcript turns survive; in-flight audio does not.
+history into the new session. Prior transcript turns survive; in-flight audio does not. GPT-Live does
+the same by default, with its text-only seeding, and `state_restored` is `False`; a session stored with
+`openai_live_store=True` is forked instead, so the new session has the whole conversation, and
+`state_restored` is `True` unless the drop cut a turn off.
 
 Gemini and xAI use native in-process session resumption, enabled automatically when a `reconnect`
 policy is present (an explicit `google_enable_session_resumption=False` alongside a policy raises
