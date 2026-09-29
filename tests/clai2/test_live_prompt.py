@@ -451,6 +451,65 @@ async def test_recalled_history_gets_completions_and_completed_draft_survives_na
         assert live.buffer.text == '/help'
 
 
+async def popup_shows(live: LivePrompt, text: str) -> None:
+    """Wait for the completion worker to publish a popup row containing `text`."""
+    while text not in Text.from_ansi('\n'.join(live.frame())).plain:
+        await anyio.sleep(0.01)
+
+
+async def test_history_walk_keeps_arrows_through_recalled_commands() -> None:
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['oldest', '/he', 'newest']
+        live.buffer.replace('draft')
+        live.feed('up')
+        live.feed('up')
+        assert live.buffer.text == '/he'
+        await popup_shows(live, 'Hello command')
+        live.feed('up')
+        assert live.buffer.text == 'oldest'
+        live.feed('down')
+        await popup_shows(live, 'Hello command')
+        live.feed('down')
+        assert live.buffer.text == 'newest'
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+
+
+async def test_tab_hands_arrows_to_popup_during_history_walk() -> None:
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['oldest', '/he']
+        live.feed('up')
+        await popup_shows(live, 'Hello command')
+        # Escape closes the popup without ending the walk, and Tab looks the suggestions up again.
+        live.feed('escape')
+        live.feed('tab')
+        await popup_shows(live, 'Hello command')
+        live.feed('tab')
+        live.feed('down')
+        live.feed('up')
+        live.feed('up')
+        live.feed('enter')
+        assert live.buffer.text == '/hello'
+        live.feed('up')
+        assert live.buffer.text == '/he'
+
+
+async def test_typed_command_prefix_arrows_cycle_popup() -> None:
+    async with editor() as (live, pipe, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['older']
+        pipe.send_text('/he')
+        await popup_shows(live, 'Hello command')
+        live.feed('up')
+        live.feed('enter')
+        assert live.buffer.text == '/hello'
+        live.feed('escape')
+        live.feed('up')
+        assert live.buffer.text == 'older'
+
+
 @pytest.mark.parametrize('menu', [False, True])
 async def test_blocked_completion_does_not_hold_terminal_ownership(menu: bool) -> None:
     started = anyio.Event()

@@ -320,7 +320,9 @@ async def test_a_key_that_vanishes_while_choosing_is_reported_in_the_menu(
     await shell.loader.enable('posthog')
     key_choice(monkeypatch, KeyReference(name='GONE'))
     script(monkeypatch, lists=[pick('key')])
-    assert await shell.loader.configure('posthog') == 'The selected API key no longer exists. Select a saved key again.'
+    assert await shell.loader.configure('posthog') == (
+        'The selected API key no longer exists. Select a saved key again through /plugins configure posthog.'
+    )
 
 
 async def test_saved_key_auth_fails_closed() -> None:

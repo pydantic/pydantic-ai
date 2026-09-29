@@ -68,13 +68,13 @@ class RealtimeModelSettings(TypedDict, total=False):
     max_tokens: int
     """The maximum number of tokens to generate per response before stopping.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, and Gemini. xAI accepts it but ignores it.
     """
 
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    Supported by: OpenAI and Azure OpenAI. xAI accepts it but ignores it.
     """
 
     async_tool_calls: bool | None
@@ -148,15 +148,16 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting on the request-response models.
 
     `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`
-    selects an effort level. `False` disables thinking (sent as `reasoning.effort: 'none'` on OpenAI,
-    Azure OpenAI, and xAI).
+    selects an effort level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI,
+    Azure AI Voice Live, and xAI).
     OpenAI and Gemini apply it only to models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]. Other models
     silently ignore it. Providers with a richer native config expose it separately
     (e.g. Gemini's `google_thinking_config`), which takes precedence.
 
-    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and xAI's reasoning
-    Grok Voice models (`grok-voice-latest` and the `grok-voice-think-*` family).
+    Supported by: OpenAI `gpt-realtime-2*` models (also on Azure), reasoning chat models like `gpt-5`
+    on Azure AI Voice Live, Gemini native-audio models, and xAI's reasoning Grok Voice models
+    (`grok-voice-latest` and the `grok-voice-think-*` family).
     """
 
     turn_detection: bool | TurnDetection
@@ -175,9 +176,12 @@ class RealtimeModelSettings(TypedDict, total=False):
     """
 
     handshake_timeout: float
-    """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`.
+    """Seconds to wait for the realtime protocol handshake to complete. Defaults to `30.0`.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    On OpenAI, Azure OpenAI, and xAI this bounds the wait for each handshake event; on Gemini it bounds
+    opening the socket and waiting for the session setup to complete.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
     """
 
     reconnect: ReconnectPolicy

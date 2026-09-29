@@ -163,5 +163,5 @@ def oauth(name: str, server: RemoteServer) -> OAuth | None:
 
 
 def sign_in(name: str) -> OAuth:
-    """Browser sign-in whose tokens live in the `mcp-NAME` credential."""
+    """Browser sign-in whose tokens are kept in the `mcp-NAME` credential."""
     return OAuth(client_name='CLAI', callback_host='127.0.0.1', token_storage=TokenStore(name))

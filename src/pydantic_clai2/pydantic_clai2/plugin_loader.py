@@ -13,7 +13,7 @@ from typing import Generic
 
 from anyio import CancelScope, fail_after
 from anyio.lowlevel import checkpoint
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import AgentStreamEvent
@@ -40,6 +40,14 @@ from .spinners import Spinner
 from .status import Status, StatusSegment
 
 _FOLDER_PACKAGE = 'pydantic_clai2_plugins'
+
+_RETIRED_BUILTINS: dict[str, PluginSettings] = {
+    'google_workspace': PluginSettings(
+        id='google_workspace', factory='pydantic_ai_harness.google_workspace:GoogleWorkspace', enabled=False
+    ),
+    'ordinal': PluginSettings(id='ordinal', factory='pydantic_ai_harness.ordinal:Ordinal', enabled=False),
+}
+"""Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
 
 
 class PluginError(Exception):
@@ -111,8 +119,11 @@ class PluginLoader(Generic[DepsT]):
         conversation: Conversation | None = None,
         status: Status | None = None,
         full_screen: FullScreen = bare_screen,
+        enabled: bool = True,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
+
+        `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation` and `status` are handed to every host; see `PluginHost` for the defaults.
@@ -130,6 +141,7 @@ class PluginLoader(Generic[DepsT]):
         self._loaded: dict[str, PluginHost[DepsT]] = {}
         # A `/plugins add` declaration being tried before it is saved, so rejected settings never reach the store.
         self._staged: dict[str, PluginSettings] = {}
+        self.enabled = enabled
 
     @property
     def plugins_dir(self) -> Path:
@@ -138,8 +150,10 @@ class PluginLoader(Generic[DepsT]):
 
     def entries(self) -> list[PluginEntry[DepsT]]:
         """Saved declarations plus drop-in files, keeping the loaded state of each."""
+        if not self.enabled:
+            return []
         folder = self._discover()
-        declared = {declaration.id: declaration for declaration in self._store.plugins()}
+        declared = {declaration.id: self._upgrade(declaration) for declaration in self._store.plugins()}
         declared.update(self._staged)
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
@@ -163,6 +177,21 @@ class PluginLoader(Generic[DepsT]):
                 refreshed[name] = previous
         self._entries = refreshed
         return list(refreshed.values())
+
+    def _upgrade(self, saved: PluginSettings) -> PluginSettings:
+        """Point a stored copy of a built-in that CLAI has since replaced at the replacement.
+
+        Enabling a built-in saves its whole declaration, so without this an upgrade would keep
+        loading the old factory. Declarations with their own settings are left as the user wrote them.
+        """
+        current = self._builtin.get(saved.id)
+        if current is None or not _same_plugin(saved, _RETIRED_BUILTINS.get(saved.id)):
+            return saved
+        return current.model_copy(update={'enabled': saved.enabled})
+
+    def _saved(self, entry: PluginEntry[DepsT]) -> PluginSettings:
+        """The stored declaration as it is now, without refreshing `entries()` mid-load."""
+        return next((saved for saved in self._store.plugins() if saved.id == entry.name), entry.declaration)
 
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
@@ -246,9 +275,7 @@ class PluginLoader(Generic[DepsT]):
             full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
-            save_settings=lambda settings: self._save(
-                entry.declaration.model_copy(update={'settings': settings, 'enabled': True})
-            ),
+            save_settings=lambda settings: self._save(entry, settings),
         )
         activating = False
         try:
@@ -271,12 +298,15 @@ class PluginLoader(Generic[DepsT]):
             raise PluginError(name, exc) from exc
         entry.error = None
 
-    def _save(self, declaration: PluginSettings) -> None:
+    def _save(self, entry: PluginEntry[DepsT], settings: dict[str, JsonValue]) -> None:
         """Persist a host's saved settings, or, while `/plugins add` is trying them, update what it will save."""
-        if declaration.id in self._staged:
-            self._staged[declaration.id] = declaration
-        else:
-            self._store.save_plugin(declaration)
+        update: dict[str, object] = {'settings': settings, 'enabled': True}
+        staged = self._staged.get(entry.name)
+        if staged is not None:
+            self._staged[entry.name] = staged.model_copy(update=update)
+            return
+        # The declaration saved now, not at load: another CLAI process may have replaced it since.
+        self._store.save_plugin(self._saved(entry).model_copy(update=update))
 
     async def _failed_load(self, entry: PluginEntry[DepsT], host: PluginHost[DepsT]) -> None:
         try:
