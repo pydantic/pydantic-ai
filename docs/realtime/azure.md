@@ -191,8 +191,35 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Voice Live silently ignores the inherited `openai_*` settings plus `thinking` and
-`parallel_tool_calls`. Use Voice-Live-specific settings where available.
+Voice Live silently ignores the other inherited `openai_*` settings (all but `openai_voice`) plus
+`thinking` and `parallel_tool_calls`. Use Voice-Live-specific settings where available.
+
+### Voices
+
+Cascade models (and `phi4-mm-realtime`) speak only through Azure text-to-speech voices: they reject
+`openai_voice` with `Only Azure voice is supported`, which fails the session as it starts. Choose their
+voice with
+[`azure_voice_live_voice`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_voice],
+either a standard voice name or an
+[`AzureVoiceLiveVoice`][pydantic_ai.realtime.azure.AzureVoiceLiveVoice] for a custom, personal, or
+`azure-realtime-native` voice, or to tune its rate, pitch, or style:
+
+```python
+from pydantic_ai.realtime.azure import AzureRealtimeModelSettings, AzureVoiceLiveVoice
+
+standard_voice = AzureRealtimeModelSettings(azure_voice_live_voice='en-US-AvaMultilingualNeural')
+tuned_hd_voice = AzureRealtimeModelSettings(
+    azure_voice_live_voice=AzureVoiceLiveVoice(
+        type='azure-standard', name='en-US-Ava:DragonHDLatestNeural', temperature=0.8, rate='1.1'
+    )
+)
+```
+
+Native-audio models like `gpt-realtime` accept both an Azure voice and `openai_voice`;
+`azure_voice_live_voice` takes precedence when both are set. Without either, Voice Live uses the model's
+default voice. See Microsoft's
+[voice reference](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to#audio-output-through-azure-text-to-speech)
+for the available voices and fields.
 
 ### Which models use which API
 
@@ -200,11 +227,11 @@ Voice Live silently ignores the inherited `openai_*` settings plus `thinking` an
 neither contains the other, so each recognized model is served by the GA realtime API, by Voice Live, or
 by both:
 
-- **Both** (e.g. `gpt-realtime`, `gpt-realtime-mini`) — default to GA;
+- **Both** (e.g. `gpt-realtime`, `gpt-realtime-mini`, `gpt-realtime-2`) — default to GA;
   `azure_voice_live=True` selects Voice Live.
 - **Voice Live only** (e.g. `gpt-5` and the other cascade chat models, `phi4-mm-realtime`) — routed to
   Voice Live automatically, with or without the setting.
-- **GA only** (e.g. `gpt-realtime-2`, `gpt-4o-realtime-preview`) — `azure_voice_live=True` raises a
+- **GA only** (e.g. `gpt-4o-realtime-preview`, `gpt-realtime-translate`) — `azure_voice_live=True` raises a
   [`UserError`][pydantic_ai.exceptions.UserError], since Voice Live doesn't serve them.
 
 An unrecognized model (a future release, or a deployment named after something else) defaults to GA and
