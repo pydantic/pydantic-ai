@@ -208,6 +208,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     direct_link_text: dict[int, str] = {}
     anchor_text_lengths: dict[int, int] = {}
     anchors: list[tuple[Tag, int, bool, bool]] = []
+    deep_anchor_ids: set[int] = set()
     videos: list[tuple[Tag, int, bool]] = []
     rows: list[Tag] = []
     pending: list[tuple[PageElement, int, int, int, bool, bool, bool, int | None]] = [
@@ -250,6 +251,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 cost += 8 * colspan
             if node.name == 'a' and depth > 16 and anchor_id is None:
                 anchors.append((node, depth, noformat, inline))
+                deep_anchor_ids.add(id(node))
             elif node.name == 'video':
                 videos.append((node, depth, inline))
             if node.name == 'tr':
@@ -276,7 +278,8 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             assert isinstance(node, NavigableString)
             parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
             converted_text = converter.process_text(node, parent_tags)
-            direct_link_text[id(node)] = converted_text
+            if anchor_id in deep_anchor_ids:
+                direct_link_text[id(node)] = converted_text
             if converted_text.strip():
                 contentful.add(id(node))
             # Inline and preformatted containers can discard these lines before an outer tag
@@ -287,7 +290,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 # rendered anchor after probing, or let the output meter handle inner tags.
                 if anchor_id is None:
                     text_scan_cost += max(depth - 16, 0) * len(converted_text)
-                else:
+                elif anchor_id in deep_anchor_ids:
                     anchor_text_lengths[anchor_id] = anchor_text_lengths.get(anchor_id, 0) + len(converted_text)
         if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
             raise ModelRetry('the document is too complex')
@@ -478,6 +481,8 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 text_scan_cost += (depth - 16) * (len(str(src or '')) + len(str(node.get('poster') or '')))
             if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
                 raise ModelRetry('the document is too complex')
+    del nodes, contentful, direct_link_text, anchor_text_lengths, anchors, deep_anchor_ids
+    del videos, rows, subtree_sizes, first_sources, descendant_td, colspan_scan_lengths, video_inline
     return _extract_title(html), converter.convert_soup(soup)
 
 
@@ -562,7 +567,6 @@ class _MarkdownConverter(MarkdownConverter):
         try:
             bullet = f'{start + self._ol_indexes[id(el)]}. '
         except ValueError:
-            self.ordered_list_starts[id(parent)] = 1
             bullet = f'{1 + self._ol_indexes[id(el)]}. '
         bullet_indent = ' ' * len(bullet)
         if len(bullet_indent) * text.count('\n') > _MAX_HTML_CONVERSION_COST:

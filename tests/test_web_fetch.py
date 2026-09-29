@@ -955,6 +955,16 @@ class TestMarkdownConverter:
         html = '<div>' * 300 + f'<a href="{value}"><span>{value}</span></a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
+    def test_deep_link_probe_preserves_wide_ordered_list_start(self):
+        """Probing list items in reverse order must not change their rendered numbering."""
+        start = '9' * 4300
+        link = f'<a href="/x"><ol start="{start}"><li>x</li><li>x</li></ol></a>'
+        shallow = '<div>' * 10 + link + '</div>' * 10
+        deep = '<div>' * 17 + link + '</div>' * 17
+        shallow_content = _convert_html(shallow)[1]
+        assert shallow_content.startswith(f'[{start}. x')
+        assert _convert_html(deep)[1] == shallow_content
+
     @pytest.mark.parametrize('wrapper', ['p', 'div', 'sub', 'sup', 'dt', 'ul', 'ol', 'video', 'a'])
     def test_converted_wrapper_autolink_is_not_overcharged(self, wrapper: str):
         """A wrapper whose conversion leaves the URL text intact preserves the autolink shortcut."""
