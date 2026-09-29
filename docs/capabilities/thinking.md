@@ -44,7 +44,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 
 | Provider | `Thinking()` / `Thinking(effort=True)` | `Thinking(effort='high')` | Notes |
 |---|---|---|---|
-| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, 5.5, and Sonnet 5 also support `effort='xhigh'` |
+| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, 5.5, and Sonnet 5 and 5.5 also support `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | GPT-5.6 maps unified `'minimal'` to `'low'` |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | Unified efforts snap to the nearest documented level — e.g. `gemini-3.1-flash-lite-image` (levels: `minimal`, `high`) maps `'low'` to `'MINIMAL'` and `'medium'`/`'xhigh'` to `'HIGH'` — and models without `minimal` map unified `'minimal'` to `'LOW'` |
@@ -106,7 +106,7 @@ agent = Agent(model, model_settings=settings)
 To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](../agent.md#model-run-settings).
 
 !!! note
-    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, and `claude-sonnet-5`. For those models, use [adaptive thinking](#adaptive-thinking-effort) instead.
+    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5`, and `claude-sonnet-5-5`. For those models, use [adaptive thinking](#adaptive-thinking-effort) instead.
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
@@ -119,6 +119,8 @@ settings = AnthropicModelSettings(
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI raises its [default](../models/anthropic.md#model-settings) as needed to leave at least 4096 tokens beyond the budget.
 
 Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
 
@@ -141,13 +143,20 @@ agent = Agent(model, model_settings=settings)
 
 ### Adaptive Thinking & Effort {#adaptive-thinking-effort}
 
-Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7, 4.8, 5, 5.5, and Sonnet 5. Claude Opus 4.7, 4.8, 5, 5.5, and Sonnet 5 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
+Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7, 4.8, 5, 5.5, and Sonnet 5 and 5.5. Claude Opus 4.7, 4.8, 5, 5.5, and Sonnet 5 and 5.5 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
+
+Claude Opus 5 and later, Claude Sonnet 5, and the Claude Fable and Mythos models think adaptively without any thinking setting. On Claude Opus 5 and Sonnet 5, the unified `thinking=False` setting turns that off by sending `anthropic_thinking={'type': 'disabled'}`; the others can't turn thinking off, so `thinking=False` is ignored there. Because a forced tool choice stops Claude from thinking, a structured `output_type` on these models uses Native Output rather than Tool Output unless thinking is off; see [Forced tool choice](../models/anthropic.md#forced-tool-choice).
 
 !!! note "Claude Opus 5 caps effort when thinking is disabled"
-    Claude Opus 5 rejects `xhigh` and `max` effort while thinking is explicitly disabled with `anthropic_thinking={'type': 'disabled'}`; use an effort of `high` or below, or leave thinking enabled. Claude Opus 4.8 accepts that combination, so audit requests that disable thinking when migrating. Pydantic AI raises a `UserError` before sending the request rather than surfacing Anthropic's 400.
+    Claude Opus 5 rejects `xhigh` and `max` effort while thinking is disabled with `thinking=False` or `anthropic_thinking={'type': 'disabled'}`; use an effort of `high` or below, or leave thinking enabled. Claude Opus 4.8 accepts that combination, so audit requests that disable thinking when migrating. Pydantic AI raises a `UserError` before sending the request rather than surfacing Anthropic's 400.
 
 !!! note "Claude Opus 5.5 always thinks"
-    Claude Opus 5.5 can't disable thinking: Anthropic rejects `anthropic_thinking={'type': 'disabled'}` at every effort level. The unified `thinking=False` setting sends no `thinking` field, so the model thinks adaptively at its default `medium` effort. Where you previously disabled thinking, lower `anthropic_effort` instead (for example `anthropic_effort='low'`). A unified `thinking` setting also works, but on this model it switches a structured `output_type` away from Tool Output; see [Forced tool choice](../models/anthropic.md#forced-tool-choice).
+    Claude Opus 5.5 can't disable thinking: Anthropic rejects `anthropic_thinking={'type': 'disabled'}` at every effort level. The unified `thinking=False` setting is ignored, so the model thinks adaptively at its default `medium` effort. Where you previously disabled thinking, lower `anthropic_effort` instead (for example `anthropic_effort='low'`).
+
+!!! note "Claude Sonnet 5.5 turns off up-front thinking with `between_tools`"
+    Claude Sonnet 5.5 rejects `anthropic_thinking={'type': 'disabled'}`. Its lowest setting is `anthropic_thinking={'type': 'between_tools'}`, which skips up-front thinking and keeps only the short progress notes the model writes between tool calls. Anthropic accepts it at `low`, `medium`, and `high` effort only. The unified `thinking=False` setting sends no `thinking` field, so the model thinks adaptively at its default `high` effort; use `between_tools` where you previously disabled thinking.
+
+    Under adaptive thinking, Claude Sonnet 5.5 returns the notes it writes between tool calls as thinking blocks rather than text, and they arrive empty at Anthropic's default `display: 'omitted'`. To show them, set `anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}`; `between_tools` returns them without it.
 
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent

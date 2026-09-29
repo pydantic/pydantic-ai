@@ -564,9 +564,8 @@ navigation:
       - page: "OpenAI"
         path: "realtime/openai.md"
         slug: "realtime/openai"
-      - page: "OpenAI GPT-Live"
-        path: "realtime/openai-live.md"
-        slug: "realtime/openai-live"
+        aliases:
+          - "realtime/openai-live"
       - page: "Azure"
         path: "realtime/azure.md"
         slug: "realtime/azure"
@@ -1462,6 +1461,8 @@ redirects:
     to: "capabilities/thinking/index.md"
   - from: "core-concepts/storage/index.md"
     to: "core-concepts/persistence/index.md"
+  - from: "realtime/openai-live/index.md"
+    to: "realtime/openai/index.md"
   # Content that moved outside the documentation site.
   - from: "a2a"
     to: "https://github.com/datalayer/fasta2a"

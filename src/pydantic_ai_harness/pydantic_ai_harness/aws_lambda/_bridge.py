@@ -282,7 +282,7 @@ class StepBridge:
                 raise AgentLoopGone(
                     f'The {ENGINE_NAME} agent event loop stopped before durable step {name!r} could be '
                     'scheduled, so its result can never arrive. This should not happen; please report '
-                    'it at https://github.com/pydantic/pydantic-ai-harness/issues.'
+                    'it at https://github.com/pydantic/pydantic-ai/issues.'
                 ) from None
             while True:
                 try:
@@ -297,7 +297,7 @@ class StepBridge:
                     raise AgentLoopGone(
                         f'The {ENGINE_NAME} agent event loop stopped while durable step {name!r} was in '
                         'flight, so its result can never arrive. This should not happen; please report '
-                        'it at https://github.com/pydantic/pydantic-ai-harness/issues.'
+                        'it at https://github.com/pydantic/pydantic-ai/issues.'
                     ) from None
 
         async with self._order:

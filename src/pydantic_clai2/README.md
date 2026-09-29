@@ -132,11 +132,14 @@ The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
 available. It runs in CLAI's working directory, with the terminal's input and output, so interactive programs and pagers work. CLAI
 reports `Done` or the exit code with the elapsed time. Ctrl-C interrupts the
-command and returns to the prompt. The command shares CLAI's process group, so
-every process it started receives the Ctrl-C from the terminal. If the shell
-itself has not exited 0.25 seconds later it is killed, as `subprocess.run`
-does. A program started by a compound command (`a; b`) that ignores Ctrl-C can
-outlive that shell. As at other times, a second Ctrl-C within two seconds exits
+command and returns to the prompt. On POSIX the command runs in its own session,
+so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
+`subprocess.run` waits) kills whatever is still running there, including
+background jobs and programs that ignore Ctrl-C. Only a process that detaches
+on purpose with `setsid()`, as daemons do, outlives the command. Without a
+controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
+or `ssh` password prompts, cannot read your input. On Windows the console
+delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
 CLAI. Neither the command nor its output is added to the conversation, and a
 bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
 order with other queued input. `/help` lists the syntax.
@@ -491,6 +494,20 @@ saves it in your model list and makes it the model for the next prompt. `Ctrl+S`
 the model-aware request and thinking controls described below. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/add_model NAME` sets the model without the menu.
+
+CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
+missing from the Python CLAI runs on fails right away, naming the install command, instead
+of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+
+```bash
+pip install "pydantic-clai2[typesafe]"
+```
+
+From a pydantic-ai checkout, run CLAI with the extra instead:
+
+```bash
+uv run --package pydantic-clai2 --extra typesafe clai2
+```
 
 ### Model settings and custom parameters
 
@@ -1417,9 +1434,9 @@ disabling it leaves the agent's original configuration in effect. Custom
 
 - [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)
 - [Capability events](https://pydantic.dev/docs/ai/capabilities/overview/)
-- [Code Puppy splash](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/splash.py)
-- [Code Puppy streaming](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/agents/event_stream_handler.py)
-- [Code Puppy command registry](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/command_line/command_registry.py)
+- [Code Puppy splash](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/splash.py)
+- [Code Puppy streaming](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/agents/event_stream_handler.py)
+- [Code Puppy command registry](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/command_line/command_registry.py)
 
 See `THIRD_PARTY_NOTICES.md` for attribution.
 
