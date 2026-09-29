@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage
@@ -77,9 +78,9 @@ def _later() -> str:
     return 'later ran'
 
 
-def _add_function_agent(model: Any) -> Agent[None, str]:
+def _add_function_agent(model: Any) -> Agent[Any, str]:
     """Cause 1: `FunctionToolset.add_function()` called from inside a tool."""
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset[Any]()
 
     @toolset.tool_plain
     def unlock() -> str:
@@ -89,28 +90,28 @@ def _add_function_agent(model: Any) -> Agent[None, str]:
     return Agent(model, toolsets=[toolset])
 
 
-def _dynamic_toolset_agent(model: Any) -> Agent[None, str]:
+def _dynamic_toolset_agent(model: Any) -> Agent[Any, str]:
     """Cause 2: a dynamic toolset returning a different set on re-evaluation."""
     state = {'unlocked': False}
-    base = FunctionToolset[None]()
+    base = FunctionToolset[Any]()
 
     @base.tool_plain
     def unlock() -> str:
         state['unlocked'] = True
         return 'unlocked'
 
-    extra = FunctionToolset[None]()
+    extra = FunctionToolset[Any]()
     extra.add_function(_later, name='later')
     agent = Agent(model, toolsets=[base])
 
     @agent.toolset
-    def dynamic(ctx: RunContext[None]) -> AbstractToolset[None] | None:
+    def dynamic(ctx: RunContext[Any]) -> AbstractToolset[Any] | None:
         return extra if state['unlocked'] else None
 
     return agent
 
 
-def _mcp_list_changed_agent(model: Any) -> Agent[None, str]:
+def _mcp_list_changed_agent(model: Any) -> Agent[Any, str]:
     """Cause 3: an MCP server adding a tool and sending `notifications/tools/list_changed`."""
     server: FastMCP[None] = FastMCP('probe')
 
@@ -128,10 +129,10 @@ def _mcp_list_changed_agent(model: Any) -> Agent[None, str]:
     return Agent(model, toolsets=[MCPToolset(server)])
 
 
-def _prepare_tools_agent(model: Any) -> Agent[None, str]:
+def _prepare_tools_agent(model: Any) -> Agent[Any, str]:
     """Cause 4: `prepare_tools` letting a tool through only from the second step on."""
 
-    async def prepare(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prepare(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         return [tool_def for tool_def in tool_defs if tool_def.name != 'later' or ctx.run_step > 1]
 
     agent = Agent(model, capabilities=[PrepareTools(prepare)])
@@ -140,10 +141,10 @@ def _prepare_tools_agent(model: Any) -> Agent[None, str]:
     return agent
 
 
-def _tool_prepare_agent(model: Any) -> Agent[None, str]:
+def _tool_prepare_agent(model: Any) -> Agent[Any, str]:
     """A per-tool `prepare` returning `None` on the first step (not in the issue's list; same shape as cause 4)."""
 
-    async def only_after_first_step(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def only_after_first_step(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition | None:
         return tool_def if ctx.run_step > 1 else None
 
     agent = Agent(model)
@@ -162,7 +163,7 @@ CAUSES: list[Any] = [
 
 
 @pytest.mark.parametrize('make_agent', CAUSES)
-async def test_newcomer_is_recorded_once_where_it_appears(make_agent: Callable[[Any], Agent[None, str]]):
+async def test_newcomer_is_recorded_once_where_it_appears(make_agent: Callable[[Any], Agent[Any, str]]):
     """Each cause records exactly one delta, in the request carrying the tool result that preceded it."""
     agent = make_agent(FunctionModel(_unlock_then_call_later))
     async with agent:
@@ -262,7 +263,7 @@ async def test_newcomer_is_not_re_announced_on_a_later_run_over_the_same_history
 
     seen: list[ModelRequestParameters] = []
     # A fresh process: `later` is in the population from the first request of this run.
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset[Any]()
     toolset.add_function(lambda: 'unlocked', name='unlock')
     toolset.add_function(_later, name='later')
     agent = Agent(
@@ -330,7 +331,7 @@ async def test_stripped_delta_falls_back_to_an_ordinary_tools_entry():
                 message.parts = [part for part in message.parts if not isinstance(part, ToolAvailabilityDeltaPart)]
         return messages
 
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset[Any]()
 
     @toolset.tool_plain
     def unlock() -> str:
@@ -354,13 +355,13 @@ async def test_stripped_delta_falls_back_to_an_ordinary_tools_entry():
     ],
 )
 async def test_newcomer_visibility_follows_the_addition_channel(
-    tool_addition_mode: str | None, tool_deferral_mode: str | None, visibility: str
+    tool_addition_mode: ToolAdditionMode | None, tool_deferral_mode: ToolDeferralMode | None, visibility: str
 ):
     """The newcomer takes whatever channel a revealed deferred tool would, down to plain `tools` where there is none."""
     seen: list[ModelRequestParameters] = []
     model = FunctionModel(
         _recording(_unlock_then_call_later, seen),
-        profile={'tool_addition_mode': tool_addition_mode, 'tool_deferral_mode': tool_deferral_mode},
+        profile=ModelProfile(tool_addition_mode=tool_addition_mode, tool_deferral_mode=tool_deferral_mode),
     )
     await _add_function_agent(model).run('go')
 

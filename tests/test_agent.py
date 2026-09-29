@@ -49,6 +49,7 @@ from pydantic_ai import (
     TemplateStr,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -9755,7 +9756,8 @@ def test_adding_tools_during_run():
                         content='foo tool added',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    ToolAvailabilityDeltaPart(tools_added=['foo']),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -9763,7 +9765,7 @@ def test_adding_tools_during_run():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foo', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=60, output_tokens=4),
+                usage=RequestUsage(input_tokens=67, output_tokens=4),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -9784,7 +9786,7 @@ def test_adding_tools_during_run():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(input_tokens=63, output_tokens=5),
+                usage=RequestUsage(input_tokens=70, output_tokens=5),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
