@@ -1569,6 +1569,8 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
 
     ws = _FailingSend([], sends=2)
     conn = _manual(ws, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})
+    commits_announced: list[None] = []
+    conn.set_audio_commit_listener(lambda: commits_announced.append(None))
     await conn.send(_AUDIO)
     await conn.send(CommitAudio())
     await conn.send(_OTHER_AUDIO)
@@ -1586,6 +1588,8 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
         'response.create',
     ]
     assert _appended(replacement) == [_AUDIO.data, _OTHER_AUDIO.data]
+    # The session placed the turn when the commit first started going out; sending it again doesn't move it.
+    assert len(commits_announced) == 1
 
 
 async def test_audio_kept_back_during_a_reply_is_the_latest_input_once_sent() -> None:
@@ -1946,3 +1950,76 @@ async def test_speech_reported_after_the_commit_went_out_stays_with_that_commit(
         'user speech: Second turn.',
         'assistant speech: Answer two.',
     ]
+
+
+@pytest.mark.parametrize('request_by', ['create_response', 'text'])
+async def test_audio_committed_by_a_request_is_recorded_in_place(
+    monkeypatch: pytest.MonkeyPatch, request_by: str
+) -> None:
+    """Audio never committed is committed by the next request, which is when it joins the conversation."""
+    ws = _PhasedWebSocket(
+        [_created(), _updated()],
+        [],
+        [
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}),
+            _user_transcript('item-u1', 'Spoken.'),
+            *_reply('r1', 'Answer.'),
+        ],
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+
+    async with Agent().realtime(_model(rt_xai.XaiRealtimeModelSettings(turn_detection=False))).session() as session:
+        await session.send_audio(_AUDIO.data)
+        if request_by == 'text':
+            await session.send('Text.')
+        else:
+            await session.create_response()
+        ws.advance()
+        await session.wait_for_reply()
+        turns = _turns(session.all_messages())
+
+    assert turns == [
+        *(['user: Text.'] if request_by == 'text' else []),
+        'user speech: Spoken.',
+        'assistant speech: Answer.',
+    ]
+
+
+async def test_speech_for_audio_already_committed_is_not_held_for_the_next_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """xAI reporting speech for a turn whose commit went out doesn't tie that turn to the next commit.
+
+    The next turn's audio was sent before xAI reported on the first, so it reserved no place of its own.
+    """
+
+    def turn(item_id: str, transcript: str, response_id: str, answer: str) -> list[str]:
+        return [
+            json.dumps({'type': 'input_audio_buffer.speech_started', 'item_id': item_id, 'audio_start_ms': 0}),
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': item_id}),
+            _user_transcript(item_id, transcript),
+            *_reply(response_id, answer),
+        ]
+
+    ws = _PhasedWebSocket(
+        [_created(), _updated()],
+        [],
+        turn('item-u1', 'First.', 'r1', 'One.'),
+        turn('item-u2', 'Second.', 'r2', 'Two.'),
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+
+    async with Agent().realtime(_model(rt_xai.XaiRealtimeModelSettings(turn_detection=False))).session() as session:
+        await session.send_audio(_AUDIO.data)
+        await session.commit_audio()
+        await session.create_response()
+        await session.send_audio(_AUDIO.data)
+        await session.commit_audio()
+        ws.advance()
+        await session.wait_for_reply()
+        await session.create_response()
+        ws.advance()
+        await session.wait_for_reply()
+        turns = _turns(session.all_messages())
+
+    assert turns == ['user speech: First.', 'assistant speech: One.', 'user speech: Second.', 'assistant speech: Two.']

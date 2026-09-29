@@ -303,6 +303,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._manual_turns = manual_turns
         self._commit_held = False
         self._audio_commit_listener: Callable[[], None] | None = None
+        # Whether the listener heard about the held commit already, which a reconnect sends again.
+        self._commit_announced = False
         # Whether xAI heard speech in the audio it has since the last commit. It doesn't answer a commit of
         # silence at all (checked live), so without speech the commit goes out with a `response.create`.
         self._speech_detected = False
@@ -373,9 +375,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """Send the held commit, and the audio it covers, with the request for a response."""
         # Marked first, so audio sent meanwhile is kept back until the reply ends rather than joining the turn.
         self._response_active = True
-        if self._audio_commit_listener is not None:
-            # Before anything goes out, so nothing xAI sends in answer can be handled ahead of it.
-            self._audio_commit_listener()
+        if not self._commit_announced:
+            self._commit_announced = True
+            self._announce_commit()
         # Each frame leaves the held audio only as it goes out, and the commit stays held until it's sent, so
         # a connection that drops midway still has the whole turn to send again after the reconnect.
         while self._held_audio_committed:
@@ -398,8 +400,13 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         )
         self._release_commit()
 
+    def _announce_commit(self) -> None:
+        """Tell the listener audio is being committed, before anything goes out that xAI could answer first."""
+        if self._audio_commit_listener is not None:
+            self._audio_commit_listener()
+
     def _release_commit(self) -> None:
-        self._commit_held = False
+        self._commit_held = self._commit_announced = False
         self._sent_audio.clear()
         # The commit lands after anything sent while it was held, so the audio is xAI's latest input.
         self._audio_is_latest_input = True
@@ -436,6 +443,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await super()._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
             self._audio_is_latest_input = False
         # Audio still in the buffer is committed by the request, and answered by its response.
+        if self._audio_uncommitted:
+            self._announce_commit()
         self._audio_uncommitted = self._speech_detected = False
         self._sent_audio.clear()
         await super()._create_response(input_indexes)

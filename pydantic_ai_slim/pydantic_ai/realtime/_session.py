@@ -230,6 +230,7 @@ class _HeldCommit:
 
     anchor: ModelMessage | _InFlightResponse | None = None
     sent: bool = False
+    has_audio: bool = False
     requests: list[ModelRequest] = field(default_factory=list[ModelRequest])
 
 
@@ -909,6 +910,7 @@ class RealtimeSession:
         # The commit a connection that `defers_audio_commit` holds, which user turns starting now belong to,
         # and sent ones placed after a response that isn't recorded yet.
         self._held_commit = _HeldCommit()
+        self._sent_commit: _HeldCommit | None = None
         self._held_commits_in_flight: list[_HeldCommit] = []
         # User turns held in `_pending_sent_requests` until the response they interrupted is recorded, and
         # the watchdog that records them anyway if it never is (see `_BARGE_IN_TURN_HOLD_SECONDS`).
@@ -1813,6 +1815,7 @@ class RealtimeSession:
             return
         user_turn_was_active = self._user_turn_active
         audio_was_uncommitted = self._audio_uncommitted
+        self._held_commit.has_audio = True
         # Without input transcription, a provider that reports speech boundaries opens each turn itself,
         # at speech start. Audio alone is then no turn: an always-on microphone streams silence between
         # utterances, and taking it for one would record a phantom turn per response and one at close.
@@ -2477,7 +2480,8 @@ class RealtimeSession:
 
         That's where the provider has them. Turns that started after this commit belong to the next one.
         """
-        held, self._held_commit = self._held_commit, _HeldCommit()
+        held = self._sent_commit = self._held_commit
+        self._held_commit = _HeldCommit()
         # Requests sent while a response is being produced go after it, and ahead of the commit going out now.
         held.anchor = self._pending_sent_requests[-1] if self._pending_sent_requests else self._position_here()
         held.sent = True
@@ -2880,7 +2884,11 @@ class RealtimeSession:
     def _user_turn_anchor_here(self) -> _UserTurnAnchor:
         """Where a user turn starting now belongs: with the held commit, after the response being produced, or else the last message."""
         if self._connection.defers_audio_commit:
-            return self._held_commit
+            if self._held_commit.has_audio or self._sent_commit is None:
+                return self._held_commit
+            # No audio for the next commit yet, so a turn starting now is the provider reporting on audio
+            # that already went out.
+            return self._sent_commit
         return self._position_here()
 
     def _position_here(self) -> ModelMessage | _InFlightResponse | None:
