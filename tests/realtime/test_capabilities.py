@@ -367,6 +367,29 @@ async def test_dynamic_native_tool_function_resolves_at_connect() -> None:
     assert [type(t) for t in model.native_tools] == [WebSearchTool]
 
 
+async def test_dynamic_native_tool_failure_after_for_run_runs_cleanup() -> None:
+    observed: list[str] = []
+
+    class TrackingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            observed.append('setup')
+            return self
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[None]:
+            observed.append('cleanup')
+            raise error
+
+    def broken_native_tool(ctx: RunContext[None]) -> WebSearchTool:
+        raise RuntimeError('native tool setup failed')
+
+    agent = Agent()
+    model = _RecordingModel(supported_native_tools=frozenset({WebSearchTool}))
+    with pytest.raises(RuntimeError, match='native tool setup failed'):
+        await _drain(agent, model, capabilities=[TrackingCap(), NativeTool(broken_native_tool)])
+
+    assert observed == ['setup', 'cleanup']
+
+
 async def test_unsupported_capability_native_tool_raises_before_connect() -> None:
     """An unsupported native tool with no local fallback fails up front, before connecting.
 

@@ -96,7 +96,7 @@ from ..capabilities.abstract import (
     leaf_capabilities,
     select_workspace,
 )
-from ..capabilities.combined import bind_capabilities_tier
+from ..capabilities.combined import bind_capabilities_tier, reconstructing_setup_cleanup
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
@@ -239,7 +239,8 @@ async def _run_setup_error_hook(
     assert resolved_layers
     # Each layer's `for_run()` ran, including ones the run layer later overrides. Their hooks
     # must all get a chance to clean up setup side effects.
-    run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+    with reconstructing_setup_cleanup():
+        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
     run_ctx.root_capability = run_capability
     if not run_ctx.capabilities:
         # A failed `for_run` may leave duplicate ids in the partial tree; cleanup still needs
@@ -1908,14 +1909,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
 
         # Build toolset with per-run capability contributions
-        toolset = self._get_toolset(
-            output_toolset=output_toolset,
-            additional_toolsets=toolsets,
-            cap_toolsets=cap_toolsets,
-            run_capability=run_capability,
-            max_output_retries=effective_output_toolset_max_retries,
-        )
         try:
+            toolset = self._get_toolset(
+                output_toolset=output_toolset,
+                additional_toolsets=toolsets,
+                cap_toolsets=cap_toolsets,
+                run_capability=run_capability,
+                max_output_retries=effective_output_toolset_max_retries,
+            )
             toolset = await toolset.for_run(initial_ctx)
         except BaseException as error:
             await _run_setup_error_hook(resolved_caps.resolved_layers, initial_ctx, error)
@@ -3417,12 +3418,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             except BaseException as error:
                 if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
                     raise
-                resolved_layers = [
-                    replace_resolved_run_capabilities(capability, layer_resolutions)
-                    for capability, layer_resolutions in zip(
-                        [base_capability, *extra_capabilities], resolutions.layers, strict=True
-                    )
-                ]
+                with reconstructing_setup_cleanup():
+                    resolved_layers = [
+                        replace_resolved_run_capabilities(capability, layer_resolutions)
+                        for capability, layer_resolutions in zip(
+                            [base_capability, *extra_capabilities], resolutions.layers, strict=True
+                        )
+                    ]
                 await _run_setup_error_hook(resolved_layers, ctx, error)
                 raise
 
@@ -3800,26 +3802,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # there's no tool-search corpus and realtime providers don't support it. The helper already
         # folded in `override(native_tools=...)` and any per-call capability native tools.
         # KEEP IN SYNC with the graph's resolution in `_prepare_request_parameters`.
-        native_tools: list[AbstractNativeTool] = []
-        for native_tool in resolved_caps.native_tools:
-            if not isinstance(native_tool, AbstractNativeTool):
-                resolved_native = native_tool(run_context)
-                if inspect.isawaitable(resolved_native):
-                    resolved_native = await resolved_native
-                if resolved_native is None:
-                    continue
-                native_tool = resolved_native
-            if not (isinstance(native_tool, ToolSearchTool) and native_tool.optional):
-                native_tools.append(native_tool)
-        model_profile = model.profile
-
-        toolset = self._get_toolset(
-            output_toolset=None,
-            additional_toolsets=toolsets,
-            cap_toolsets=resolved_caps.toolsets,
-            run_capability=run_capability,
-        )
         try:
+            native_tools: list[AbstractNativeTool] = []
+            for native_tool in resolved_caps.native_tools:
+                if not isinstance(native_tool, AbstractNativeTool):
+                    resolved_native = native_tool(run_context)
+                    if inspect.isawaitable(resolved_native):
+                        resolved_native = await resolved_native
+                    if resolved_native is None:
+                        continue
+                    native_tool = resolved_native
+                if not (isinstance(native_tool, ToolSearchTool) and native_tool.optional):
+                    native_tools.append(native_tool)
+            model_profile = model.profile
+
+            toolset = self._get_toolset(
+                output_toolset=None,
+                additional_toolsets=toolsets,
+                cap_toolsets=resolved_caps.toolsets,
+                run_capability=run_capability,
+            )
             toolset = await toolset.for_run(run_context)
         except BaseException as error:
             if run_lifecycle:

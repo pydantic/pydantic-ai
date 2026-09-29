@@ -22,6 +22,7 @@ from pydantic import TypeAdapter
 from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    CapabilityOrdering,
     CombinedCapability,
     DynamicCapability,
     LocalWorkspace,
@@ -888,6 +889,57 @@ async def test_model_selection_failure_after_for_run_cleans_resolved_capability(
 
     with pytest.raises(UserError, match='unsupported:foo'):
         await Agent(TestModel(), capabilities=[ChangesModel()]).run('go')
+
+    assert observed == ['setup', 'cleanup']
+
+
+async def test_resolved_capability_ordering_failure_runs_cleanup() -> None:
+    observed: list[str] = []
+
+    class ResolvedA(AbstractCapability[object]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[ResolvedB])
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            observed.append('cleanup')
+            raise error
+
+    class ResolvedB(AbstractCapability[object]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[ResolvedA])
+
+    class A(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            observed.append('setup')
+            return ResolvedA()
+
+    class B(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            return ResolvedB()
+
+    with pytest.raises(UserError, match='Circular ordering constraints among capabilities'):
+        await Agent(TestModel(), capabilities=[A(), B()]).run('go')
+
+    assert observed == ['setup', 'cleanup']
+
+
+async def test_toolset_construction_failure_after_for_run_runs_cleanup() -> None:
+    observed: list[str] = []
+
+    class BrokenWrapper(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            observed.append('setup')
+            return self
+
+        def get_wrapper_toolset(self, toolset: AbstractToolset[object]) -> AbstractToolset[object]:
+            raise RuntimeError('wrapper setup failed')
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            observed.append('cleanup')
+            raise error
+
+    with pytest.raises(RuntimeError, match='wrapper setup failed'):
+        await Agent(TestModel(), capabilities=[BrokenWrapper()]).run('go')
 
     assert observed == ['setup', 'cleanup']
 
