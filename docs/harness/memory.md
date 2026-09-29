@@ -48,6 +48,8 @@ the provider's read tool. `search_memory` stays because it provides bounded rank
 than a plain file read. The dedicated reader stays for every other store, a
 `FileStore(workspace=...)`, an inactive or size-limited provider, or a tree excluded by its root or
 access patterns.
+Non-empty custom `guidance` also keeps `read_memory`, because the capability cannot safely rewrite
+application-provided instructions that may name that tool.
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 

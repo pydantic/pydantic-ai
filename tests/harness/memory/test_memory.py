@@ -412,13 +412,16 @@ class RacyFallbackStore(DelegatingStore):
 
 
 class TestPublicAgentPath:
-    @pytest.mark.parametrize('case', ['present', 'absent', 'inactive', 'custom-store', 'unreadable', 'limited-read'])
+    @pytest.mark.parametrize(
+        'case', ['present', 'absent', 'inactive', 'custom-store', 'unreadable', 'limited-read', 'custom-guidance']
+    )
     async def test_read_memory_deduplicates_only_for_reachable_run_workspace_files(
         self, tmp_path: Path, case: str
     ) -> None:
         memory_dir = tmp_path / 'memory'
         memory_dir.mkdir()
         store = FileStore('memory')
+        guidance: str | None = None
         file_system: FileSystem[None] | None = None
         if case == 'present':
             file_system = FileSystem(max_read_chars=100_000)
@@ -433,6 +436,9 @@ class TestPublicAgentPath:
             file_system = FileSystem(denied_patterns=['memory'])
         elif case == 'limited-read':
             file_system = FileSystem()
+        elif case == 'custom-guidance':
+            file_system = FileSystem(max_read_chars=100_000)
+            guidance = 'Call `read_memory` before answering.'
 
         seen_tools: set[str] = set()
         seen_instructions: list[str] = []
@@ -445,7 +451,7 @@ class TestPublicAgentPath:
         await Agent(
             FunctionModel(model),
             capabilities=[
-                Memory[None](store=store),
+                Memory[None](store=store, guidance=guidance),
                 LocalWorkspace(tmp_path),
                 *([file_system] if file_system is not None else []),
             ],

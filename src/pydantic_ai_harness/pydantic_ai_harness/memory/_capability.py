@@ -195,6 +195,8 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         """Drop `read_memory` when active general file tools can read this run's file store."""
+        if self.guidance not in (None, ''):
+            return tool_defs
         if await self._file_tools_path(ctx, tool_names={tool.name for tool in tool_defs}) is not None:
             return [tool_def for tool_def in tool_defs if tool_def.name != 'read_memory']
         return tool_defs
