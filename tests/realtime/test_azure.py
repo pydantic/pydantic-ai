@@ -107,9 +107,11 @@ def _azure_provider() -> AzureProvider:
         ('gpt-realtime', True, 'voice_live'),
         ('gpt-realtime-mini', None, 'ga'),
         ('gpt-realtime-1.5', True, 'voice_live'),
-        # GA-only: defaults to GA, `azure_voice_live=True` is rejected before connecting.
         ('gpt-realtime-2', None, 'ga'),
-        ('gpt-realtime-2', True, 'error'),
+        ('gpt-realtime-2', True, 'voice_live'),
+        ('gpt-realtime-2.1-mini', True, 'voice_live'),
+        # GA-only: defaults to GA, `azure_voice_live=True` is rejected before connecting.
+        ('gpt-realtime-translate', None, 'ga'),
         ('gpt-4o-realtime-preview', True, 'error'),
         ('gpt-realtime-translate', True, 'error'),
         # Voice-Live-only: auto-routed to Voice Live whether or not the setting is passed.
@@ -155,11 +157,13 @@ def test_azure_realtime_apis_default_absent_for_unknown_model() -> None:
 @pytest.mark.parametrize(
     'model_name,expected',
     [
-        # A version number is matched at a boundary, so `gpt-realtime-2` (GA-only) does not swallow a
-        # date-suffixed `gpt-realtime` deployment (served by both, hence unconstrained).
-        ('gpt-realtime-2', frozenset({'azure_openai'})),
-        ('gpt-realtime-2-2026-05-07', frozenset({'azure_openai'})),
-        ('gpt-realtime-2025-08-28', None),
+        # Served by both APIs, so unconstrained — including point releases and dated snapshots.
+        ('gpt-realtime-2', None),
+        ('gpt-realtime-2.1-mini', None),
+        # A GA-only base is matched at a boundary: its dated snapshot is covered too.
+        ('gpt-realtime-translate-2026-05-07', frozenset({'azure_openai'})),
+        # ...but not a longer name that merely starts with it.
+        ('gpt-50', None),
         # Cascade families cover their point releases (`.`-delimited) as well as `-`-suffixed variants.
         ('gpt-5.2-chat', frozenset({'voice_live'})),
         ('gpt-4o-mini', frozenset({'voice_live'})),
