@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,79 +11,87 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '636'
+      - "562"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      model: claude-opus-5
-      stream: false
-      system:
-      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
-          is assigned, reply UNASSIGNED.
-        type: text
-      - text: |-
-          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Send parcels to warehouse A.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '1037'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-227726e4577d5fb344762ecaa5adff73-d8a059f976b73590-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - signature: CAISzQIKjgEIERgCKkBIaBgGTdeQqqt92V/Rx6NFg6nP2WPNPl4iEIOXydqc0NXsXhFt2NBu8LIdgxHa9B5XPSBe/rqttH5WGIFuc57BMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGoAb2X/NQGEgwK/6UT2dM2owGXRhAaDPUivAPu8a/B/nv49SIw4hZShz07ubf0OASS6np1Up9IhcRAkXH88x8X3hclZH0IfwtwNbbVYOJd3qMdLxNnKmz8vIKJ6c2NvuCtcUj45BZ4ygCbs+Qbc0P30dyWikmlHX0iltT8JI9HngvlqLcbxsK5JBtDYU/HOPHLcdviyi6kjiZATamDMxnAgQ5stJ0I3cqfRpWQsIRSuNZOJwQ/RDr4392auwCb5YvFBjgYAQ==
-        thinking: ''
-        type: thinking
-      - text: A
-        type: text
-      id: msg_011Cepc4kVtJmghikVPdQ2DS
-      model: claude-opus-5
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 139
-        output_tokens: 34
-        output_tokens_details:
-          thinking_tokens: 31
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        model: claude-opus-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d312feb22d182fa8ca40e62d928478be-e2e03bd32b7d88f1-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-opus-5
+        id: msg_011CfYQHzaqoqETSivkFaXoB
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+        - type: text
+          text: A
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 125
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 31
+          output_tokens_details:
+            thinking_tokens: 28
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:19.397293+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -89,55 +100,59 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1480'
+      - "1594"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - signature: CAISzQIKjgEIERgCKkBIaBgGTdeQqqt92V/Rx6NFg6nP2WPNPl4iEIOXydqc0NXsXhFt2NBu8LIdgxHa9B5XPSBe/rqttH5WGIFuc57BMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGoAb2X/NQGEgwK/6UT2dM2owGXRhAaDPUivAPu8a/B/nv49SIw4hZShz07ubf0OASS6np1Up9IhcRAkXH88x8X3hclZH0IfwtwNbbVYOJd3qMdLxNnKmz8vIKJ6c2NvuCtcUj45BZ4ygCbs+Qbc0P30dyWikmlHX0iltT8JI9HngvlqLcbxsK5JBtDYU/HOPHLcdviyi6kjiZATamDMxnAgQ5stJ0I3cqfRpWQsIRSuNZOJwQ/RDr4392auwCb5YvFBjgYAQ==
-          thinking: ''
-          type: thinking
-        - text: A
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: |-
-            Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse B.
-          type: text
-        role: system
-      model: claude-opus-5
-      stream: false
-      system:
-      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
-          is assigned, reply UNASSIGNED.
-        type: text
-      - text: |-
-          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Send parcels to warehouse A.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context>
+            type: text
+        model: claude-opus-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one.
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '927'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -145,37 +160,630 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-e1d8887f2dddb8b1f114efce1ff33862-5d7a1bfa76451b31-01
+      - 00-a18057977b85693cff4ef84374854512-2fdbf00763433c9b-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content: []
-      id: msg_011Cepc4wp2rKUseemCnX1AV
-      model: claude-opus-5
-      role: assistant
-      stop_details:
-        category: reasoning_extraction
-        explanation: 'This request was blocked as it seems to violate Anthropic''s Terms of Service restrictions on reverse
-          engineering or duplicating model outputs. To learn more, visit https://www.anthropic.com/legal/commercial-terms.
-          API integrators: you can reduce refusals for your users by configuring a fallback model -- see https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback'
-        type: refusal
-      stop_reason: refusal
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 267
-        output_tokens: 0
-        output_tokens_details:
-          thinking_tokens: 0
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        model: claude-opus-5
+        id: msg_011CfYQJ7PsHMSMm5i9MkvCy
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+        - type: text
+          text: B
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 218
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 29
+          output_tokens_details:
+            thinking_tokens: 26
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:22.516312+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2582"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        model: claude-opus-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1f92789eec59a2ba2787baea54ecda83-95331baad20977e9-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-opus-5
+        id: msg_011CfYQJLq1ScEQvgtMj7qku
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAISxAQKkAMIEhgCKkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAavN8NUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwEbTjkRRqPydFg3PAaDG5h0tgaMj8XJQDC6yIw7uz50aIq9ahmupWbZbaaTMMmnkj5TviJxdLpqzhXofCLNJst1MO/3V0dxBi6RgfAKmHs2x2T7z2jvAaG6kr2VuCByAX87TVDAAJBlRRFw/nK5BLwWPqOIn07ZeAZX/A5yK8r6dMGYJfl7RO60vQYMnMhYYgiGw5PIhoonGETP2tr/WsTXcCQppWgbTrXMBaYBuqxGAE=
+        - type: text
+          text: B
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 270
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 29
+          output_tokens_details:
+            thinking_tokens: 26
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:24.327280+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3710"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISxAQKkAMIEhgCKkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAavN8NUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwEbTjkRRqPydFg3PAaDG5h0tgaMj8XJQDC6yIw7uz50aIq9ahmupWbZbaaTMMmnkj5TviJxdLpqzhXofCLNJst1MO/3V0dxBi6RgfAKmHs2x2T7z2jvAaG6kr2VuCByAX87TVDAAJBlRRFw/nK5BLwWPqOIn07ZeAZX/A5yK8r6dMGYJfl7RO60vQYMnMhYYgiGw5PIhoonGETP2tr/WsTXcCQppWgbTrXMBaYBuqxGAE=
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context>
+            type: text
+        model: claude-opus-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-7cf0c5cfda3a2c3888fc5949bc6d0aed-d5851de7de9d7f73-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-opus-5
+        id: msg_011CfYQJUcJw4sxBf7CkefUW
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAISsAQKnwMIEhgCKkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa3N8NUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgzpNVkRuVFrvW7ejRUaDE7BQ0P1gv7quyN2FiIwj2wz5o3NwhZibTPg54KoW1ycdn/kgdY2kOPZyvEdhP/Fiju5sdGoAntfnU1gwQ5gKj6tz6vQRfV0yGG7CQaa0DhR/Nmb3qGwXMaXJUbiMbP5fZvwCb+MW9YMNFsKHEbf9ceN3diJb9p5Xo5NrEyjhxgB
+        - type: text
+          text: A
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 347
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 19
+          output_tokens_details:
+            thinking_tokens: 16
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:25.776184+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4827"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISxAQKkAMIEhgCKkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAavN8NUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwEbTjkRRqPydFg3PAaDG5h0tgaMj8XJQDC6yIw7uz50aIq9ahmupWbZbaaTMMmnkj5TviJxdLpqzhXofCLNJst1MO/3V0dxBi6RgfAKmHs2x2T7z2jvAaG6kr2VuCByAX87TVDAAJBlRRFw/nK5BLwWPqOIn07ZeAZX/A5yK8r6dMGYJfl7RO60vQYMnMhYYgiGw5PIhoonGETP2tr/WsTXcCQppWgbTrXMBaYBuqxGAE=
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISsAQKnwMIEhgCKkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa3N8NUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgzpNVkRuVFrvW7ejRUaDE7BQ0P1gv7quyN2FiIwj2wz5o3NwhZibTPg54KoW1ycdn/kgdY2kOPZyvEdhP/Fiju5sdGoAntfnU1gwQ5gKj6tz6vQRfV0yGG7CQaa0DhR/Nmb3qGwXMaXJUbiMbP5fZvwCb+MW9YMNFsKHEbf9ceN3diJb9p5Xo5NrEyjhxgB
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: A pallet of bottled water arrived at the dock. Where to?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              This context has been withdrawn.
+              </context>
+            type: text
+        model: claude-opus-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ea5923fe4c1b1a8ddecb3d775f2f4859-0eaa1cb487bebe76-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-opus-5
+        id: msg_011CfYQJadTnTo9PVVKDb2rN
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAISiwUKrgMIEhgCKkAXQkCe7FEzQhLaO09rWDBEzJJEdjA5ZyU+dslXE8DLW3d+pHAGXsh3mCQ+KfISI4/+ELRMtbchpEbFmg2RLLGIMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa7N8NUGwgF5CBkQABpLAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatBUscA083BZWUEc77BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIJTti6K1NmeiOqAnWrHLAWxJjmsDyOmq/UQnxrze5GwKIkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwJKCzAONjyhftHFWQaDNj5wODIy9cHSsaVAyIwaXL4lDKlg9V5mFwgJRCVbZtn9YybXi/SkRMv4zqtPf0LQuTUN+8hVsG2Y8OuqmsPKokBUtrPPi/F1a4abAjiHqXBI1Grn2HlkZiiH0R6z8+kiRDvAwurfKz8n9UIlr1ZqAqBgLddg914y4rnXrzSCgz4Zby8wGp5Myffu+cgsjL4xFZdMELLFlGbEfIE6VZPHXFLOkcrJuFIQN+LX34PsNjdqjhB1NlX3QEbFStpJjoLkjYzb9kPq17sHv8YAQ==
+        - type: text
+          text: UNASSIGNED
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 418
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 55
+          output_tokens_details:
+            thinking_tokens: 45
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:27.507036+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "6090"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISxAQKkAMIEhgCKkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAavN8NUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwEbTjkRRqPydFg3PAaDG5h0tgaMj8XJQDC6yIw7uz50aIq9ahmupWbZbaaTMMmnkj5TviJxdLpqzhXofCLNJst1MO/3V0dxBi6RgfAKmHs2x2T7z2jvAaG6kr2VuCByAX87TVDAAJBlRRFw/nK5BLwWPqOIn07ZeAZX/A5yK8r6dMGYJfl7RO60vQYMnMhYYgiGw5PIhoonGETP2tr/WsTXcCQppWgbTrXMBaYBuqxGAE=
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISsAQKnwMIEhgCKkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa3N8NUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgzpNVkRuVFrvW7ejRUaDE7BQ0P1gv7quyN2FiIwj2wz5o3NwhZibTPg54KoW1ycdn/kgdY2kOPZyvEdhP/Fiju5sdGoAntfnU1gwQ5gKj6tz6vQRfV0yGG7CQaa0DhR/Nmb3qGwXMaXJUbiMbP5fZvwCb+MW9YMNFsKHEbf9ceN3diJb9p5Xo5NrEyjhxgB
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: A pallet of bottled water arrived at the dock. Where to?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              This context has been withdrawn.
+              </context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISiwUKrgMIEhgCKkAXQkCe7FEzQhLaO09rWDBEzJJEdjA5ZyU+dslXE8DLW3d+pHAGXsh3mCQ+KfISI4/+ELRMtbchpEbFmg2RLLGIMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa7N8NUGwgF5CBkQABpLAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatBUscA083BZWUEc77BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIJTti6K1NmeiOqAnWrHLAWxJjmsDyOmq/UQnxrze5GwKIkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwJKCzAONjyhftHFWQaDNj5wODIy9cHSsaVAyIwaXL4lDKlg9V5mFwgJRCVbZtn9YybXi/SkRMv4zqtPf0LQuTUN+8hVsG2Y8OuqmsPKokBUtrPPi/F1a4abAjiHqXBI1Grn2HlkZiiH0R6z8+kiRDvAwurfKz8n9UIlr1ZqAqBgLddg914y4rnXrzSCgz4Zby8wGp5Myffu+cgsjL4xFZdMELLFlGbEfIE6VZPHXFLOkcrJuFIQN+LX34PsNjdqjhB1NlX3QEbFStpJjoLkjYzb9kPq17sHv8YAQ==
+            type: thinking
+          - text: UNASSIGNED
+            type: text
+        - role: user
+          content:
+          - text: Finally, a small parcel of replacement laptop batteries. Which warehouse?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:memory:state">
+              Send parcels to warehouse C.
+              </context>
+            type: text
+        model: claude-opus-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-14d039ef8d34c632ba5c7484aa1d197c-f7b9b8413b294492-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-opus-5
+        id: msg_011CfYQJi1yQGL8NPRqwr4y4
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: C
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 533
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 3
+          output_tokens_details:
+            thinking_tokens: 0
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:28.916171+00:00

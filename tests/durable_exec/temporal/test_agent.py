@@ -4237,11 +4237,7 @@ class InstructionUpdatesWorkflow:
             for part in message.parts
             if isinstance(part, InstructionDeltaPart)
         ] == ['B', 'A', None, 'C']
-        assert {message.instructions for message in messages if isinstance(message, ModelRequest)} == {
-            "Instruction block 'capability:recorded_instructions:state' has the following initial value. "
-            'Later system updates to this block replace its entire value; follow the latest update, '
-            'including a withdrawal, rather than this initial value.\n\nA'
-        }
+        assert {message.instructions for message in messages if isinstance(message, ModelRequest)} == {'A'}
         return messages
 
 

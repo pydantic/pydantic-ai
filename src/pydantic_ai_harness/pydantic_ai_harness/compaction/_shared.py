@@ -93,7 +93,7 @@ def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
         if isinstance(msg, ModelRequest):
             for request_part in msg.parts:
                 if isinstance(request_part, InstructionDeltaPart) and index < baseline_index:
-                    continue  # pragma: lax no cover
+                    continue
                 segments.extend(_request_part_text(request_part))
         else:
             for response_part in msg.parts:
@@ -115,7 +115,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     elif isinstance(part, SystemPromptPart):
         return [part.content]
     elif isinstance(part, InstructionDeltaPart):
-        return [part.render()]  # pragma: lax no cover
+        return [part.render()]
     elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
         # Both are sent in full. The tool-search and capability-load returns subclass
         # `ToolReturnPart`, so they arrive here too.

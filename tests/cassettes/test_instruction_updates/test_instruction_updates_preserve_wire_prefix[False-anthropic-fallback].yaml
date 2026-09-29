@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,37 +11,40 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '640'
+      - "607"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
-          is assigned, reply UNASSIGNED.
-        type: text
-      - text: |-
-          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Send parcels to warehouse A.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '494'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -46,36 +52,40 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-e89f11733461871fe570c70c41eb682d-078e5dcaa87e389c-01
+      - 00-964b21b6e250706d0d8ad8feb53d5fe2-57efdf561806372c-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: A
-        type: text
-      id: msg_011Cepc41TX5eitTpAdy1VcJ
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 96
-        output_tokens: 4
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CfYQHNZQ3TYYwKSqwLGTG
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: A
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 101
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 4
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:10.765450+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -84,50 +94,53 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '957'
+      - "913"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: A
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse B.</system>
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
-          is assigned, reply UNASSIGNED.
-        type: text
-      - text: |-
-          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Send parcels to warehouse A.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '495'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -135,36 +148,40 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-61892dc697f23fa6ab53faf8bf527491-d52b9417219a2760-01
+      - 00-5172b3f2067912753939f474e3c080c0-51307dd6c021f0c1-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: B
-        type: text
-      id: msg_011Cepc48b9777EgfqMk5jPZ
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 143
-        output_tokens: 4
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CfYQHUzrvNSASxyxnmZf7
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: B
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 152
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 4
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:12.254628+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -173,58 +190,61 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1113'
+      - "1084"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: A
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse B.</system>
-          type: text
-        role: user
-      - content:
-        - text: B
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
-          is assigned, reply UNASSIGNED.
-        type: text
-      - text: |-
-          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Send parcels to warehouse A.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '495'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -232,36 +252,40 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-0200de6b58157eb56beb46f5a770671d-d8c1875a6d6eaa83-01
+      - 00-de4ff8fa51e5a3170b3c670b147854ff-2e7b2ad076661a38-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: B
-        type: text
-      id: msg_011Cepc4GwSEv6hnsab6XbZN
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 157
-        output_tokens: 4
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CfYQHaqLtcxfYp9SrCQGd
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: B
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 174
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 4
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:13.718353+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -270,71 +294,74 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1430'
+      - "1366"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: A
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse B.</system>
-          type: text
-        role: user
-      - content:
-        - text: B
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: B
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse A.</system>
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
-          is assigned, reply UNASSIGNED.
-        type: text
-      - text: |-
-          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Send parcels to warehouse A.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context></system>
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '495'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -342,36 +369,40 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-fe34ba64e1bd8b0e3e0dc8ccd570fd9f-516bc2ad6e61253f-01
+      - 00-a0ef2670345361bfe8b367affe074887-23341d273b082762-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: A
-        type: text
-      id: msg_011Cepc4Q2pzVwHwVEqd3WA7
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 204
-        output_tokens: 4
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CfYQHh4tJciJFuPjbqEVf
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: A
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 216
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 4
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:15.001368+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -380,81 +411,87 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1733'
+      - "1722"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: A
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse B.</system>
-          type: text
-        role: user
-      - content:
-        - text: B
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: B
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse A.</system>
-          type: text
-        role: user
-      - content:
-        - text: A
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: <system>Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.</system>
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
-          is assigned, reply UNASSIGNED.
-        type: text
-      - text: |-
-          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Send parcels to warehouse A.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: A pallet of bottled water arrived at the dock. Where to?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+              </context></system>
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '504'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -462,36 +499,40 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1fc7d1ca9894138cf6a11e4c558f0cb4-990cf9814d353e95-01
+      - 00-cacf7cba297d1975cfc2b5614a4e03dd-5f3b893ad9eca443-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: UNASSIGNED
-        type: text
-      id: msg_011Cepc4WMLKDUhEsnj52QgY
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 244
-        output_tokens: 7
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CfYQHnrQBXQjpPrEKR415
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: UNASSIGNED
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 273
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 7
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:16.350766+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -500,94 +541,100 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2059'
+      - "2043"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: A
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse B.</system>
-          type: text
-        role: user
-      - content:
-        - text: B
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        role: user
-      - content:
-        - text: B
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse A.</system>
-          type: text
-        role: user
-      - content:
-        - text: A
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: <system>Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.</system>
-          type: text
-        role: user
-      - content:
-        - text: UNASSIGNED
-          type: text
-        role: assistant
-      - content:
-        - text: Where should this parcel go?
-          type: text
-        - text: |-
-            <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
-
-            Send parcels to warehouse C.</system>
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
-          is assigned, reply UNASSIGNED.
-        type: text
-      - text: |-
-          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Send parcels to warehouse A.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: A pallet of bottled water arrived at the dock. Where to?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: UNASSIGNED
+            type: text
+        - role: user
+          content:
+          - text: Finally, a small parcel of replacement laptop batteries. Which warehouse?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse C.
+              </context></system>
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '495'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -595,33 +642,34 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b6e562836deb2292c9c827f7f4cd944b-7fdd3f010b3d0f6e-01
+      - 00-f937776ec0d88907a61acb811dcfb106-e33fc5e303c577e4-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: C
-        type: text
-      id: msg_011Cepc4duG1i9j5krLw5Tjk
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 294
-        output_tokens: 4
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CfYQHtMHeV1PsjewFzEXW
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: C
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 323
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 4
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-09-29T20:59:17.676383+00:00

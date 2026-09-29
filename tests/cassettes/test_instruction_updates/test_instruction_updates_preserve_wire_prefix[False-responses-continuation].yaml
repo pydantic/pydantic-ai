@@ -1,144 +1,8 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '647'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
     method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: Where should this parcel go?
-        role: user
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      model: gpt-5.6
-      reasoning:
-        context: all_turns
-        effort: none
-      store: true
-      stream: false
     uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      - CF-Ray
-      - CF-Ray
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '2014'
-      content-type:
-      - application/json
-      openai-processing-ms:
-      - '803'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1788808138
-      created_at: 1788808138
-      error: null
-      frequency_penalty: 0.0
-      id: resp_0c32fab0387644ba006a9f0bca01e487d2bb465277eaee1316
-      incomplete_details: null
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.6-sol
-      moderation: null
-      object: response
-      output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: A
-          type: output_text
-        id: msg_0c32fab0387644ba006a9f0bca99e087d2b90b614d8e96f861
-        phase: final_answer
-        role: assistant
-        status: completed
-        type: message
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: null
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: none
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
-          input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
-          output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools: []
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 93
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 5
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 98
-      user: null
-    status:
-      code: 200
-      message: OK
-- request:
     headers:
       accept:
       - application/json
@@ -147,323 +11,36 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '879'
+      - "575"
       content-type:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: Where should this parcel go?
-        role: user
-      - content: |-
-          Instruction block 'capability:memory:state' is replaced from this point onward by:
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          Send parcels to warehouse B.
-        role: system
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      model: gpt-5.6
-      previous_response_id: resp_0c32fab0387644ba006a9f0bca01e487d2bb465277eaee1316
-      reasoning:
-        context: all_turns
-        effort: none
-      store: true
-      stream: false
-    uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      - CF-Ray
-      - CF-Ray
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '2069'
-      content-type:
-      - application/json
-      openai-processing-ms:
-      - '1132'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1788808139
-      created_at: 1788808139
-      error: null
-      frequency_penalty: 0.0
-      id: resp_0c32fab0387644ba006a9f0bcb052087d28fd162828d51f264
-      incomplete_details: null
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.6-sol
-      moderation: null
-      object: response
-      output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: B
-          type: output_text
-        id: msg_0c32fab0387644ba006a9f0bcbd2cc87d2b710cd54ded5a58a
-        phase: final_answer
-        role: assistant
-        status: completed
-        type: message
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: resp_0c32fab0387644ba006a9f0bca01e487d2bb465277eaee1316
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: none
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
-          input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
-          output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools: []
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 138
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 5
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 143
-      user: null
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '730'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: Where should this parcel go?
-        role: user
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      model: gpt-5.6
-      previous_response_id: resp_0c32fab0387644ba006a9f0bcb052087d28fd162828d51f264
-      reasoning:
-        context: all_turns
-        effort: none
-      store: true
-      stream: false
-    uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      - CF-Ray
-      - CF-Ray
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '2069'
-      content-type:
-      - application/json
-      openai-processing-ms:
-      - '792'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1788808140
-      created_at: 1788808140
-      error: null
-      frequency_penalty: 0.0
-      id: resp_0c32fab0387644ba006a9f0bcc55e887d299e91eb49bd30edb
-      incomplete_details: null
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.6-sol
-      moderation: null
-      object: response
-      output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: B
-          type: output_text
-        id: msg_0c32fab0387644ba006a9f0bcce99087d29beb7ab6d8e4f48c
-        phase: final_answer
-        role: assistant
-        status: completed
-        type: message
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: resp_0c32fab0387644ba006a9f0bcb052087d28fd162828d51f264
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: none
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
-          input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
-          output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools: []
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 155
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 5
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 160
-      user: null
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '879'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: Where should this parcel go?
-        role: user
-      - content: |-
-          Instruction block 'capability:memory:state' is replaced from this point onward by:
-
+          <context id="capability:memory:state">
           Send parcels to warehouse A.
-        role: system
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      model: gpt-5.6
-      previous_response_id: resp_0c32fab0387644ba006a9f0bcc55e887d299e91eb49bd30edb
-      reasoning:
-        context: all_turns
-        effort: none
-      store: true
-      stream: false
-    uri: https://api.openai.com/v1/responses
+          </context>
+          A later <context> element with the same id replaces this one.
+        model: gpt-5.6
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+        stream: false
   response:
+    status: 200
     headers:
       access-control-expose-headers:
       - X-Request-ID
@@ -473,102 +50,105 @@ interactions:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '2069'
       content-type:
       - application/json
       openai-processing-ms:
-      - '879'
+      - "1344"
       openai-version:
-      - '2020-10-01'
+      - 2020-10-01
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1788808142
-      created_at: 1788808141
-      error: null
-      frequency_penalty: 0.0
-      id: resp_0c32fab0387644ba006a9f0bcd541487d283a9ab2231d7dfce
-      incomplete_details: null
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.6-sol
-      moderation: null
-      object: response
-      output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: A
-          type: output_text
-        id: msg_0c32fab0387644ba006a9f0bce000c87d2b6cd17340345314f
-        phase: final_answer
-        role: assistant
+    body:
+      type: json
+      content:
+        id: resp_0b8ddae656908244006abc26b969f087d1bb16c2fd00cf938a
+        object: response
+        created_at: 1790715577
         status: completed
-        type: message
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: resp_0c32fab0387644ba006a9f0bcc55e887d299e91eb49bd30edb
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: none
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790715578
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_0b8ddae656908244006abc26ba7c9887d1b6d478075e97ce00
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: A
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 90
           input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
           output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools: []
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 200
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 5
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 205
-      user: null
-    status:
-      code: 200
-      message: OK
+            reasoning_tokens: 0
+          total_tokens: 95
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T20:59:38.812623+00:00
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
     headers:
       accept:
       - application/json
@@ -577,35 +157,40 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '865'
+      - "755"
       content-type:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: Where should this parcel go?
-        role: user
-      - content: Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.
-        role: system
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context>
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      model: gpt-5.6
-      previous_response_id: resp_0c32fab0387644ba006a9f0bcd541487d283a9ab2231d7dfce
-      reasoning:
-        context: all_turns
-        effort: none
-      store: true
-      stream: false
-    uri: https://api.openai.com/v1/responses
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        model: gpt-5.6
+        previous_response_id: resp_0b8ddae656908244006abc26b969f087d1bb16c2fd00cf938a
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+        stream: false
   response:
+    status: 200
     headers:
       access-control-expose-headers:
       - X-Request-ID
@@ -615,102 +200,105 @@ interactions:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '2078'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1024'
+      - "1027"
       openai-version:
-      - '2020-10-01'
+      - 2020-10-01
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1788808143
-      created_at: 1788808142
-      error: null
-      frequency_penalty: 0.0
-      id: resp_0c32fab0387644ba006a9f0bce64b087d2b0c1fa018033188d
-      incomplete_details: null
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.6-sol
-      moderation: null
-      object: response
-      output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: UNASSIGNED
-          type: output_text
-        id: msg_0c32fab0387644ba006a9f0bcf200487d28265822412aa91ff
-        phase: final_answer
-        role: assistant
+    body:
+      type: json
+      content:
+        id: resp_0b8ddae656908244006abc26bae68887d1a0015a916cbd1002
+        object: response
+        created_at: 1790715579
         status: completed
-        type: message
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: resp_0c32fab0387644ba006a9f0bcd541487d283a9ab2231d7dfce
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: none
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790715579
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_0b8ddae656908244006abc26bb9c6887d1bb2d36ac33da4ebf
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: B
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0b8ddae656908244006abc26b969f087d1bb16c2fd00cf938a
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 139
           input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
           output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools: []
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 241
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 7
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 248
-      user: null
-    status:
-      code: 200
-      message: OK
+            reasoning_tokens: 0
+          total_tokens: 144
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T20:59:39.977520+00:00
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
     headers:
       accept:
       - application/json
@@ -719,38 +307,35 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '879'
+      - "632"
       content-type:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: Where should this parcel go?
-        role: user
-      - content: |-
-          Instruction block 'capability:memory:state' is replaced from this point onward by:
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          Send parcels to warehouse C.
-        role: system
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      model: gpt-5.6
-      previous_response_id: resp_0c32fab0387644ba006a9f0bce64b087d2b0c1fa018033188d
-      reasoning:
-        context: all_turns
-        effort: none
-      store: true
-      stream: false
-    uri: https://api.openai.com/v1/responses
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        model: gpt-5.6
+        previous_response_id: resp_0b8ddae656908244006abc26bae68887d1a0015a916cbd1002
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+        stream: false
   response:
+    status: 200
     headers:
       access-control-expose-headers:
       - X-Request-ID
@@ -760,99 +345,549 @@ interactions:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '2069'
       content-type:
       - application/json
       openai-processing-ms:
-      - '821'
+      - "1128"
       openai-version:
-      - '2020-10-01'
+      - 2020-10-01
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1788808144
-      created_at: 1788808143
-      error: null
-      frequency_penalty: 0.0
-      id: resp_0c32fab0387644ba006a9f0bcf981887d29f320842f1606440
-      incomplete_details: null
-      instructions: |-
-        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-        Send parcels to warehouse A.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.6-sol
-      moderation: null
-      object: response
-      output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: C
-          type: output_text
-        id: msg_0c32fab0387644ba006a9f0bd0389487d290a97a629ff90b4d
-        phase: final_answer
-        role: assistant
+    body:
+      type: json
+      content:
+        id: resp_0b8ddae656908244006abc26bc0e5887d184ffccf1317e9541
+        object: response
+        created_at: 1790715580
         status: completed
-        type: message
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: resp_0c32fab0387644ba006a9f0bce64b087d2b0c1fa018033188d
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: none
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790715581
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_0b8ddae656908244006abc26bcec2487d184fee400be674180
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: B
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0b8ddae656908244006abc26bae68887d1a0015a916cbd1002
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 164
           input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
           output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools: []
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 288
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 5
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 293
-      user: null
-    status:
-      code: 200
-      message: OK
-version: 1
+            reasoning_tokens: 0
+          total_tokens: 169
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T20:59:41.245160+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "731"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: An envelope with signed contracts. Routing?
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        model: gpt-5.6
+        previous_response_id: resp_0b8ddae656908244006abc26bc0e5887d184ffccf1317e9541
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1053"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0b8ddae656908244006abc26bd521087d191a5a09b06934765
+        object: response
+        created_at: 1790715581
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790715582
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_0b8ddae656908244006abc26be229087d1b2136d9540a5fa2f
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: A
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0b8ddae656908244006abc26bc0e5887d184ffccf1317e9541
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 206
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 211
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T20:59:42.435325+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "748"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: A pallet of bottled water arrived at the dock. Where to?
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            This context has been withdrawn.
+            </context>
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        model: gpt-5.6
+        previous_response_id: resp_0b8ddae656908244006abc26bd521087d191a5a09b06934765
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "833"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0b8ddae656908244006abc26be867887d18ab067acc6582410
+        object: response
+        created_at: 1790715582
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790715583
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_0b8ddae656908244006abc26bf1c0887d1b7bf6b26ece1e5aa
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: UNASSIGNED
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0b8ddae656908244006abc26bd521087d191a5a09b06934765
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 253
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 7
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 260
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T20:59:43.417662+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "761"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Finally, a small parcel of replacement laptop batteries. Which warehouse?
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse C.
+            </context>
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        model: gpt-5.6
+        previous_response_id: resp_0b8ddae656908244006abc26be867887d18ab067acc6582410
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "961"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0b8ddae656908244006abc26bf879c87d1b36090cf0279e689
+        object: response
+        created_at: 1790715583
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790715584
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </context>
+          A later <context> element with the same id replaces this one.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_0b8ddae656908244006abc26c02fbc87d1a50a453560f84697
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: C
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0b8ddae656908244006abc26be867887d18ab067acc6582410
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 302
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 307
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T20:59:44.549105+00:00

@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai.capabilities import Capability, Hooks
-from pydantic_ai.exceptions import ContentFilterError, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CompactionPart,
@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     sanitize_messages,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -150,7 +151,8 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
         captured.append([ModelMessagesTypeAdapter.dump_json([message]) for message in messages])
         request = messages[-1]
         assert isinstance(request, ModelRequest)
-        assert request.instruction_parts == info.model_request_parameters.instruction_parts
+        # History keeps the content; only the request the model receives carries the rendering.
+        assert [part.content for part in request.instruction_parts or []] == ['A']
         assert [part.content for part in request.parts if isinstance(part, UserPromptPart)][:2] == [
             'Continue.',
             'Hook context.',
@@ -183,7 +185,12 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
         )
 
     assert updates == snapshot([[], ['B'], ['B'], ['B', 'C']])
-    assert prefixes[0] is not None and prefixes[0].endswith('\n\nA')
+    assert prefixes[0] == snapshot("""\
+<context id="agent:state">
+A
+</context>
+A later <context> element with the same id replaces this one and stays in effect until replaced again.\
+""")
     assert prefixes == [prefixes[0]] * 4
     for previous, current in zip(captured, captured[1:]):
         assert current[: len(previous)] == previous
@@ -255,8 +262,7 @@ async def test_instruction_updates_survive_fresh_agent_and_serialized_history(ca
     ]
     assert set(prefixes) == {prefixes[0]}
     assert prefixes[0] is not None
-    assert prefixes[0].startswith(f'Stable instructions.\n\nInstruction block {case.instruction_id!r}')
-    assert prefixes[0].endswith('\n\nA')
+    assert prefixes[0] == 'Stable instructions.\n\nA'
     assert evaluations == (['A', 'B', 'B', 'A', None, None, 'C'] if case.source in ('agent', 'capability') else [])
     assert sum(isinstance(m, ModelRequest) and m.instruction_baseline is not None for m in history) == 1
 
@@ -333,7 +339,7 @@ def test_instruction_updates_reject_missing_serialized_addresses(address: str | 
         )
 
 
-async def test_instruction_updates_preserve_unknown_serialized_addresses():
+async def test_instruction_updates_unknown_serialized_addresses_round_trip_and_rebaseline():
     baseline: dict[str, InstructionBaselineEntry] = {
         'plugin:two:state': InstructionBaselineEntry(index=1, part=InstructionPart(content='B', on_change='append')),
         'plugin:one:state': InstructionBaselineEntry(index=0, part=InstructionPart(content='A', on_change='append')),
@@ -372,20 +378,27 @@ async def test_instruction_updates_preserve_unknown_serialized_addresses():
     )
     restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
     assert restored == history
-    agent = Agent(TestModel(custom_output_text='ok'))
+    # A model renders a block's `<context id>` from the part's id, which a namespace this version doesn't
+    # know can't deserialize into, so continuing starts a new window instead of stating updates to
+    # blocks the prefix can't name.
+    agent = Agent(
+        TestModel(custom_output_text='ok'),
+        instructions=InstructionPart(content='Current', name='state', on_change='append'),
+    )
     result = await agent.run('Continue.', message_history=restored)
     request = result.new_messages()[0]
     assert isinstance(request, ModelRequest)
-    assert [(p.id, p.content) for p in request.parts if isinstance(p, InstructionDeltaPart)] == [
-        ('plugin:two:state', None),
-        ('plugin:one:state', None),
-    ]
-    assert request.instructions is not None
-    assert request.instructions.index('plugin:one:state') < request.instructions.index('plugin:two:state')
+    assert not any(isinstance(p, InstructionDeltaPart) for p in request.parts)
+    assert request.instructions == 'Current'
+    assert request.instruction_baseline is not None and list(request.instruction_baseline) == ['agent:state']
     assert isinstance(agent.model, Model)
-    projected = repr(agent.model.prepare_messages(result.all_messages()))
-    assert 'plugin:one:state' in projected and 'plugin:two:state' in projected
-    assert "Instruction block 'None'" not in projected
+    projected = agent.model.prepare_messages(result.all_messages())
+    assert not any(
+        isinstance(part, (SystemPromptPart, UserPromptPart)) and '<context' in str(part.content)
+        for message in projected
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
 
 
 async def test_instruction_updates_empty_baseline_keeps_other_block_positions():
@@ -404,8 +417,7 @@ async def test_instruction_updates_empty_baseline_keeps_other_block_positions():
     )
     request = second.new_messages()[0]
     assert isinstance(request, ModelRequest) and request.instructions is not None
-    assert request.instructions.startswith('Before\n\nInstruction block')
-    assert request.instructions.endswith('\n\nB\n\nAfter')
+    assert request.instructions == 'Before\n\nB\n\nAfter'
     assert not any(isinstance(part, InstructionDeltaPart) for part in request.parts)
 
 
@@ -425,13 +437,13 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
         result = await agent.run('Continue.', deps='C', message_history=history)
         request = result.new_messages()[0]
         assert isinstance(request, ModelRequest)
-        assert request.instructions is not None and request.instructions.endswith('\n\nC')
+        assert request.instructions == 'C'
         assert request.instruction_baseline is not None
         assert not any(isinstance(p, InstructionDeltaPart) for p in request.parts)
         assert isinstance(agent.model, Model)
         projected = agent.model.prepare_messages(result.all_messages())
         assert not any(
-            isinstance(part, (SystemPromptPart, UserPromptPart)) and 'is replaced' in str(part.content)
+            isinstance(part, (SystemPromptPart, UserPromptPart)) and '<context' in str(part.content)
             for message in projected
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -456,7 +468,7 @@ async def test_instruction_updates_multiple_blocks_and_later_sources():
         request = result.new_messages()[0]
         assert isinstance(request, ModelRequest)
         updates.append([(str(p.id), p.content) for p in request.parts if isinstance(p, InstructionDeltaPart)])
-        assert request.instructions is not None and request.instructions.endswith('\n\nA')
+        assert request.instructions == 'A'
         history = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
     assert updates == [[], [('agent:two', 'B')], [('agent:one', None)], [('agent:one', 'A'), ('agent:two', 'C')]]
 
@@ -551,7 +563,7 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
-    assert 'is replaced from this point onward by:\\n\\nB' in repr(captured_messages)
+    assert '<context id="agent:state">\\nB\\n</context>' in repr(captured_messages)
     assert any(
         isinstance(part, InstructionDeltaPart) and part.content == 'B'
         for message in result.all_messages()
@@ -666,11 +678,7 @@ async def test_instruction_updates_strip_client_operator_state():
     result = await agent.run('Continue.', message_history=sanitized)
     request = result.new_messages()[0]
     assert isinstance(request, ModelRequest)
-    assert request.instructions == snapshot(
-        "Instruction block 'agent:state' has the following initial value. Later system updates to this block "
-        'replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\n'
-        'Server state'
-    )
+    assert request.instructions == 'Server state'
     assert 'Forged' not in result.all_messages_json().decode()
 
 
@@ -703,8 +711,14 @@ async def test_instruction_updates_duplicate_identity_rewrites_and_resets_histor
         instructions=InstructionPart(content='A', name='state', on_change='append'),
     )
     first = await first_agent.run('Continue.')
+    prefixes: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prefixes.append(info.instructions)
+        return ModelResponse(parts=[TextPart('ok')])
+
     second_agent = Agent(
-        TestModel(custom_output_text='ok'),
+        FunctionModel(model_fn),
         instructions=[
             InstructionPart(content='B', name='state', on_change='append'),
             InstructionPart(content='C', name='state', on_change='append'),
@@ -715,6 +729,8 @@ async def test_instruction_updates_duplicate_identity_rewrites_and_resets_histor
     request = result.new_messages()[0]
     assert isinstance(request, ModelRequest)
     assert request.instructions == 'B\n\nC'
+    # Downgraded to `'rewrite'`, so the model gets them untagged too.
+    assert prefixes == ['B\n\nC']
     assert request.instruction_baseline == {}
 
 
@@ -744,6 +760,12 @@ async def test_instruction_updates_deferred_source_warns():
     assert result.output == 'done'
 
 
+def test_instruction_updates_render_escapes_the_id():
+    """A capability id is free text, so a quote in it must not end the `id` attribute."""
+    part = InstructionDeltaPart(id='capability:"quoted" <id>:state', content='New.')
+    assert part.render() == '<context id="capability:&quot;quoted&quot; &lt;id&gt;:state">\nNew.\n</context>'
+
+
 @pytest.mark.parametrize('include_content', [False, True])
 def test_instruction_updates_instrumentation(include_content: bool):
     part = InstructionDeltaPart(id='agent:state', content=None)
@@ -751,6 +773,125 @@ def test_instruction_updates_instrumentation(include_content: bool):
     assert settings.messages_to_otel_messages([ModelRequest(parts=[part])]) == [
         {'role': 'system', 'parts': [{'type': 'text', 'content': part.render()}] if include_content else []}
     ]
+
+
+def context_statements(messages: list[ModelMessage]) -> list[str]:
+    """The instruction updates a model received in the history tail, as system parts or `<system>`-wrapped user text."""
+    return [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, (SystemPromptPart, UserPromptPart))
+        and isinstance(part.content, str)
+        and '<context' in part.content
+    ]
+
+
+RENDERINGS: dict[bool, tuple[str, list[str]]] = {
+    True: (
+        'Stable.\n\n<context id="agent:state">\nA\n</context>\n'
+        'A later <context> element with the same id replaces this one.',
+        [
+            '<context id="agent:state">\nB\n</context>',
+            '<context id="agent:state">\nThis context has been withdrawn.\n</context>',
+        ],
+    ),
+    False: (
+        'Stable.\n\n<context id="agent:state">\nA\n</context>\n'
+        'A later <context> element with the same id replaces this one and stays in effect until replaced again.',
+        [
+            '<system><context id="agent:state">\nB\n</context></system>',
+            '<system><context id="agent:state">\n'
+            'This context has been withdrawn, and the withdrawal stays in effect until replaced again.\n'
+            '</context></system>',
+        ],
+    ),
+}
+"""The prefix and the update and withdrawal statements, on each side of `supports_inline_system_prompts`."""
+
+
+@pytest.mark.parametrize('inline_system', [True, False])
+async def test_instruction_updates_render_per_delivery_path(inline_system: bool):
+    """Pin the exact prefix and tail text on each side of `supports_inline_system_prompts`.
+
+    A unit test because the recorded tests assert the rendering only by substring; this pins every byte,
+    and that the prefix a model receives stays identical across the requests of a conversation.
+    """
+    prefixes: list[str | None] = []
+    tails: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prefixes.append(info.instructions)
+        tails.append(context_statements(messages))
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = Agent(
+        FunctionModel(model_fn, profile=ModelProfile(supports_inline_system_prompts=inline_system)),
+        deps_type=State,
+        instructions='Stable.',
+    )
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    history: list[ModelMessage] = []
+    for value in ['A', 'B', None]:
+        result = await agent.run('Continue.', deps=State(value), message_history=history)
+        history = result.all_messages()
+
+    prefix, tail = RENDERINGS[inline_system]
+    assert prefixes == [prefix] * 3
+    assert tails == [[], tail[:1], tail]
+    # History keeps only the content, so another model can render its own path from it.
+    assert [message.instructions for message in history if isinstance(message, ModelRequest)] == ['Stable.\n\nA'] * 3
+
+
+async def test_instruction_updates_fallback_members_render_their_own_path():
+    """Each `FallbackModel` member renders the same history for its own delivery path."""
+    seen: dict[bool, list[tuple[str | None, list[str]]]] = {True: [], False: []}
+
+    def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen[True].append((info.instructions, context_statements(messages)))
+        raise ModelHTTPError(503, 'inline')
+
+    def answering(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen[False].append((info.instructions, context_statements(messages)))
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FallbackModel(
+        FunctionModel(failing, profile=ModelProfile(supports_inline_system_prompts=True)),
+        FunctionModel(answering, profile=ModelProfile(supports_inline_system_prompts=False)),
+    )
+    agent = Agent(model, deps_type=State, instructions='Stable.')
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    history: list[ModelMessage] = []
+    for value in ['A', 'B']:
+        result = await agent.run('Continue.', deps=State(value), message_history=history)
+        history = result.all_messages()
+
+    for inline_system in [True, False]:
+        prefix, tail = RENDERINGS[inline_system]
+        assert seen[inline_system] == [(prefix, []), (prefix, tail[:1])]
+
+
+async def test_instruction_updates_direct_unaddressable_append_part_renders_as_written():
+    """A direct caller's append-mode part without an id has nothing to tag, so it goes out as written.
+
+    Not reachable through `Agent`, which downgrades such a part to `'rewrite'` with a warning first.
+    """
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(info.instructions or '')]))
+    response = await model.request(
+        [ModelRequest(parts=[UserPromptPart('Continue.')])],
+        None,
+        ModelRequestParameters(instruction_parts=[InstructionPart(content='As written.', on_change='append')]),
+    )
+    assert response.parts == [TextPart('As written.')]
 
 
 @dataclass(frozen=True)
@@ -775,14 +916,7 @@ WIRE_CASES: list[ParameterSet] = [
     pytest.param(
         WireCase('anthropic', 'claude-opus-5', True),
         id='anthropic-inline',
-        marks=[
-            pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
-            pytest.mark.xfail(
-                raises=ContentFilterError,
-                strict=True,
-                reason='Claude Opus 5 rejects these benign instruction updates with reasoning_extraction.',
-            ),
-        ],
+        marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
     ),
     pytest.param(
         WireCase('responses', 'gpt-5.6', True),
@@ -795,6 +929,39 @@ WIRE_CASES: list[ParameterSet] = [
         marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
     ),
 ]
+
+
+NEUTRAL_SENTENCE = 'A later <context> element with the same id replaces this one.'
+PERSISTENCE_SENTENCE = (
+    'A later <context> element with the same id replaces this one and stays in effect until replaced again.'
+)
+
+
+def wire_texts(value: object) -> list[str]:
+    """Every string in a captured request body, wherever the provider's schema puts it."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in wire_texts(item)]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, list):
+        return [text for item in value for text in wire_texts(item)]  # pyright: ignore[reportUnknownVariableType]
+    return []
+
+
+def wire_contains(body: object, text: str) -> bool:
+    return any(text in candidate for candidate in wire_texts(body))
+
+
+def expected_update(case: WireCase, instruction_id: str, content: str | None) -> str:
+    """The tail statement as each delivery path renders it."""
+    if content is None:
+        content = (
+            'This context has been withdrawn.'
+            if case.inline_system
+            else 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
+        )
+    element = f'<context id="{instruction_id}">\n{content}\n</context>'
+    return element if case.inline_system else f'<system>{element}</system>'
 
 
 @pytest.fixture
@@ -834,7 +1001,11 @@ def wire_model(
 async def test_instruction_updates_preserve_wire_prefix(
     case: WireCase, wire_model: Model, request_capture: RequestCapture, allow_model_requests: None, stream: bool
 ):
-    """Assert today's SDK payloads, including across fresh agents and JSON history round trips."""
+    """Assert today's SDK payloads, including across fresh agents and JSON history round trips.
+
+    Each turn asks about a different parcel: Claude Opus 5 refuses a conversation that repeats one user
+    prompt while its earlier reasoning is in context, whatever the instructions say.
+    """
     history: list[ModelMessage] = []
     prior_response_id: str | None = None
     instructions = (
@@ -842,7 +1013,15 @@ async def test_instruction_updates_preserve_wire_prefix(
         'Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.'
     )
     expected_updates = [False, True, False, True, True, True]
-    for index, value in enumerate(['A', 'B', 'B', 'A', None, 'C']):
+    prompts = [
+        'I have a box of books from the library donation drive. Where should it be routed?',
+        'Next up: a carton of ceramic mugs, marked fragile. Which warehouse?',
+        'This one is a bicycle frame, oversized. Where does it go?',
+        'An envelope with signed contracts. Routing?',
+        'A pallet of bottled water arrived at the dock. Where to?',
+        'Finally, a small parcel of replacement laptop batteries. Which warehouse?',
+    ]
+    for index, (value, prompt) in enumerate(zip(['A', 'B', 'B', 'A', None, 'C'], prompts)):
         cap = Capability[State](id='memory')
 
         @cap.instructions(name='state', on_change='append')
@@ -851,31 +1030,32 @@ async def test_instruction_updates_preserve_wire_prefix(
 
         agent = Agent(wire_model, deps_type=State, instructions=instructions, capabilities=[cap])
         if stream:
-            async with agent.run_stream(
-                'Where should this parcel go?', deps=State(value), message_history=history
-            ) as result:
+            async with agent.run_stream(prompt, deps=State(value), message_history=history) as result:
                 output = await result.get_output()
                 history = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
         else:
-            result = await agent.run('Where should this parcel go?', deps=State(value), message_history=history)
+            result = await agent.run(prompt, deps=State(value), message_history=history)
             output = result.output
             history = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
         assert output.strip() == (value or 'UNASSIGNED')
         body = request_capture.body(index=index)
         wire_messages = body['input' if case.provider == 'responses' else 'messages']
         assert isinstance(wire_messages, list)
-        if index:
+        if index == 0:
+            sentence = NEUTRAL_SENTENCE if case.inline_system else PERSISTENCE_SENTENCE
+            assert wire_contains(
+                body, f'<context id="capability:memory:state">\nSend parcels to warehouse A.\n</context>\n{sentence}'
+            )
+        else:
             prior = request_capture.body(index=index - 1)
             assert body.get('system') == prior.get('system')
             assert body.get('instructions') == prior.get('instructions')
+            if expected_updates[index]:
+                content = f'Send parcels to warehouse {value}.' if value is not None else None
+                assert wire_contains(wire_messages, expected_update(case, 'capability:memory:state', content))
             if case.continuation:
                 assert body['previous_response_id'] == prior_response_id
-                rendered = str(wire_messages)
-                assert rendered.count('is replaced from this point onward') + rendered.count('is withdrawn.') == (
-                    1 if expected_updates[index] else 0
-                )
-                if expected_updates[index] and value is not None:
-                    assert f'Send parcels to warehouse {value}.' in rendered
+                assert str(wire_messages).count('<context id=') == (1 if expected_updates[index] else 0)
             else:
                 previous_messages = prior['input' if case.provider == 'responses' else 'messages']
                 assert isinstance(previous_messages, list)
@@ -944,8 +1124,9 @@ async def test_instruction_updates_after_tool_mutation(
         assert second['previous_response_id'] == first_response.provider_response_id
     else:
         assert second_messages[: len(first_messages)] == first_messages
-    assert 'Todo status: done.' in str(second_messages)
-    assert 'is replaced from this point onward' in str(second_messages)
+    sentence = NEUTRAL_SENTENCE if case.inline_system else PERSISTENCE_SENTENCE
+    assert wire_contains(first, f'<context id="capability:todos:state">\nTodo status: pending.\n</context>\n{sentence}')
+    assert wire_contains(second_messages, expected_update(case, 'capability:todos:state', 'Todo status: done.'))
     assert any(
         isinstance(part, InstructionDeltaPart) and part.content == 'Todo status: done.'
         for message in history
@@ -1054,5 +1235,5 @@ async def test_instruction_updates_ui_keeps_operator_state_server_side(kind: str
     result = await agent.run('Continue.', message_history=sanitized)
     request = result.new_messages()[0]
     assert isinstance(request, ModelRequest)
-    assert request.instructions is not None and request.instructions.endswith('\n\nTrusted state.')
+    assert request.instructions == 'Trusted state.'
     assert request.instruction_baseline is not None

@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,101 +11,105 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '743'
+      - "601"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Process the todo.
-          type: text
-        role: user
-      model: claude-opus-5
-      stream: true
-      system:
-      - text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
-        type: text
-      - text: |-
-          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Todo status: pending.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Finish the pending todo.
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: finish_todo
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: Process the todo.
+            type: text
+        model: claude-opus-5
+        stream: true
+        system:
+        - type: text
+          text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        - type: text
+          text: |-
+            <context id="capability:todos:state">
+            Todo status: pending.
+            </context>
+            A later <context> element with the same id replaces this one.
+        tool_choice:
+          type: auto
+        tools:
+        - name: finish_todo
+          description: Finish the pending todo.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-72d564c3f7898882a5aeac2c8a6c4f1c-54ffdf34c9bfc68d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CepcVfJ3U1jHq2EPfXAP8","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":458,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"}}          }
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYPCnovCYDXsLAtTDm27","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":431,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}  }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'ll process"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'ll fin"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the pending todo now."}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ish the"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pending todo."} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
+        data: {"type":"content_block_stop","index":0         }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01Bf5o5mrkP4A5GxFmuFjoX7","name":"finish_todo","input":{},"caller":{"type":"direct"}}      }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_0116wXXyDsLV5JFJ7ct45gNN","name":"finish_todo","input":{},"caller":{"type":"direct"}}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}           }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1             }
+        data: {"type":"content_block_stop","index":1          }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":458,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":40,"output_tokens_details":{"thinking_tokens":0}}  }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":431,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":40,"output_tokens_details":{"thinking_tokens":0}}           }
 
         event: message_stop
-        data: {"type":"message_stop"      }
+        data: {"type":"message_stop"              }
 
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-length:
-      - '1890'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-cad41f5a68f1b855db1178215a399356-46b0eff3c7dbea5e-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    status:
-      code: 200
-      message: OK
+  recorded_at: 2026-09-29T20:45:02.270463+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -111,81 +118,70 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1280'
+      - "1065"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Process the todo.
-          type: text
-        role: user
-      - content:
-        - text: I'll process the pending todo now.
-          type: text
-        - id: toolu_01Bf5o5mrkP4A5GxFmuFjoX7
-          input: {}
-          name: finish_todo
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: Saved.
-            type: text
-          is_error: false
-          tool_use_id: toolu_01Bf5o5mrkP4A5GxFmuFjoX7
-          type: tool_result
-        role: user
-      - content:
-        - text: |-
-            Instruction block 'capability:todos:state' is replaced from this point onward by:
-
-            Todo status: done.
-          type: text
-        role: system
-      model: claude-opus-5
-      stream: true
-      system:
-      - text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
-        type: text
-      - text: |-
-          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
-
-          Todo status: pending.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Finish the pending todo.
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: finish_todo
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
     body:
-      string: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CepcVp8cAqyPVBPcYJyWZ","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":574,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":0,"inference_geo":"not_available"}}      }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"reasoning_extraction","explanation":"This request was blocked as it seems to violate Anthropic's Terms of Service restrictions on reverse engineering or duplicating model outputs. To learn more, visit https://www.anthropic.com/legal/commercial-terms. API integrators: you can reduce refusals for your users by configuring a fallback model — see https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback"}},"usage":{"input_tokens":574,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}        }
-
-        event: message_stop
-        data: {"type":"message_stop"  }
-
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: Process the todo.
+            type: text
+        - role: assistant
+          content:
+          - text: I'll finish the pending todo.
+            type: text
+          - id: toolu_0116wXXyDsLV5JFJ7ct45gNN
+            type: tool_use
+            name: finish_todo
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_0116wXXyDsLV5JFJ7ct45gNN
+            type: tool_result
+            content:
+            - text: Saved.
+              type: text
+            is_error: false
+        - role: system
+          content:
+          - text: |-
+              <context id="capability:todos:state">
+              Todo status: done.
+              </context>
+            type: text
+        model: claude-opus-5
+        stream: true
+        system:
+        - type: text
+          text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        - type: text
+          text: |-
+            <context id="capability:todos:state">
+            Todo status: pending.
+            </context>
+            A later <context> element with the same id replaces this one.
+        tool_choice:
+          type: auto
+        tools:
+        - name: finish_todo
+          description: Finish the pending todo.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
     headers:
       cache-control:
       - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1204'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -193,13 +189,36 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a504ef182a2c081810a509f2a473e47b-b620709307ac45aa-01
+      - 00-38be1596666a98afb5f7d91985f4cd4b-3426862ce35eb11b-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYPCvxoVesjhz5SByMYw","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":506,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"D"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ONE"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":506,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5,"output_tokens_details":{"thinking_tokens":0}}}
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-09-29T20:45:03.205112+00:00

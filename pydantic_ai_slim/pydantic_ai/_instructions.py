@@ -222,15 +222,21 @@ def update_instruction_history(
         # Unset parts preserve the recorded request text and end the structured append window.
         target.instruction_baseline = {} if baseline is not None else None
         return None
-    if any(str(part.id) in effective and part.on_change != 'append' for part in normalized):
-        # A changed policy or ambiguous identity can no longer address the old block safely.
+    if any(str(part.id) in effective and part.on_change != 'append' for part in normalized) or (
+        baseline is not None and any(entry.part.id is None for entry in baseline.values())
+    ):
+        # A changed policy or ambiguous identity can no longer address the old block safely, and
+        # neither can a baseline block from a source namespace this version doesn't know: models
+        # render its `<context id>` from the part's id, which didn't survive deserialization.
         # Rebaseline the window so its old deltas cannot override the rewritten prefix.
         baseline = None
         effective.clear()
         target.instruction_baseline = {}
     if baseline is None:
         if not any(part.on_change == 'append' for part in normalized):
-            return instructions
+            # `normalized`, not `instructions`: a block downgraded to `'rewrite'` above must not be
+            # rendered as an append-mode block.
+            return normalized
         baseline = {
             str(part.id): InstructionBaselineEntry(index=index, part=replace(part))
             for index, part in enumerate(normalized)
@@ -259,21 +265,10 @@ def update_instruction_history(
     prefix: list[InstructionPart] = [
         part for part in normalized if part.on_change != 'append' and str(part.id) not in tracked
     ]
-    for instruction_id, entry in sorted(baseline.items(), key=lambda item: item[1].index):
-        prefix.insert(
-            entry.index,
-            replace(
-                entry.part,
-                content=(
-                    f'Instruction block {instruction_id!r} has the following initial value. '
-                    'Later system updates to this block replace its entire value; follow the latest update, '
-                    'including a withdrawal, rather than this initial value.\n\n'
-                    f'{entry.part.content}'
-                ),
-            )
-            if entry.part.content
-            else entry.part,
-        )
+    # Parts keep only their content: each model renders the append-mode ones for its own delivery
+    # path in `Model.prepare_request`.
+    for entry in sorted(baseline.values(), key=lambda entry: entry.index):
+        prefix.insert(entry.index, entry.part)
     prefix = [part for part in prefix if part.content]
     target.instructions = InstructionPart.join(prefix)
     target.instruction_parts = prefix

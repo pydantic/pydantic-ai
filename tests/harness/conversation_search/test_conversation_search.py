@@ -871,7 +871,7 @@ class TestSearchScope:
         )
         rendered = await _search(_StubSource({'r1': history}), 'DELTATAIL')
         assert 'Found 1 match(es)' in rendered
-        assert "System: Instruction block 'agent:state' is replaced" in rendered
+        assert 'System: <context id="agent:state">' in rendered
         assert 'DELTATAIL' not in rendered.split(':\n\n', 1)[1]
 
     async def test_max_matches_and_context_lines_honored(self) -> None:

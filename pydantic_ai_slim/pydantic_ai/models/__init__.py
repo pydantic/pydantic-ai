@@ -71,6 +71,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _render_instruction_baseline,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -747,6 +748,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
             )
 
+        params = _render_append_blocks(params, inline_system=self.profile.get('supports_inline_system_prompts', False))
+
         # Append prompted_output_instructions to instruction_parts so models that use structured
         # instruction parts (for per-part system messages or cache placement) also get them.
         # Done here (after customize_request_parameters) so it uses the final resolved template.
@@ -834,11 +837,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 ),
                 default=0,
             )
+            # The same path choice as the prefix statement in `prepare_request`; on the fallback path
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            inline_system = self.profile.get('supports_inline_system_prompts', False)
             messages = [
                 replace(
                     message,
                     parts=[
-                        SystemPromptPart(content=part.render(), timestamp=message.timestamp or _utils.now_utc())
+                        SystemPromptPart(
+                            content=part.render(inline_system=inline_system),
+                            timestamp=message.timestamp or _utils.now_utc(),
+                        )
                         if isinstance(part, InstructionDeltaPart)
                         else part
                         for part in message.parts
@@ -2366,6 +2375,25 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _render_append_blocks(params: ModelRequestParameters, *, inline_system: bool) -> ModelRequestParameters:
+    """Render the prefix statement of each append-mode block for the model's delivery path.
+
+    History holds only the blocks' content, so each model renders its own path here, the same one its
+    later updates take in `prepare_messages`. A part without an id has nothing to tag and goes out as
+    written: agent history never holds one (it is downgraded to `'rewrite'` with a warning), but a
+    `before_model_request` hook or a direct caller can still supply one.
+    """
+    if not (parts := params.instruction_parts):
+        return params
+    rendered = [
+        _render_instruction_baseline(part, inline_system=inline_system)
+        if part.on_change == 'append' and part.id is not None
+        else part
+        for part in parts
+    ]
+    return replace(params, instruction_parts=rendered) if rendered != parts else params
 
 
 def _unprojected_instruction_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]

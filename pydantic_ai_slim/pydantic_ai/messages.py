@@ -2073,17 +2073,55 @@ class InstructionDeltaPart:
     part_kind: Literal['instruction-delta'] = 'instruction-delta'
     """Part type identifier, used as a discriminator for deserialization."""
 
-    def render(self) -> str:
-        """Render a full replacement for the provider's inline system instruction channel."""
-        if self.content is None:
-            return f'Instruction block {str(self.id)!r} is withdrawn. Its previous instructions no longer apply.'
-        return f'Instruction block {str(self.id)!r} is replaced from this point onward by:\n\n{self.content}'
+    def render(self, *, inline_system: bool = True) -> str:
+        """Render this change as a `<context>` element that replaces the block's earlier one.
+
+        Args:
+            inline_system: Whether the receiving model supports mid-conversation system messages, per its
+                profile's `supports_inline_system_prompts`. When `False`, the model gets this text as
+                `<system>`-tagged user text, and a withdrawal says that it stays in effect. Defaults to
+                `True` for callers with no model to ask, such as token estimates and search.
+        """
+        if self.content is not None:
+            content = self.content
+        elif inline_system:
+            content = 'This context has been withdrawn.'
+        else:
+            content = 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
+        return _context_element(self.id, content)
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Render the replacement in traces only when content capture is enabled."""
         return [_otel_messages.TextPart(type='text', content=self.render())] if settings.include_content else []
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _context_element(instruction_id: str, content: str) -> str:
+    """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces."""
+    return f'<context id="{html.escape(instruction_id)}">\n{content}\n</context>'
+
+
+def _render_instruction_baseline(part: InstructionPart, *, inline_system: bool) -> InstructionPart:  # pyright: ignore[reportUnusedFunction]
+    """Render an append-mode block's initial value as it appears in the request prefix.
+
+    The sentence after the element tells the model that a later
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] replaces it, and which sentence
+    depends on how that update arrives. A model that receives mid-conversation system content natively
+    gets a neutral one, because Claude Opus 5 refuses a prefix asserting that the update persists. A
+    model that gets the update `<system>`-wrapped in a user turn needs that assertion to keep following
+    the update on later turns.
+
+    History stores only the content, so each model renders its own prefix, and renders it identically
+    on every request.
+    """
+    assert part.id is not None
+    sentence = (
+        'A later <context> element with the same id replaces this one.'
+        if inline_system
+        else 'A later <context> element with the same id replaces this one and stays in effect until replaced again.'
+    )
+    return replace(part, content=f'{_context_element(str(part.id), part.content)}\n{sentence}')
 
 
 @dataclass(repr=False, kw_only=True)
