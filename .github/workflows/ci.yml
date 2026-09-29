@@ -733,16 +733,15 @@ jobs:
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }} \
               python -c 'pass'
             uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            uv_extra=(--no-sync)
+            uv_run=(--no-sync)
             runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
               --output "$COVERAGE_FILE.testmon" --)
           else
             unset COVERAGE_PROCESS_START
-            uv_extra=()
+            uv_run=(${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }})
             runner=(pytest)
           fi
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }} \
-            "${uv_extra[@]}" "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          uv run "${uv_run[@]}" "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
@@ -856,15 +855,13 @@ jobs:
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START=./pyproject.toml
             uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            uv_extra=(--no-sync)
             runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
               --output "$COVERAGE_FILE.testmon" --)
           else
             unset COVERAGE_PROCESS_START
-            uv_extra=()
             runner=(pytest)
           fi
-          uv run --no-sync "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec --splits 2 --group ${{ matrix.shard }}
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
