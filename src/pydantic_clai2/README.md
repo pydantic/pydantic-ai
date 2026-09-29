@@ -37,7 +37,7 @@ and commands start there. Commands get CLAI's environment minus LLM provider API
 keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools.
 
 Tool calls show a single-line summary followed by a blank line by default.
-Tool names are pink; their arguments and bullet markers are muted grey. Shell output, exit details and
+Tool and argument names are pink; argument values and bullet markers are muted grey. Shell output, exit details and
 log paths, grep results, and file diffs stay out of the terminal; the model still
 receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show detailed output again, or
@@ -53,6 +53,10 @@ log in, or run a prompt. Once the prompt is ready, a background thread imports
 them, so the first prompt usually finds them loaded; if it arrives sooner, it waits
 for the rest of those imports. Enabled plugins still load before the first prompt;
 their initialization contributes to startup time.
+An enabled plugin whose module is not installed, such as a built-in saved by another
+CLAI version, is skipped without a message; `/plugins list` shows why. Library
+`UserWarning`s are hidden so they do not break up the display; pass `-W default` to
+Python or set `PYTHONWARNINGS=default` to see them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
@@ -132,11 +136,14 @@ The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
 available. It runs in CLAI's working directory, with the terminal's input and output, so interactive programs and pagers work. CLAI
 reports `Done` or the exit code with the elapsed time. Ctrl-C interrupts the
-command and returns to the prompt. The command shares CLAI's process group, so
-every process it started receives the Ctrl-C from the terminal. If the shell
-itself has not exited 0.25 seconds later it is killed, as `subprocess.run`
-does. A program started by a compound command (`a; b`) that ignores Ctrl-C can
-outlive that shell. As at other times, a second Ctrl-C within two seconds exits
+command and returns to the prompt. On POSIX the command runs in its own session,
+so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
+`subprocess.run` waits) kills whatever is still running there, including
+background jobs and programs that ignore Ctrl-C. Only a process that detaches
+on purpose with `setsid()`, as daemons do, outlives the command. Without a
+controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
+or `ssh` password prompts, cannot read your input. On Windows the console
+delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
 CLAI. Neither the command nor its output is added to the conversation, and a
 bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
 order with other queued input. `/help` lists the syntax.
@@ -492,6 +499,20 @@ the model-aware request and thinking controls described below. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/add_model NAME` sets the model without the menu.
 
+CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
+missing from the Python CLAI runs on fails right away, naming the install command, instead
+of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+
+```bash
+pip install "pydantic-clai2[typesafe]"
+```
+
+From a pydantic-ai checkout, run CLAI with the extra instead:
+
+```bash
+uv run --package pydantic-clai2 --extra typesafe clai2
+```
+
 ### Model settings and custom parameters
 
 `/model_settings` opens a searchable list of added models. Enter configures a
@@ -642,7 +663,7 @@ repository.
 ```
 
 The keys are the field names from `/config show` (`model`, `request_limit`,
-`thinking`, `splash`, `shell_lines`, `grep_lines`, `smooth_seconds`) and are
+`thinking`, `splash`, `shell_lines`, `grep_lines`, `tool_arg_chars`, `smooth_seconds`) and are
 validated the same way as `/set`. A bad value stops startup with the file name
 and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
@@ -1110,8 +1131,10 @@ repeated CLAI heading. Intermediate text is flushed when a tool-call part begins
 before the tool's arguments finish streaming. Incomplete lines within a text part
 still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
-Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Long names
-are truncated to one terminal row. Completion activity remains in the footer
+Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
+without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
+muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
+changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
@@ -1417,9 +1440,9 @@ disabling it leaves the agent's original configuration in effect. Custom
 
 - [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)
 - [Capability events](https://pydantic.dev/docs/ai/capabilities/overview/)
-- [Code Puppy splash](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/splash.py)
-- [Code Puppy streaming](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/agents/event_stream_handler.py)
-- [Code Puppy command registry](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/command_line/command_registry.py)
+- [Code Puppy splash](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/splash.py)
+- [Code Puppy streaming](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/agents/event_stream_handler.py)
+- [Code Puppy command registry](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/command_line/command_registry.py)
 
 See `THIRD_PARTY_NOTICES.md` for attribution.
 

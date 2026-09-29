@@ -379,6 +379,7 @@ FileSystem(
     read_only=False,               # keep only READ_ONLY_TOOL_NAMES
     content_hashes=True,           # report hashes and accept expected_hash
     tools=DEFAULT_TOOL_NAMES,      # which tools to register (add 'list_files', 'grep')
+    max_retries=None,              # consecutive retries per tool before the run fails (None = the agent's budget)
 )
 ```
 

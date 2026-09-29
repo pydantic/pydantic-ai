@@ -16,7 +16,33 @@ from .menu_worker import menu_key
 
 CUSTOM = 'Type a value...'
 KEEP = 'Keep current'
+SAVE_AND_CLOSE = 'Save & close'
+SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
 _LIST_HINT = 'type to filter - Enter edit - R reset - Esc close'
+
+
+class _SaveAndClose:
+    """The value of the Save & close row; never a field key or a key name."""
+
+
+_CLOSE = _SaveAndClose()
+
+
+def save_and_close_item() -> MenuItem:
+    """The last row of every settings menu. Edits save as they happen, so choosing it only leaves."""
+    return MenuItem(SAVE_AND_CLOSE, value=_CLOSE)
+
+
+def is_save_and_close(item: MenuItem) -> bool:
+    """Whether `item` is the row built by `save_and_close_item`."""
+    return item.value is _CLOSE
+
+
+def picked(result: MenuResult) -> MenuItem | None:
+    """The chosen row, or `None` when the user left with Esc or the Save & close row."""
+    if result.cancelled or result.item is None or is_save_and_close(result.item):
+        return None
+    return result.item
 
 
 @dataclass(frozen=True)
@@ -82,9 +108,9 @@ def shown(value: JsonValue) -> str:
     return value if isinstance(value, str) else json.dumps(value)
 
 
-def first_error(exc: ValidationError) -> str:
+def first_error(exc: ValueError) -> str:
     """The first validation message, which is all a one-line hint has room for."""
-    return exc.errors()[0]['msg']
+    return exc.errors()[0]['msg'] if isinstance(exc, ValidationError) else str(exc)
 
 
 class FieldMenu:
@@ -97,8 +123,8 @@ class FieldMenu:
         self.rows = list(source.rows())
 
     def items(self) -> list[MenuItem]:
-        """One row per field with its current value."""
-        return [
+        """One row per field with its current value, then Save & close."""
+        fields = [
             MenuItem(
                 f'{row.label or row.key:<24} {row.display(self._source.current(row))}',
                 value=row.key,
@@ -106,9 +132,12 @@ class FieldMenu:
             )
             for row in self.rows
         ]
+        return [*fields, save_and_close_item()]
 
     def details(self, item: MenuItem) -> str:
         """The right-hand panel: current value, default, choices, description."""
+        if is_save_and_close(item):
+            return SAVE_AND_CLOSE_DETAILS
         row = self.row_for(item.value)
         if row is None:
             return ''
@@ -138,7 +167,7 @@ class FieldMenu:
             .searchable(self._searchable)
             .initial_index(min(initial, len(self.rows) - 1))
             .preview(self.details)
-            .on_key('R' if self._searchable else 'r', self.reset_marker)
+            .on_key('R' if self._searchable else 'r', self._reset_key)
             .footer_hint(_LIST_HINT if self._searchable else 'Enter edit - r reset - Esc back')
             .key_source(menu_key)
         )
@@ -149,6 +178,10 @@ class FieldMenu:
     def reset_marker(self, menu: object, item: MenuItem) -> MenuResult:
         """R: hand the row back to the loop tagged for reset."""
         return MenuResult(item=MenuItem(item.label, value=_Reset(str(item.value))))
+
+    def _reset_key(self, menu: object, item: MenuItem) -> MenuResult | None:
+        """R on Save & close has nothing to reset, so the list stays open."""
+        return None if is_save_and_close(item) else self.reset_marker(menu, item)
 
     def build_choices(self, row: FieldRow) -> Menu:
         """A picker for fields with a fixed set of values, plus typing your own."""
@@ -234,14 +267,14 @@ TERMINAL = Runners()
 def run_flow(
     menu: FieldMenu, runners: Runners = TERMINAL, *, submenus: dict[str, Callable[[], list[str]]] | None = None
 ) -> list[str]:
-    """List, edit, back to the list, until Esc. Returns the messages to show afterwards."""
+    """List, edit, back to the list, until Esc or Save & close. Returns the messages to show afterwards."""
     messages: list[str] = []
     cursor = 0
     while True:
-        result = runners.run_list(menu.build(cursor))
-        if result.cancelled or result.item is None:
+        item = picked(runners.run_list(menu.build(cursor)))
+        if item is None:
             return messages
-        value = result.item.value
+        value = item.value
         if isinstance(value, _Reset):
             row = menu.row_for(value.key)
             if row is not None:
