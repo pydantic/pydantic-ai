@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import threading
 import warnings
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
@@ -39,7 +41,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
-from pydantic_ai.profiles import _max_cache_point_ttl  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.profiles import ModelProfile, _expected_cache_retention  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
@@ -56,7 +58,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
-    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
@@ -73,22 +75,90 @@ def _cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
     return cache_read_tokens / input_tokens if input_tokens else 0.0
 
 
-def _prompt_cache_retention(model: Model) -> timedelta | None:
-    """The model's documented prompt-cache retention window, or `None` when it can't be determined."""
+def _cache_retention(request_context: ModelRequestContext) -> timedelta | None:
+    """How long the provider is expected to keep this request's cached prefix, or `None` when unknown.
+
+    The retention the request's settings ask for, else the provider's documented default, extended by any
+    cache points in the history -- the same boundary `prompt_cache_outlook` predicts with.
+    """
+    model = request_context.model
+    profile: ModelProfile | None
     try:
-        return model.profile.get('default_cache_retention')
+        profile = model.profile
     except NotImplementedError:
         # `FallbackModel` has no profile of its own: it resolves a model per request and applies that
         # model's profile during dispatch, and the resolved model isn't reachable from here — the
         # response only carries its provider and model *names*. Without a retention window the
         # collapse is classified `unknown` rather than failing an otherwise successful run.
-        return None
+        profile = None
+    return _expected_cache_retention(
+        request_context.messages,
+        profile=profile,
+        retention=model.resolve_cache_retention(request_context.model_settings),
+    )
+
+
+_CacheKey: TypeAlias = tuple[str | None, str | None]
+"""A response's `(provider_name, model_name)`: which provider cache its tokens came from."""
 
 
 @dataclass
 class _CacheMark:
     established_tokens: int
     last_seen: datetime
+
+
+_CacheMarks: TypeAlias = dict[_CacheKey, _CacheMark]
+
+
+class _ConversationCacheMarkStore:
+    """Process-wide cache marks, keyed by `RunContext.conversation_id`.
+
+    The first request of a run that continues a conversation re-sends the prefix the previous run
+    cached, so that is where a moved prefix most often shows. Judging it needs the previous run's marks,
+    and the `Instrumentation` capability can't carry them: the one `Agent(instrument=...)` and
+    `Agent.instrument_all()` inject is built afresh for every run. Conversation ids are unique, and a
+    history serialized and loaded back carries its id along, so a process-wide store keyed by them
+    serves every way of running an agent.
+
+    Memory is bounded twice over: conversations are kept in least-recently-updated order, and the oldest
+    are forgotten once idle for longer than any provider documents keeping a cache, or once there are
+    more than `max_conversations`. Forgetting one only loses the chance to report a collapse the
+    provider's cache expiry already explains. A conversation's marks stay bound to the runs using them,
+    and go back in the store on their next update.
+    """
+
+    max_conversations: ClassVar[int] = 4096
+    horizon: ClassVar[timedelta] = timedelta(hours=24)
+    """The longest documented prompt-cache retention (OpenAI's extended retention)."""
+
+    def __init__(self) -> None:
+        self._conversations: OrderedDict[str, tuple[datetime, _CacheMarks]] = OrderedDict()
+        # Runs on different threads (each with its own event loop) can share the store.
+        self._lock = threading.Lock()
+
+    def get(self, conversation_id: str | None) -> _CacheMarks:
+        """The conversation's marks; a new, unstored set for a new conversation or a run without one."""
+        with self._lock:
+            stored = self._conversations.get(conversation_id) if conversation_id is not None else None
+        return stored[1] if stored is not None else {}
+
+    def update(self, conversation_id: str | None, marks: _CacheMarks, now: datetime) -> None:
+        """Record that the conversation's marks were updated at `now`, forgetting stale conversations."""
+        if conversation_id is None:
+            return
+        with self._lock:
+            conversations = self._conversations
+            conversations[conversation_id] = (now, marks)
+            conversations.move_to_end(conversation_id)
+            while (
+                len(conversations) > self.max_conversations
+                or now - next(iter(conversations.values()))[0] > self.horizon
+            ):
+                conversations.popitem(last=False)
+
+
+_conversation_cache_marks = _ConversationCacheMarkStore()
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -114,7 +184,9 @@ class Instrumentation(AbstractCapability[Any]):
     `pydantic_ai.cache.collapse_reason` attributes. Collapses are classified as
     `unexpected`, `ttl-expired`, `unknown`, or `unreported`; only `unexpected` collapses
     emit a `pydantic_ai.cache.collapse` span event, so the event means the cacheable
-    prefix moved while it should still have been warm.
+    prefix moved while it should still have been warm. The established prefix is tracked
+    per conversation and per provider and model, so the first request of a run that
+    continues a conversation is judged against what the previous run cached.
     """
 
     _safe_at_runtime: ClassVar[bool] = True
@@ -159,9 +231,9 @@ class Instrumentation(AbstractCapability[Any]):
     """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`).
     `for_run`'s `replace(self)` re-runs the factory, so each run starts with an empty cache
     that's discarded when the run ends."""
-    _cache_marks: dict[tuple[str | None, str | None], _CacheMark] = field(
-        default_factory=lambda: {}, repr=False, init=False
-    )
+    _conversation_id: str | None = field(default=None, repr=False, init=False)
+    _cache_marks: _CacheMarks = field(default_factory=dict[_CacheKey, _CacheMark], repr=False, init=False)
+    """This run's conversation's cache marks, shared with its other runs (see `_ConversationCacheMarkStore`)."""
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
@@ -225,8 +297,8 @@ class Instrumentation(AbstractCapability[Any]):
         # Usage this run's span is accountable for, credited by `_usage_attribution` for as long as
         # the span is open in `wrap_run`; see `_run_span_end_attributes`.
         inst._run_usage = RunUsage()
-        # `replace` is shallow, so mutable per-run state must be reset explicitly.
-        inst._cache_marks = {}
+        inst._conversation_id = ctx.conversation_id
+        inst._cache_marks = _conversation_cache_marks.get(ctx.conversation_id)
         return inst
 
     # ------------------------------------------------------------------
@@ -453,6 +525,7 @@ class Instrumentation(AbstractCapability[Any]):
             # a stale high-water mark on every later request.
             updated_established = read + write if collapsed else max(established, read + write)
             self._cache_marks[key] = _CacheMark(established_tokens=updated_established, last_seen=now)
+            _conversation_cache_marks.update(self._conversation_id, self._cache_marks, now)
         # An unreported response tells us nothing about the provider's copy of the prefix — it may
         # still be sitting there, aging toward its TTL — so the mark and its idle clock stay put.
 
@@ -481,11 +554,9 @@ class Instrumentation(AbstractCapability[Any]):
             # re-sent uncached either way, so the waste is real and reported, but the cause isn't
             # knowable from usage alone, so this never alerts.
             reason = 'unreported'
-        elif (retention := _prompt_cache_retention(request_context.model)) is None:
+        elif (retention := _cache_retention(request_context)) is None:
             reason = 'unknown'
         else:
-            if (cache_point_ttl := _max_cache_point_ttl(request_context.messages)) is not None:
-                retention = max(retention, cache_point_ttl)
             assert mark is not None  # a collapse requires an established mark
             reason = 'ttl-expired' if now - mark.last_seen > retention else 'unexpected'
         span.set_attribute('pydantic_ai.cache.collapse_reason', reason)

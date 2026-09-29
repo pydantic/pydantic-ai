@@ -7,12 +7,17 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from pytest_mock import MockerFixture
 
-from pydantic_ai import Agent, CachePoint, ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai import Agent, CachePoint, ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.capabilities.instrumentation import (
+    Instrumentation,
+    _CacheMark,  # pyright: ignore[reportPrivateUsage]
+    _ConversationCacheMarkStore,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import try_import
@@ -323,3 +328,272 @@ def test_fallback_model_collapse_is_classified_not_raised() -> None:
         'pydantic_ai.cache.collapse_reason': 'unknown',
     }
     assert not spans[-1].events
+
+
+# ---- Cache marks across the runs of a conversation ---------------------------------------
+
+
+class ConversationModel(FunctionModel):
+    """Serves a queue of cache usages, one per request, across any number of runs."""
+
+    def __init__(self, *, retention: timedelta | None = timedelta(hours=1), requested: timedelta | None = None):
+        super().__init__(
+            self._respond, model_name='cache-model', profile=ModelProfile(default_cache_retention=retention)
+        )
+        self.usages: list[CacheUsage] = []
+        self.requested = requested
+        self.resolved_settings: list[ModelSettings | None] = []
+
+    def _respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = self.usages.pop(0)
+        return ModelResponse(
+            parts=[TextPart('done')],
+            usage=RequestUsage(
+                input_tokens=usage.input_tokens, cache_read_tokens=usage.read, cache_write_tokens=usage.write
+            ),
+            provider_name=usage.provider_name,
+        )
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        self.resolved_settings.append(model_settings)
+        return self.requested
+
+
+def conversation_agent(model: ConversationModel) -> tuple[Agent, InMemorySpanExporter]:
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    agent = Agent(
+        model,
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False))
+        ],
+    )
+    return agent, exporter
+
+
+def chat_cache_attributes(exporter: InMemorySpanExporter) -> list[dict[str, object]]:
+    return [cache_attributes(span) for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
+
+
+COLLAPSED_ON_CONTINUATION = {
+    'pydantic_ai.cache.hit_ratio': 0.05,
+    'pydantic_ai.cache.established_tokens': 100,
+    'pydantic_ai.cache.collapsed': True,
+    'pydantic_ai.cache.wasted_tokens': 1300,
+    'pydantic_ai.cache.collapse_reason': 'unexpected',
+}
+
+
+def test_collapse_on_first_request_of_continued_conversation() -> None:
+    """The next turn re-sends what the previous one cached, so its first request is judged against the
+    previous run's mark: a run keeping marks to itself would see a fresh establish here (issue #7900)."""
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400)]
+    first = agent.run_sync('first turn')
+    model.usages = [CacheUsage(read=100)]
+    second = agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert second.conversation_id == first.conversation_id
+    assert chat_cache_attributes(exporter)[-1] == COLLAPSED_ON_CONTINUATION
+    chat_span = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')][-1]
+    assert [event.name for event in chat_span.events] == ['pydantic_ai.cache.collapse']
+
+
+def test_collapse_on_continuation_from_serialized_history() -> None:
+    """History serialized and loaded back carries its conversation id, so it continues the same marks."""
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400)]
+    first = agent.run_sync('first turn')
+    history = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('second turn', message_history=history)
+
+    assert chat_cache_attributes(exporter)[-1] == COLLAPSED_ON_CONTINUATION
+
+
+def test_new_conversation_starts_from_a_clean_mark() -> None:
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400)]
+    agent.run_sync('first conversation')
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('second conversation')
+
+    assert chat_cache_attributes(exporter)[-1] == {
+        'pydantic_ai.cache.hit_ratio': 0.05,
+        'pydantic_ai.cache.established_tokens': 100,
+    }
+
+
+def test_marks_are_shared_by_injected_instrumentation() -> None:
+    """`Agent(instrument=...)` builds its `Instrumentation` afresh for every run, so the marks can't live on it."""
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    model = ConversationModel()
+    agent = Agent(model)
+    agent.instrument = InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
+
+    model.usages = [CacheUsage(write=1400)]
+    first = agent.run_sync('first turn')
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert chat_cache_attributes(exporter)[-1] == COLLAPSED_ON_CONTINUATION
+
+
+def test_continuation_after_cache_expiry_is_ttl_expired(mocker: MockerFixture) -> None:
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    mocker.patch('pydantic_ai._utils.now_utc', side_effect=[t0, t0 + timedelta(minutes=30)])
+    model = ConversationModel(retention=timedelta(minutes=5))
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400)]
+    first = agent.run_sync('first turn')
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert chat_cache_attributes(exporter)[-1]['pydantic_ai.cache.collapse_reason'] == 'ttl-expired'
+
+
+@pytest.mark.parametrize(
+    ('retention', 'requested', 'reason'),
+    [
+        # Settings that request nothing leave the provider's default in place.
+        (timedelta(minutes=5), None, 'ttl-expired'),
+        # Retention requested by the settings replaces the default, both ways.
+        (timedelta(minutes=5), timedelta(hours=1), 'unexpected'),
+        (timedelta(hours=1), timedelta(minutes=5), 'ttl-expired'),
+        (None, timedelta(hours=1), 'unexpected'),
+        (None, None, 'unknown'),
+    ],
+)
+def test_collapse_classified_with_resolved_retention(
+    mocker: MockerFixture, retention: timedelta | None, requested: timedelta | None, reason: str
+) -> None:
+    """Classification uses `Model.resolve_cache_retention()` for the request's settings, falling back to
+    the profile's `default_cache_retention`."""
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    mocker.patch('pydantic_ai._utils.now_utc', side_effect=[t0, t0 + timedelta(minutes=30)])
+    model = ConversationModel(retention=retention, requested=requested)
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400)]
+    first = agent.run_sync('first turn')
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('second turn', message_history=first.all_messages(), model_settings={'temperature': 0.5})
+
+    assert chat_cache_attributes(exporter)[-1]['pydantic_ai.cache.collapse_reason'] == reason
+    # The resolver sees the settings the collapsing request was made with.
+    assert model.resolved_settings[-1] == {'temperature': 0.5}
+
+
+def test_idle_conversations_are_forgotten(mocker: MockerFixture) -> None:
+    """A conversation idle past the longest documented cache retention is dropped, bounding memory."""
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    mocker.patch(
+        'pydantic_ai._utils.now_utc',
+        side_effect=[t0, t0 + timedelta(hours=25), t0 + timedelta(hours=25)],
+    )
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400)]
+    first = agent.run_sync('first turn')
+    # Any later update sweeps the conversations that went idle before it.
+    model.usages = [CacheUsage(write=1400)]
+    agent.run_sync('another conversation')
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert 'pydantic_ai.cache.collapsed' not in chat_cache_attributes(exporter)[-1]
+
+
+def test_least_recently_updated_conversations_are_forgotten(mocker: MockerFixture) -> None:
+    mocker.patch.object(_ConversationCacheMarkStore, 'max_conversations', 1)
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400)]
+    first = agent.run_sync('first turn')
+    model.usages = [CacheUsage(write=1400)]
+    agent.run_sync('another conversation')
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert 'pydantic_ai.cache.collapsed' not in chat_cache_attributes(exporter)[-1]
+
+
+def test_recently_updated_conversation_outlives_older_ones(mocker: MockerFixture) -> None:
+    """Forgetting goes by the last update, not by when a conversation was first seen."""
+    mocker.patch.object(_ConversationCacheMarkStore, 'max_conversations', 2)
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400)]
+    first = agent.run_sync('first turn')
+    model.usages = [CacheUsage(write=1400)]
+    agent.run_sync('another conversation')
+    model.usages = [CacheUsage(read=1400)]
+    second = agent.run_sync('second turn', message_history=first.all_messages())
+    model.usages = [CacheUsage(write=1400)]
+    agent.run_sync('yet another conversation')
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('third turn', message_history=second.all_messages())
+
+    assert chat_cache_attributes(exporter)[-1] == COLLAPSED_ON_CONTINUATION
+
+
+def test_marks_forgotten_mid_run_are_kept_by_the_run(mocker: MockerFixture) -> None:
+    """A run keeps judging against its conversation's marks even if the store forgot them meanwhile,
+    and puts them back, so the next run of the conversation still sees them."""
+    mocker.patch.object(_ConversationCacheMarkStore, 'max_conversations', 1)
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+    other_model = ConversationModel()
+    other = Agent(other_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    @agent.tool_plain
+    async def run_another_conversation() -> str:
+        other_model.usages = [CacheUsage(write=1400)]
+        await other.run('another conversation')
+        return 'done'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        response = ConversationModel._respond(model, messages, info)  # pyright: ignore[reportPrivateUsage]
+        if len(messages) == 1:
+            response.parts = [ToolCallPart('run_another_conversation', {}, tool_call_id='call-1')]
+        return response
+
+    model.function = respond
+    # The collapse re-baselines the mark to what the collapsing request established.
+    model.usages = [CacheUsage(write=1400), CacheUsage(read=100, write=1300)]
+    first = agent.run_sync('first turn')
+    assert chat_cache_attributes(exporter)[-1] == {
+        'pydantic_ai.cache.hit_ratio': 0.05,
+        'pydantic_ai.cache.established_tokens': 1400,
+        'pydantic_ai.cache.collapsed': True,
+        'pydantic_ai.cache.wasted_tokens': 1300,
+        'pydantic_ai.cache.collapse_reason': 'unexpected',
+    }
+
+    model.usages = [CacheUsage(read=100)]
+    agent.run_sync('second turn', message_history=first.all_messages())
+    assert chat_cache_attributes(exporter)[-1] == COLLAPSED_ON_CONTINUATION
+
+
+def test_marks_without_a_conversation_are_not_stored() -> None:
+    """A run without a conversation id has nothing to share its marks with, so they stay private to it."""
+    store = _ConversationCacheMarkStore()
+    marks = store.get(None)
+    marks[('test', 'cache-model')] = _CacheMark(established_tokens=1400, last_seen=datetime.now(timezone.utc))
+    store.update(None, marks, datetime.now(timezone.utc))
+
+    assert store.get(None) == {}
+    assert not store._conversations  # pyright: ignore[reportPrivateUsage]

@@ -266,7 +266,7 @@ Instrumented agent runs report prompt-cache health without additional configurat
 | Attribute | Description |
 |-----------|-------------|
 | `pydantic_ai.cache.hit_ratio` | Fraction of input tokens read from the prompt cache, on model-request spans and on agent-run spans with cache reads. |
-| `pydantic_ai.cache.established_tokens` | The cached-prefix size later requests are judged against, for the response's provider and model. It grows as the prefix does, and drops to whatever the current request established after a collapse, so an intentional bust is reported once rather than against a stale high-water mark. |
+| `pydantic_ai.cache.established_tokens` | The cached-prefix size later requests are judged against, for the conversation and the response's provider and model. It grows as the prefix does, and drops to whatever the current request established after a collapse, so an intentional bust is reported once rather than against a stale high-water mark. |
 | `pydantic_ai.cache.collapsed` | `true` when a sufficiently large established prefix falls below half its previous size. |
 | `pydantic_ai.cache.wasted_tokens` | Previously established tokens that were not read after a collapse. |
 | `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl-expired`, `unknown`, or `unreported`. |
@@ -282,9 +282,11 @@ Only an `unexpected` collapse — one that happens while the provider's document
 
 A response reporting neither cache reads nor writes is ambiguous: on providers that report cache writes (Anthropic, Bedrock) it means the cache wasn't engaged for that request — caching disabled, or a prompt below the provider's minimum cacheable size — while on providers that only report reads (OpenAI's implicit caching) it is what a full cache miss looks like. The established prefix was re-sent uncached either way, so the collapse and its wasted tokens are recorded as `unreported`, but the cause can't be determined from usage alone, so no event is emitted. Before anything has been cached, such responses are ignored entirely.
 
+The established prefix is tracked per [conversation](message-history.md#correlating-runs-with-run_id-and-conversation_id), not per run, so a run that continues a conversation via `message_history` (including history that was serialized and loaded back) is judged against what the previous run cached. That is where a moved prefix most often shows: the first request of the next turn re-sends the prefix the previous turn cached, and anything that rewrote history in between — a compaction, a memory or todo write — makes it miss. The marks are kept in the process's memory: a conversation's are forgotten once it has been idle for longer than any provider keeps a cache (24 hours), or when more than 4,096 conversations have been active more recently.
+
 Model switches never register as collapses: the established prefix is tracked per provider and model, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover starts a fresh mark, and switching back is judged against the original one.
 
-Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend the provider's documented retention window; when the provider has no documented retention, collapses stay `unknown` even if cache points carry TTLs. Request-level retention settings such as [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] are not yet reflected in the classification, so a collapse within an extended window may be reported as `ttl-expired` rather than `unexpected`.
+The retention window is the one the request's settings ask for, such as `anthropic_cache='1h'` or [`openai_prompt_cache_retention='24h'`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention], as resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], or else the provider's documented [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]. Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend it; when there is no known retention, collapses stay `unknown` even if cache points carry TTLs.
 
 ### Emitted metrics
 
