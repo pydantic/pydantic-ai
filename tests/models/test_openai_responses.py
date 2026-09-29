@@ -14667,6 +14667,39 @@ async def test_openai_responses_compact_non_json_response_body_raises_model_api_
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
 
 
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_openai_responses_stream_non_json_chunk_raises_model_api_error(allow_model_requests: None):
+    """A streamed event the SDK can't decode as JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a stream on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+    content = (
+        b'event: response.output_text.delta\n'
+        b'data: {"type":"response.output_text.delta","item_id":"msg_001","output_index":0,"content_index":0,'
+        b'"delta":"Hello","sequence_number":0,"logprobs":[]}\n\n'
+        b'event: response.output_text.delta\n'
+        b'data: {not json\n\n'
+    )
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
 async def test_openai_responses_stream_mcp_call_invalid_arguments_is_not_mapped(allow_model_requests: None):
     """Only the SDK's own body decoding maps to `ModelAPIError`: a malformed MCP `arguments` string in a well-formed
     stream is parsed by our event processing, so its `json.JSONDecodeError` still surfaces as is.

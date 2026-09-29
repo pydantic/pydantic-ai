@@ -261,7 +261,8 @@ _ChunkT = TypeVar('_ChunkT')
 class _MapStreamDecodeErrors(Generic[_ChunkT]):
     """Apply `_map_decode_errors` to the SDK decoding each chunk, but not to the code consuming it.
 
-    A plain iterator rather than an async generator, so an abandoned stream leaves nothing for the event loop to finalize.
+    A plain iterator rather than an async generator, so it adds no generator for the event loop to finalize when a stream
+    is abandoned.
     """
 
     def __init__(self, stream: AsyncIterable[_ChunkT], model_name: str):
