@@ -16377,9 +16377,9 @@ async def test_forced_stream_request_handles_model_response_from_responses_creat
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, bool]:
+    ) -> ModelResponse:
         assert stream is True
-        return returned_response, False
+        return returned_response
 
     monkeypatch.setattr(model, '_responses_create', mock_responses_create)
 
@@ -16412,9 +16412,9 @@ async def test_request_stream_handles_model_response_from_responses_create(
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, bool]:
+    ) -> ModelResponse:
         assert stream is True
-        return returned_response, False
+        return returned_response
 
     monkeypatch.setattr(model, '_responses_create', mock_responses_create)
 
@@ -16480,8 +16480,8 @@ async def test_request_stream_model_response_with_parts(allow_model_requests: No
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, bool]:
-        return returned_response, False
+    ) -> ModelResponse:
+        return returned_response
 
     monkeypatch.setattr(model, '_responses_create', mock_responses_create)
 
