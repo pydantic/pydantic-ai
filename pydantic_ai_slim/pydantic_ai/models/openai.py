@@ -2350,6 +2350,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
             yield sr
 
+    def _process_provider_details(self, response: responses.Response) -> dict[str, Any] | None:
+        """Hook that maps a Responses API response to provider details.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` to apply custom mappings.
+        """
+        return None
+
     def _process_response(  # noqa: C901
         self,
         response: responses.Response,
@@ -2526,6 +2533,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
             provider_details['service_tier'] = response.service_tier
+
+        # allow subclasses to add provider details; built-in keys keep priority
+        extra = self._process_provider_details(response) or {}
+        if extra:
+            provider_details = {**extra, **provider_details}
 
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:

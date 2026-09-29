@@ -17534,3 +17534,118 @@ async def test_codex_incomplete_response(allow_model_requests: None, stream: boo
     assert kwargs['prompt_cache_key'] == 'conv-test'
     assert 'temperature' not in kwargs
     assert 'top_p' not in kwargs
+
+
+async def test_responses_provider_details_hook_none_leaves_builtins(allow_model_requests: None):
+    """A default `_process_provider_details` hook leaves built-in provider details untouched."""
+
+    class NoneHookModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return None
+
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = NoneHookModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    model_response = result.all_messages()[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details == {'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)}
+
+
+async def test_responses_provider_details_hook_merges(allow_model_requests: None):
+    """Provider details returned by the hook are merged with the built-in provider details."""
+
+    class MergingModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return response.model_extra
+
+    c = resp.Response.model_validate(
+        {
+            'id': '123',
+            'object': 'response',
+            'created_at': 1704067200,
+            'status': 'completed',
+            'model': 'gpt-4o-123',
+            'output': [
+                {
+                    'id': 'output-1',
+                    'role': 'assistant',
+                    'status': 'completed',
+                    'type': 'message',
+                    'content': [{'type': 'output_text', 'text': 'world', 'annotations': []}],
+                }
+            ],
+            'parallel_tool_calls': True,
+            'tool_choice': 'auto',
+            'tools': [],
+            'content_filters': {'hate': {'filtered': False}},
+        }
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = MergingModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    model_response = result.all_messages()[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details == {
+        'content_filters': {'hate': {'filtered': False}},
+        'finish_reason': 'completed',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+    }
+
+
+async def test_responses_provider_details_hook_builtin_wins_collisions(allow_model_requests: None):
+    """Built-in provider details win over colliding keys returned by the hook."""
+
+    class CollidingModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return {'finish_reason': 'custom'}
+
+    c = resp.Response.model_validate(
+        {
+            'id': '123',
+            'object': 'response',
+            'created_at': 1704067200,
+            'status': 'completed',
+            'model': 'gpt-4o-123',
+            'output': [
+                {
+                    'id': 'output-1',
+                    'role': 'assistant',
+                    'status': 'completed',
+                    'type': 'message',
+                    'content': [{'type': 'output_text', 'text': 'world', 'annotations': []}],
+                }
+            ],
+            'parallel_tool_calls': True,
+            'tool_choice': 'auto',
+            'tools': [],
+        }
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = CollidingModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    model_response = result.all_messages()[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details == {
+        'finish_reason': 'completed',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+    }
