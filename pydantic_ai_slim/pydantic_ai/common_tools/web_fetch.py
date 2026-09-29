@@ -53,6 +53,8 @@ _MAX_HTML_CONVERSION_COST = 20_000_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
+# Python caps decimal-to-int conversion at 4300 digits by default; keep this bounded if disabled.
+_MAX_HTML_ORDERED_START_DIGITS = 4_300
 
 
 class WebFetchResult(TypedDict):
@@ -206,7 +208,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     nodes: list[PageElement] = []
     contentful: set[int] = set()
     text_metrics: dict[int, tuple[int, int]] = {}
-    direct_link_text: dict[int, tuple[str, ...]] = {}
+    direct_link_text: dict[int, str] = {}
     anchors: list[tuple[Tag, int, bool]] = []
     videos: list[tuple[Tag, int, bool]] = []
     code_tags: list[tuple[Tag, int, bool]] = []
@@ -228,6 +230,8 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                     start_attr = node.parent.get('start')
                     start_digits = 1
                     if isinstance(start_attr, str) and start_attr.isdecimal():
+                        if len(start_attr) > _MAX_HTML_ORDERED_START_DIGITS:
+                            raise ModelRetry('the document is too complex')
                         start_digits = len(start_attr.lstrip('0')) or 1
                     marker_width = max(start_digits, len(str(len(node.parent.contents)))) + 3
                     indent_width += marker_width
@@ -266,7 +270,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
             converted_text = converter.process_text(node, parent_tags)
             text_metrics[id(node)] = (len(converted_text), converted_text.count('`'))
-            direct_link_text[id(node)] = (converted_text,)
+            direct_link_text[id(node)] = converted_text
             if converted_text.strip():
                 contentful.add(id(node))
             # Only converted lines need indentation; collapsed whitespace and escaped characters
@@ -302,17 +306,6 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                     descendant_td.add(node_id)
                 if node_id not in first_sources and child_id in first_sources:
                     first_sources[node_id] = first_sources[child_id]
-            if _upstream_get_conv_fn(converter, node.name) is None:
-                child_parts: list[str] = []
-                for child in node.contents:
-                    if isinstance(child, (Comment, Doctype)):
-                        continue
-                    parts = direct_link_text.get(id(child))
-                    if parts is None:
-                        break
-                    child_parts.extend(parts)
-                else:
-                    direct_link_text[node_id] = tuple(child_parts)
             text_metrics[node_id] = (text_length, backticks)
             if node.name in ('hr', 'q', 'td', 'th', 'tr') or (
                 node.name == 'video'
@@ -321,20 +314,69 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             ):
                 contentful.add(node_id)
 
+    link_probe_cost = 0
     for node, depth, noformat in anchors:
         href = node.get('href')
         if href and not noformat and any(id(child) in contentful for child in node.contents):
             title = str(node.get('title') or '')
-            candidate_parts: list[str] = []
+            autolink = False
             if not title:
-                for child in node.contents:
+                # Keep only direct child references. Flattening text fragments at every
+                # transparent ancestor would retain depth * fragment-count references.
+                link_nodes: list[PageElement] = [node]
+                for child in node.descendants:
                     if isinstance(child, (Comment, Doctype)):
                         continue
-                    anchor_parts = direct_link_text.get(id(child))
-                    if anchor_parts is None:
+                    cost += 8
+                    if cost > _MAX_HTML_CONVERSION_COST:
+                        raise ModelRetry('the document is too complex')
+                    if isinstance(child, Tag) and _upstream_get_conv_fn(converter, child.name) is not None:
                         break
-                    candidate_parts.extend(anchor_parts)
-            autolink = bool(candidate_parts) and ''.join(candidate_parts).replace(r'\_', '_') == href
+                    link_nodes.append(child)
+                else:
+                    rendered: dict[int, str] = {}
+                    for child in reversed(link_nodes):
+                        if isinstance(child, Tag):
+                            child_strings: list[str] = []
+                            for grandchild in child.contents:
+                                child_string = rendered.pop(id(grandchild), '')
+                                if child_string:
+                                    child_strings.append(child_string)
+                            if len(child_strings) > 1:
+                                # Match markdownify's collapse at *each* tag boundary. A flat
+                                # leaf join is different when a nested child is all newlines.
+                                parts = ['']
+                                for child_string in child_strings:
+                                    link_probe_cost += len(child_string)
+                                    if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
+                                        raise ModelRetry('the document is too complex')
+                                    leading_count = len(child_string) - len(child_string.lstrip('\n'))
+                                    trailing_count = len(child_string) - len(child_string.rstrip('\n'))
+                                    if leading_count == len(child_string):
+                                        trailing_count = 0
+                                    leading = child_string[:leading_count]
+                                    middle = child_string[leading_count : len(child_string) - trailing_count]
+                                    trailing = (
+                                        child_string[len(child_string) - trailing_count :] if trailing_count else ''
+                                    )
+                                    if parts[-1] and leading:
+                                        previous = parts.pop()
+                                        leading = '\n' * min(2, max(len(previous), len(leading)))
+                                    parts.extend((leading, middle, trailing))
+                                text = ''.join(parts)
+                                link_probe_cost += len(text)
+                                if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
+                                    raise ModelRetry('the document is too complex')
+                            else:
+                                text = child_strings[0] if child_strings else ''
+                            rendered[id(child)] = text
+                        else:
+                            rendered[id(child)] = direct_link_text[id(child)]
+                    candidate = rendered[id(node)]
+                    link_probe_cost += len(candidate)
+                    if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
+                        raise ModelRetry('the document is too complex')
+                    autolink = candidate.replace(r'\_', '_') == href
             if not autolink:
                 text_scan_cost += (depth - 16) * (len(str(href)) + len(title) + title.count('"'))
             if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:

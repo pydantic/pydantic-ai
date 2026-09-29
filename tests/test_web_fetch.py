@@ -796,6 +796,12 @@ class TestMarkdownConverter:
         _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
         assert content == '1. one\n2. two'
 
+    def test_oversized_ordered_list_start_is_bounded(self):
+        """A long decimal start must not fail Python's integer conversion limit."""
+        html = '<ol start="' + '1' * 5000 + '"><li>one</li></ol>'
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+
     @pytest.mark.parametrize('tag', ['blockquote', 'dd', 'li'])
     def test_deeply_nested_indentation_is_bounded(self, tag: str):
         """The converter rejects repeated indentation before intermediate Markdown expands."""
@@ -898,6 +904,47 @@ class TestMarkdownConverter:
         content = value[:4_500_000] + '<!--ignored-->' + value[4_500_000:]
         html = '<div>' * 300 + f'<a href="{value}"><span>{content}</span></a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
+
+    def test_wrapped_autolink_collapses_newlines_across_ignored_comment(self):
+        """Autolink detection matches markdownify's newline merging between child strings."""
+        left = 'x' * 4_500_000
+        right = 'x' * 4_499_999
+        href = left + '\n' + right
+        content = left + '\n<!--ignored-->\n' + right
+        html = '<div>' * 300 + f'<a href="{href}"><span>{content}</span></a>' + '</div>' * 300
+        assert _convert_html(html)[1] == f'<{href}>'
+
+    def test_wrapped_autolink_collapses_newline_only_child(self):
+        """A child containing only newlines is collapsed at its own tag boundary."""
+        href = 'x\ny'
+        html = '<div>' * 17 + f'<a href="{href}"><span>x<!--ignored-->\n\n<!--ignored-->y</span></a>'
+        html += '</div>' * 17
+        assert _convert_html(html)[1] == f'<{href}>'
+
+    def test_many_autolink_fragments_keep_conversion_bounded(self):
+        """Transparent ancestors do not duplicate every descendant text fragment."""
+        value = 'x' * 20_000
+        content = 'x<!--ignored-->' * 20_000
+        html = f'<a href="{value}">' + '<span>' * 300 + content + '</span>' * 300 + '</a>'
+        assert _convert_html(html)[1] == f'<{value}>'
+
+    def test_autolink_probe_node_budget(self):
+        """Many link descendants are charged even when they render as one autolink."""
+        value = 'x' * 200
+        html = '<div>' * 17 + f'<a href="{value}">' + 'x<!--ignored-->' * 200 + '</a>' + '</div>' * 17
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_CONVERSION_COST', 1500):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+
+    @pytest.mark.parametrize('budget', [50, 150, 250])
+    def test_autolink_probe_text_budget(self, budget: int):
+        """Rendered link text is bounded while inline context skips the leaf scan estimate."""
+        value = 'x' * 100
+        html = '<div>' * 16 + f'<h3><a href="{value}">' + 'x<!--ignored-->' * 100
+        html += '</a></h3>' + '</div>' * 16
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', budget):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
 
     def test_pre_padding_is_not_overcharged(self):
         """Preformatted whitespace is stripped before enclosing blocks scan it."""
