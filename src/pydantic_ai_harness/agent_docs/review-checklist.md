@@ -137,6 +137,11 @@ Checks:
 - Both the README and the unified doc are updated for any user-facing change
   (public class, params, defaults, tool names, extras, safety semantics). A
   change reflected in only one of them is a defect, not a follow-up.
+- The `pydantic-ai-harness` agent skill
+  (`pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`) reflects the change:
+  a new capability is listed in its routing table and covered in the matching
+  `references/` file, and a changed parameter, default, tool name, or extra is
+  updated there too.
 - **Harness blown-out parity.** A packaged harness (`Coder`, `Researcher`, ...)
   has its composition written out in full — default instructions and allowlists
   included, not imported — in its docs page's "Blown-out equivalent" AND in its

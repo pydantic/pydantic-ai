@@ -107,7 +107,13 @@ from ._openai_protocol import (
     with_realtime_query,
 )
 from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
-from ._utils import inject_trace_context, reconnect_with_backoff, require_pcm_audio, resolve_advertised_tools
+from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
+    inject_trace_context,
+    reconnect_with_backoff,
+    require_pcm_audio,
+    resolve_advertised_tools,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -121,6 +127,7 @@ from .codec import (
     RealtimeInput,
     SessionUsage,
     TextContext,
+    ToolCall,
     ToolResult,
     TruncateOutput,
 )
@@ -135,6 +142,8 @@ from .settings import RealtimeModelSettings, ReconnectPolicy
 _AUTO_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
 
 _OUTPUT_AUDIO_BUFFER_CLEAR_EVENT = 'output_audio_buffer.clear'
+_MAX_TRACKED_OUTPUT_ITEMS = 32
+"""How many recent output items a barge-in can still name for truncation: far more than can be queued for playback."""
 _OUTPUT_SPEECH_START_FRAME = 'output_audio_buffer.started'
 _OUTPUT_SPEECH_END_FRAMES = frozenset({'output_audio_buffer.stopped', 'output_audio_buffer.cleared'})
 
@@ -357,6 +366,18 @@ def _describe_close(ws: ClientConnection) -> str:
     return f'received {code} {reason}' if reason else f'received {code}'
 
 
+@dataclass
+class _ToolCallBatch:
+    """The tool calls one response made, which get a single `response.create` once all have outputs."""
+
+    unanswered: set[str] = field(default_factory=set[str])
+    """Calls whose output hasn't been sent yet."""
+    inputs: list[int] = field(default_factory=list[int])
+    """The `send()` inputs that carried the outputs, which the `response.create` is made for."""
+    done: bool = False
+    """Whether the response is done, so no further call can join."""
+
+
 class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
@@ -394,6 +415,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
+        self._gave_up = False
         self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
@@ -413,6 +435,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._inputs_received = 0
         self._deferred_response_inputs: list[int] = []
         self._response_request_inputs: tuple[int, ...] = ()
+        # Inputs that shared a `response.create` with an earlier one and so get no response of their own,
+        # reported to the session through `_take_merged_response_requests`.
+        self._merged_response_requests = 0
+        # The calls each response made, by response id, and the response each call came from: a response's
+        # tool results get a single `response.create`, once the response is done and every call has its
+        # output. Asking after each one had the model answer before its sibling calls had results.
+        self._tool_call_batches: dict[str, _ToolCallBatch] = {}
+        self._tool_call_responses: dict[str, str] = {}
         self._cancel_sent = False
         # Id of a response we cancelled (barge-in): the server keeps streaming a few straggler deltas
         # before its `response.done`, and mapping them would surface speech the user already interrupted.
@@ -425,6 +455,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._current_item_id: str | None = None
         self._current_content_index = 0
         self._generated_audio_bytes = 0
+        # Recent output items, with their audio content index and generated audio bytes, so a barge-in
+        # can truncate a reply the listener was still hearing after a newer one was generated. Bounded,
+        # and cleared once none of them can be playing (a reconnect, a sideband's playback end).
+        self._output_items: dict[str, tuple[int, int]] = {}
         self._output_audio_playing = False
         self._output_speech_clear_sent = False
 
@@ -445,6 +479,23 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None:
         """The call so far, when a session has offered it for replay on reconnect."""
         return self._message_history
+
+    @property
+    def _can_reconnect(self) -> bool:
+        return (
+            not self._gave_up
+            and self._dial is not None
+            and self._reconnect is not None
+            and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
+        )
+
+    @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        return True
+
+    def _take_merged_response_requests(self) -> int:
+        merged, self._merged_response_requests = self._merged_response_requests, 0
+        return merged
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
@@ -482,31 +533,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             text = content if isinstance(content, str) else content.text
             await self._send_text(text, respond=isinstance(content, str), input_index=input_index)
         elif isinstance(content, ToolResult):
-            # Normalize any follow-up content (downloading and re-encoding media) before the first
-            # frame goes out, so content this provider can't carry fails with nothing sent rather than
-            # leaving the result on the wire without the material that explains it.
-            item = (
-                await user_message_item(
-                    content.content,
-                    provider_name=self._provider_name,
-                    supports_images=self._supports_tool_result_images,
-                )
-                if content.content
-                else None
-            )
-            await self._send_event(
-                {
-                    'type': CONVERSATION_ITEM_CREATE_EVENT,
-                    'item': {
-                        'type': 'function_call_output',
-                        'call_id': content.tool_call_id,
-                        'output': content.output,
-                    },
-                }
-            )
-            if item:
-                await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
-            await self._request_response((input_index,))
+            await self._send_tool_result(content, input_index=input_index)
         elif isinstance(content, BinaryImage):
             # An image is added as conversation context (like a video frame), not a turn of its own,
             # so it doesn't trigger a response — drive that with audio (VAD) or `CreateResponse`.
@@ -527,7 +554,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         elif isinstance(content, ClearAudio):
             await self._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
         elif isinstance(content, CreateResponse):
-            await self._request_response((input_index,))
+            await self._solicit_response((input_index,))
         elif isinstance(content, CancelResponse):
             # Only cancel when a response is actually active: with server VAD the provider may have
             # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
@@ -545,25 +572,89 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 await self._send_event({'type': _OUTPUT_AUDIO_BUFFER_CLEAR_EVENT})
                 self._output_speech_clear_sent = True
         elif isinstance(content, TruncateOutput):
-            # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
-            if self._current_item_id is not None:
-                audio_end_ms = content.audio_end_ms
-                # A WebRTC sideband connection does not receive output-audio deltas because media flows
-                # directly between the browser and provider. Only clamp connections that observe those
-                # deltas; otherwise the byte counter stays zero and every barge-in would truncate to zero.
-                if self._observes_output_audio:
-                    max_audio_end_ms = self._generated_audio_bytes * 1000 // 48_000
-                    audio_end_ms = min(audio_end_ms, max_audio_end_ms)
-                await self._send_event(
-                    {
-                        'type': CONVERSATION_ITEM_TRUNCATE_EVENT,
-                        'item_id': self._current_item_id,
-                        'content_index': self._current_content_index,
-                        'audio_end_ms': audio_end_ms,
-                    }
-                )
+            await self._truncate_output(content)
         else:
             raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+
+    async def _truncate_output(self, content: TruncateOutput) -> None:
+        if content.item_id is None:
+            # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
+            if self._current_item_id is None:
+                return
+            item_id, content_index, generated = (
+                self._current_item_id,
+                self._current_content_index,
+                self._generated_audio_bytes,
+            )
+        elif (item := self._output_items.get(content.item_id)) is not None:
+            item_id, (content_index, generated) = content.item_id, item
+        else:
+            # An item this connection no longer tracks (e.g. from before a reconnect) can't be playing.
+            return
+        audio_end_ms = content.audio_end_ms
+        # A WebRTC sideband connection does not receive output-audio deltas because media flows
+        # directly between the browser and provider. Only clamp connections that observe those
+        # deltas; otherwise the byte counter stays zero and every barge-in would truncate to zero.
+        if self._observes_output_audio:
+            audio_end_ms = min(audio_end_ms, generated * 1000 // 48_000)
+        await self._send_event(
+            {
+                'type': CONVERSATION_ITEM_TRUNCATE_EVENT,
+                'item_id': item_id,
+                'content_index': content_index,
+                'audio_end_ms': audio_end_ms,
+            }
+        )
+
+    def _track_output_item(self, item_id: str, content_index: int, generated: int) -> None:
+        self._output_items.pop(item_id, None)
+        self._output_items[item_id] = (content_index, generated)
+        if len(self._output_items) > _MAX_TRACKED_OUTPUT_ITEMS:
+            del self._output_items[next(iter(self._output_items))]
+
+    async def _send_tool_result(self, content: ToolResult, *, input_index: int) -> None:
+        # Normalize any follow-up content (downloading and re-encoding media) before the first
+        # frame goes out, so content this provider can't carry fails with nothing sent rather than
+        # leaving the result on the wire without the material that explains it.
+        item = (
+            await user_message_item(
+                content.content,
+                provider_name=self._provider_name,
+                supports_images=self._supports_tool_result_images,
+            )
+            if content.content
+            else None
+        )
+        await self._send_event(
+            {
+                'type': CONVERSATION_ITEM_CREATE_EVENT,
+                'item': {
+                    'type': 'function_call_output',
+                    'call_id': content.tool_call_id,
+                    'output': content.output,
+                },
+            }
+        )
+        if item:
+            await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
+        if (response_id := self._tool_call_responses.pop(content.tool_call_id, None)) is None:
+            # A call this connection didn't see made: its result asks for a response of its own.
+            await self._solicit_response((input_index,))
+            return
+        batch = self._tool_call_batches[response_id]
+        batch.unanswered.discard(content.tool_call_id)
+        batch.inputs.append(input_index)
+        await self._answer_tool_call_batch_if_complete(response_id)
+
+    async def _answer_tool_call_batch_if_complete(self, response_id: str) -> None:
+        """Ask for the response that answers `response_id`'s tool calls, once it's done and all have outputs."""
+        batch = self._tool_call_batches[response_id]
+        if batch.done and not batch.unanswered:
+            del self._tool_call_batches[response_id]
+            # One input names the request: the session counts one reply for the batch, so counting each
+            # output's input would release more reservations than this request holds when it's merged or
+            # refused.
+            await self._request_response((batch.inputs[-1],))
 
     async def _send_text(self, text: str, *, respond: bool, input_index: int) -> None:
         await self._send_event(
@@ -578,7 +669,25 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             }
         )
         if respond:
-            await self._request_response((input_index,))
+            await self._solicit_response((input_index,))
+
+    async def _solicit_response(self, input_indexes: Sequence[int]) -> None:
+        """Request a response for a caller's `send()`, which is told when the request didn't go out.
+
+        A `response.create` that fails on a dead socket never reached the server, so no response is
+        active. Left marked active, a reconnect would re-ask for a response the caller was told had
+        failed. Only the caller's own request is taken back: one the receive loop sends for a deferred
+        request has no caller to tell, so the reconnect re-asks for it as before.
+        """
+        ws = self._ws
+        try:
+            await self._request_response(input_indexes)
+        except self.transport_errors:
+            # Only a request that went straight out can fail here; a deferred one sends nothing yet. If
+            # the link was replaced meanwhile, the active response is the new socket's, not this one.
+            if self._ws is ws:
+                self._response_active = False
+            raise
 
     async def _request_response(self, input_indexes: Sequence[int]) -> None:
         """Ask the model to respond now, or defer until the active response completes."""
@@ -656,6 +765,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if await self._try_reconnect():
                 yield RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
                 continue
+            # Out of attempts: no reconnect is coming any more.
+            self._gave_up = True
             yield RealtimeSessionErrorEvent(
                 message=f'{self._provider_label} connection closed; reconnect failed: {closed}', recoverable=False
             )
@@ -683,6 +794,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if added.part.type == 'audio':
             self._current_item_id = added.item_id
             self._current_content_index = added.content_index
+            self._track_output_item(added.item_id, added.content_index, 0)
 
     async def _decode_frame(self, raw: str) -> list[RealtimeCodecEvent]:  # noqa: C901
         """Parse one text frame into events, updating tracked response state.
@@ -704,8 +816,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._output_speech_clear_sent = False
             if not self._response_active:
                 # The response already closed; playback ending retires its output item (kept alive
-                # past `response.done` by `_clear_active_response` for barge-in truncation).
+                # past `response.done` by `_clear_active_response` for barge-in truncation), and
+                # every earlier one it could still name.
                 self._current_item_id = None
+                self._output_items.clear()
             return [] if self._observes_output_audio or not was_playing else [RealtimeOutputSpeechEndEvent()]
         # Drop trailing frames from a response we cancelled on barge-in (its audio/transcript deltas,
         # output-item events, etc.); its own `response.done` still passes through below to close the
@@ -725,8 +839,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             done_events, superseded = await self._handle_response_done(data)
             events.extend(done_events)
         event = self._map_event(data)
+        if (
+            event_type == 'response.function_call_arguments.done'
+            and isinstance(event, ToolCall)
+            and isinstance(response_id := data.get('response_id'), str)
+        ):
+            self._tool_call_batches.setdefault(response_id, _ToolCallBatch()).unanswered.add(event.tool_call_id)
+            self._tool_call_responses[event.tool_call_id] = response_id
         if event_type == 'response.created':
             created = RESPONSE_CREATED_EVENT_ADAPTER.validate_python(data)
+            if not self._response_started:
+                # The response our `response.create` asked for has started, so the request it carried
+                # for several inputs (deferred behind the previous response together) was not refused:
+                # it answers all of them at once.
+                self._merged_response_requests += max(0, len(self._response_request_inputs) - 1)
             self._response_active = True
             self._response_started = True
             self._active_response_id = created.response.id or None
@@ -752,6 +878,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     self._generated_audio_bytes = len(event.data)
                 else:
                     self._generated_audio_bytes += len(event.data)
+                self._track_output_item(event.item_id, content_index, self._generated_audio_bytes)
         if event is not None and not (event_type == 'response.done' and superseded):
             events.append(event)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
@@ -854,6 +981,19 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # response has closed.
             if response.status != 'cancelled' or was_client_cancel:
                 await self._create_response(deferred_inputs)
+            else:
+                # The response the user's barge-in starts answers them instead, and takes one of their
+                # requests; the others are merged into it.
+                self._merged_response_requests += max(0, len(deferred_inputs) - 1)
+        if isinstance(response_id, str) and (batch := self._tool_call_batches.get(response_id)) is not None:
+            # No more calls can join the response: its tool results are answered once all are in.
+            batch.done = True
+            if response.status == 'cancelled' and not was_client_cancel and not batch.unanswered:
+                # As for a deferred request above: the user barged in, and the response their speech
+                # starts answers the results already sent, rather than one talking over them.
+                del self._tool_call_batches[response_id]
+            else:
+                await self._answer_tool_call_batch_if_complete(response_id)
         # Validated only now that all the response state above is settled: a malformed usage payload
         # raises `ValueError`, which `__aiter__` surfaces as a recoverable frame error and keeps reading
         # — but this `response.done` was still the terminal for its response, and bailing before the
@@ -934,8 +1074,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 tuple(self._deferred_response_inputs) if self._pending_response else self._response_request_inputs
             )
             self._clear_active_response()
-            # A fresh socket also drops anything the old one was still holding for us.
+            # A fresh socket also drops anything the old one was still holding for us, including the
+            # output items a barge-in could have named. Where the provider doesn't restore the calls in
+            # flight, the session settles them rather than sending their results, so their batches go
+            # too; where it does (xAI), their results still get answered.
             self._cancelled_response_id = None
+            self._output_items.clear()
+            if not self.reconnect_restores_in_flight_state:
+                self._tool_call_batches.clear()
+                self._tool_call_responses.clear()
             if replay_response:
                 await self._create_response(replay_inputs)
             # Cleared only once the replay is on the wire, so a send that failed above leaves the
@@ -961,6 +1108,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # On a sideband, the provider keeps playing this response's audio to the browser after
         # `response.done`, and a barge-in truncation during that tail still has to name the playing
         # item — so it is retired when playback ends (`output_audio_buffer.stopped`/`.cleared`) instead.
+        # Over a WebSocket the finished item stays reachable only by name, through `_output_items`: an
+        # unnamed truncate means "the item being generated", and a finished reply may have been heard in full.
         if self._observes_output_audio or not self._output_audio_playing:
             self._current_item_id = None
         self._generated_audio_bytes = 0

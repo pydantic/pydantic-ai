@@ -19,6 +19,10 @@ consequential ambiguity, or approval for irreversible actions. Use reasonable
 defaults for minor ambiguities. Run focused tests and appropriate lint/type checks;
 report what you actually verified, assumptions, and remaining limitations.
 
+Leave only the requested change in the project. Check behavior with inline shell
+scripts (e.g. a heredoc) rather than new files, add tests only where the project
+already has them, and delete any scratch files you created before finishing.
+
 Finish required long-running work before responding: do other useful work, then
 poll status and output until complete or blocked. Servers may remain running once
 readiness is verified; shut them down when no longer needed.

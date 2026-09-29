@@ -315,7 +315,7 @@ async def test_anthropic_code_execution_files_500_then_stale_thinking_block_stil
     expected_containers: list[object] = ['container_from_history', OMIT, OMIT]
     assert [kwargs['container'] for kwargs in completion_kwargs] == expected_containers
     assert completion_kwargs[-1]['extra_body'] == snapshot(
-        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
 
 

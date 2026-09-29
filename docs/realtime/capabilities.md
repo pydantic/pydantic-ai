@@ -75,10 +75,10 @@ session when filtering or redaction is required.
 Deferred capabilities load in a session the same way they do in a regular run: the capability
 catalog is part of the session's instructions, and calling the `load_capability` tool returns the
 loaded capability's instructions as its result — which works on every provider. What a session
-cannot do is advertise *new tools* mid-conversation (the connection's tools are fixed when it
-opens; see [#7288](https://github.com/pydantic/pydantic-ai/issues/7288)), so opening a session with
-a `defer_loading=True` capability that contributes tools or native tools raises
+cannot do yet is advertise *new tools* mid-conversation: Pydantic AI fixes the connection's tools
+when it opens (OpenAI and xAI accept a mid-session tool update;
+[#7288](https://github.com/pydantic/pydantic-ai/issues/7288)), so opening a session with a
+`defer_loading=True` capability that contributes tools or native tools raises
 [`UserError`][pydantic_ai.exceptions.UserError] before connecting — accepting it would silently
-provide less than requested. Realtime per-turn/exchange hooks are expected to widen this boundary
-in the future; see [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) and
+provide less than requested. Loading those tools on providers that accept the update is tracked in
 [#7191](https://github.com/pydantic/pydantic-ai/issues/7191).
