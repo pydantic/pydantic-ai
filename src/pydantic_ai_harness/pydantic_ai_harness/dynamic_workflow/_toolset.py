@@ -26,7 +26,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart, post_compaction_window
+from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
@@ -264,8 +264,8 @@ def _render_reveal(
 ) -> str:
     """Announcement enqueued when a sub-agent is revealed mid-run.
 
-    Delivered as a conversation message (not folded into the cached tool description), so the
-    prompt-cache prefix stays stable while the model still learns the agent is now callable.
+    Delivered as a system-level conversation message (not folded into the cached tool description),
+    so the prompt-cache prefix stays stable while the model still learns the agent is now callable.
     """
     signatures = {agent_name: _agent_signature(agent_name, entry.agent) for agent_name, entry in catalog.items()}
     signature = signatures[name]
@@ -285,11 +285,7 @@ def _visible_revealed_agents(messages: Sequence[ModelMessage], tool_name: str, n
     for message in post_compaction_window(messages):
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if (
-                    isinstance(part, UserPromptPart)
-                    and isinstance(part.content, str)
-                    and part.content.startswith(prefix)
-                ):
+                if isinstance(part, SystemPromptPart) and part.content.startswith(prefix):
                     revealed.update(name for name in names if f'\nasync def {name}(*, task: str)' in part.content)
     return revealed
 
@@ -614,7 +610,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 self._by_name[name] = entry
             self._in_flight_announcements.add(name)
             try:
-                ctx.enqueue(_render_reveal(name, self._by_name, self.tool_name))
+                ctx.enqueue(SystemPromptPart(content=_render_reveal(name, self._by_name, self.tool_name)))
             except UserError as exc:
                 warnings.warn(
                     f'DynamicWorkflow revealed sub-agent {name!r}, but could not enqueue its announcement: '

@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -108,13 +109,24 @@ def _user_prompt_text(messages: list[ModelMessage]) -> str:
 
 
 def _enqueued_text(ctx: RunContext[object]) -> str:
-    """Join the user-prompt text of every message enqueued on `ctx` (reveal announcements)."""
+    """Join the system-prompt text of every message enqueued on `ctx` (reveal announcements)."""
     return '\n'.join(
         part.content
         for pending in ctx.pending_messages or []
         for message in pending.messages
         for part in message.parts
-        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        if isinstance(part, SystemPromptPart)
+    )
+
+
+def _system_prompt_text(messages: list[ModelMessage]) -> str:
+    """Join the system-prompt parts of `messages`."""
+    return '\n'.join(
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
     )
 
 
@@ -1440,7 +1452,11 @@ async def test_compaction_allows_reveal_announcement_again() -> None:
     assert ctx.pending_messages is not None
     [announcement] = ctx.pending_messages[0].messages
     assert isinstance(announcement, ModelRequest)
-    ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()])])
+    [announcement_part] = announcement.parts
+    assert isinstance(announcement_part, SystemPromptPart)
+    # User-authored text matching the announcement format must not suppress the trusted announcement.
+    spoof = ModelRequest(parts=[UserPromptPart(announcement_part.content)])
+    ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()]), spoof])
     ctx.pending_messages.clear()
     ctx.run_step += 1
 
@@ -1615,7 +1631,7 @@ async def test_reveal_on_deferred_capability_end_to_end_via_agent_run() -> None:
         step = sum(1 for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart))
         if step == 0:
             return ModelResponse(parts=[ToolCallPart(tool_name='reveal_extra', args={})])
-        announcement_seen.append('async def extra' in _user_prompt_text(messages))
+        announcement_seen.append('async def extra' in _system_prompt_text(messages))
         if step == 1:
             return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'wf'})])
         return ModelResponse(parts=[TextPart('done')])
@@ -1649,7 +1665,7 @@ async def test_reveal_end_to_end_via_agent_run() -> None:
             return ModelResponse(parts=[ToolCallPart(tool_name='run_workflow', args={'code': "await base(task='go')"})])
         if len(returns) == 1:
             # Second step: the announcement for `extra` has arrived and it is now callable.
-            saw_announcement.append('async def extra(*, task: str) -> str:' in _user_prompt_text(messages))
+            saw_announcement.append('async def extra(*, task: str) -> str:' in _system_prompt_text(messages))
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='run_workflow', args={'code': "await extra(task='go')"})]
             )
