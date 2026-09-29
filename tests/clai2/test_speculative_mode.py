@@ -512,7 +512,7 @@ class TestSandboxCallDisplay:
         ]
         headers = [line for line in output.getvalue().splitlines() if line.startswith('\u25cf')]
         assert headers == [
-            '\u25cf run_code',
+            '\u25cf run_code code="text = await read_file(path=\\"a.py\\")\\\u2026',
             "\u25cf read_file 'a.py' offset=0 limit=2000 lines",
             "\u25cf read_file 'b.py' offset=0 limit=2000 lines",
             "\u25cf read_file 'missing.py' offset=0 limit=2000 lines",

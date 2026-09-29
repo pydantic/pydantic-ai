@@ -37,7 +37,7 @@ and commands start there. Commands get CLAI's environment minus LLM provider API
 keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools.
 
 Tool calls show a single-line summary followed by a blank line by default.
-Tool names are pink; their arguments and bullet markers are muted grey. Shell output, exit details and
+Tool and argument names are pink; argument values and bullet markers are muted grey. Shell output, exit details and
 log paths, grep results, and file diffs stay out of the terminal; the model still
 receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show detailed output again, or
@@ -656,7 +656,7 @@ repository.
 ```
 
 The keys are the field names from `/config show` (`model`, `request_limit`,
-`thinking`, `splash`, `shell_lines`, `grep_lines`, `smooth_seconds`) and are
+`thinking`, `splash`, `shell_lines`, `grep_lines`, `tool_arg_chars`, `smooth_seconds`) and are
 validated the same way as `/set`. A bad value stops startup with the file name
 and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
@@ -1124,8 +1124,10 @@ repeated CLAI heading. Intermediate text is flushed when a tool-call part begins
 before the tool's arguments finish streaming. Incomplete lines within a text part
 still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
-Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Long names
-are truncated to one terminal row. Completion activity remains in the footer
+Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
+without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
+muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
+changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
