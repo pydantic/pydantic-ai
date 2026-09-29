@@ -175,10 +175,14 @@ LatestOpenAIRealtimeModelNames = Literal['gpt-realtime', 'gpt-realtime-2.1', 'gp
 OpenAIRealtimeModelName = str | LatestOpenAIRealtimeModelNames
 
 LatestOpenAIRealtimeTranscriptionModelNames = Literal[
+    # OpenAI deprecated these three on 2026-08-26 and shuts them down on 2027-02-26, in favor of
+    # `gpt-live-transcribe` and `gpt-transcribe`.
     'whisper-1',
     'gpt-4o-transcribe',
     'gpt-4o-mini-transcribe',
     'gpt-realtime-whisper',
+    'gpt-live-transcribe',
+    'gpt-transcribe',
 ]
 OpenAIRealtimeTranscriptionModelName = str | LatestOpenAIRealtimeTranscriptionModelNames
 
