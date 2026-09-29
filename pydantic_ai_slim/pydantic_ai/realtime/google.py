@@ -431,26 +431,26 @@ _TURN_COVERAGE = {
 # malformed function call, a blocklist match) are looked up in `GoogleModel`'s table instead.
 _CONTENT_FILTER_TURN_COMPLETE_REASONS = frozenset(
     {
-        'PROHIBITED_INPUT_CONTENT',
-        'IMAGE_PROHIBITED_INPUT_CONTENT',
-        'INPUT_TEXT_CONTAIN_PROMINENT_PERSON_PROHIBITED',
-        'INPUT_IMAGE_CELEBRITY',
-        'INPUT_IMAGE_PHOTO_REALISTIC_CHILD_PROHIBITED',
-        'INPUT_TEXT_NCII_PROHIBITED',
-        'INPUT_IP_PROHIBITED',
-        'UNSAFE_PROMPT_FOR_IMAGE_GENERATION',
-        'GENERATED_IMAGE_SAFETY',
-        'GENERATED_CONTENT_SAFETY',
-        'GENERATED_AUDIO_SAFETY',
-        'GENERATED_VIDEO_SAFETY',
-        'GENERATED_CONTENT_PROHIBITED',
-        'GENERATED_CONTENT_BLOCKLIST',
-        'GENERATED_IMAGE_PROHIBITED',
-        'GENERATED_IMAGE_CELEBRITY',
-        'GENERATED_IMAGE_PROMINENT_PEOPLE_DETECTED_BY_REWRITER',
-        'GENERATED_IMAGE_IDENTIFIABLE_PEOPLE',
-        'GENERATED_IMAGE_MINORS',
-        'OUTPUT_IMAGE_IP_PROHIBITED',
+        genai_types.TurnCompleteReason.PROHIBITED_INPUT_CONTENT,
+        genai_types.TurnCompleteReason.IMAGE_PROHIBITED_INPUT_CONTENT,
+        genai_types.TurnCompleteReason.INPUT_TEXT_CONTAIN_PROMINENT_PERSON_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_IMAGE_CELEBRITY,
+        genai_types.TurnCompleteReason.INPUT_IMAGE_PHOTO_REALISTIC_CHILD_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_TEXT_NCII_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_IP_PROHIBITED,
+        genai_types.TurnCompleteReason.UNSAFE_PROMPT_FOR_IMAGE_GENERATION,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_AUDIO_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_VIDEO_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_PROHIBITED,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_BLOCKLIST,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_PROHIBITED,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_CELEBRITY,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_PROMINENT_PEOPLE_DETECTED_BY_REWRITER,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_IDENTIFIABLE_PEOPLE,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_MINORS,
+        genai_types.TurnCompleteReason.OUTPUT_IMAGE_IP_PROHIBITED,
     }
 )
 
@@ -464,7 +464,7 @@ def _turn_complete_finish_reason(reason: genai_types.TurnCompleteReason) -> Fini
     """
     if reason.value in _FINISH_REASON_MAP:
         return _FINISH_REASON_MAP[reason.value]
-    return 'content_filter' if reason.value in _CONTENT_FILTER_TURN_COMPLETE_REASONS else None
+    return 'content_filter' if reason in _CONTENT_FILTER_TURN_COMPLETE_REASONS else None
 
 
 _WS_CONNECT_LOCK: RunVar[Lock] = RunVar('gemini_live_ws_connect_lock')
