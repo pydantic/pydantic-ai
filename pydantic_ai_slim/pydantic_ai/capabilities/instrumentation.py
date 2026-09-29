@@ -98,8 +98,8 @@ def _cache_retention(request_context: ModelRequestContext) -> timedelta | None:
     )
 
 
-_CacheKey: TypeAlias = tuple[str | None, str | None]
-"""A response's `(provider_name, model_name)`: which provider cache its tokens came from."""
+_CacheKey: TypeAlias = tuple[str | None, str | None, str | None]
+"""A response's `(provider_name, provider_url, model_name)`: which provider cache its tokens came from."""
 
 
 @dataclass
@@ -185,7 +185,7 @@ class Instrumentation(AbstractCapability[Any]):
     `unexpected`, `ttl-expired`, `unknown`, or `unreported`; only `unexpected` collapses
     emit a `pydantic_ai.cache.collapse` span event, so the event means the cacheable
     prefix moved while it should still have been warm. The established prefix is tracked
-    per conversation and per provider and model, so the first request of a run that
+    per conversation and per provider, endpoint, and model, so the first request of a run that
     continues a conversation is judged against what the previous run cached.
     """
 
@@ -505,9 +505,9 @@ class Instrumentation(AbstractCapability[Any]):
         read = usage.cache_read_tokens
         write = usage.cache_write_tokens
         # Keyed on the response: `FallbackModel` resolves the model inside `request()`, so only the
-        # response says which provider and model actually served this request. A switch therefore
+        # response says which provider, endpoint, and model actually served this request. A switch therefore
         # starts a fresh mark (never a collapse), and switching back is judged against the old one.
-        key = (response.provider_name, response.model_name)
+        key = (response.provider_name, response.provider_url, response.model_name)
         mark = self._cache_marks.get(key)
         established = mark.established_tokens if mark else 0
 

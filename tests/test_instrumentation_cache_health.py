@@ -44,7 +44,8 @@ with try_import() as otel_sdk_imports_successful:
                     return SamplingResult(Decision.DROP)
             return SamplingResult(Decision.RECORD_AND_SAMPLE)
 
-        def get_description(self) -> str:  # pragma: no cover - required by the ABC, never called here
+        # Required by the ABC, never called here.
+        def get_description(self) -> str:  # pragma: no cover
             return 'DropFirstChatSpanSampler'
 
 
@@ -64,6 +65,7 @@ class CacheUsage:
     input_tokens: int = 2000
     provider_name: str | None = 'test'
     model_name: str = 'cache-model'
+    provider_url: str | None = None
 
 
 class ResponseNameFunctionModel(FunctionModel):
@@ -352,6 +354,7 @@ class ConversationModel(FunctionModel):
                 input_tokens=usage.input_tokens, cache_read_tokens=usage.read, cache_write_tokens=usage.write
             ),
             provider_name=usage.provider_name,
+            provider_url=usage.provider_url,
         )
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
@@ -446,6 +449,22 @@ def test_marks_are_shared_by_injected_instrumentation() -> None:
     agent.run_sync('second turn', message_history=first.all_messages())
 
     assert chat_cache_attributes(exporter)[-1] == COLLAPSED_ON_CONTINUATION
+
+
+def test_endpoint_switch_is_not_a_collapse() -> None:
+    """Two endpoints serving the same provider and model name keep separate caches, so switching is a fresh mark."""
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=1400, provider_url='https://eu.example.com')]
+    first = agent.run_sync('first turn')
+    model.usages = [CacheUsage(write=1400, provider_url='https://us.example.com')]
+    agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert chat_cache_attributes(exporter)[-1] == {
+        'pydantic_ai.cache.hit_ratio': 0.0,
+        'pydantic_ai.cache.established_tokens': 1400,
+    }
 
 
 def test_continuation_after_cache_expiry_is_ttl_expired(mocker: MockerFixture) -> None:
@@ -592,7 +611,7 @@ def test_marks_without_a_conversation_are_not_stored() -> None:
     """A run without a conversation id has nothing to share its marks with, so they stay private to it."""
     store = _ConversationCacheMarkStore()
     marks = store.get(None)
-    marks[('test', 'cache-model')] = _CacheMark(established_tokens=1400, last_seen=datetime.now(timezone.utc))
+    marks[('test', None, 'cache-model')] = _CacheMark(established_tokens=1400, last_seen=datetime.now(timezone.utc))
     store.update(None, marks, datetime.now(timezone.utc))
 
     assert store.get(None) == {}
