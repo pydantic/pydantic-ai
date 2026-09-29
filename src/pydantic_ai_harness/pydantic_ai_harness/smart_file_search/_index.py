@@ -183,7 +183,8 @@ class _Slot:
 class SnippetIndexes:
     """Snippet indexes by directory and glob, kept between searches for up to `max_cached` of them.
 
-    An index being searched is never evicted, so more may be kept briefly while searches run in parallel.
+    An index being searched is never evicted, so more may be kept while searches run in parallel; the excess
+    is dropped as each search finishes.
 
     With `max_cached=0` every search builds a throwaway index. A search holds its directory's lock from
     refresh to shortlist, so parallel searches of one directory build its index once, in turn.
@@ -198,11 +199,15 @@ class SnippetIndexes:
         slot = self._slots.pop(key, None) or _Slot()
         if self._max_cached:
             self._slots[key] = slot  # most recently searched last
-            # Never evict an index mid-search: a parallel search of it would then build a second one.
-            idle = [other for other, kept in self._slots.items() if other != key and not kept.lock.locked()]
-            for other in idle[: len(self._slots) - self._max_cached]:
-                del self._slots[other]
+            self._evict(keep=key)
         return slot
+
+    def _evict(self, keep: tuple[str, str | None] | None = None) -> None:
+        """Drop the least recently searched indexes over `max_cached`, except `keep` and any being searched."""
+        # Never evict an index mid-search: a parallel search of it would then build a second one.
+        idle = [other for other, kept in self._slots.items() if other != keep and not kept.lock.locked()]
+        for other in idle[: len(self._slots) - self._max_cached]:
+            del self._slots[other]
 
     async def shortlist(self, workspace: Workspace, root: str, glob: str | None, query: str, k: int) -> Shortlist:
         """Refresh `root`'s index from the workspace and shortlist `k` snippets for `query`."""
@@ -217,7 +222,9 @@ class SnippetIndexes:
                     del self._slots[key]
                 raise
             hits = await anyio.to_thread.run_sync(slot.index.shortlist, query, k)
-            return Shortlist(hits=hits, files=files, snippets=slot.index.snippets, skipped=skipped)
+        # Parallel searches can leave more than `max_cached` indexes; trim once this one is no longer busy.
+        self._evict()
+        return Shortlist(hits=hits, files=files, snippets=slot.index.snippets, skipped=skipped)
 
 
 async def _refresh(

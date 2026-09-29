@@ -206,6 +206,16 @@ async def test_an_index_being_searched_is_not_evicted() -> None:
     assert list(slots) == [('c', None)]
 
 
+async def test_parallel_searches_trim_the_cache_when_done(tmp_path: Path) -> None:
+    for name in ('a', 'b', 'c'):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / 'm.py').write_text('expired = True\n')
+    indexes = SnippetIndexes(1)
+    workspace = _workspace(tmp_path)
+    await asyncio.gather(*(indexes.shortlist(workspace, name, None, 'expired', 5) for name in ('a', 'b', 'c')))
+    assert len(indexes._slots) == 1  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_line_budget_counts_unicode_line_separators(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     (tmp_path / 'a.py').write_text('x = 1\u2028' * 50)  # 50 lines to the chunker, no newline at all
     monkeypatch.setattr(_index, 'MAX_TOTAL_LINES', 10)
