@@ -1396,16 +1396,12 @@ class TestBedrock:
                 await model.embed(['test'], input_type='query')
             assert type(exc_info.value) is ModelAPIError
 
-    @pytest.mark.parametrize(
-        'error',
-        [
-            pytest.param(ReadTimeoutError(endpoint_url='https://bedrock.example'), id='read-timeout'),
-            pytest.param(EndpointConnectionError(endpoint_url='https://bedrock.example'), id='endpoint-connection'),
-        ],
-    )
-    async def test_transport_error(self, bedrock_provider: BedrockProvider, error: Exception):
+    @pytest.mark.parametrize('error_type', ['read-timeout', 'endpoint-connection'])
+    async def test_transport_error(self, bedrock_provider: BedrockProvider, error_type: str):
         """botocore raises transport failures as `BotoCoreError`, which maps to `ModelAPIError` like `BedrockConverseModel`."""
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        error_cls = ReadTimeoutError if error_type == 'read-timeout' else EndpointConnectionError
+        error = error_cls(endpoint_url='https://bedrock.example')
 
         with patch.object(model.client, 'invoke_model', side_effect=error):
             with pytest.raises(ModelAPIError) as exc_info:
