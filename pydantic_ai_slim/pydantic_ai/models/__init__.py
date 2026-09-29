@@ -444,6 +444,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     default), the standing prompt travels in a per-request channel rebuilt from those items, so the
     trim has to re-insert them or it is silently dropped from every subsequent request. See
     `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
+    _renders_retry_feedback: ClassVar[bool] = False
+    """Whether this model renders a `RetryFeedbackPart` itself, so `prepare_messages` passes it through untranslated.
+
+    Set by a model that judges the conversation rather than answering it: translated, the feedback would
+    read as the user's request or as a system prompt, where the model has to see it as a step the agent took.
+    """
 
     _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
@@ -831,7 +837,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         # First, so every later step — the tool-availability announcement and the `<system>` wrap
         # below it — sees the plain parts a retry translates into rather than the retry itself.
-        messages = _translate_retry_parts(messages)
+        messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
 
         supports_tool_addition = self.tool_addition_mode is not None
@@ -2372,7 +2378,8 @@ _UnpreparedPart: TypeAlias = (
 Each of these carries something no provider API has a field for — a mid-conversation change to the
 tool list, or a retry that isn't a plain turn — and `prepare_messages` turns it into the parts every
 adapter already knows how to map. So an adapter meeting one has been handed a history that step never
-ran on, which is one branch to check rather than one per part.
+ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
+on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 """
 
 
@@ -2432,7 +2439,7 @@ for, on a turn the user didn't write.
 """
 
 
-def _translate_retry_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool) -> list[ModelMessage]:
     """Replace every retry part with the part that carries it on the wire.
 
     Runs first in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages], so the tool-search
@@ -2449,16 +2456,19 @@ def _translate_retry_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
     exactly as an authored one there would — `_standing_system_prompt_count` reads the parts as
     translated. That position is only reachable through a hand-built history, an adapter load, or
     compaction, and it is the position the agent's author put the part in.
+
+    With `keep_feedback`, for a model that sets `Model._renders_retry_feedback`, a `RetryFeedbackPart`
+    stays as it is, and so does the one a tool-less legacy `RetryPromptPart` becomes.
     """
 
     def translate(part: ModelRequestPart) -> ModelRequestPart:
         # TODO(v3): remove `RetryPromptPart`
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             translated = _translate_legacy_retry_part(part)
-            if isinstance(translated, ToolReturnPart):
+            if isinstance(translated, ToolReturnPart) or keep_feedback:
                 return translated
             part = translated
-        elif not isinstance(part, RetryFeedbackPart):
+        elif not isinstance(part, RetryFeedbackPart) or keep_feedback:
             return part
         if _retry_feedback_speaks_for_the_harness(part):
             return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
@@ -2468,7 +2478,8 @@ def _translate_retry_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
     changed = False
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
-            isinstance(part, RetryPromptPart | RetryFeedbackPart)  # pyright: ignore[reportDeprecated]
+            isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+            or (isinstance(part, RetryFeedbackPart) and not keep_feedback)
             for part in message.parts
         ):
             transformed.append(message)

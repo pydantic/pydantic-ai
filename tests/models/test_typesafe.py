@@ -2477,7 +2477,7 @@ async def test_history_from_another_model(allow_model_requests: None):
                 {'tool_call': {'name': 'get_weather', 'args': {'city': 'London'}}},
                 {'tool_return': {'name': 'get_weather', 'content': 'Rainy'}},
                 {'assistant': 'Rain.'},
-                {'system': 'Say more.'},
+                {'retry': 'Say more.'},
                 {'assistant': 'It is raining.'},
                 {'summary': 'Weather was discussed.'},
             ],

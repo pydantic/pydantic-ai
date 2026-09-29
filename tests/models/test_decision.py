@@ -1766,11 +1766,10 @@ async def test_a_message_history_that_ends_mid_turn_is_split_at_its_latest_promp
             'text': """\
 Thanks. It arrived broken.
 
-Please refund it.
-
-<system>Pick something else.</system>\
+Please refund it.\
 """,
             'done': [
+                {'retry': 'Pick something else.'},
                 {'thinking': 'A refund, then.'},
                 {'tool_call': {'name': 'issue_refund', 'args': {}}},
                 {'tool_return': {'name': 'issue_refund', 'content': 'Refunded.'}},
@@ -1887,13 +1886,7 @@ def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, 
                     'text': 'I was charged twice this month.',
                     'done': [
                         {'tool_call': {'name': 'final_result', 'args': {'urgent': True, 'action': 'review'}}},
-                        {
-                            'retry': """\
-Be sure.
-
-Fix the errors and try again.\
-"""
-                        },
+                        {'tool_return': {'name': 'final_result', 'content': '{"error":"Be sure."}'}},
                     ],
                 }
             ),
@@ -1907,23 +1900,10 @@ Fix the errors and try again.\
                     'done': [
                         {'tool_call': {'name': 'final_result', 'args': {'urgent': True}}},
                         {
-                            'retry': """\
-1 validation error:
-```json
-[
-  {
-    "type": "value_error",
-    "loc": [
-      "urgent"
-    ],
-    "msg": "Value error, Check again.",
-    "input": true
-  }
-]
-```
-
-Fix the errors and try again.\
-"""
+                            'tool_return': {
+                                'name': 'final_result',
+                                'content': '{"error":"[{\\"type\\":\\"value_error\\",\\"loc\\":[\\"urgent\\"],\\"msg\\":\\"Value error, Check again.\\",\\"input\\":true}]"}',
+                            }
                         },
                     ],
                 }
@@ -1938,11 +1918,10 @@ Fix the errors and try again.\
                     'done': [
                         {'tool_call': {'name': 'look_up_charges', 'args': {}}},
                         {
-                            'retry': """\
-The billing system is busy.
-
-Fix the errors and try again.\
-"""
+                            'tool_return': {
+                                'name': 'look_up_charges',
+                                'content': '{"error":"The billing system is busy."}',
+                            }
                         },
                     ],
                 }
@@ -1958,18 +1937,9 @@ Fix the errors and try again.\
                         {'assistant': 'Sorry about that, refunding now.'},
                         {
                             'retry': """\
-1 validation error:
-```json
-[
-  {
-    "type": "json_invalid",
-    "loc": [],
-    "msg": "Invalid JSON: expected value at line 1 column 1"
-  }
-]
-```
-
-Fix the errors and try again.\
+<validation_errors>
+[{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
+</validation_errors>\
 """
                         },
                     ],
@@ -2004,17 +1974,51 @@ async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_m
             'text': 'Delete everything.',
             'done': [
                 {'assistant': 'Deleting.'},
+                {'retry': 'Answer with a tool call.'},
+            ],
+        }
+    )
+
+
+class HandsOffSecondRoutingDecisionModel(RoutingDecisionModel):
+    """Routes like `RoutingDecisionModel`, but fails its second request, so a `FallbackModel` hands that step on."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        if len(self.requests) == 1:
+            self.requests.append(request)
+            raise ModelAPIError(self.model_name, 'The backend is busy.')
+        return await super().decide(request, model_settings)
+
+
+async def test_feedback_after_a_tool_returned_is_a_retry_entry(allow_model_requests: None):
+    """Feedback after a tool returned goes in `done`: the prompt stays the text, and the tool stays withheld."""
+
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Sorry about that, refunding now.')])
+
+    model = HandsOffSecondRoutingDecisionModel({'Triage': 0.1, 'look_up_order': 0.9, 'issue_refund': 0.05})
+    agent = Agent(FallbackModel(model, FunctionModel(reply)), output_type=Triage, tools=[look_up_order, issue_refund])
+    await agent.run('Where is my order?')
+    assert model.requests[2].state == snapshot(
+        {
+            'text': 'Where is my order?',
+            'done': [
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+                {'assistant': 'Sorry about that, refunding now.'},
                 {
                     'retry': """\
-Validation feedback:
-Answer with a tool call.
-
-Fix the errors and try again.\
+<validation_errors>
+[{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
+</validation_errors>\
 """
                 },
             ],
         }
     )
+    route = model.requests[2].questions['route']
+    assert isinstance(route, ChoiceQuestion)
+    assert list(route.criteria) == snapshot(['Triage', 'issue_refund'])
 
 
 async def test_a_system_prompt_is_a_system_entry_on_any_backend(allow_model_requests: None):

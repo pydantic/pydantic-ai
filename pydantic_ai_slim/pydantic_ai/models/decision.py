@@ -423,6 +423,10 @@ class DecisionModel(Model[InterfaceClient]):
     instead, and counts against `max_choice_options`.
     """
 
+    # Retry feedback is a step taken for the prompt, so it goes along as a `retry` entry: translated, a validation
+    # error would become the user text judged as the request, and a `ModelRetry` message a system prompt.
+    _renders_retry_feedback = True
+
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile: text output off and inline system prompts on, whatever the provider or `profile=` says.
@@ -2069,6 +2073,8 @@ def _request_entry(part: ModelRequestPart) -> JsonValue:
         return {'user': _prompt_text(part)}
     elif isinstance(part, ToolReturnPart):
         return _tool_return_entry(part)
+    elif isinstance(part, RetryFeedbackPart):
+        return {'retry': part.model_response()}
     elif isinstance(part, _UnpreparedPart):  # pragma: no cover
         raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):  # pragma: no cover
