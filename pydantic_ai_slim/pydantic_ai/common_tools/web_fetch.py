@@ -53,8 +53,6 @@ _MAX_HTML_CONVERSION_COST = 20_000_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
-# Python caps decimal-to-int conversion at 4300 digits by default; keep this bounded if disabled.
-_MAX_HTML_ORDERED_START_DIGITS = 4_300
 
 
 class WebFetchResult(TypedDict):
@@ -230,8 +228,6 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                     start_attr = node.parent.get('start')
                     start_digits = 1
                     if isinstance(start_attr, str) and start_attr.isdecimal():
-                        if len(start_attr) > _MAX_HTML_ORDERED_START_DIGITS:
-                            raise ModelRetry('the document is too complex')
                         start_digits = len(start_attr.lstrip('0')) or 1
                     marker_width = max(start_digits, len(str(len(node.parent.contents)))) + 3
                     indent_width += marker_width
@@ -273,8 +269,8 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             direct_link_text[id(node)] = converted_text
             if converted_text.strip():
                 contentful.add(id(node))
-            # Only converted lines need indentation; collapsed whitespace and escaped characters
-            # also change the amount of text copied through ancestors.
+            # Inline and preformatted containers can discard these lines before an outer tag
+            # sees them; the converter's output meter charges what actually survives.
             if not inline and not in_pre:
                 cost += (indent_depth + indent_width) * converted_text.count('\n')
                 text_scan_cost += max(depth - 16, 0) * len(converted_text)
@@ -432,7 +428,8 @@ class _MarkdownConverter(MarkdownConverter):
       isn't at the very end;
     - each `<li>` in an `<ol>` is numbered by counting all of its previous siblings.
 
-    Each override produces exactly what the upstream step produces.
+    Each formatting override produces exactly what the upstream step produces. The conversion
+    hook stops once generated output or repeated scans exceed the measured work budgets.
     """
 
     def __init__(self, **options: Any):

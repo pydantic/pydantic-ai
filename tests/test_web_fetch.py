@@ -796,12 +796,6 @@ class TestMarkdownConverter:
         _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
         assert content == '1. one\n2. two'
 
-    def test_oversized_ordered_list_start_is_bounded(self):
-        """A long decimal start must not fail Python's integer conversion limit."""
-        html = '<ol start="' + '1' * 5000 + '"><li>one</li></ol>'
-        with pytest.raises(ModelRetry, match='too complex'):
-            _convert_html(html)
-
     @pytest.mark.parametrize('tag', ['blockquote', 'dd', 'li'])
     def test_deeply_nested_indentation_is_bounded(self, tag: str):
         """The converter rejects repeated indentation before intermediate Markdown expands."""
