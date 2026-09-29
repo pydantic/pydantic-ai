@@ -5,9 +5,11 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import gc
 import re
 import threading
 import warnings
+import weakref
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -19,12 +21,13 @@ from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.agent import Agent
+from pydantic_ai.agent import Agent, _is_run_control_error  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities import (
     CombinedCapability,
     ToolSearch,
     UseThreadExecutor,
 )
+from pydantic_ai.capabilities._run_resolution import RunCapabilityResolutions
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import (
@@ -2028,6 +2031,20 @@ class TestNodeRunHooks:
 # --- Run error hook tests ---
 
 
+def test_run_resolution_capture_retains_original_capability() -> None:
+    resolutions = RunCapabilityResolutions()
+
+    def reserve_temporary() -> weakref.ReferenceType[AbstractCapability[object]]:
+        capability = AbstractCapability[object]()
+        reference = weakref.ref(capability)
+        resolutions.reserve(capability)
+        return reference
+
+    reference = reserve_temporary()
+    gc.collect()
+    assert reference() is not None
+
+
 class TestRunErrorHooks:
     async def test_on_run_error_fires_on_failure(self):
         cap = LoggingCapability()
@@ -2047,14 +2064,19 @@ class TestRunErrorHooks:
         assert 'on_run_error' not in cap.log
 
     @pytest.mark.parametrize('failure_location', ['capability', 'toolset'])
-    @pytest.mark.parametrize('grouped', [False, True])
-    async def test_on_run_error_not_called_for_generator_exit_during_setup(self, failure_location: str, grouped: bool):
+    @pytest.mark.parametrize(
+        ('control_error_type', 'grouped'),
+        [(GeneratorExit, False), (GeneratorExit, True), (KeyboardInterrupt, True)],
+    )
+    async def test_on_run_error_not_called_for_control_error_during_setup(
+        self, failure_location: str, control_error_type: type[BaseException], grouped: bool
+    ):
         setup_failed = False
         reconstruction_states: list[bool] = []
         control_error: BaseException = (
-            BaseExceptionGroup('setup control', [BaseExceptionGroup('nested', [GeneratorExit()])])
+            BaseExceptionGroup('setup control', [BaseExceptionGroup('nested', [control_error_type()])])
             if grouped
-            else GeneratorExit()
+            else control_error_type()
         )
 
         class FailingSetupCapability(AbstractCapability[Any]):
@@ -2090,15 +2112,21 @@ class TestRunErrorHooks:
             await agent.run('hello', toolsets=toolsets)
         assert not any(reconstruction_states[reconstruction_count_before_setup:])
 
-    async def test_on_run_error_not_called_for_grouped_generator_exit_during_run(self):
+    @pytest.mark.parametrize('control_error_type', [GeneratorExit, KeyboardInterrupt])
+    async def test_on_run_error_not_called_for_grouped_control_error_during_run(
+        self, control_error_type: type[BaseException]
+    ):
         class RecoveringCapability(AbstractCapability[Any]):
             async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
                 pytest.fail('on_run_error should not run for grouped control exceptions')  # pragma: no cover
 
-        control_error = BaseExceptionGroup('outer', [BaseExceptionGroup('inner', [GeneratorExit()])])
+        control_error = BaseExceptionGroup('outer', [BaseExceptionGroup('inner', [control_error_type()])])
         with pytest.raises(BaseExceptionGroup, match='outer'):
             async with Agent(TestModel(), capabilities=[RecoveringCapability()]).iter('hello'):
                 raise control_error
+
+    def test_keyboard_interrupt_is_run_control_error(self):
+        assert _is_run_control_error(KeyboardInterrupt())
 
     async def test_on_run_error_can_transform_error(self):
         @dataclass

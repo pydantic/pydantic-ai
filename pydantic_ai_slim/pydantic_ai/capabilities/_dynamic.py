@@ -10,7 +10,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._run_resolution import record_partial_run_capability_resolution, resolve_capability_for_run
+from ._run_resolution import (
+    PartialRunCapabilityResolution,
+    record_partial_run_capability_resolution,
+    resolve_capability_for_run,
+)
 from .abstract import AbstractCapability, CapabilityOrdering
 from .wrapper import WrapperCapability
 
@@ -106,7 +110,11 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             # The child may create state and then raise in `for_run`. Preserve it for setup
             # cleanup even though this dynamic wrapper will not return a resolved instance.
             record_partial_run_capability_resolution(
-                self, ResolvedDynamicCapability(wrapped=capability, dynamic_toolset=self.get_toolset())
+                self,
+                PartialRunCapabilityResolution(
+                    child=capability,
+                    wrap=lambda child: ResolvedDynamicCapability(wrapped=child, dynamic_toolset=self.get_toolset()),
+                ),
             )
         return await resolve_capability_for_run(capability, ctx)
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Generator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Generic
 
 from typing_extensions import TypeIs
 
@@ -16,12 +17,21 @@ def _is_capability(value: object) -> TypeIs[AbstractCapability[AgentDepsT]]:
     return isinstance(value, AbstractCapability)
 
 
+@dataclass
+class PartialRunCapabilityResolution(Generic[AgentDepsT]):
+    child: AbstractCapability[AgentDepsT]
+    wrap: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]
+
+
 class RunCapabilityResolutions:
     def __init__(self) -> None:
         self.resolved: dict[int, list[object | None]] = {}
+        self.capabilities_by_id: dict[int, object] = {}
         self.layers: list[RunCapabilityResolutions] = []
 
     def reserve(self, capability: AbstractCapability[AgentDepsT]) -> int:
+        # Keep every id key's original object alive until reconstruction finishes.
+        self.capabilities_by_id[id(capability)] = capability
         occurrences = self.resolved.setdefault(id(capability), [])
         occurrences.append(None)
         return len(occurrences) - 1
@@ -105,7 +115,8 @@ def resolve_capability_for_run(
 
 
 def record_partial_run_capability_resolution(
-    capability: AbstractCapability[AgentDepsT], resolved: AbstractCapability[AgentDepsT]
+    capability: AbstractCapability[AgentDepsT],
+    resolved: AbstractCapability[AgentDepsT] | PartialRunCapabilityResolution[AgentDepsT],
 ) -> None:
     """Retain an accessible child when its enclosing `for_run` has not finished yet."""
     active = _current_resolution.get()
@@ -128,14 +139,22 @@ def replace_resolved_run_capabilities(
 
     occurrences_seen: dict[int, int] = {}
 
+    def is_partial_resolution(value: object) -> TypeIs[PartialRunCapabilityResolution[AgentDepsT]]:
+        return isinstance(value, PartialRunCapabilityResolution)
+
     def replace(cap: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         capability_id = id(cap)
         occurrence = occurrences_seen.get(capability_id, 0)
         occurrences_seen[capability_id] = occurrence + 1
         resolved_occurrences = resolutions.resolved.get(capability_id, [])
         resolved = resolved_occurrences[occurrence] if occurrence < len(resolved_occurrences) else None
+        if is_partial_resolution(resolved):
+            return resolved.wrap(rebuild(resolved.child))
         if _is_capability(resolved):
             return resolved
         return cap
 
-    return capability.visit_and_replace(replace) or capability
+    def rebuild(cap: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        return cap.visit_and_replace(replace) or cap
+
+    return rebuild(capability)

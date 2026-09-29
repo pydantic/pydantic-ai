@@ -1164,6 +1164,37 @@ async def test_setup_failure_cleans_dynamic_child_that_fails_in_for_run() -> Non
     assert cleaned == [2, 1]
 
 
+@pytest.mark.parametrize('nested_dynamic', [False, True])
+async def test_setup_failure_cleans_resolved_child_of_partial_dynamic(nested_dynamic: bool) -> None:
+    cleaned: list[str] = []
+
+    class Stateful(AbstractCapability[object]):
+        def __init__(self, instance: str) -> None:
+            self.instance = instance
+
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            return Stateful('resolved')
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append(self.instance)
+            raise error
+
+    class Fails(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            raise RuntimeError('child setup failed')
+
+    def child(ctx: RunContext[object]) -> AbstractCapability[object]:
+        return CombinedCapability([Stateful('original'), Fails()])
+
+    dynamic: AbstractCapability[object] = DynamicCapability(
+        lambda ctx: DynamicCapability(child) if nested_dynamic else child(ctx)
+    )
+    with pytest.raises(RuntimeError, match='child setup failed'):
+        await Agent(TestModel(), capabilities=[dynamic]).run('go')
+
+    assert cleaned == ['resolved']
+
+
 async def test_setup_failure_calls_on_run_error_for_each_repeated_resolved_capability() -> None:
     cleanup_order: list[int] = []
     second_resolution_complete = asyncio.Event()
