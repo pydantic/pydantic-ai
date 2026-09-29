@@ -33,7 +33,13 @@ with try_import() as imports_successful:
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.realtime import WebRTCSession
-    from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings, SemanticVAD
+    from pydantic_ai.realtime.azure import (
+        AzureEndOfUtteranceDetection,
+        AzureRealtimeModel,
+        AzureRealtimeModelSettings,
+        AzureSemanticVAD,
+        SemanticVAD,
+    )
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
 
@@ -577,6 +583,66 @@ async def test_gpt_realtime_2_is_served_by_voice_live(
     part = response.parts[0]
     assert isinstance(part, TextPart)
     assert part.content == snapshot('Hey there!')
+
+
+@pytest.mark.usefixtures('no_genai_prices_context_window')
+async def test_cascade_spoken_turn_with_azure_audio_processing(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette], assets_path: Path
+) -> None:
+    """A cascade model takes a spoken turn with Voice Live's semantic VAD, end-of-utterance detection, noise
+    suppression, and echo cancellation, all applied by the server."""
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-4.1',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(
+            azure_voice_live_turn_detection=AzureSemanticVAD(
+                type='azure_semantic_vad_multilingual',
+                languages=['en', 'fr'],
+                end_of_utterance_detection=AzureEndOfUtteranceDetection(
+                    model='semantic_detection_v1_multilingual', timeout_ms=800
+                ),
+            ),
+            # OpenAI's near-field suppression is for the native-audio models; a cascade gets Azure's own.
+            openai_input_noise_reduction='near_field',
+            azure_voice_live_echo_cancellation=True,
+        ),
+    )
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    [updated] = [
+        message.data
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage)
+        and message.direction == 'received'
+        and message.data.get('type') == 'session.updated'
+    ]
+    applied = updated['session']
+    assert applied['turn_detection']['type'] == 'azure_semantic_vad_multilingual'
+    assert applied['turn_detection']['end_of_utterance_detection']['model'] == 'semantic_detection_v1_multilingual'
+    assert applied['input_audio_noise_reduction'] == {'type': 'azure_deep_noise_suppression'}
+    assert applied['input_audio_echo_cancellation']['type'] == 'server_echo_cancellation'
+    messages = session.all_messages()
+    user_turn = messages[0]
+    assert isinstance(user_turn, ModelRequest)
+    user_part = user_turn.parts[0]
+    assert isinstance(user_part, SpeechPart)
+    assert user_part.transcript == snapshot('Hello, my name is Marcelo.')
+    reply = messages[-1]
+    assert isinstance(reply, ModelResponse)
+    assert isinstance(reply.parts[0], SpeechPart)
 
 
 async def test_voice_live_rejects_webrtc_signaling() -> None:

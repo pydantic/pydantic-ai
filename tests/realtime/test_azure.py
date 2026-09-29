@@ -20,10 +20,13 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import RealtimeSessionErrorEvent, TurnDetection
     from pydantic_ai.realtime.azure import (
+        AzureEndOfUtteranceDetection,
         AzureRealtimeConnection,
         AzureRealtimeModel,
         AzureRealtimeModelProfile,
         AzureRealtimeModelSettings,
+        AzureSemanticVAD,
+        AzureServerVAD,
         AzureVoiceLiveVoice,
         SemanticVAD,
         ServerVAD,
@@ -218,6 +221,92 @@ def test_voice_live_session_config_options() -> None:
     )
     assert config['turn_detection']['threshold'] == 0.3
     assert config['input_audio_transcription'] == {'model': 'azure-speech'}
+
+
+def _voice_live_config(
+    model_name: str, profile: AzureRealtimeModelProfile | None = None, **settings: Any
+) -> dict[str, Any]:
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com', api_version='2026-04-10', api_key='azure-key'
+    )
+    model = AzureRealtimeModel(model_name, provider=provider, profile=profile)
+    return model._session_config(  # pyright: ignore[reportPrivateUsage]
+        '', None, model_settings=AzureRealtimeModelSettings(azure_voice_live=True, **settings)
+    )
+
+
+def test_voice_live_azure_turn_detection() -> None:
+    """Voice Live's own turn detection options are sent as given, with the response defaults filled in."""
+    eou = AzureEndOfUtteranceDetection(model='semantic_detection_v1', threshold_level='low', timeout_ms=800)
+    semantic = AzureSemanticVAD(
+        type='azure_semantic_vad_multilingual', languages=['en', 'fr'], remove_filler_words=True
+    )
+    assert _voice_live_config('gpt-realtime', azure_voice_live_turn_detection=semantic)['turn_detection'] == {
+        'create_response': True,
+        'interrupt_response': True,
+        'type': 'azure_semantic_vad_multilingual',
+        'languages': ['en', 'fr'],
+        'remove_filler_words': True,
+    }
+    server = AzureServerVAD(type='server_vad', speech_duration_ms=300, end_of_utterance_detection=eou)
+    assert _voice_live_config('gpt-4.1', azure_voice_live_turn_detection=server)['turn_detection'] == {
+        'create_response': True,
+        'interrupt_response': True,
+        'type': 'server_vad',
+        'speech_duration_ms': 300,
+        'end_of_utterance_detection': eou,
+    }
+    # A cascade deployed under another name opts in through its profile.
+    cascade = AzureRealtimeModelProfile(azure_voice_live_cascade=True)
+    config = _voice_live_config(
+        'my-voice-bot',
+        cascade,
+        azure_voice_live_turn_detection=AzureSemanticVAD(type='azure_semantic_vad', end_of_utterance_detection=eou),
+    )
+    assert config['turn_detection']['end_of_utterance_detection'] == eou
+
+
+@pytest.mark.parametrize('model_name', ['gpt-realtime', 'azure-realtime', 'my-voice-bot'])
+def test_voice_live_rejects_end_of_utterance_detection_on_native_models(model_name: str) -> None:
+    """Voice Live rejects it for a non-cascade model and then refuses the rest of the session, so fail early."""
+    eou = AzureEndOfUtteranceDetection(model='semantic_detection_v1')
+    with pytest.raises(UserError, match='End-of-utterance detection works only on an Azure AI Voice Live cascade'):
+        _voice_live_config(
+            model_name,
+            azure_voice_live_turn_detection=AzureServerVAD(type='server_vad', end_of_utterance_detection=eou),
+        )
+
+
+@pytest.mark.parametrize(
+    'model_name,settings,expected',
+    [
+        # Azure's own suppression works everywhere and wins over the OpenAI setting.
+        (
+            'gpt-realtime',
+            {
+                'azure_voice_live_noise_reduction': 'azure_deep_noise_suppression',
+                'openai_input_noise_reduction': 'near_field',
+            },
+            'azure_deep_noise_suppression',
+        ),
+        ('gpt-5', {'azure_voice_live_noise_reduction': 'far_field'}, 'far_field'),
+        # OpenAI's near/far field is for the native-audio models; a cascade gets Azure's instead.
+        ('gpt-realtime', {'openai_input_noise_reduction': 'near_field'}, 'near_field'),
+        ('gpt-5', {'openai_input_noise_reduction': 'near_field'}, 'azure_deep_noise_suppression'),
+        ('gpt-5', {}, None),
+    ],
+)
+def test_voice_live_noise_reduction(model_name: str, settings: dict[str, Any], expected: str | None) -> None:
+    config = _voice_live_config(model_name, **settings)
+    assert config.get('input_audio_noise_reduction') == ({'type': expected} if expected else None)
+
+
+@pytest.mark.parametrize(
+    'echo_cancellation,expected', [(True, {'type': 'server_echo_cancellation'}), (False, None), (None, None)]
+)
+def test_voice_live_echo_cancellation(echo_cancellation: bool | None, expected: dict[str, str] | None) -> None:
+    settings = {} if echo_cancellation is None else {'azure_voice_live_echo_cancellation': echo_cancellation}
+    assert _voice_live_config('gpt-realtime', **settings).get('input_audio_echo_cancellation') == expected
 
 
 def test_voice_live_maps_session_settings() -> None:
