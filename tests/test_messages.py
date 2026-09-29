@@ -1737,9 +1737,11 @@ def test_url_media_type_is_dumped_under_its_alias() -> None:
         }
     )
 
-    by_name = TypeAdapter(ImageUrl).dump_python(item, mode='json', by_alias=False)
+    # No extension to infer from, so only the stored value can bring the media type back.
+    given = ImageUrl(url='https://example.com/file', media_type='image/png')
+    by_name = TypeAdapter(ImageUrl).dump_python(given, mode='json', by_alias=False)
     assert by_name['_media_type'] == 'image/png'
-    assert TypeAdapter(ImageUrl).validate_python(by_name)._media_type == 'image/png'
+    assert TypeAdapter(ImageUrl).validate_python(by_name).media_type == 'image/png'
 
 
 def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():
