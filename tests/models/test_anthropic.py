@@ -8476,7 +8476,7 @@ async def test_anthropic_advisor_tool_stream(
     assert '4' in agent_run.result.output
     assert advisor_return_started
     calls = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolCallPart))
-    # The advisor `server_tool_use` input is always empty, so `args` stays None, as without streaming.
+    # The advisor `server_tool_use` input is always empty.
     assert [(c.tool_name, c.args_as_dict()) for c in calls] == [('advisor', {})]
     returns = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolReturnPart))
     content = returns[0].content
