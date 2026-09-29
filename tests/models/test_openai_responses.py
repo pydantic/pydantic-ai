@@ -10324,7 +10324,8 @@ async def test_openai_responses_image_generation_store_false(
     assert result.output == snapshot('It was red.')
 
     _, second_request = request_capture.bodies('/v1/responses')
-    assert [item.get('type', 'message') for item in second_request['input']] == snapshot(
+    second_input = cast(list[dict[str, Any]], second_request['input'])
+    assert [item.get('type', 'message') for item in second_input] == snapshot(
         ['message', 'reasoning', 'message', 'message']
     )
 
