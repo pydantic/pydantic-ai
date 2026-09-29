@@ -277,6 +277,11 @@ def test_zero_sdp_addresses_blanks_offer_addresses() -> None:
     assert zero(b'v=0\r\nc=IN IP4 192.168.1.5\r\na=ice-ufrag:creB\r\n') == (
         b'v=0\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:creB\r\n'
     )
+    # GPT-Live takes the offer inside a JSON body, where the line breaks are escaped.
+    live_offer = {'session': {'model': 'gpt-live-1'}, 'transport': {'type': 'webrtc', 'sdp': offer.decode()}}
+    zeroed = json.loads(zero(json.dumps(live_offer).encode()) or b'')
+    assert 'c=IN IP4 0.0.0.0\r\n' in zeroed['transport']['sdp']
+    assert '192.168.1.5' not in zeroed['transport']['sdp']
     # Bodies with no address fields at all — every other recorded request — are unchanged.
     assert zero(b'{"model": "gpt-realtime"}') == b'{"model": "gpt-realtime"}'
     assert zero(None) is None
