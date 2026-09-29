@@ -255,6 +255,15 @@ async def test_a_sub_agent_named_like_a_helper_keeps_its_name() -> None:
     assert '`log(message)`' not in await _description(ts)
 
 
+async def test_a_sub_agent_named_asyncio_is_not_shadowed_by_the_prelude() -> None:
+    assert await _run(_toolset('asyncio'), "await asyncio(task='x')") == 'asyncio:x'
+
+
+def test_the_private_prefix_is_reserved() -> None:
+    with pytest.raises(UserError, match="'_dw_agent' starts with '_dw_', which is reserved"):
+        _toolset('_dw_agent')
+
+
 async def test_description_documents_the_helpers() -> None:
     description = await _description(_toolset('a', 'b'))
     helpers = description[description.index('These helpers') : description.index('`asyncio.gather` also works')]

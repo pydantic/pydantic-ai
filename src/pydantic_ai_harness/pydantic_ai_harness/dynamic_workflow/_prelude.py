@@ -11,11 +11,14 @@ from __future__ import annotations
 
 from collections.abc import Collection
 
-HOST_AGENT = '_dw_agent'
-HOST_WORKFLOW = '_dw_workflow'
-HOST_LOG = '_dw_log'
-HOST_PHASE = '_dw_phase'
-HOST_BUDGET = '_dw_budget'
+PRIVATE_PREFIX = '_dw_'
+"""Prefix of every name the prelude defines besides the helpers, so sub-agents cannot collide with them."""
+
+HOST_AGENT = f'{PRIVATE_PREFIX}agent'
+HOST_WORKFLOW = f'{PRIVATE_PREFIX}workflow'
+HOST_LOG = f'{PRIVATE_PREFIX}log'
+HOST_PHASE = f'{PRIVATE_PREFIX}phase'
+HOST_BUDGET = f'{PRIVATE_PREFIX}budget'
 
 HOST_ASYNC_NAMES = frozenset({HOST_AGENT, HOST_WORKFLOW})
 """Host functions the helpers `await`: dispatched concurrently."""
@@ -26,7 +29,8 @@ HOST_INLINE_NAMES = frozenset({HOST_LOG, HOST_PHASE, HOST_BUDGET})
 ARGS_NAME = 'args'
 
 _SHARED = """\
-import asyncio
+# Aliased, so a sub-agent named `asyncio` is not shadowed; scripts import `asyncio` themselves.
+import asyncio as _dw_asyncio
 
 
 async def _dw_resolve(value):
@@ -76,7 +80,7 @@ async def agent(task, *, name=None, schema=None, model=None, phase=None):
     'parallel': (
         """\
 async def parallel(tasks):
-    return list(await asyncio.gather(*[_dw_settle(task) for task in _dw_items(tasks, 'parallel')]))
+    return list(await _dw_asyncio.gather(*[_dw_settle(task) for task in _dw_items(tasks, 'parallel')]))
 """,
         'async def parallel(tasks: list[Any]) -> list[Any]: ...',
     ),
@@ -84,7 +88,7 @@ async def parallel(tasks):
         """\
 async def pipeline(items, *stages):
     items = _dw_items(items, 'pipeline')
-    return list(await asyncio.gather(*[_dw_chain(item, index, stages) for index, item in enumerate(items)]))
+    return list(await _dw_asyncio.gather(*[_dw_chain(item, index, stages) for index, item in enumerate(items)]))
 """,
         'async def pipeline(items: list[Any], *stages: Any) -> list[Any]: ...',
     ),

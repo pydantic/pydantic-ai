@@ -330,7 +330,8 @@ await agent('Summarize: ' + '\n'.join(v for v in verified if v), name='summarize
 
 Outside `parallel` and `pipeline`, a failed `await agent(...)` raises `RuntimeError` rather than
 returning `None`, so it cannot pass for a sub-agent with nothing to say. A sub-agent named like a
-helper, say `log`, keeps its name, and that helper is left out.
+helper, say `log`, keeps its name, and that helper is left out. Names starting with `_dw_` are
+reserved for the helpers' internals.
 
 ## Choosing sub-agent models
 

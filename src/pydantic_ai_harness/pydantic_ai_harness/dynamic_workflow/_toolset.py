@@ -428,6 +428,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                     description=_SAVE_DESCRIPTION,
                     parameters_json_schema=schema,
                     metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+                    # Serialized, so two saves of one name in a step cannot both pass the collision check.
+                    sequential=True,
                 ),
                 max_retries=self.max_retries,
                 args_validator=validator,

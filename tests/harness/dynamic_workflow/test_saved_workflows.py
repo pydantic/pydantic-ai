@@ -343,6 +343,7 @@ async def test_save_workflow_writes_a_file_the_run_can_use(tmp_path: Path) -> No
         'args': {'type': 'object', 'required': ['text']},
         'agents': ['reviewer'],
     }
+    assert (await ts.get_tools(ctx))['save_workflow'].tool_def.sequential
     message = await call_workflow_tool(ts, dict(save), ctx)
     assert message.replace(str(tmp_path.resolve()), '<tmp>') == snapshot(
         "Saved workflow 'echo' to <tmp>/workflows/echo.py. Run it with `run_workflow` by name, or from a script with `await workflow('echo', args)`."

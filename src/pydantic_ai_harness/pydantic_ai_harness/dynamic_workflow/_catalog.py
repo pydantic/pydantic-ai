@@ -11,7 +11,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.dynamic_workflow._prelude import render_helper_stubs
+from pydantic_ai_harness.dynamic_workflow._prelude import PRIVATE_PREFIX, render_helper_stubs
 
 
 def _is_valid_sandbox_name(name: str) -> bool:
@@ -263,6 +263,11 @@ def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: se
         raise UserError(
             f'DynamicWorkflow sub-agent name {name!r} cannot be exposed as a sandbox function: '
             'it must be a Python identifier that is not a reserved keyword. Rename it.'
+        )
+    if name.startswith(PRIVATE_PREFIX):
+        raise UserError(
+            f'DynamicWorkflow sub-agent name {name!r} starts with {PRIVATE_PREFIX!r}, which is reserved '
+            'for the sandbox helpers. Rename it.'
         )
     if name in existing_names:
         raise UserError(f'DynamicWorkflow has two sub-agents named {name!r}; names must be unique.')

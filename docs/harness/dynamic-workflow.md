@@ -141,7 +141,7 @@ verified = await pipeline(['auth.py', 'parser.py', 'db.py'], review, verify)
 await agent('Summarize: ' + '\n'.join(v for v in verified if v), name='summarizer')
 ```
 
-Unlike inside `parallel` and `pipeline`, a failed `await agent(...)` on its own raises `RuntimeError` rather than returning `None`, so it cannot be mistaken for a sub-agent with nothing to say. A sub-agent named like a helper, say `log`, keeps its name, and that helper is left out.
+Unlike inside `parallel` and `pipeline`, a failed `await agent(...)` on its own raises `RuntimeError` rather than returning `None`, so it cannot be mistaken for a sub-agent with nothing to say. A sub-agent named like a helper, say `log`, keeps its name, and that helper is left out. Names starting with `_dw_` are reserved for the helpers' internals.
 
 ## Choosing sub-agent models
 
