@@ -671,6 +671,20 @@ class TestWebFetchLocalTool:
             with pytest.raises(ModelRetry, match='nested too deeply'):
                 await tool('https://example.com')
 
+    async def test_fetch_html_conversion_budget_returns_model_retry(self):
+        """The conversion budget surfaces a URL-qualified retry to the agent."""
+        html = '<dd>' * 15 + 'x\n' * 300_000 + '</dd>' * 15
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=50_000, allow_local_urls=False, timeout=30)
+            with pytest.raises(
+                ModelRetry, match=r'Failed to convert https://example\.com: the document is too complex'
+            ):
+                await tool('https://example.com')
+
     async def test_nested_html_conversion_keeps_event_loop_responsive(self):
         """A deeply nested definition list cannot occupy a worker and delay other coroutines for seconds."""
         html = '<dd>' * 120 + 'line\n' * 150_000 + '</dd>' * 120
@@ -885,11 +899,34 @@ class TestMarkdownConverter:
         html = '<div>' * 30 + '<a href="/x">link</a>' + '</div>' * 30
         assert _convert_html(html)[1] == '[link](/x)'
 
+    @pytest.mark.parametrize('content', ['link<!--ignored-->', '<em>link</em>'])
+    def test_nested_link_child_parity(self, content: str):
+        """Ignored comments and formatted children keep their normal Markdown output."""
+        html = '<div>' * 30 + f'<a href="/x">{content}</a>' + '</div>' * 30
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
     def test_deep_autolink_is_not_overcharged(self):
         """Autolink syntax replaces its text with the URL rather than appending a copy."""
         value = 'x' * 9_000_000
         html = '<div>' * 300 + f'<a href="{value}">{value}</a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
+
+    def test_wrapped_deep_autolink_is_not_overcharged(self):
+        """Transparent descendants preserve the converter's autolink shortcut."""
+        value = 'x' * 9_000_000
+        html = '<div>' * 300 + f'<a href="{value}"><span>{value}</span></a>' + '</div>' * 300
+        assert _convert_html(html)[1] == f'<{value}>'
+
+    def test_pre_padding_is_not_overcharged(self):
+        """Preformatted whitespace is stripped before enclosing blocks scan it."""
+        html = '<div>' * 300 + '<pre>' + ' ' * 18_000_000 + '</pre>' + '</div>' * 300
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
+    @pytest.mark.parametrize('container', ['<table><tr><td>{content}</td></tr></table>', '<h3>{content}</h3>'])
+    def test_collapsed_newlines_are_not_overcharged(self, container: str):
+        """Cells and headings collapse newlines before outer definition items see them."""
+        html = '<dd>' * 15 + container.format(content='x\n' * 300_000) + '</dd>' * 15
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
     def test_inline_video_does_not_use_src(self):
         """A video in a table cell keeps its text and ignores its source URL."""
@@ -923,6 +960,14 @@ class TestMarkdownConverter:
             _convert_html(html)
         assert time.perf_counter() - started < 3
 
+    def test_repeated_tbody_table_search_is_bounded(self):
+        """The first row of each tbody must not rescan the whole table."""
+        html = '<table>' + '<tbody><tr><td>x</td></tr></tbody>' * 2000 + '</table>'
+        started = time.perf_counter()
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+        assert time.perf_counter() - started < 3
+
     def test_small_table_colspan_converts(self):
         """Small decimal colspans retain the converter's output."""
         html = '<table><tr><td colspan="002">x</td></tr></table>'
@@ -940,6 +985,19 @@ class TestMarkdownConverter:
     def test_generated_text_growth_is_bounded(self, tag: str, character: str):
         """Code delimiters and underlined headings multiply long child text."""
         html = '<div>' * 300 + f'<{tag}>' + character * 16_000_000 + f'</{tag}>' + '</div>' * 300
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+
+    def test_heading_generated_link_growth_is_bounded(self):
+        """An underlined heading duplicates its rendered link, including the URL."""
+        value = 'x' * 17_000_000
+        html = '<div>' * 300 + f'<h1><a href="{value}">link</a></h1>' + '</div>' * 300
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+
+    def test_generated_link_newlines_are_bounded(self):
+        """Link URLs can create lines that nested definition items must indent."""
+        html = '<dd>' * 15 + '<a href="' + 'x\n' * 600_000 + '">z</a>' + '</dd>' * 15
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
 
@@ -990,6 +1048,12 @@ class TestMarkdownConverter:
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
         assert time.perf_counter() - started < 3
+
+    def test_generated_list_lines_with_wide_marker_are_bounded(self):
+        """A URL can generate the lines an ordered-list marker would indent."""
+        html = '<ol start="' + '9' * 1000 + '"><li><a href="' + 'x\n' * 30_000 + '">z</a></li></ol>'
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
 
     @pytest.mark.parametrize(
         'html',
