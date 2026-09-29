@@ -3244,18 +3244,10 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
     # <https://platform.claude.com/docs/en/about-claude/pricing>). The rest of
     # `cache_creation_input_tokens` is priced at the five-minute rate, so the one-hour count is all pricing needs.
     # In streaming, only the start event carries the split, so it's kept in `details` to survive the merge.
-    # The one-hour count is capped at the total it's part of: after a compaction iteration's cache write, the final
-    # event resets `cache_creation_input_tokens` without resending the split, so a message accumulated from a stream
-    # keeps the start event's stale one-hour count. This assumes a stale split can only overshoot the total.
     if (
         isinstance(response_usage, BetaUsage)
         and response_usage.cache_creation is not None
-        and (
-            ephemeral_1h_input_tokens := min(
-                response_usage.cache_creation.ephemeral_1h_input_tokens,
-                response_usage.cache_creation_input_tokens or 0,
-            )
-        )
+        and (ephemeral_1h_input_tokens := response_usage.cache_creation.ephemeral_1h_input_tokens)
     ):
         details['ephemeral_1h_input_tokens'] = ephemeral_1h_input_tokens
 
@@ -3333,6 +3325,17 @@ def _map_usage(
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
     details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+    # The one-hour count is capped at the total it's part of: after a compaction iteration's cache write, the final
+    # event resets `cache_creation_input_tokens` without resending the split, so the start event's one-hour count
+    # would otherwise survive, both in streamed usage and in a message accumulated from a stream. This assumes a
+    # stale split can only overshoot the total.
+    if 'ephemeral_1h_input_tokens' in details:
+        if ephemeral_1h_input_tokens := min(
+            details['ephemeral_1h_input_tokens'], details.get('cache_creation_input_tokens', 0)
+        ):
+            details['ephemeral_1h_input_tokens'] = ephemeral_1h_input_tokens
+        else:
+            del details['ephemeral_1h_input_tokens']
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
@@ -3628,6 +3631,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                             yield self._parts_manager.handle_part(
                                 vendor_part_id=event.index,
                                 part=_finalize_streamed_tool_search_call_part(existing),
+                            )
+                    elif isinstance(current_block, BetaServerToolUseBlock):
+                        # An empty input streams as an empty JSON delta, which accumulates as `''`; the
+                        # non-streaming `_map_server_tool_use_block` maps an empty input to `args=None`.
+                        existing = self._parts_manager.get_part_by_vendor_id(event.index)
+                        if isinstance(existing, NativeToolCallPart) and existing.args in ('', '{}'):
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=event.index, part=replace(existing, args=None)
                             )
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch

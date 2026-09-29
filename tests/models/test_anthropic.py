@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from functools import cached_property
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 import httpx2
 import pytest
+import yaml
 from pydantic import BaseModel, Field
 
 from pydantic_ai import (
@@ -8470,6 +8472,9 @@ async def test_anthropic_advisor_tool_stream(
     assert agent_run.result is not None
     assert '4' in agent_run.result.output
     assert advisor_return_started
+    calls = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolCallPart))
+    # The advisor `server_tool_use` input is always empty, so `args` stays None, as without streaming.
+    assert [(c.tool_name, c.args) for c in calls] == [('advisor', None)]
     returns = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolReturnPart))
     content = returns[0].content
     assert isinstance(content, dict)
@@ -14973,6 +14978,53 @@ async def test_anthropic_compaction_usage_with_cache(
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
     assert cache_breakpoints(request_capture.body()) == ({'type': 'ephemeral', 'ttl': ttl}, [])
     assert result.usage == expected_usage
+
+
+def test_anthropic_compaction_1h_cache_write_survives_the_streamed_merge() -> None:
+    """Streamed usage for a 1h-TTL compaction request counts its one-hour cache write once.
+
+    The start event carries the compaction iteration's one-hour split, and the final event resets
+    `cache_creation_input_tokens` without resending it, so the stale split used to survive the merge alongside
+    `compaction_ephemeral_1h_input_tokens`: one-hour writes above the total. Folds the events recorded
+    by `test_anthropic_compaction_usage_with_cache[1h]`, which asserts the same values without streaming.
+    """
+    cassette = (
+        Path(__file__).parent / 'cassettes' / 'test_anthropic' / 'test_anthropic_compaction_usage_with_cache[1h].yaml'
+    )
+    content = yaml.safe_load(cassette.read_text())['interactions'][0]['response']['body']['content']
+    request_usage: RequestUsage | None = None
+    for line in content.splitlines():
+        if not line.startswith('data: '):
+            continue
+        event = json.loads(line.removeprefix('data: '))
+        if event['type'] == 'message_start':
+            parsed: BetaRawMessageStartEvent | BetaRawMessageDeltaEvent = BetaRawMessageStartEvent.model_validate(event)
+        elif event['type'] == 'message_delta':
+            parsed = BetaRawMessageDeltaEvent.model_validate(event)
+        else:
+            continue
+        request_usage = _map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
+
+    assert request_usage == snapshot(
+        RequestUsage(
+            details={
+                'input_tokens': 187,
+                'output_tokens': 8,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+                'message_iterations': 1,
+                'compaction_iterations': 1,
+                'compaction_input_tokens': 100,
+                'compaction_output_tokens': 85,
+                'compaction_cache_creation_input_tokens': 55100,
+                'compaction_ephemeral_1h_input_tokens': 55100,
+            },
+            input_tokens=55387,
+            cache_write_tokens=55100,
+            cache_write_1h_tokens=55100,
+            output_tokens=93,
+        )
+    )
 
 
 async def test_anthropic_compaction_usage_with_cache_streaming(
