@@ -3435,14 +3435,15 @@ class AnthropicStreamedResponse(StreamedResponse):
                             continue
                         call_part = _map_server_tool_use_block(current_block, self.provider_name)
                         builtin_tool_calls[call_part.tool_call_id] = call_part
-                        # In streaming, the block's `input` is empty at start and arrives via
+                        # In streaming, the block's `input` is usually empty at start and arrives via
                         # subsequent `BetaInputJSONDelta` events. Emit with `args=None` so the
                         # accumulating JSON deltas can attach as a string; the
-                        # `BetaRawContentBlockStopEvent` handler below normalizes the final
-                        # value back to the canonical part shape (matching non-streaming).
+                        # `BetaRawContentBlockStopEvent` handler below normalizes a tool search's final
+                        # value back to the canonical part shape (matching non-streaming). A server tool
+                        # call made from code execution carries its whole input here, without deltas.
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
-                            part=replace(call_part, args=None),
+                            part=call_part if current_block.input else replace(call_part, args=None),
                         )
                     elif isinstance(current_block, BetaWebSearchToolResultBlock):
                         yield self._parts_manager.handle_part(
@@ -3615,20 +3616,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                                 vendor_part_id=event.index,
                                 part=_finalize_streamed_tool_search_call_part(existing),
                             )
-                    elif isinstance(current_block, BetaToolUseBlock | BetaServerToolUseBlock):
-                        existing = self._parts_manager.get_part_by_vendor_id(event.index)
-                        assert isinstance(existing, ToolCallPart | NativeToolCallPart)
-                        tool_input = _streamed_tool_input(current_block, existing)
-                        if tool_input is not None:
-                            # Parse the args like a non-streamed response carries them.
-                            args = (
-                                tool_input
-                                if isinstance(current_block, BetaToolUseBlock)
-                                else _map_server_tool_use_block(
-                                    current_block.model_copy(update={'input': tool_input}), self.provider_name
-                                ).args
-                            )
-                            self._parts_manager.finalize_tool_call_args(vendor_part_id=event.index, args=args)
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
@@ -4103,23 +4090,6 @@ def _normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str
     raw = (tool_args or {}).get(wire_key, '')
     queries = [raw] if isinstance(raw, str) else []
     return {'queries': queries}
-
-
-def _streamed_tool_input(
-    block: BetaToolUseBlock | BetaServerToolUseBlock, part: ToolCallPart | NativeToolCallPart
-) -> dict[str, Any] | None:
-    """The `input` a non-streamed response would carry for a streamed tool use block, or `None` if it isn't valid JSON.
-
-    The input streams as JSON deltas, which accumulate on the part as a string. A block without deltas, like a server
-    tool call made from code execution, carries its input on the block itself.
-    """
-    if not isinstance(part.args, str) or not part.args:
-        return cast(dict[str, Any], block.input)
-    try:
-        tool_input = pydantic_core.from_json(part.args)
-    except ValueError:
-        return None
-    return cast(dict[str, Any], tool_input) if isinstance(tool_input, dict) else None
 
 
 def _finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> NativeToolSearchCallPart:

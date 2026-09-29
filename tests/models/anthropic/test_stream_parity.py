@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from pydantic_ai import _utils
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponsePart
 from pydantic_ai.models import ModelRequestParameters
 
 from ...conftest import try_import
@@ -52,9 +52,15 @@ def _comparable(response: ModelResponse) -> dict[str, Any]:
     del fields['timestamp']
     # A return part stamps the time it was built.
     fields['parts'] = [
-        {'type': type(part).__name__, **dataclasses.asdict(part), 'timestamp': None} for part in response.parts
+        {'type': type(part).__name__, **dataclasses.asdict(part), 'timestamp': None} | _comparable_args(part)
+        for part in response.parts
     ]
     return fields
+
+
+def _comparable_args(part: ModelResponsePart) -> dict[str, Any]:
+    # Streamed tool call args are the JSON string the deltas built, where a complete message has a dict.
+    return {'args': part.args_as_dict()} if isinstance(part, BaseToolCallPart) else {}
 
 
 async def _streamed_and_complete(

@@ -9,7 +9,6 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     NativeToolCallPart,
     PartDeltaEvent,
-    PartEndEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
@@ -1140,24 +1139,6 @@ def test_get_part_by_vendor_id():
     assert part == snapshot(TextPart(content='hello', part_kind='text'))
 
     assert manager.get_part_by_vendor_id('missing') is None
-
-
-def test_finalized_tool_call_args_reach_the_end_event_and_its_replay():
-    """Args finalized without a delta, like parsed streamed JSON, reach a replay through the `PartEndEvent`."""
-    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
-    start_event = manager.handle_tool_call_delta(vendor_part_id='tool', tool_name='my_tool', tool_call_id='call_1')
-    delta_event = manager.handle_tool_call_delta(vendor_part_id='tool', args='{"city": "London"}')
-    assert isinstance(start_event, PartStartEvent)
-    assert isinstance(delta_event, PartDeltaEvent)
-
-    manager.finalize_tool_call_args(vendor_part_id='tool', args={'city': 'London'})
-    final_part = ToolCallPart(tool_name='my_tool', args={'city': 'London'}, tool_call_id='call_1')
-    assert manager.get_parts() == [final_part]
-
-    replay_manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
-    for event in (start_event, delta_event, PartEndEvent(index=0, part=final_part)):
-        replay_manager.apply_event(event)
-    assert replay_manager.get_parts() == [final_part]
 
 
 def test_apply_event_preserves_stream_part_indexes():

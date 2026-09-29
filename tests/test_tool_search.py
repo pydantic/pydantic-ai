@@ -3524,7 +3524,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     {
                         'type': 'tool_call',
                         'tool_name': 'lookup_refund_policy',
-                        'args': {'order_id': 'order-123'},
+                        'args': '{"order_id": "order-123"}',
                     }
                 ],
             ),

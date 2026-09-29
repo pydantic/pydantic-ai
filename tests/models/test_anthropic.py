@@ -2434,16 +2434,19 @@ async def test_multiple_parallel_tool_calls(
                 part_kind='text',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Alice'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info', args='{"name": "Alice"}', tool_call_id=IsStr(), part_kind='tool-call'
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Bob'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info', args='{"name": "Bob"}', tool_call_id=IsStr(), part_kind='tool-call'
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Charlie'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args='{"name": "Charlie"}',
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Daisy'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info', args='{"name": "Daisy"}', tool_call_id=IsStr(), part_kind='tool-call'
             ),
         ]
     )
@@ -2576,50 +2579,6 @@ async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_request
     call_kwargs = mock_client.beta.messages.create.call_args.kwargs
     assert call_kwargs['speed'] is OMIT
     assert 'fast-mode-2026-02-01' not in call_kwargs['betas']
-
-
-@pytest.mark.parametrize(
-    'partial_json',
-    [
-        pytest.param('{"first": "On', id='cut-off'),
-        pytest.param('["One"]', id='not-an-object'),
-    ],
-)
-async def test_stream_keeps_tool_call_args_that_arent_a_json_object(allow_model_requests: None, partial_json: str):
-    """Streamed tool call args that don't parse as a JSON object stay the streamed string, for tool validation to reject.
-
-    A response cut off by `max_tokens` can end mid-JSON.
-    """
-    stream = [
-        BetaRawMessageStartEvent(type='message_start', message=anth_msg(BetaUsage(input_tokens=20, output_tokens=0))),
-        BetaRawContentBlockStartEvent(
-            type='content_block_start',
-            index=0,
-            content_block=BetaToolUseBlock(type='tool_use', id='tool_1', name='my_tool', input={}),
-        ),
-        BetaRawContentBlockDeltaEvent(
-            type='content_block_delta',
-            index=0,
-            delta=BetaInputJSONDelta(type='input_json_delta', partial_json=partial_json),
-        ),
-        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
-        BetaRawMessageDeltaEvent(
-            type='message_delta',
-            delta=Delta(stop_reason='max_tokens'),
-            usage=BetaMessageDeltaUsage(output_tokens=5),
-        ),
-        BetaRawMessageStopEvent(type='message_stop'),
-    ]
-    mock_client = MockAnthropic.create_stream_mock(stream)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    async with m.request_stream(
-        [ModelRequest(parts=[UserPromptPart(content='')])], {}, ModelRequestParameters()
-    ) as streamed:
-        async for _ in streamed:
-            pass
-
-    assert streamed.get().parts == [ToolCallPart(tool_name='my_tool', args=partial_json, tool_call_id='tool_1')]
 
 
 async def test_stream_structured(allow_model_requests: None):
@@ -6411,7 +6370,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'San Francisco weather today'},
+                        args='{"query": "San Francisco weather today"}',
                         tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
                         provider_name='anthropic',
                     ),
@@ -6498,7 +6457,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'San Francisco weather September 16 2025'},
+                        args='{"query": "San Francisco weather September 16 2025"}',
                         tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
                         provider_name='anthropic',
                     ),
@@ -6765,7 +6724,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                 index=1,
                 part=NativeToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'San Francisco weather today'},
+                    args='{"query": "San Francisco weather today"}',
                     tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
                     provider_name='anthropic',
                 ),
@@ -6921,7 +6880,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                 index=4,
                 part=NativeToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'San Francisco weather September 16 2025'},
+                    args='{"query": "San Francisco weather September 16 2025"}',
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
                     provider_name='anthropic',
                 ),
@@ -7561,7 +7520,7 @@ async def test_anthropic_web_fetch_tool_stream(
                     ),
                     NativeToolCallPart(
                         tool_name='web_fetch',
-                        args={'url': 'https://ai.pydantic.dev'},
+                        args='{"url": "https://ai.pydantic.dev"}',
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
@@ -8282,8 +8241,8 @@ async def test_anthropic_advisor_result_variants(
     calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
     returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert [c.tool_name for c in calls] == ['advisor']
-    # The advisor `server_tool_use` input is always empty, so `args` stays None.
-    assert calls[0].args is None
+    # The advisor `server_tool_use` input is always empty.
+    assert calls[0].args_as_dict() == {}
     assert [r.tool_name for r in returns] == ['advisor']
     assert returns[0].content == expected_content
 
@@ -8469,8 +8428,8 @@ async def test_anthropic_advisor_tool(allow_model_requests: None, anthropic_api_
     calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
     returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert [c.tool_name for c in calls] == ['advisor']
-    # The advisor `server_tool_use` input is always empty, so `args` stays None.
-    assert calls[0].args is None
+    # The advisor `server_tool_use` input is always empty.
+    assert calls[0].args_as_dict() == {}
     assert [r.tool_name for r in returns] == ['advisor']
     content = returns[0].content
     assert isinstance(content, dict)
@@ -8518,7 +8477,7 @@ async def test_anthropic_advisor_tool_stream(
     assert advisor_return_started
     calls = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolCallPart))
     # The advisor `server_tool_use` input is always empty, so `args` stays None, as without streaming.
-    assert [(c.tool_name, c.args) for c in calls] == [('advisor', None)]
+    assert [(c.tool_name, c.args_as_dict()) for c in calls] == [('advisor', {})]
     returns = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolReturnPart))
     content = returns[0].content
     assert isinstance(content, dict)
@@ -9184,7 +9143,7 @@ async def test_anthropic_code_execution_tool(
                     TextPart(content='Sure! Let me calculate that for you.'),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo $((3 * 12390))'},
+                        args='{"command": "echo $((3 * 12390))"}',
                         tool_call_id='srvtoolu_01FBP24qnwQdUrAD7Zkmgo1z',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
@@ -9253,7 +9212,7 @@ async def test_anthropic_code_execution_tool(
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo $((4 * 12390))'},
+                        args='{"command": "echo $((4 * 12390))"}',
                         tool_call_id='srvtoolu_0145eEZDa6jUXCMf2mXiWvrn',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
@@ -9348,7 +9307,7 @@ async def test_anthropic_code_execution_tool_stream(
                     TextPart(content="I'll calculate that expression for you right away!"),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo "65465-6544 * 65464-6+1.02255" | bc -l'},
+                        args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
                         tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
@@ -9495,7 +9454,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                 index=2,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
-                    args={'command': 'echo "65465-6544 * 65464-6+1.02255" | bc -l'},
+                    args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'bash_code_execution'},
@@ -9863,7 +9822,7 @@ async def test_anthropic_tool_output(
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_017UNCdavs1wnorx882Leniq')
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_017UNCdavs1wnorx882Leniq')
                 ],
                 usage=RequestUsage(
                     input_tokens=711,
@@ -9903,7 +9862,7 @@ async def test_anthropic_tool_output(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args={'city': 'Mexico City', 'country': 'Mexico'},
+                        args='{"city": "Mexico City", "country": "Mexico"}',
                         tool_call_id='toolu_01XLX8Tn3mJAQWVLKZzdkJXr',
                     )
                 ],
@@ -9989,7 +9948,7 @@ MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST M
                     TextPart(
                         content="I'll help you find the largest city in your country. Let me first determine which country you're in."
                     ),
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01A6nVcvkJZ34xjbVWD68U9W'),
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_01A6nVcvkJZ34xjbVWD68U9W'),
                 ],
                 usage=RequestUsage(
                     input_tokens=566,
@@ -10114,7 +10073,7 @@ Don't include any text or Markdown fencing before or after.
                     TextPart(
                         content="I'll help you find the largest city in your country. Let me first determine which country you're in."
                     ),
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01EFHXeuSi8dBkTkYCKLarCu'),
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_01EFHXeuSi8dBkTkYCKLarCu'),
                 ],
                 usage=RequestUsage(
                     input_tokens=642,
@@ -10544,14 +10503,14 @@ async def test_anthropic_text_editor_code_execution_tool(
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'create', 'path': '/tmp/hello.txt', 'file_text': 'Hello, world!'},
+                        args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
                         tool_call_id='srvtoolu_01WFgbd6mVbXEn1svFKtFQCE',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'view', 'path': '/tmp/hello.txt'},
+                        args='{"command": "view", "path": "/tmp/hello.txt"}',
                         tool_call_id='srvtoolu_015rV12wivwdNWXL4hMvXwSk',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
@@ -10726,7 +10685,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
                 index=1,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
-                    args={'command': 'create', 'path': '/tmp/hello.txt', 'file_text': 'Hello, world!'},
+                    args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
@@ -10776,7 +10735,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
                 index=2,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
-                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
@@ -10881,7 +10840,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
                 index=6,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
-                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
@@ -11440,7 +11399,7 @@ async def test_anthropic_web_search_tool_stream(
                 index=0,
                 part=NativeToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'top world news today'},
+                    args='{"query": "top world news today"}',
                     tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
                     provider_name='anthropic',
                 ),
@@ -11580,7 +11539,7 @@ async def test_anthropic_web_search_tool_stream(
                 index=3,
                 part=NativeToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'breaking news headlines August 14 2025'},
+                    args='{"query": "breaking news headlines August 14 2025"}',
                     tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
                     provider_name='anthropic',
                 ),
@@ -14092,7 +14051,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                 parts=[
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo $((3 * 12390))'},
+                        args='{"command": "echo $((3 * 12390))"}',
                         tool_call_id='srvtoolu_01F4x4GeMm6sCtxZgH4X7zgW',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
@@ -14145,7 +14104,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                 parts=[
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo $((4 * 12390))'},
+                        args='{"command": "echo $((4 * 12390))"}',
                         tool_call_id='srvtoolu_017vcQzhihPQeto4H19pZ5uW',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
