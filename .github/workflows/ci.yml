@@ -1458,8 +1458,9 @@ jobs:
           title="Bump the gh-aw engine pin to ${released}"
           # `--search` matches words rather than the phrase, so it narrows the
           # listing and the exact title is compared here.
-          if gh issue list --state open --search "${title} in:title" \
-            --json title --jq '.[].title' | grep -qxF "${title}"; then
+          existing_titles=$(gh issue list --state open --search "${title} in:title" \
+            --json title --jq '.[].title')
+          if grep -qxF "${title}" <<< "$existing_titles"; then
             echo "An open issue already asks for this: ${title}"
             exit 0
           fi
