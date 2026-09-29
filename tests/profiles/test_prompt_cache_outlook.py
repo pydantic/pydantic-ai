@@ -24,6 +24,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from ..conftest import try_import
 
 with try_import() as anthropic_imports:
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as bedrock_imports:
@@ -172,10 +173,34 @@ def test_cache_point_without_profile_retention_is_unknown():
     assert prompt_cache_outlook(history, profile=ModelProfile(), now=NOW) == 'unknown'
 
 
-def test_explicit_retention_overrides_cache_point():
+def test_cache_point_extends_explicit_retention():
+    # Requested retention replaces the profile's default, but cache points still extend it: they are
+    # facts of the history, whichever boundary they extend.
     history = _cache_point_history(timedelta(minutes=30), '1h')
     profile = ModelProfile(default_cache_retention=timedelta(minutes=5))
-    assert prompt_cache_outlook(history, profile=profile, retention=timedelta(minutes=10), now=NOW) == 'cold'
+    assert prompt_cache_outlook(history, profile=profile, retention=timedelta(minutes=10), now=NOW) == 'warm'
+    assert prompt_cache_outlook(_history(timedelta(minutes=30)), retention=timedelta(minutes=10), now=NOW) == 'cold'
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    ('settings', 'expected'),
+    [
+        (None, 'cold'),
+        (AnthropicModelSettings(anthropic_cache=True), 'cold'),
+        (AnthropicModelSettings(anthropic_cache='1h'), 'warm'),
+    ],
+)
+def test_outlook_with_resolved_retention(settings: AnthropicModelSettings | None, expected: str):
+    """The resolver and the profile default compose: settings that request nothing leave the default in place."""
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
+    outlook = prompt_cache_outlook(
+        _history(timedelta(minutes=30)),
+        profile=model.profile,
+        retention=model.resolve_cache_retention(settings),
+        now=NOW,
+    )
+    assert outlook == expected
 
 
 # ---- Outlook: unknown cases --------------------------------------------------------------

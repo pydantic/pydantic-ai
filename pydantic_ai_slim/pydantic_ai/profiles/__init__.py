@@ -412,23 +412,24 @@ def prompt_cache_outlook(
     has no response after it (like the just-appended request a [history processor](../message-history.md#processing-message-history)
     sees, which hasn't been sent yet) never touched the cache, so its timestamp must not reset the idle clock.
 
+    Cache points in the history extend whichever boundary applies to their largest TTL, assuming they
+    were honored by the provider that served the requests.
+
     Args:
         messages: The message history the next request would be built on, oldest first.
         profile: The model profile whose [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]
-            is used as the expectation boundary. When present, cache points in the history extend this
-            boundary to their largest TTL, assuming they were honored by the provider that served the requests.
-        retention: An explicit expectation boundary, overriding both the profile and cache-point TTLs.
-            Use this for settings-based extended retention that is not reflected in the profile.
+            is used as the expectation boundary when `retention` is `None`.
+        retention: The retention requested for these requests, replacing the profile's default. With a model
+            and its settings in hand, pass
+            [`model.resolve_cache_retention(model_settings)`][pydantic_ai.models.Model.resolve_cache_retention]:
+            it returns `None` when the settings request nothing, so the profile's default still applies.
         now: The reference time to measure idleness against. Defaults to the current UTC time; inject a
             fixed value for deterministic tests.
 
     Returns:
         `'warm'`, `'cold'`, or `'unknown'` (see [`PromptCacheOutlook`][pydantic_ai.profiles.PromptCacheOutlook]).
     """
-    if retention is None and profile is not None:
-        retention = profile.get('default_cache_retention')
-        if retention is not None and (cache_point_ttl := _max_cache_point_ttl(messages)) is not None:
-            retention = max(retention, cache_point_ttl)
+    retention = _expected_cache_retention(messages, profile=profile, retention=retention)
     if retention is None:
         return 'unknown'
 
@@ -446,6 +447,22 @@ def prompt_cache_outlook(
 
     idle = now - last_timestamp
     return 'warm' if idle <= retention else 'cold'
+
+
+def _expected_cache_retention(
+    messages: Sequence[ModelMessage], *, profile: ModelProfile | None, retention: timedelta | None
+) -> timedelta | None:
+    """How long the provider is expected to keep this history's cached prefix, or `None` if unknown.
+
+    `retention` (the retention requested by settings) replaces the profile's default, and cache points in
+    `messages` extend either to their largest TTL. Cache points alone never produce a boundary: without a
+    known base, whether the provider honored them at all is unknown.
+    """
+    if retention is None and profile is not None:
+        retention = profile.get('default_cache_retention')
+    if retention is not None and (cache_point_ttl := _max_cache_point_ttl(messages)) is not None:
+        retention = max(retention, cache_point_ttl)
+    return retention
 
 
 _CACHE_POINT_TTLS: dict[str, timedelta] = {'5m': timedelta(minutes=5), '1h': timedelta(hours=1)}
