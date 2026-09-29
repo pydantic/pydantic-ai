@@ -1651,6 +1651,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # `google-genai`'s `send_tool_response` (as of 2.25) hands the parts' raw bytes to
             # `json.dumps`, which can't encode them, so the message is serialized with the SDK's own
             # types, which base64-encode bytes, and sent over the session's socket as it would be.
+            # https://github.com/googleapis/python-genai/issues/3022
             message = genai_types.LiveClientMessage(
                 tool_response=genai_types.LiveClientToolResponse(function_responses=[function_response])
             )
