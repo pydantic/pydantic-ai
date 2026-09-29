@@ -338,6 +338,19 @@ async def test_login_signs_in_now_through_the_browser(monkeypatch: pytest.Monkey
     assert output.getvalue() == 'Enter code: ABCD-EFGH\n'
 
 
+async def test_sign_in_text_from_the_server_cannot_drive_the_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def sign_in(auth: DeviceAuth) -> Tokens:
+        auth._announce('Enter code: \x1b]52;c;eA==\x07')  # pyright: ignore[reportPrivateUsage]
+        raise SignInError('Logfire refused browser sign-in: \x1b[2J')
+
+    monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
+    command, output = logfire_command()
+    with pytest.raises(ValueError) as raised:
+        await command(['login'])
+    assert str(raised.value) == 'Logfire refused browser sign-in: \\x1b[2J'
+    assert output.getvalue() == 'Enter code: \\x1b]52;c;eA==\\x07\n'
+
+
 async def test_login_failures_are_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     async def sign_in(auth: DeviceAuth) -> Tokens:
         raise SignInError('Logfire sign-in was denied. Run /logfire_mcp login to retry.')

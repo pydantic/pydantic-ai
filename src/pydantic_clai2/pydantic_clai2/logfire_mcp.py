@@ -27,6 +27,7 @@ from .logfire_oauth import SIGN_IN_TIMEOUT, Announce, DeviceAuth, SignInError, f
 from .mcp import http_client
 from .menu_worker import menu_key, run_worker, worker_stopping
 from .plugins import PluginHost, SessionStart
+from .tool_output import terminal_text
 
 KEY_NAME = 'LOGFIRE_API_KEY'
 """The conventional `/keys` label, matching the variable `LogfireMCP` reads, so other tools can share one key."""
@@ -61,7 +62,8 @@ def activate(host: PluginHost[None]) -> None:
     settings = host.settings(LogfireMCPSettings)
 
     def announce(line: str) -> None:
-        host.console.print(line, markup=False, highlight=False)
+        # Links, codes, and notices can carry text from a self-hosted server, so terminal controls are made inert.
+        host.console.print(terminal_text(line), markup=False, highlight=False)
 
     async def command(args: list[str]) -> str:
         return await _command(args, settings=settings, announce=announce)

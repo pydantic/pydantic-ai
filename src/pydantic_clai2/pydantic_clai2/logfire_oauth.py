@@ -38,6 +38,7 @@ from pydantic_ai.exceptions import UserError
 
 from .credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
 from .mcp import http_client
+from .tool_output import terminal_text
 
 ACCOUNT = 'logfire-oauth'
 """The credential account holding Logfire sign-ins, one per MCP URL."""
@@ -54,6 +55,10 @@ Sleep = Callable[[float], Awaitable[None]]
 
 class SignInError(Exception):
     """Browser sign-in did not complete; the message says why and how to retry."""
+
+    def __init__(self, message: str) -> None:
+        # Messages can quote the server's own error text, so terminal controls in it are made inert.
+        super().__init__(terminal_text(message))
 
 
 class Tokens(BaseModel):
