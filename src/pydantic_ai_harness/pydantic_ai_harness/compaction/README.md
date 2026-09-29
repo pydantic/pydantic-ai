@@ -582,9 +582,8 @@ SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=T
 
 Retaining user turns leaves the summary, any receipt, and the retained turns as adjacent
 `ModelRequest`s. Providers that require one request per turn -- Bedrock Converse and Gemini among
-them -- never see that shape: Pydantic AI normalizes the history with `_merge_consecutive_messages`
-after the `before_model_request` hooks run, combining adjacent requests into a single turn before
-dispatch. `keep_user_messages` therefore needs no provider-specific handling.
+them -- never see that shape: Pydantic AI merges adjacent `ModelRequest`s into a single turn after the
+`before_model_request` hooks run, before dispatch. `keep_user_messages` therefore needs no provider-specific handling.
 
 ## Anchored incremental summarization and the cross-model bridge
 

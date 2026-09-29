@@ -215,7 +215,7 @@ Pass `models` to advertise a stable ACP session config option named `model` (usi
 run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-5', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
 ```
 
-A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows (its default is then the first known model, so curate the list when you want a specific default). Without `models`, no model config option is advertised.
+A model id is any string a Pydantic AI model accepts, so newer models missing from `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows (its default is then the first known model, so curate the list when you want a specific default). Without `models`, no model config option is advertised.
 
 To advertise ids Pydantic AI's `infer_model` does not understand (for example OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`; returning the id unchanged falls back to `infer_model`.
 
@@ -230,7 +230,7 @@ Each completed turn reports its token counts (input/output/total, plus cached to
 - **Overwrite diffs.** `write_file` renders an overwrite as if creating a new file (no prior contents), so the diff understates what it replaced.
 - **Live terminal panes.** `acp_terminal` returns a command's captured output; it does not embed a *live* terminal pane in the tool call, which would need the terminal id at call-start, before the command runs.
 - **Images.** Prompt image blocks are off by default and must be enabled via `prompt_capabilities` with a model that accepts them (see [Prompt content types](#prompt-content-types)). The harness `FileSystem.read_file` is text-only, so the agent cannot open image files from the workspace itself.
-- **Slash commands.** The adapter does not yet advertise any commands (`available_commands`), so no slash commands appear in the client. Planned.
+- **Slash commands.** The adapter advertises no commands (`available_commands`), so no slash commands appear in the client.
 - **MCP servers.** Client-offered MCP servers are surfaced to your `session_config` to turn into toolsets (advertise the transports with `mcp_capabilities`); the adapter does not auto-connect them. Resource metadata is not yet wired end-to-end.
 
 ## API

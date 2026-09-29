@@ -176,8 +176,7 @@ covers instructions plus built-in capabilities, and the gateway's MCP servers st
 it through `--mcp-config`. Like a module it carries no `model:`: the engine always passes
 `-m` from the workflow's `engine.model`, which replaces whatever a loaded agent declares.
 A spec cannot name a harness capability: spec capability names resolve through a closed
-registry that the harness is not part of, and the CLI passes no `custom_capability_types`
-(pydantic/pydantic-ai#8334). Nor can it define a function tool. Either needs a module.
+registry that the harness is not part of, and the CLI passes no `custom_capability_types`. Nor can it define a function tool. Either needs a module.
 
 ## Observability
 

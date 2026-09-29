@@ -140,9 +140,9 @@ During streaming, the executor stream pauses while an advisor consultation runs 
 
 Local consultations can run in parallel. When `max_uses` is set, calls claim the per-request allowance before starting the advisor model request, so parallel calls cannot exceed it.
 
-Native advice is compatible with durable execution because it remains part of the executor model request. Local execution cannot yet preserve the same semantics across every durable backend. Temporal and Prefect can checkpoint the returned advice, but changes to the activity-local or task-local [`RunUsage`][pydantic_ai.usage.RunUsage] do not merge back into the outer run. DBOS does not checkpoint ordinary function-tool calls, so a local advisor request could run again during workflow replay.
+Native advice is compatible with durable execution because it remains part of the executor model request. Local execution does not preserve the same semantics across every durable backend. Temporal and Prefect can checkpoint the returned advice, but changes to the activity-local or task-local [`RunUsage`][pydantic_ai.usage.RunUsage] do not merge back into the outer run. DBOS does not checkpoint ordinary function-tool calls, so a local advisor request could run again during workflow replay.
 
-Use `mode='native'` with a supported provider when running the agent durably. Harness does not inspect durability integrations because Pydantic AI core does not yet expose a public durable-context contract. Local execution, including an `auto` fallback, is therefore unsupported in durable runs rather than rejected by this capability.
+Use `mode='native'` with a supported provider when running the agent durably. Harness does not inspect durability integrations because Pydantic AI core does not expose a public durable-context contract. Local execution, including an `auto` fallback, is therefore unsupported in durable runs rather than rejected by this capability.
 
 ## API reference
 

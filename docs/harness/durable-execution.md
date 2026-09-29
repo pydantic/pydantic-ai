@@ -141,8 +141,7 @@ Tools that write files ask for approval and report the write from the workflow, 
 `FileChangeRequestEvent`, `FileWrittenEvent`, `FileEditedEvent`, and `DirectoryCreatedEvent` reach your
 listeners as they happen. Other tools run in activities, and their events are not delivered:
 `FileReadEvent`, `DirectoryListedEvent`, and `FilesSearchedEvent` from the file tools, and
-`CommandStartedEvent`, `CommandOutputEvent`, and `CommandFinishedEvent` from `shell`
-([pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971)). The tools themselves work
+`CommandStartedEvent`, `CommandOutputEvent`, and `CommandFinishedEvent` from `shell`. The tools themselves work
 and return their results as usual.
 
 When Temporal replays a workflow, approval listeners run again, so make their external effects

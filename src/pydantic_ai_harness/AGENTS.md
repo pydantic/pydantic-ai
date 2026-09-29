@@ -132,6 +132,34 @@ Applies to docs, READMEs, docstrings, comments, commit messages, and PR text.
 - Prefer plain ASCII punctuation over decorative Unicode (arrows, fancy quotes)
   in prose and comments.
 
+## Docs rules
+
+`README.md` files and `docs/harness/*.md` are written for users of the capability, and
+many of those users are agents choosing and wiring capabilities at runtime.
+Docstrings and comments are written for whoever changes the code next. Both
+are real documentation; the difference is the audience.
+
+- Document observable behavior: what the capability does, when to reach for
+  it, how to configure it, its constraints, and its failure modes. A reader
+  must be able to use the feature correctly without opening the source.
+- Implementation detail is inline documentation. Hook ordering internals,
+  private registries, coroutine and task lifetimes, design rationale, and
+  tradeoff discussions belong in docstrings and comments next to the code,
+  not in user-facing pages.
+- Docs describe shipped behavior. Do not reference open issues, PRs, or
+  roadmap plans, and do not promise future fixes. State a limitation as a
+  constraint with its observable consequence.
+- Durable execution spans Temporal, DBOS, and Prefect. Name every engine a
+  statement covers, and state per-engine differences where they exist; do not
+  use Temporal alone as shorthand for durable execution.
+- Do not lean on private names. If an explanation only makes sense once the
+  reader knows a `_`-prefixed name, either promote the name or move the
+  explanation inline.
+- Name sections after the reader's goal ("Track spend across worker
+  processes"), not the implementation ("The `Spend` class hierarchy").
+- Examples must be realistic: perform setup the example actually needs, check
+  state before acting on it, and do not hardcode throwaway values.
+
 ## Package management
 
 - Change dependencies only when required. Use `uv` and link an issue.
@@ -190,7 +218,8 @@ hand-maintained docs that must stay in sync: the `README.md` next to the code
 pydantic.dev/docs/ai/harness). The `docs/` folder is flat -- there are no
 `capabilities/` or `experimental/` subdirectories. A user-facing change updates
 both; `agent_docs/review-checklist.md` "Docs" and the `docs-parity-reviewer`
-subagent enforce the parity before merge.
+subagent enforce the parity before merge. Audience and content rules for both
+surfaces are in "Docs rules".
 
 Do not add placeholder template files for new capabilities. Start from the
 existing `CodeMode` package shape, then delete what the new capability does not

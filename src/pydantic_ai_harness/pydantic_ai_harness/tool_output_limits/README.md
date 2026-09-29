@@ -21,8 +21,7 @@ dropping context already inside it.
 | `Summarize` | one LLM call | yes | A size-gated summary (inherits the run's model by default) |
 
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
-the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool (the Claude
-Code pattern, the core [#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design).
+the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool.
 That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking. The read-back tool's own returns are exempt from
@@ -321,10 +320,8 @@ again on replay.
 
 ## Relationship to other capabilities
 
-- Supersedes the spill scope of PR #185 `ToolOutputManagement` (one-way truncate / spill with
-  no read-back); this capability's truncation and ANSI / binary handling are harvested from it.
 - Writes spills through the run's workspace, so they sit beside the files that
   [FileSystem](../filesystem/) and [Shell](../shell/) tools act on.
 - Distinct from `compaction`, which compresses or drops context already inside the window, and
-  from `ClampOversizedMessages` (PR #286), which clamps runaway model responses, not tool
+  from `ClampOversizedMessages`, which clamps runaway model responses, not tool
   returns.

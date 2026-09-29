@@ -24,12 +24,6 @@ pip install 'pydantic-ai-harness[logfire]'
 Back an agent's instructions with a Logfire-managed
 [Prompt](https://logfire.pydantic.dev/docs/reference/advanced/prompt-management/).
 
-> A broader, first-party `Managed` capability is in flight in
-> [pydantic-ai#5107](https://github.com/pydantic/pydantic-ai/pull/5107) and will eventually be
-> importable as `pydantic_ai.managed.logfire.Managed` -- covering instructions, model settings,
-> and whole-spec variables. Until then, `ManagedPrompt` is the supported path for backing
-> instructions with a Logfire-managed prompt.
-
 ### The problem
 
 Prompts are critical to agent behavior, but iterating on them through the normal
