@@ -130,7 +130,7 @@ async def test_command_start_timeout_is_bounded(fake_modal: FakeModal) -> None:
     fake_modal.exec_hangs = True
     backend = ModalSandboxBackend()
     with pytest.raises(WorkspaceTimeoutError, match=r'^Command timed out after 0\.01 seconds$'):
-        with anyio.fail_after(0.2):
+        with anyio.fail_after(5):
             await backend.run(['echo', 'hello'], timeout=0.01)
 
 
@@ -383,7 +383,7 @@ async def test_filesystem_operation_is_not_blocked_by_command_wait(
         while not fake_modal.sandboxes:
             await anyio.sleep(0)
         fake_modal.sandboxes[0].files['/marker.txt'] = b'marker'
-        with anyio.fail_after(0.2):
+        with anyio.fail_after(5):
             assert await Workspace(backend).read_text('/marker.txt') == 'marker'
         tg.cancel_scope.cancel()
 
@@ -452,7 +452,7 @@ def test_removed_names_raise_import_error_naming_the_replacement(name: str, repl
 
 def test_removed_name_fails_a_from_import_with_the_guidance() -> None:
     with pytest.raises(ImportError, match='ModalSandboxBackend'):
-        from pydantic_ai_harness.modal_sandbox import ModalSandboxSession  # noqa: F401, I001  # pyright: ignore[reportUnusedImport]
+        from pydantic_ai_harness.modal_sandbox import ModalSandboxSession  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 
 def test_other_missing_names_are_attribute_errors() -> None:

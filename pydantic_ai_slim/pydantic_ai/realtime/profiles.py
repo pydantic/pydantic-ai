@@ -64,7 +64,8 @@ class RealtimeModelProfile(TypedDict, total=False):
 
     Distinct from [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption]:
     a provider may support cancelling a response (barge-in) without supporting output truncation. OpenAI
-    supports both; xAI Grok Voice supports cancellation but not truncation."""
+    supports both; xAI Grok Voice supports cancellation, but its truncation only lands after a response
+    has ended, and unreliably, so it reports `False`."""
     supports_text_output: bool
     """Whether the model can generate text instead of speech, via
     [`output_modality='text'`][pydantic_ai.realtime.RealtimeModelSettings.output_modality].
