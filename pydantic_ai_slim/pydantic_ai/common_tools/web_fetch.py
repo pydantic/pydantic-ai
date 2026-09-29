@@ -376,7 +376,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                     link_probe_cost += len(candidate)
                     if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
                         raise ModelRetry('the document is too complex')
-                    autolink = candidate.replace(r'\_', '_') == href
+                    autolink = candidate.strip().replace(r'\_', '_') == href
             if not autolink:
                 text_scan_cost += (depth - 16) * (len(str(href)) + len(title) + title.count('"'))
             if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
