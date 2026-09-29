@@ -71,6 +71,9 @@ command that started a session of its own (the harness `Shell`'s jobs) is in ano
 _STOP_TIMEOUT = 2.0
 """Bounds how late a stopped command's timeout or cancellation is raised when the daemon stops answering."""
 
+_LABEL = 'ai.pydantic.workspace'
+"""Marks the containers this capability created; only those can be attached to or removed through a ref."""
+
 _KEEPALIVE = 'while :; do sleep 86400; done'
 """The container's main process: it only has to outlive every command, and `--init` reaps their orphans."""
 
@@ -104,10 +107,34 @@ def _runner() -> LocalWorkspaceBackend:
     return LocalWorkspaceBackend('/', env={name: os.environ[name] for name in _CLIENT_ENV if name in os.environ})
 
 
+def _is_missing(result: CommandResult) -> bool:
+    return 'no such container' in result.stderr.lower()
+
+
+async def _check_owned(runner: LocalWorkspaceBackend, executable: str, name: str, error: type[WorkspaceError]) -> bool:
+    """Whether the container `name` exists, raising `error` unless this capability created it.
+
+    A ref can come from message history, and the daemon serves every container on the machine: without this
+    check, a crafted ref could run commands in, or remove, an unrelated container.
+    """
+    template = f'{{{{index .Config.Labels "{_LABEL}"}}}}'
+    result = await runner.run([executable, 'inspect', '--type', 'container', '--format', template, '--', name])
+    if result.exit_code != 0:
+        if _is_missing(result):
+            return False
+        raise error(f'could not inspect container {name}: {result.stderr.strip()}')
+    if result.stdout.strip() != 'true':
+        raise error(f'container {name} was not created by `DockerSandbox`: it lacks the label {_LABEL}=true')
+    return True
+
+
 async def remove_container(name: str, *, executable: str = 'docker') -> None:
-    """Remove a container and its anonymous volumes, whether it is running or not; a missing one is fine."""
-    result = await _runner().run([executable, 'rm', '--force', '--volumes', '--', name])
-    if result.exit_code != 0 and 'no such container' not in result.stderr.lower():
+    """Remove a container this capability created, with its anonymous volumes; a missing one is fine."""
+    runner = _runner()
+    if not await _check_owned(runner, executable, name, WorkspaceError):
+        return
+    result = await runner.run([executable, 'rm', '--force', '--volumes', '--', name])
+    if result.exit_code != 0 and not _is_missing(result):
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
@@ -205,7 +232,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             '--name',
             name,
             '--label',
-            'ai.pydantic.workspace=true',
+            f'{_LABEL}=true',
             '--workdir',
             self._working_dir,
             '--entrypoint',
@@ -229,6 +256,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise WorkspaceUnavailableError(f'could not create a container from {self._image}: {result.stderr.strip()}')
 
     async def _start(self) -> None:
+        if not await _check_owned(self._runner, self._executable, self._name, WorkspaceUnavailableError):
+            raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: no such container')
         result = await self._runner.run([self._executable, 'start', '--', self._name])
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: {result.stderr.strip()}')

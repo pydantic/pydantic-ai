@@ -25,7 +25,8 @@ run)
         case $1 in
         --name) name=$2; shift ;;
         --workdir) workdir=$2; shift ;;
-        --label | --entrypoint | --network | --memory) shift ;;
+        --label) label=$2; shift ;;
+        --entrypoint | --network | --memory) shift ;;
         --fake-hang) sleep 30 ;;
         esac
         shift
@@ -35,10 +36,20 @@ run)
         echo 'docker: Error response from daemon: pull access denied for missing-image.' >&2
         exit 125
     fi
-    mkdir -p "$workdir" && printf '%s' "$workdir" > "$state/$name" && echo "$name"
+    mkdir -p "$workdir" && printf '%s' "$workdir" > "$state/$name" || exit 1
+    [ "$label" != ai.pydantic.workspace=true ] || touch "$state/$name.labeled"
+    echo "$name"
+    ;;
+inspect)
+    # Always `inspect --type container --format TEMPLATE -- NAME`.
+    name=$6
+    [ -f "$state/$name" ] || { echo "Error: No such container: $name" >&2; exit 1; }
+    [ "$name" != uninspectable ] || { echo 'permission denied while trying to connect to the daemon' >&2; exit 1; }
+    if [ -f "$state/$name.labeled" ]; then echo true; else echo '<no value>'; fi
     ;;
 start)
     [ -f "$state/$2" ] || { echo "Error response from daemon: No such container: $2" >&2; exit 1; }
+    [ "$2" != broken ] || { echo 'Error response from daemon: port is already allocated' >&2; exit 1; }
     echo "$2"
     ;;
 exec)
@@ -83,7 +94,7 @@ rm)
         *"$bin/docker"*) kill -s KILL -- "-$pid" "$pid" 2> /dev/null ;;
         esac
     done
-    rm -rf "$state/$name" "$state/$name.pids" "$state/$name.hang-stop"
+    rm -rf "$state/$name" "$state/$name.labeled" "$state/$name.pids" "$state/$name.hang-stop"
     ;;
 esac
 """
@@ -101,10 +112,13 @@ class FakeDocker:
     def containers(self) -> list[str]:
         return sorted(path.name for path in (self.bin_dir / 'containers').glob('*') if not path.suffix)
 
-    def add_container(self, name: str, working_dir: Path) -> None:
+    def add_container(self, name: str, working_dir: Path, *, labeled: bool = True) -> None:
+        """Add a container; `labeled=False` makes it one `DockerSandbox` didn't create."""
         state = self.bin_dir / 'containers'
         state.mkdir(exist_ok=True)
         (state / name).write_text(str(working_dir))
+        if labeled:
+            (state / f'{name}.labeled').touch()
 
     def hang_stops(self, name: str) -> None:
         (self.bin_dir / 'containers' / f'{name}.hang-stop').touch()

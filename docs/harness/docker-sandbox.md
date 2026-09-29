@@ -80,7 +80,7 @@ async def remove_sandbox(ref: WorkspaceRef) -> None:  # for example `result.work
     await DockerSandbox('python:3.13-slim').destroy(ref)
 ```
 
-Containers the capability created carry the label `ai.pydantic.workspace=true`, so `docker ps --all --filter label=ai.pydantic.workspace=true` finds any you've lost track of.
+Containers the capability created carry the label `ai.pydantic.workspace=true`, so `docker ps --all --filter label=ai.pydantic.workspace=true` finds any you've lost track of. Attaching to a ref and `destroy` both check that label first and refuse any other container, because a ref can come from stored message history and the Docker daemon serves every container on your machine.
 
 ## Security
 

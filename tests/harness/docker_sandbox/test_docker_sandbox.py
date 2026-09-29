@@ -195,6 +195,42 @@ async def test_capability_attaches_to_its_own_refs_only(docker: FakeDocker, cont
         await capability.destroy(WorkspaceRef(provider='e2b', id='earlier'))
 
 
+async def test_containers_it_did_not_create_are_refused(docker: FakeDocker, container_dir: Path) -> None:
+    docker.add_container('database', container_dir, labeled=False)
+    ref = WorkspaceRef(provider='docker', id='database')
+
+    with pytest.raises(WorkspaceUnavailableError, match='database was not created by `DockerSandbox`'):
+        await DockerSandbox('image').backend(ref).run(['true'])
+    with pytest.raises(WorkspaceError, match='database was not created by `DockerSandbox`'):
+        await DockerSandbox('image').destroy(ref)
+    assert docker.containers() == ['database']
+    assert not any(call.startswith(('start', 'exec', 'rm')) for call in docker.calls)
+
+
+async def test_a_container_that_cannot_be_inspected_is_refused(docker: FakeDocker, container_dir: Path) -> None:
+    docker.add_container('uninspectable', container_dir)
+    ref = WorkspaceRef(provider='docker', id='uninspectable')
+
+    with pytest.raises(WorkspaceUnavailableError, match='could not inspect container uninspectable: permission denied'):
+        await DockerSandbox('image').backend(ref).working_dir()
+    with pytest.raises(WorkspaceError, match='could not inspect container uninspectable'):
+        await DockerSandbox('image').destroy(ref)
+
+
+async def test_attaching_to_a_removed_container_is_unavailable(docker: FakeDocker) -> None:
+    with pytest.raises(WorkspaceUnavailableError, match='gone is unavailable: no such container'):
+        await DockerSandbox('image').backend(WorkspaceRef(provider='docker', id='gone')).working_dir()
+
+
+async def test_a_container_that_fails_to_start_is_unavailable(docker: FakeDocker, container_dir: Path) -> None:
+    docker.add_container('broken', container_dir)
+
+    with pytest.raises(
+        WorkspaceUnavailableError, match='broken is unavailable: Error response from daemon: port is already allocated'
+    ):
+        await DockerSandbox('image').backend(WorkspaceRef(provider='docker', id='broken')).working_dir()
+
+
 async def test_a_failed_removal_raises(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('stuck', container_dir)
 
