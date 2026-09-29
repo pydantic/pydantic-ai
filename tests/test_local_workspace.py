@@ -8,6 +8,7 @@ import os
 import shlex
 import signal
 import threading
+from asyncio import base_subprocess
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -435,16 +436,54 @@ async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, m
         await task
 
 
+async def test_timeout_while_connecting_pipes_kills_the_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A deadline that passes while asyncio is still connecting the new process's pipes lets the spawn
+    finish, then kills the process group; interrupting it would leave the pipes open and the group alive."""
+    workspace = LocalWorkspaceBackend(tmp_path)
+    pid_file = tmp_path / 'pid'
+    timeout = 0.05
+    real_connect_pipes = base_subprocess.BaseSubprocessTransport._connect_pipes
+
+    async def late_connect_pipes(
+        transport: base_subprocess.BaseSubprocessTransport, waiter: asyncio.Future[None] | None
+    ) -> None:
+        await _wait_for_pid_file(pid_file)
+        await anyio.sleep(timeout)
+        await real_connect_pipes(transport, waiter)
+
+    monkeypatch.setattr(base_subprocess.BaseSubprocessTransport, '_connect_pipes', late_connect_pipes)
+    with pytest.raises(WorkspaceTimeoutError, match='during startup'):
+        await workspace.run(_background_sleep_command(pid_file), shell=True, timeout=timeout)
+
+    await _assert_process_gone(int(pid_file.read_text()))
+
+
 async def test_kill_tolerates_an_already_exited_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = LocalWorkspaceBackend(tmp_path)
     real_killpg = os.killpg
+    spawned: list[int] = []
+    killed: list[int] = []
+
+    async def timed_out_after_spawn(
+        process: anyio.abc.Process,
+        _stdout_buffer: bytearray,
+        _stderr_buffer: bytearray,
+        _absolute_deadline: float | None,
+    ) -> int:
+        spawned.append(process.pid)
+        raise TimeoutError
 
     def already_exited(pgid: int, sig: int) -> None:
         real_killpg(pgid, sig)
+        killed.append(pgid)
         raise ProcessLookupError
 
+    monkeypatch.setattr(workspace, '_wait_and_collect_output', timed_out_after_spawn)
     monkeypatch.setattr(os, 'killpg', already_exited)
     with pytest.raises(WorkspaceTimeoutError):
-        await LocalWorkspaceBackend(tmp_path).run(['sh', '-c', 'sleep 3600'], timeout=0.05)
+        await workspace.run(['sleep', '3600'], timeout=30)
+    assert len(spawned) == 1
+    assert killed == spawned
 
 
 async def test_commands_inherit_only_path_home_and_locale_from_the_host(
