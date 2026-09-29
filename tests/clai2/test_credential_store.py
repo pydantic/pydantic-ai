@@ -295,6 +295,12 @@ def test_delete_clears_a_corrupt_manifest(vault: dict[str, str], fallback: Path)
     assert vault == {}
 
 
+def test_delete_skips_chunks_that_are_already_gone(fallback: Path) -> None:
+    keyring.set_password('pydantic-clai2', 'openai-codex', f'clai-chunks-v1:{"0" * 32}:2')
+    delete_credentials(fallback=fallback)
+    assert load_codex_credentials(fallback=fallback) is None
+
+
 def test_delete_without_keyring_removes_the_file(no_keyring: None, fallback: Path) -> None:
     save_codex_credentials(fallback=fallback, value='plain')
     delete_credentials(fallback=fallback)

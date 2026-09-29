@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "13201"
+      - "13199"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 256
         messages:
         - role: user
           content:
@@ -221,7 +221,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-3b0cd0f175974b91bc413458e25f666c-ab0173507292435e-01
+      - 00-375b13820b5a7a16011502074920e46f-79baac501a4327af-01
       transfer-encoding:
       - chunked
       vary:
@@ -230,7 +230,7 @@ interactions:
       type: json
       content:
         model: claude-sonnet-4-5-20250929
-        id: msg_011CfYaF6tRuep5eak45kEx5
+        id: msg_011CfYbtSY2xUXmGT1poAV3z
         type: message
         role: assistant
         content:
@@ -242,16 +242,16 @@ interactions:
         stop_details: null
         usage:
           input_tokens: 3
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 4897
+          cache_creation_input_tokens: 4897
+          cache_read_input_tokens: 0
           cache_creation:
-            ephemeral_5m_input_tokens: 0
+            ephemeral_5m_input_tokens: 4897
             ephemeral_1h_input_tokens: 0
           output_tokens: 4
           service_tier: standard
           inference_geo: not_available
         diagnostics: null
-  recorded_at: 2026-09-29T23:09:48.126655+00:00
+  recorded_at: 2026-09-29T23:31:21.478039+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -263,7 +263,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "13367"
+      - "13365"
       content-type:
       - application/json
       host:
@@ -271,7 +271,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 256
         messages:
         - role: user
           content:
@@ -290,7 +290,7 @@ interactions:
           type: ephemeral
           ttl: 5m
         diagnostics:
-          previous_message_id: msg_011CfYaF6tRuep5eak45kEx5
+          previous_message_id: msg_011CfYbtSY2xUXmGT1poAV3z
         stream: false
         system:
         - type: text
@@ -481,7 +481,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-58b39e09a257f1f89e3de3ffb6df0254-f03c50d41a39dcd5-01
+      - 00-d9863e626c48e2ab9f732405ae2e6c04-71625c1062760b5a-01
       transfer-encoding:
       - chunked
       vary:
@@ -490,7 +490,7 @@ interactions:
       type: json
       content:
         model: claude-sonnet-4-5-20250929
-        id: msg_011CfYaFCuLtzKJWGQPeRNCP
+        id: msg_011CfYbtYfsaWfFA5SAB1MxA
         type: message
         role: assistant
         content:
@@ -502,16 +502,16 @@ interactions:
         stop_details: null
         usage:
           input_tokens: 3
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 4910
+          cache_creation_input_tokens: 13
+          cache_read_input_tokens: 4897
           cache_creation:
-            ephemeral_5m_input_tokens: 0
+            ephemeral_5m_input_tokens: 13
             ephemeral_1h_input_tokens: 0
           output_tokens: 5
           service_tier: standard
           inference_geo: not_available
         diagnostics: null
-  recorded_at: 2026-09-29T23:09:50.700887+00:00
+  recorded_at: 2026-09-29T23:31:22.737832+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -523,7 +523,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "13697"
+      - "13695"
       content-type:
       - application/json
       host:
@@ -531,7 +531,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 256
         messages:
         - role: user
           content:
@@ -558,7 +558,7 @@ interactions:
           type: ephemeral
           ttl: 5m
         diagnostics:
-          previous_message_id: msg_011CfYaFCuLtzKJWGQPeRNCP
+          previous_message_id: msg_011CfYbtYfsaWfFA5SAB1MxA
         stream: false
         system:
         - type: text
@@ -759,7 +759,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-8dbbc132a8b5c7dece260d1e8c09ee28-e3a265a65fcc086a-01
+      - 00-427e2d4ebbf4086d03617241db3a7ca7-70fae6f33b07df2c-01
       transfer-encoding:
       - chunked
       vary:
@@ -768,7 +768,7 @@ interactions:
       type: json
       content:
         model: claude-sonnet-4-5-20250929
-        id: msg_011CfYaFPbmQweTuyeXzR6nu
+        id: msg_011CfYbtda4MuV7koX3dETDi
         type: message
         role: assistant
         content:
@@ -780,10 +780,10 @@ interactions:
         stop_details: null
         usage:
           input_tokens: 3
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 4986
+          cache_creation_input_tokens: 4986
+          cache_read_input_tokens: 0
           cache_creation:
-            ephemeral_5m_input_tokens: 0
+            ephemeral_5m_input_tokens: 4986
             ephemeral_1h_input_tokens: 0
           output_tokens: 5
           service_tier: standard
@@ -792,4 +792,4 @@ interactions:
           cache_miss_reason:
             type: tools_changed
             cache_missed_input_tokens: 3713
-  recorded_at: 2026-09-29T23:09:51.888675+00:00
+  recorded_at: 2026-09-29T23:31:24.051236+00:00

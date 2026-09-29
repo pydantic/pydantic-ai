@@ -48,6 +48,10 @@ _STABLE_PREFIX = 'Reference catalogue for the cache diagnostics test corpus.\n' 
 )
 
 
+# An explicit `max_tokens` keeps non-streaming requests from being streamed behind the scenes.
+_MAX_TOKENS = 256
+
+
 def get_weather(city: str) -> str:
     """Get the weather for a city."""
     return f'Sunny in {city}'  # pragma: no cover
@@ -59,7 +63,7 @@ def get_time(city: str) -> str:
 
 
 def _diagnostics_agent(model: AnthropicModel) -> Agent[None, str]:
-    settings = AnthropicModelSettings(anthropic_cache=True, anthropic_cache_diagnostics=True)
+    settings = AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_cache=True, anthropic_cache_diagnostics=True)
     return Agent(model, instructions=_STABLE_PREFIX, model_settings=settings, tools=[get_weather])
 
 
@@ -161,7 +165,7 @@ async def test_cache_diagnostics_skip_foreign_baseline(
     ]
     agent = Agent(
         anthropic_model('claude-sonnet-4-5', capture=True),
-        model_settings=AnthropicModelSettings(anthropic_cache_diagnostics=True),
+        model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_cache_diagnostics=True),
     )
 
     result = await agent.run('Reply with exactly: OK', message_history=history)
@@ -236,7 +240,9 @@ async def test_cache_diagnostics_request_field_by_client(
             ),
         }
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=clients[client_name]()))
-        await Agent(model, model_settings=settings).run('Reply with exactly: OK', message_history=_history())
+        await Agent(model, model_settings={'max_tokens': _MAX_TOKENS, **settings}).run(
+            'Reply with exactly: OK', message_history=_history()
+        )
 
     [body] = bodies
     assert body.get('diagnostics') == expected
@@ -251,7 +257,9 @@ async def test_cache_diagnostics_recorded_while_pending(allow_model_requests: No
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
         client = AsyncAnthropic(api_key='x', http_client=http_client)
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
-        agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache_diagnostics=True))
+        agent = Agent(
+            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_cache_diagnostics=True)
+        )
         result = await agent.run('Reply with exactly: OK', message_history=_history())
 
     assert _last_response(result.all_messages()).provider_details == snapshot(
@@ -270,7 +278,9 @@ async def test_cache_diagnostics_skip_other_provider_with_message_id(allow_model
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
         client = AsyncAnthropic(api_key='x', http_client=http_client)
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
-        agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache_diagnostics=True))
+        agent = Agent(
+            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_cache_diagnostics=True)
+        )
         await agent.run('Reply with exactly: OK', message_history=_history('bedrock', 'msg_bdrk_0122'))
 
     [body] = bodies
