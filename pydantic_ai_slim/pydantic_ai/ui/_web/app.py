@@ -181,21 +181,6 @@ def _normalize_same_origin_path(path: str, parameter: str) -> str:
     return path if path.endswith('/') else f'{path}/'
 
 
-def _path_config(root_path: str, base_path: str | None, api_path: str | None) -> tuple[dict[str, str], dict[str, str]]:
-    """Return the paths derived from the ASGI `root_path`, and the paths configured explicitly."""
-    derived: dict[str, str] = {}
-    if root_path not in ('', '/'):
-        root_path = _normalize_same_origin_path(root_path, 'root_path')
-        derived = {'basePath': root_path, 'apiPath': f'{root_path}api/'}
-
-    explicit: dict[str, str] = {}
-    if base_path is not None:
-        explicit['basePath'] = base_path
-    if api_path is not None:
-        explicit['apiPath'] = api_path
-    return derived, explicit
-
-
 def _serialize_config(config: dict[str, str]) -> str:
     serialized = json.dumps(config, ensure_ascii=True, separators=(',', ':'))
     return serialized.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
@@ -288,10 +273,11 @@ def create_web_app(
     # instead of from the first request: Starlette builds its middleware stack lazily. Normalizing is
     # idempotent, so the middleware doing it again over the same list is a no-op.
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
+    explicit: dict[str, str] = {}
     if base_path is not None:
-        base_path = _normalize_same_origin_path(base_path, 'base_path')
+        explicit['basePath'] = _normalize_same_origin_path(base_path, 'base_path')
     if api_path is not None:
-        api_path = _normalize_same_origin_path(api_path, 'api_path')
+        explicit['apiPath'] = _normalize_same_origin_path(api_path, 'api_path')
 
     api_app = create_api_app(
         agent=agent,
@@ -314,7 +300,10 @@ def create_web_app(
         """Serve the chat UI from filesystem cache or CDN."""
         content = await _get_ui_html(html_source)
         root_path = quote(request.scope.get('root_path', ''), safe='/')
-        derived, explicit = _path_config(root_path, base_path, api_path)
+        derived: dict[str, str] = {}
+        if root_path not in ('', '/'):
+            root_path = _normalize_same_origin_path(root_path, 'root_path')
+            derived = {'basePath': root_path, 'apiPath': f'{root_path}api/'}
         if derived or explicit:
             content = _inject_path_config(content, derived, explicit)
 

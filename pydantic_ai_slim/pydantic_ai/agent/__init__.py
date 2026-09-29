@@ -4234,9 +4234,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             api_path: Absolute same-origin directory containing the `configure` and `chat` endpoints.
                 By default, this is a non-root ASGI `root_path` followed by `/api/`; at the origin
                 root, the UI keeps its build default. This configures browser requests only; it does
-                not change the app's internal `/api` mount. For example, to open the chat at
-                `/example/` while your proxy routes the API from `/example-2/`, pass
-                `base_path='/example/'` and `api_path='/example-2/'`. See
+                not change the app's internal `/api` mount. For example, if your proxy forwards
+                `/chat/` to the app's `/` and `/agent-api/` to its `/api/`, pass
+                `base_path='/chat/'` and `api_path='/agent-api/'`. See
                 [Mounting below a path](../web.md#mounting-below-a-path).
 
         Returns:

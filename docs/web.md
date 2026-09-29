@@ -172,10 +172,11 @@ app = agent.to_web(
 )
 ```
 
-Both values must be absolute same-origin directory paths. `base_path` controls conversation URLs and
-navigation; `api_path` is the complete directory containing `configure` and `chat`. These settings
-describe public routing: they do not mount or move the returned app's internal routes, so the outer
-application or proxy must route those public paths to the app accordingly.
+Both values must be absolute same-origin directory paths; a missing trailing `/` is appended.
+`base_path` controls conversation URLs and navigation; `api_path` is the complete directory
+containing `configure` and `chat`. These settings describe public routing: they do not mount or move
+the returned app's internal routes, so the outer application or proxy must route those public paths
+to the app accordingly.
 
 At the origin root, omitted settings are not injected, and the UI keeps its own build defaults.
 
