@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from dbos import DBOS
+from dbos._error import DBOSWorkflowCancelledError
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -69,6 +70,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     # before this capability existed). It can't be supported without changing durable history: a step
     # is registered once per name, and DBOS tool-call step names deliberately carry no tool name
     # (every tool in a toolset shares one step), so per-tool config would be first-tool-wins.
+
+    # `DBOS.cancel_workflow()` aborts the run with this `BaseException` rather than a `CancelledError`.
+    _cancellation_error_types: ClassVar[tuple[type[BaseException], ...]] = (DBOSWorkflowCancelledError,)
 
     def __init__(
         self,

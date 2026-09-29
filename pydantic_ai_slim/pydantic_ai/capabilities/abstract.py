@@ -213,6 +213,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
     """
 
+    _cancellation_error_types: ClassVar[tuple[type[BaseException], ...]] = ()
+    """Exception types the environment this capability integrates with uses to cancel a run from outside.
+
+    Internal, in-tree only. A durable execution engine can cancel a run with its own exception rather
+    than `asyncio.CancelledError` (DBOS raises `DBOSWorkflowCancelledError`). The run attaches its state
+    to such an exception exactly as it does to an external `CancelledError`, so
+    [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] can
+    recover it.
+    """
+
     @property
     def _emits_app_events(self) -> bool:
         """Whether this app-facing capability may emit `CustomEvent`s while dispatching callbacks.
