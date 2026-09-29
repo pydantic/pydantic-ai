@@ -77,8 +77,14 @@ def activate(host: PluginHost[DepsT]) -> None:
     host.configure(partial(configure, host))
     settings = host.settings(LinearSettings)
     if settings.auth == 'oauth':
-        client = _oauth_client(settings.read_only)
-        host.add(Linear[DepsT](client=client, include_instructions=settings.include_instructions))
+
+        def connect(_: RunContext[DepsT]) -> Linear[DepsT]:
+            # A new client per run: FastMCP keeps tokens in memory once connected, so `/linear logout` would
+            # otherwise leave this session signed in.
+            client = _oauth_client(settings.read_only)
+            return Linear[DepsT](client=client, include_instructions=settings.include_instructions)
+
+        host.add(connect)
         store = TokenStore(TOKEN_ACCOUNT)
 
         async def logout(args: list[str]) -> str:

@@ -115,7 +115,10 @@ def is_linear(capability: object) -> TypeGuard[Linear[None]]:
 
 
 def only(loader: PluginLoader[None]) -> Linear[None]:
+    """The capability the next run gets; under OAuth, built per run."""
     [capability] = loader.capabilities()
+    if callable(capability):
+        capability = capability(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
     assert is_linear(capability)
     return capability
 
@@ -322,8 +325,8 @@ async def test_cancel_empty_and_invalid_choice(vault: Vault) -> None:
 async def test_oauth_signs_in_with_keyring_tokens(tmp_path: Path, vault: Vault, read_only: bool, url: str) -> None:
     loader, commands, _ = make(tmp_path)
     await declare(loader, {'auth': 'oauth', 'read_only': read_only})
-    [capability] = loader.capabilities()
-    assert isinstance(capability, Linear)
+    capability = only(loader)
+    assert only(loader).client is not capability.client, 'each run connects afresh, so a logout drops cached tokens'
     assert not capability.read_only, 'the URL carries read_only, not tool annotations'
     client = capability.client
     assert isinstance(client, Client)
