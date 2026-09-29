@@ -60,11 +60,11 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     from pydantic_ai_harness import Advisor, Coder
 
     agent = Agent(
-        'anthropic:claude-fable-5',
+        'anthropic:claude-fable-5-1',
         capabilities=[
             Coder(),  # files, shell, repo context, sub-agents, context management
             WebSearch(),  # look up docs and error messages on the web
-            Advisor('openai:gpt-5.6-sol'),  # a second opinion from another model when stuck
+            Advisor('openai:gpt-6-sol'),  # a second opinion from another model when stuck
         ],
     )
     agent.to_cli_sync()
@@ -110,7 +110,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
         score: float = Field(ge=-1, le=1)
 
 
-    agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
+    agent = Agent('openai:gpt-6-sol', output_type=Sentiment)
 
 
     @agent.tool
@@ -144,7 +144,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 
     agent = Agent(
-        'openai:gpt-5.6-sol',
+        'openai:gpt-6-sol',
         instructions='Research the topic and write a structured brief.',
         name='researcher',
         capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
@@ -335,7 +335,7 @@ async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
 
 
 support_agent = Agent(  # (9)!
-    'openai:gpt-5.6-sol',  # (10)!
+    'openai:gpt-6-sol',  # (10)!
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # (11)!
     instructions=(
@@ -381,7 +381,7 @@ async def main():
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
 8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), like an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
 9. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
-10. Here we configure the agent to use [OpenAI's GPT-5.6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
+10. Here we configure the agent to use [OpenAI's GPT-6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
 11. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
 12. Mount the capabilities on the agent. More [capabilities](capabilities/overview.md), like [web search](capabilities/web-search.md) or anything from the [Harness](https://pydantic.dev/docs/ai/harness/), snap on alongside them in the same list.
 13. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
@@ -414,7 +414,7 @@ logfire.instrument_sqlite3()  # (3)!
 ...
 
 support_agent = Agent(
-    'openai:gpt-5.6-sol',
+    'openai:gpt-6-sol',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
     instructions=(
