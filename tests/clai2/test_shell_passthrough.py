@@ -169,7 +169,10 @@ class TestShellPassthrough:
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cancelling a shell command must also terminate a background child."""
-        child_code = "import os, pathlib, time; pathlib.Path('child.pid').write_text(str(os.getpid())); time.sleep(30)"
+        child_code = (
+            "import os, pathlib, time; pathlib.Path('child.pid.tmp').write_text(str(os.getpid())); "
+            "os.replace('child.pid.tmp', 'child.pid'); time.sleep(30)"
+        )
         python = shlex.quote(sys.executable)
         command = f'{python} -c {shlex.quote(child_code)} & while [ ! -f child.pid ]; do :; done; kill -INT $PPID; wait'
 
