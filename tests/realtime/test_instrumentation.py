@@ -77,7 +77,7 @@ from pydantic_ai.realtime.codec import (
     SessionUsage,
     ToolCall,
 )
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .test_session import FakeRealtimeModel, make_tool_manager
@@ -491,6 +491,41 @@ async def test_session_span_reports_its_own_usage_not_a_carried_total() -> None:
     assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
     assert sess.attributes['gen_ai.aggregated_usage.output_tokens'] == 4
     assert session.usage.input_tokens == 110
+
+
+async def test_session_span_leaves_a_delegates_usage_to_its_own_span() -> None:
+    """A run a tool starts with `usage=ctx.usage` adds to `session.usage`, but reports on its own span."""
+    settings, exporter = _settings()
+    sub = Agent(TestModel(), name='sub')
+    sub.instrument = settings
+
+    agent: Agent[None, str] = Agent(name='assistant')
+
+    @agent.tool
+    async def analyze(ctx: RunContext[None]) -> str:
+        result = await sub.run('hi', usage=ctx.usage)
+        return result.output
+
+    agent.instrument = settings
+    conn = _Connection(
+        [
+            ToolCall(tool_call_id='c', tool_name='analyze', args='{}'),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(_Model(conn)).session() as session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    sess = spans['invoke_agent assistant']
+    delegate = spans['invoke_agent sub']
+    assert sess.attributes is not None and delegate.attributes is not None
+    assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
+    assert sess.attributes['gen_ai.aggregated_usage.output_tokens'] == 4
+    delegate_input_tokens = delegate.attributes['gen_ai.aggregated_usage.input_tokens']
+    assert delegate_input_tokens == snapshot(51)
+    assert session.usage.input_tokens == 10 + delegate_input_tokens
 
 
 async def test_session_and_chat_spans_carry_request_config() -> None:
