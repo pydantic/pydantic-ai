@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
     from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
+    from .goal import Goal
     from .grain import Grain
     from .guardrails import (
         GuardrailError,
@@ -92,6 +93,7 @@ __all__ = [
     'ExaSearch',
     'FallbackCompaction',
     'FileSystem',
+    'Goal',
     'Grain',
     'GuardrailError',
     'GuardrailResult',
@@ -163,6 +165,7 @@ _CAPABILITY_EXPORTS = {
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
+    'Goal': 'goal',
     'Grain': 'grain',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
