@@ -315,6 +315,66 @@ wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
 to stock built-ins. See [telemetry](README.md#telemetry-and-references).
 
+## Notion: workspace tools
+
+The built-in `notion` plugin (`pydantic_clai2.notion`) starts disabled. It adds
+harness `Notion`: the tools of Notion's hosted MCP server, acting with the
+permissions of the Notion account it connects as. That includes tools that
+change pages.
+
+`/plugins enable notion` loads it and opens its settings menu. To change the
+settings later, run `/plugins configure notion` or press `C` on it in
+`/plugins`; you never need to reinstall it. The menu is the shared field editor
+`/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
+Each change is saved as soon as you make it, and the plugin loads again when the
+menu closes, so the next turn uses the new settings.
+
+| Row | Default | Does |
+|---|---|---|
+| Key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field; `R` clears the choice |
+| Sign-in | automatic | automatic uses the key when one is chosen and otherwise signs in through the browser; key only never opens a browser; browser always does |
+| Tools | read and write | read-only keeps only the tools the server marks as read-only |
+| Server instructions | forwarded | whether the Notion server's own instructions reach the agent |
+
+Notion's server has one fixed URL, and the workspace is the one the connected
+account belongs to, so there is no URL or workspace row. The settings JSON uses
+`auth` (`"key"`, `"oauth"`, or unset), `read_only`, and `include_instructions`:
+
+```text
+/plugins add notion pydantic_clai2.notion '{"auth": "key", "read_only": true}'
+```
+
+### Secrets live in `/keys`
+
+Plugin settings are plaintext SQLite, so they never hold the token, and a
+declaration that tries to is rejected. The token lives in the named keystore
+you manage with `/keys`:
+
+- A new token typed in the menu is saved in `/keys` as `NOTION_API_KEY`. If
+  that name already exists, the menu asks before replacing it, because other
+  plugins and connections may share it.
+- The plugin keeps only the key's name, in CLAI's credential store. Each run
+  looks the key up again, so replacing it in `/keys` reaches every plugin that
+  uses it. Several plugins can share one named key, the way the GitHub and
+  Copilot integrations can both use `GITHUB_TOKEN`.
+- Deleting the key makes Notion runs fail until you restore it or choose
+  another. A key Notion uses cannot be renamed.
+- `NOTION_API_KEY` is a label in `/keys`, not an environment variable; the
+  plugin does not read `NOTION_ACCESS_TOKEN` either. Notion integration tokens do
+  not work with the hosted server; use a Notion OAuth access token.
+
+With no key chosen, the first run that connects opens your browser to sign in.
+Those OAuth tokens go to the OS keyring, or CLAI's private credential file when
+there is no keyring, so later launches reuse and refresh them. `/notion logout`
+forgets the browser sign-in and the chosen key name; the key itself stays in
+`/keys`.
+
+The browser sign-in needs a browser on the machine CLAI runs on. For headless
+runs or remote machines, choose a key and set Sign-in to key only: without a
+key, CLAI warns at startup and runs fail with a message instead of waiting for a
+sign-in. The plugin emits no telemetry of its own; tool calls appear in core's
+spans.
+
 ## Where plugins live
 
 Plugins are trusted Python code. Drop-in files execute automatically at startup;
@@ -394,6 +454,7 @@ credentials, extras, or settings that a checkbox cannot supply, so they belong i
 CLAI plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
+[`notion`](#notion-workspace-tools),
 [`ordinal`](#ordinal-social-posts-in-ordinal), and
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon).
 
@@ -1294,7 +1355,7 @@ async def configure() -> str:
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
 
-The built-in `github` and [`pylon`](#configuring-pylon) plugins are complete
+The built-in `github`, `notion`, and [`pylon`](#configuring-pylon) plugins are complete
 examples; `pylon` also steps out of the menu worker to run the async key picker.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
@@ -1425,8 +1486,8 @@ name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not p
 the secret on the command line.
 
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
-and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools)
-and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
+and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
+[`notion`](#notion-workspace-tools), and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
 searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.

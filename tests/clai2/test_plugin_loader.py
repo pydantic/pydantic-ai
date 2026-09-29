@@ -8,6 +8,7 @@ from types import ModuleType
 
 import anyio
 import pytest
+from pydantic import BaseModel
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -295,6 +296,23 @@ async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) 
     assert message.startswith('Disabled counter. Delete ')
     assert not harness.store.plugins()[0].enabled
     assert harness.loader.entries()[0].state == 'disabled'
+
+
+async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:
+    """Another CLAI process may replace the declaration while this one has the plugin loaded."""
+
+    class Chosen(BaseModel):
+        level: int
+
+    harness = Harness(tmp_path)
+    path = harness.write('counter')
+    await harness.loader.load('counter')
+    newer = PluginSettings(id='counter', factory='counter:activate', path=str(path), settings={'level': 1})
+    harness.store.save_plugin(newer)
+    host = harness.loader.entries()[0].host
+    assert host is not None
+    host.save_settings(Chosen(level=2))
+    assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
 
 
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:
