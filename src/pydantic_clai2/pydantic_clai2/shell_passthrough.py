@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import ntpath
 import os
 import signal
 import subprocess
@@ -20,19 +21,29 @@ HELP = '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Wind
 _INTERRUPT_GRACE = 0.25
 
 
-def _shell_process_kwargs() -> dict[str, bool | int]:
-    """Create an isolated process group so cancellation reaches shell descendants."""
-    if sys.platform == 'win32':
-        return {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
-    return {'start_new_session': True}
+def _taskkill_path() -> str:
+    """Resolve `taskkill.exe` in the system directory, never through the working directory."""
+    return ntpath.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'taskkill.exe')
+
+
+def _signal_process_group(process: asyncio.subprocess.Process, signum: int) -> None:
+    """Signal the shell's process group, which holds every descendant that has not left it."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signum)
+
+
+def _interrupt(process: asyncio.subprocess.Process) -> None:
+    """Forward Ctrl-C, which the terminal delivers to CLAI but not to a command in its own session."""
+    if sys.platform != 'win32':  # The Windows console delivers Ctrl-C to every attached process.
+        _signal_process_group(process, signal.SIGINT)
 
 
 async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
-    """Terminate a shell and all of its descendants."""
+    """Kill the shell and its descendants."""
     if sys.platform == 'win32':
         try:
             killer = await asyncio.create_subprocess_exec(
-                'taskkill',
+                _taskkill_path(),
                 '/PID',
                 str(process.pid),
                 '/T',
@@ -50,8 +61,8 @@ async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
             with contextlib.suppress(ProcessLookupError):
                 process.kill()
     else:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+        # Descendants that left the session with `setsid()` detached on purpose, as under any shell.
+        _signal_process_group(process, signal.SIGKILL)
 
 
 def shell_command(text: str) -> str | None:
@@ -76,10 +87,14 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
 
     async def execute() -> None:
         nonlocal exit_code
-        process = await asyncio.create_subprocess_shell(command, **_shell_process_kwargs())
+        # A new POSIX session gives the command a process group to kill; `start_new_session` is
+        # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl-C
+        # still reaches the command.
+        process = await asyncio.create_subprocess_shell(command, start_new_session=True)
         try:
             exit_code = await process.wait()
         except asyncio.CancelledError:
+            _interrupt(process)
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(process.wait(), _INTERRUPT_GRACE)
             await _kill_process_tree(process)

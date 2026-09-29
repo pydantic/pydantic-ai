@@ -132,11 +132,14 @@ The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
 available. It runs in CLAI's working directory, with the terminal's input and output, so interactive programs and pagers work. CLAI
 reports `Done` or the exit code with the elapsed time. Ctrl-C interrupts the
-command and returns to the prompt. The command shares CLAI's process group, so
-every process it started receives the Ctrl-C from the terminal. If the shell
-itself has not exited 0.25 seconds later it is killed, as `subprocess.run`
-does. A program started by a compound command (`a; b`) that ignores Ctrl-C can
-outlive that shell. As at other times, a second Ctrl-C within two seconds exits
+command and returns to the prompt. On POSIX the command runs in its own session,
+so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
+`subprocess.run` waits) kills whatever is still running there, including
+background jobs and programs that ignore Ctrl-C. Only a process that detaches
+on purpose with `setsid()`, as daemons do, outlives the command. Without a
+controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
+or `ssh` password prompts, cannot read your input. On Windows the console
+delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
 CLAI. Neither the command nor its output is added to the conversation, and a
 bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
 order with other queued input. `/help` lists the syntax.

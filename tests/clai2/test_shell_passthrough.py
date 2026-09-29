@@ -18,7 +18,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.shell_passthrough import shell_command
+from pydantic_clai2.shell_passthrough import _taskkill_path, shell_command  # pyright: ignore[reportPrivateUsage]
 from tests.clai2.test_app_edges import inputs
 
 
@@ -66,6 +66,14 @@ async def shell_session(
     return output.getvalue()
 
 
+def test_taskkill_is_resolved_from_system_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `taskkill.exe` planted in the working directory must never be the one that runs."""
+    monkeypatch.setenv('SystemRoot', r'D:\Win')
+    assert _taskkill_path() == r'D:\Win\System32\taskkill.exe'
+    monkeypatch.delenv('SystemRoot')
+    assert _taskkill_path() == r'C:\Windows\System32\taskkill.exe'
+
+
 class TestShellPassthrough:
     async def test_runs_in_cwd_without_agent_turn(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         text = await shell_session(tmp_path, monkeypatch, ['  !printf hi > marker.txt  ', '/exit'])
@@ -80,7 +88,7 @@ class TestShellPassthrough:
         assert 'Exit code 3 (' in text
 
     async def test_ctrl_c_interrupts_command_not_clai(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The shell signals CLAI as the terminal would on Ctrl-C; the exec'd child never sees it, so it is killed.
+        # The shell signals CLAI as the terminal would on Ctrl-C, and CLAI forwards it to the command.
         started = time.monotonic()
         text = await shell_session(
             tmp_path, monkeypatch, ['!kill -INT $PPID; exec sleep 30', '!printf after > marker.txt', '/exit']
@@ -88,6 +96,14 @@ class TestShellPassthrough:
         assert time.monotonic() - started < 10
         assert 'Interrupted (' in text
         assert (tmp_path / 'marker.txt').read_text() == 'after'
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
+    async def test_ctrl_c_is_forwarded_before_kill(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A command in its own session still gets Ctrl-C, so it can clean up before the grace kill."""
+        command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; kill -INT $PPID; while :; do :; done"
+        text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
+        assert 'Interrupted (' in text
+        assert (tmp_path / 'cleanup.txt').read_text() == 'cleaned'
 
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
