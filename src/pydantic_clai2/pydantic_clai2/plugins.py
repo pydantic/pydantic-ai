@@ -229,6 +229,9 @@ class PluginHost(Generic[DepsT]):
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
+        `persist` writes changed settings back to the plugin's declaration; without it they
+        last until the plugin unloads.
+
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
         """

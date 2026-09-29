@@ -43,10 +43,9 @@ async def main(prior_history=()):
         await session.send('Continue where we left off.')
 ```
 
-Providers replay native function calls where their protocol permits. Gemini represents seeded tool
-calls and results as readable text because Live cannot put function parts in seeded turns. Thinking
-signatures and provider-native execution metadata are omitted because they belong to the session
-that produced them.
+Seeded tool calls and results are replayed as native function calls where the provider's protocol
+permits, and as readable text where it doesn't. Thinking signatures and provider-native execution
+metadata are omitted because they belong to the session that produced them.
 
 Content-less speech parts are skipped because they carry no replayable content. Unsupported content
 raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently dropped. Video,
