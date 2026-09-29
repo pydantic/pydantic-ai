@@ -173,7 +173,9 @@ async def _assert_close_cancels_active_pull(
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(pull)
         await pull_started.wait()
-        with anyio.fail_after(1):
+        # The close is synchronized on events; the deadline only turns a regression into a failure instead of
+        # a hang. A tight one fails when a loaded CI runner stalls the event loop.
+        with anyio.fail_after(30):
             await response.close_stream()
             await pull_finished.wait()
 

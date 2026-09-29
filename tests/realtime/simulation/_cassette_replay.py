@@ -17,6 +17,7 @@ import yaml
 from google.genai import _live_converters as live_converters, types as genai_types
 from websockets.exceptions import ConnectionClosedOK
 
+from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.azure import (
     AzureRealtimeConnection,
     _VoiceLiveRealtimeConnection,  # pyright: ignore[reportPrivateUsage]
@@ -167,5 +168,21 @@ async def replay_codec_events(path: Path) -> list[list[RealtimeCodecEvent]]:
         connection = _connection(protocol, frames)
         events.append([event async for event in connection])
         if isinstance(connection, OpenAILiveConnection):
+            await connection.aclose()
+    return events
+
+
+async def replay_lifecycle_events(path: Path) -> list[list[RealtimeCodecEvent | LifecycleEvent]]:
+    """The lifecycle stream each recorded socket's provider frames make, per socket, for a version 2 connection.
+
+    Empty for a protocol whose connection is still on version 1 of the lifecycle contract.
+    """
+    protocol = cassette_protocol(path)
+    events: list[list[RealtimeCodecEvent | LifecycleEvent]] = []
+    for frames in _segments(RealtimeCassette.load(path)):
+        connection = _connection(protocol, frames)
+        if connection._lifecycle_version == 2:  # pyright: ignore[reportPrivateUsage]
+            events.append([event async for event in connection._lifecycle_events()])  # pyright: ignore[reportPrivateUsage]
+        elif isinstance(connection, OpenAILiveConnection):
             await connection.aclose()
     return events
