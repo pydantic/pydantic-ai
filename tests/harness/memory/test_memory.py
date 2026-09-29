@@ -6,6 +6,7 @@ import asyncio
 import os
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -33,6 +34,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.memory import (
@@ -1222,12 +1224,22 @@ class TestInjection:
         await agent.run('second run')
         assert calls == 2
 
-    async def test_static_tools_keep_concurrent_run_limits_and_scopes(self) -> None:
+    @pytest.mark.parametrize('wrap_toolset', [False, True])
+    async def test_static_tools_keep_concurrent_run_limits_and_scopes(self, wrap_toolset: bool) -> None:
         class LimitedMemory(Memory[int]):
             async def for_run(self, ctx: RunContext[int]) -> Memory[int]:
                 clone = await super().for_run(ctx)
                 clone.max_memory_size = ctx.deps
                 return clone
+
+            def get_toolset(self) -> AbstractToolset[int]:
+                toolset = super().get_toolset()
+                assert isinstance(toolset, AbstractToolset)
+                # Narrowing the hook's toolset-or-factory union loses the dependency type.
+                toolset = cast(AbstractToolset[int], toolset)
+                if wrap_toolset:
+                    return toolset.filtered(lambda ctx, tool: tool.name == 'read_memory')
+                return toolset
 
         stores = {limit: InMemoryStore({f'{limit}/main/MEMORY.md': 'abcdefghijk'}) for limit in (4, 8)}
         resolutions: list[int] = []
