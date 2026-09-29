@@ -915,10 +915,16 @@ async def test_setup_failure_calls_on_run_error_for_workspace_cleanup(failure: s
     toolsets: list[AbstractToolset[Any]] = [FailingToolset()] if failure == 'toolset' else []
     expected_error = f'{failure} setup failed'
 
-    with pytest.raises(RuntimeError, match=expected_error):
+    with pytest.raises(RuntimeError, match=expected_error) as exc_info:
         await agent.run('go', workspace=backend, toolsets=toolsets)
 
     assert cleaned == [backend.ref]
+    tb = exc_info.tb
+    traceback_names: list[str] = []
+    while tb is not None:
+        traceback_names.append(tb.tb_frame.f_code.co_name)
+        tb = tb.tb_next
+    assert 'on_run_error' not in traceback_names
 
 
 async def test_setup_failure_runs_every_run_capability_error_hook_without_workspace() -> None:

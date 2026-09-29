@@ -239,8 +239,16 @@ async def _run_setup_error_hook(
     run_ctx.root_capability = run_capability
     _prepare_run_capability_context(run_capability, run_ctx)
     # There is no run result to recover here, so preserve the setup error if the hook returns.
-    with setup_error_dispatch_scope(run_ctx):
-        await run_capability.on_run_error(run_ctx, error=error)
+    setup_traceback = error.__traceback__
+    try:
+        with setup_error_dispatch_scope(run_ctx):
+            await run_capability.on_run_error(run_ctx, error=error)
+    except BaseException as hook_error:
+        if hook_error is error:
+            # Re-raising the same exception adds hook frames; restore its traceback before the caller's bare raise.
+            error.__traceback__ = setup_traceback
+        else:
+            raise
 
 
 @asynccontextmanager

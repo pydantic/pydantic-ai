@@ -2045,15 +2045,18 @@ class TestRunErrorHooks:
         await agent.run('hello')
         assert 'on_run_error' not in cap.log
 
-    async def test_on_run_error_not_called_for_generator_exit_during_setup(self):
+    @pytest.mark.parametrize('failure_location', ['capability', 'toolset'])
+    async def test_on_run_error_not_called_for_generator_exit_during_setup(self, failure_location: str):
         setup_failed = False
         reconstruction_states: list[bool] = []
 
         class FailingSetupCapability(AbstractCapability[Any]):
             async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
                 nonlocal setup_failed
-                setup_failed = True
-                raise GeneratorExit()
+                if failure_location == 'capability':
+                    setup_failed = True
+                    raise GeneratorExit()
+                return self
 
             def visit_and_replace(
                 self, visitor: Callable[[AbstractCapability[Any]], AbstractCapability[Any] | None]
@@ -2065,10 +2068,19 @@ class TestRunErrorHooks:
                 # Only reached if the control-exception guard regresses.
                 pytest.fail('on_run_error should not be called for control exceptions')  # pragma: no cover
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[FailingSetupCapability()])
+        class FailingSetupToolset(FunctionToolset[Any]):
+            async def for_run(self, ctx: RunContext[Any]) -> FunctionToolset[Any]:
+                nonlocal setup_failed
+                setup_failed = True
+                raise GeneratorExit()
+
+        capability = FailingSetupCapability()
+        assert capability.visit_and_replace(lambda cap: cap) is capability
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[capability])
         reconstruction_count_before_setup = len(reconstruction_states)
+        toolsets: list[FunctionToolset[Any]] = [FailingSetupToolset()] if failure_location == 'toolset' else []
         with pytest.raises(GeneratorExit):
-            await agent.run('hello')
+            await agent.run('hello', toolsets=toolsets)
         assert not any(reconstruction_states[reconstruction_count_before_setup:])
 
     async def test_on_run_error_can_transform_error(self):
