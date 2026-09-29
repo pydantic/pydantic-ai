@@ -572,10 +572,14 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         thinking = settings.get('thinking')
         if (temperature := settings.get('azure_voice_live_temperature')) is not None:
             if _cascade_model_is_reasoning(self.model, thinking):
+                remedy = (
+                    'Set `thinking=False` to use it.'
+                    if openai_model_profile(self.model).get('openai_supports_reasoning_effort_none', False)
+                    else 'This model cannot turn reasoning off.'
+                )
                 warnings.warn(
                     f'`azure_voice_live_temperature` is not supported while {self.model!r} is reasoning, '
-                    'so it will be ignored. Set `thinking=False` to use it on a model that can turn '
-                    'reasoning off.',
+                    f'so it will be ignored. {remedy}',
                     UserWarning,
                 )
             else:

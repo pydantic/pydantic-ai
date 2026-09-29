@@ -314,9 +314,12 @@ def test_voice_live_temperature_dropped_while_reasoning(
         config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
         assert config['temperature'] == 0.5
     else:
-        with pytest.warns(UserWarning, match='`azure_voice_live_temperature` is not supported while'):
+        with pytest.warns(UserWarning, match='`azure_voice_live_temperature` is not supported while') as record:
             config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
         assert 'temperature' not in config
+        # Only a model that can turn reasoning off is pointed at `thinking=False`.
+        remedy = 'Set `thinking=False`' if model_name == 'gpt-5.2' else 'cannot turn reasoning off'
+        assert remedy in str(record[0].message)
 
 
 @pytest.mark.parametrize(
@@ -356,6 +359,8 @@ def test_voice_live_cascade_thinking_respects_profile_override() -> None:
     )
     model = AzureRealtimeModel('gpt-5', provider=provider, profile={'supports_thinking': False})
     assert model.profile.get('supports_thinking') is False
+    config = model._session_config('', None, model_settings=AzureRealtimeModelSettings(thinking='high'))  # pyright: ignore[reportPrivateUsage]
+    assert 'reasoning_effort' not in config
 
 
 def test_voice_live_rejects_openai_custom_voice_id() -> None:
