@@ -60,7 +60,7 @@ class SmartGrep(AbstractCapability[AgentDepsT]):
     from pydantic_ai_harness import SmartGrep
 
     agent = Agent(
-        'anthropic:claude-sonnet-4-6',
+        'openai:gpt-6-luna',
         capabilities=[LocalWorkspace('.'), SmartGrep(model='anthropic:claude-haiku-4-5')],
     )
     ```

@@ -35,7 +35,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import SmartGrep
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'openai:gpt-6-luna',
     capabilities=[LocalWorkspace('.'), SmartGrep(model='anthropic:claude-haiku-4-5')],
 )
 
@@ -131,7 +131,7 @@ fall back to regular search when results are weak or the tool fails. Pass `guida
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: openai:gpt-6-luna
 capabilities:
   - SmartGrep:
       model: anthropic:claude-haiku-4-5
