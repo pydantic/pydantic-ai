@@ -71,7 +71,7 @@ try:
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
-    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError
+    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError, TextGenerationError
 
 except ImportError as _import_error:
     raise ImportError(
@@ -95,6 +95,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             body=e.response.content,
             headers=dict(e.response.headers),
         ) from e
+    except TextGenerationError as e:
+        # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
+        # status code to report.
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
     except (httpx.TransportError, InferenceTimeoutError) as e:
         # `huggingface_hub` doesn't wrap connection errors and read timeouts in its own exceptions.
         raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e

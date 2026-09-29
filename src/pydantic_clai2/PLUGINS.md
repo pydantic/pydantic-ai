@@ -388,7 +388,9 @@ order plugin instructions, renderers, and status segments are consulted in.
 declared. It does not list every public harness capability for Space-enable:
 hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
-CLAI plugins written for them, such as the [`pylon` plugin](#pylon-support-issues-and-accounts-in-pylon).
+CLAI plugins written for them, such as the disabled built-ins
+[`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools) and
+[`pylon`](#pylon-support-issues-and-accounts-in-pylon).
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -404,7 +406,8 @@ as `filesystem` or `shell` alongside `coder`.
 
 Earlier releases listed every harness capability here, disabled. If you enabled
 one of those, it was saved as your own declaration, so it keeps loading and now
-shows as a saved plugin; `/plugins remove NAME` forgets it.
+shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is
+`google_workspace`, which now loads its built-in plugin instead.
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
@@ -578,6 +581,72 @@ never runs as the wrong account. `/keys` does not stop you renaming or deleting 
 key that a plugin uses. Neither sign-in uses your `/login github-copilot` login,
 and Copilot does not read the `GITHUB_TOKEN` key. The plugin emits no telemetry
 of its own; tool calls appear in core's spans.
+
+### `google_workspace`: Gmail, Calendar, and Drive tools
+
+`google_workspace` (`pydantic_clai2.google_workspace`) is a built-in that starts
+disabled. It gives the agent the tools of Google's hosted Workspace MCP servers
+through harness [`GoogleWorkspace`](../../docs/harness/google-workspace.md). It needs a
+Google OAuth access token whose scopes cover the products you select.
+
+Turning it on (Space in `/plugins`, or `/plugins enable google_workspace`) opens
+its settings menu. Open it again later with `C` in `/plugins`,
+`/plugins configure google_workspace`, or:
+
+```text
+/google_workspace
+```
+
+The settings menu is full-screen with one row per setting. Up/Down moves, Enter
+edits a row, `r` puts a row back to its default, and **Save & close** or Esc
+leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
+from the next turn, without reloading. Run `/google_workspace` again at any time
+to change a setting or pick a different key.
+
+| Row | Stored as | Default | Does |
+|---|---|---|---|
+| Access token key | the key's name, in the credential store | `GOOGLE_ACCESS_TOKEN` | which `/keys` entry holds the Google OAuth access token |
+| Products | `services` | `gmail, calendar, drive` | a searchable checklist of `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, `people`; Enter toggles one, and at least one stays on |
+| Read-only tools | `read_only` | `true` | keep only the tools Google marks as read-only |
+| Server instructions | `include_instructions` | `true` | pass the Google servers' own instructions to the agent |
+
+CLAI runs tools without asking first, so `read_only` defaults to `true`. Set it to
+`false` to also get the tools that send, change, and delete.
+
+**The token.** It lives in the [saved API keys](#saved-api-keys) store, never in
+plugin settings, which are plain SQLite and reject a `token` or `auth` entry.
+Enter on the key row lists your saved key names so you can pick one (type to
+filter; Esc leaves the choice unchanged). **Enter a different API key** asks for a
+new token without echoing it and saves it in `/keys` as `GOOGLE_ACCESS_TOKEN`,
+replacing any value already stored under that name. Only the chosen key's name is
+remembered, in the credential store. Several plugins and connections can share one
+named key, such as GitHub integrations all using `GITHUB_TOKEN`. While the plugin
+refers to a key, `/keys` refuses to rename it; pick another key here first. To
+replace the token itself, edit the key in `/keys`.
+
+The plugin loads without a token so that `/google_workspace` is available, and
+prints which key it is missing. Each turn looks the key up again, because Google
+access tokens expire after about an hour: replacing the value in `/keys` applies
+from the next turn. If the key is missing or was deleted, the turn fails with a
+message naming it instead of running without the tools. The `GOOGLE_ACCESS_TOKEN`
+environment variable is not read; key names are labels, not environment variables.
+
+**Not configurable here.** The token decides the Google account and its OAuth
+scopes. `GoogleWorkspace` takes a ready-made access token and has no OAuth client
+ID, client secret, or scope settings, so there is nothing about the OAuth client to
+store: mint the token with your own OAuth client and save it in `/keys`.
+
+Declarations still work for scripted setups:
+
+```text
+/plugins add google_workspace pydantic_clai2.google_workspace '{"services": ["gmail", "docs"], "read_only": false}'
+```
+
+Earlier versions listed `google_workspace` as a raw harness entry,
+`pydantic_ai_harness.google_workspace:GoogleWorkspace`. If you turned that entry on
+or off in the menu, CLAI now loads this plugin in its place and keeps your on or off
+choice. A declaration you added with its own settings under that factory is kept
+as written.
 
 ### `pylon`: support issues and accounts in Pylon
 
@@ -1046,6 +1115,12 @@ settings = host.settings(NotifySettings)
 ```
 
 Bad or missing values fail at startup with a message naming your plugin.
+
+To edit settings from inside the plugin, call `host.save_settings(model)` (see
+[`@host.configure`](#offer-a-settings-menu-hostconfigure)); `host.settings(Model)`
+returns them from then on. Read them per run (for example in a capability
+function passed to `host.add`) so an edit also reaches the next turn from a
+plugin command, without a reload. `google_workspace` is a worked example.
 CLAI ignores unknown names in its own saved settings and preserves their values for
 other versions or branches. This does not relax validation of plugin declarations
 or `host.settings(Model)`.
@@ -1232,7 +1307,8 @@ name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not p
 the secret on the command line.
 
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
-and plugins such as [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
+and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools)
+and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
 searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.
