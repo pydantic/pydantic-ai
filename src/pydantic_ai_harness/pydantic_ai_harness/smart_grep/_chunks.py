@@ -75,11 +75,13 @@ def windows(
     for i in range(0, max(len(lines) - overlap, 1), size - overlap):
         part = lines[i : i + size]
         text = '\n'.join(part)
+        if not text.strip():
+            continue
         if len(text) > MAX_CHUNK_CHARS:
             if size == 1:
                 raise LineTooLong(f'line exceeds {MAX_CHUNK_CHARS} characters: {path}:{first_line + i}')
             out.extend(windows(part, path, first_line=first_line + i, size=max(1, size // 2), overlap=0, symbol=symbol))
-        elif text.strip():
+        else:
             out.append(
                 Chunk(path=path, line=first_line + i, end_line=first_line + i + len(part) - 1, text=text, symbol=symbol)
             )
@@ -129,14 +131,29 @@ def _parse(text: str, path: str) -> tuple[list[Range], str] | None:
 async def list_files(workspace: Workspace, root: str, glob: str | None) -> tuple[list[str], list[tuple[str, str]]]:
     """Files under `root` that ripgrep would search, relative to it, and `(path, reason)` for unreadable ones.
 
-    Honours `.gitignore`, skips hidden files and files over `MAX_FILE_BYTES`.
+    Honours `.gitignore`, skips hidden files and files over `MAX_FILE_BYTES`. `glob` only narrows that
+    listing: ripgrep's own `--glob` overrides its ignore rules, so it would let `glob='.env'` pick a hidden,
+    ignored file and send its contents to the judge.
     """
-    arguments = ['--files', '--sort', 'path', '--max-filesize', str(MAX_FILE_BYTES)]
+    paths, unreadable = await _ripgrep_files(workspace, root, [])
     if glob:
-        arguments += ['--glob', glob]
+        matching, unreadable = await _ripgrep_files(workspace, root, ['--glob', glob])
+        wanted = set(matching)
+        paths = [path for path in paths if path in wanted]
+    return paths, unreadable
+
+
+async def _ripgrep_files(
+    workspace: Workspace, root: str, arguments: list[str]
+) -> tuple[list[str], list[tuple[str, str]]]:
     try:
         paths, capped, unreadable = await run_ripgrep(
-            workspace, arguments, cwd=root, limit=MAX_FILES, listing=True, accept=lambda record: record.path
+            workspace,
+            ['--files', '--sort', 'path', '--max-filesize', str(MAX_FILE_BYTES), *arguments],
+            cwd=root,
+            limit=MAX_FILES,
+            listing=True,
+            accept=lambda record: record.path,
         )
     except RipgrepMissing:
         raise ToolFailed(
@@ -144,7 +161,7 @@ async def list_files(workspace: Workspace, root: str, glob: str | None) -> tuple
             '(the `coder` extra does for a local workspace), or use regular file search instead.'
         ) from None
     if capped:
-        raise ModelRetry(f'Search exceeds {MAX_FILES} files. Narrow the directory or glob.')
+        raise ModelRetry(f'Search exceeds {MAX_FILES} files. Narrow the directory.')
     return paths, [(u.path, u.reason) for u in unreadable]
 
 

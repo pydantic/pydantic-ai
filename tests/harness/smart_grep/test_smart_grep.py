@@ -192,6 +192,11 @@ def test_non_python_and_broken_python_fall_back_to_windows() -> None:
         assert chunks[1].line == 51  # 10-line overlap
 
 
+def test_long_whitespace_lines_are_skipped_not_fatal() -> None:
+    chunks = windows(['x = 1', ' ' * 13_000, 'y = 2'], 'w.py', size=1, overlap=0)
+    assert [c.text for c in chunks] == ['x = 1', 'y = 2']
+
+
 def test_giant_line_raises_and_giant_window_halves() -> None:
     with pytest.raises(LineTooLong):
         windows(['x' * 13_000], 'min.js')
@@ -225,6 +230,17 @@ async def test_discover_respects_gitignore_and_reports_paths_as_spelled(tmp_path
     found = await discover(_workspace(tmp_path), str(tmp_path / 'src'))
     assert [c.path for c in found.chunks] == [str(tmp_path / 'src' / 'a.py')]
     assert (await discover(_workspace(tmp_path), 'src', glob='*.txt')).chunks == []
+
+
+async def test_glob_cannot_reach_ignored_or_hidden_files(tmp_path: Path) -> None:
+    (tmp_path / '.git').mkdir()
+    (tmp_path / '.gitignore').write_text('ignored.py\n.env\n')
+    (tmp_path / '.env').write_text('SECRET=1\n')
+    (tmp_path / 'ignored.py').write_text('x = 1\n')
+    (tmp_path / 'kept.py').write_text('y = 2\n')
+    workspace = _workspace(tmp_path)
+    assert (await discover(workspace, '.', glob='.env')).chunks == []  # ripgrep's `--glob` alone would list it
+    assert [c.path for c in (await discover(workspace, '.', glob='*.py')).chunks] == ['kept.py']
 
 
 async def test_discover_stays_inside_the_working_directory(tmp_path: Path) -> None:
