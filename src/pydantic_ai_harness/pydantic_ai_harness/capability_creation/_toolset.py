@@ -57,7 +57,7 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
             )
         return (
             f'Capability {name!r} ({record.class_name}) authored and validated. To activate it on a later '
-            'agent run, the host must load active capabilities from the store and pass them to '
+            'agent run, the host must pass `creation.store.load_active()` to '
             '`agent.run(..., capabilities=...)`; it is not active automatically or in the current run.'
         )
 

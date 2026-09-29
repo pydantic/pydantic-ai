@@ -21,8 +21,8 @@ _DEFAULT_GUIDANCE = (
     'A capability is a subclass of `pydantic_ai.capabilities.AbstractCapability` that constructs with '
     'no arguments and overrides one or more lifecycle hooks (a single overridden hook is a valid '
     'capability). Authored capabilities are validated immediately. To activate them on a later run, '
-    'the host must load them from the store and pass them to `agent.run(..., capabilities=...)`; '
-    'authoring alone does not activate them. Use `list_authored_capabilities` and '
+    'the host must pass `creation.store.load_active()` to `agent.run(..., capabilities=...)`; authoring '
+    'alone does not activate them. Use `list_authored_capabilities` and '
     '`disable_authored_capability` to manage them.'
 )
 

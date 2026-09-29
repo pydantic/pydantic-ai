@@ -392,7 +392,7 @@ class TestCapabilityCreationToolset:
         result = await toolset.author_capability('marker', VALID_CODE)
         assert 'authored and validated' in result
         assert 'MarkerCapability' in result
-        assert 'host must load active capabilities from the store' in result
+        assert 'host must pass `creation.store.load_active()`' in result
         assert '`agent.run(..., capabilities=...)`' in result
         assert 'not active automatically' in result
 
@@ -479,7 +479,7 @@ class TestCapabilityCreationCapability:
         instructions = CapabilityCreation[object](directory=tmp_path).get_instructions()
         assert isinstance(instructions, str)
         assert 'author_capability' in instructions
-        assert 'host must load them from the store' in instructions
+        assert 'host must pass `creation.store.load_active()`' in instructions
         assert 'authoring alone does not activate them' in instructions
 
     def test_get_instructions_custom(self, tmp_path: Path) -> None:
