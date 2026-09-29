@@ -80,6 +80,25 @@ an empty result is never mistaken for proof that the code does not exist. Matche
 A failed judgment fails the whole search, and the error is reported to the model as a tool failure, so it
 can fall back to regular search instead of acting on half-judged results.
 
+## Large codebases
+
+A search is capped at 200,000 files and 50 million lines, enough for the Linux kernel; past that it asks the
+model to narrow `directory` or `glob`. Without caching, every search reads, chunks and indexes its directory
+from scratch, which takes seconds for a typical repository and minutes for the kernel.
+
+Set `cache_index=True` to keep each searched directory's index between searches, for the life of the agent:
+
+```python {test="skip"}
+SmartFileSearch(model='typesafe:jev-latest', cache_index=True)
+```
+
+Later searches of the same directory still read every file, to catch changes by content hash on any
+workspace, but only chunk and index the files that changed, and look up the query in the index instead of
+scoring every snippet. Parallel `smart_grep` calls on one directory take turns, so its index is built once
+rather than by each call. On the kernel (96,000 files, 39 million lines, 4 million snippets), the first search
+took about five minutes and later ones about 25 seconds, holding about 2.3 GiB. Up to four directories
+(each with its `glob`) are kept, least recently searched evicted first.
+
 ## Choosing the judge
 
 The judge is any Pydantic AI model, set with `model`:

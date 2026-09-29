@@ -6,8 +6,8 @@ use tree-sitter (`_treesitter.py`), where regions that do not parse fall back to
 Other file types, and Python that does not parse, are cut into line windows entirely. Line coverage is
 exact: every non-blank line lands in at least one snippet.
 
-Files are listed with `rg --files` and read through the run's workspace, so a sandboxed workspace is
-searched where it lives, never on the host.
+Files are listed with `rg --files` and read through the run's workspace (see `_index.py`), so a sandboxed
+workspace is searched where it lives, never on the host.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import posixpath
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.workspaces import Workspace, WorkspaceError
@@ -23,16 +23,14 @@ from pydantic_ai_harness.filesystem._ripgrep import RipgrepMissing, run_ripgrep
 from pydantic_ai_harness.smart_grep._structure import Range, python_ranges
 from pydantic_ai_harness.smart_grep._treesitter import treesitter_ranges
 
-# Discovery is bounded by files and bytes only. Snippet count is not capped: only the ranked shortlist
-# is judged, and local BM25 over the ~24k snippets of a repo root takes well under a second.
-MAX_FILES = 20_000
+# A search is bounded by files and lines, sized to fit the Linux kernel (~96k files, ~39M lines). Snippet
+# count is not capped: only the ranked shortlist is judged, and the index only reads the query's postings.
+MAX_FILES = 200_000
+MAX_TOTAL_LINES = 50_000_000
 MAX_FILE_BYTES = 1024 * 1024
-MAX_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_CHUNK_CHARS = 12_000
 WHOLE_DECLARATION_LINES = 160
 WINDOW, OVERLAP = 60, 10
-_READ_BATCH = 64
-"""Files read from the workspace concurrently; the byte budget is checked between batches."""
 
 
 class LineTooLong(ValueError):
@@ -48,16 +46,6 @@ class Chunk:
     end_line: int
     text: str
     symbol: str | None = None
-
-
-@dataclass(kw_only=True)
-class Discovery:
-    """Every snippet under a directory, and how many files were listed and skipped."""
-
-    chunks: list[Chunk] = field(default_factory=list[Chunk])
-    files: int = 0
-    skipped: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
-    """`(path, reason)` for each listed file that could not be chunked."""
 
 
 def windows(
@@ -148,66 +136,20 @@ async def list_files(workspace: Workspace, root: str, glob: str | None) -> tuple
     return paths, [(u.path, u.reason) for u in unreadable]
 
 
-async def _read(workspace: Workspace, path: str) -> bytes | OSError:
+async def read_or_error(workspace: Workspace, path: str) -> bytes | OSError:
+    """The file's bytes, or the `OSError` of a file that vanished or became unreadable since it was listed."""
     try:
         return await workspace.read_bytes(path)
     except WorkspaceError:
         raise
-    except OSError as exc:  # the file vanished or became unreadable since it was listed
+    except OSError as exc:
         return exc
 
 
-async def _require_inside_working_dir(workspace: Workspace, root: str, directory: str) -> None:
-    """Refuse a directory outside the working directory, symlinks followed: its source would go to the judge."""
+async def searchable_root(workspace: Workspace, directory: str) -> str:
+    """The real path of `directory`, refused outside the working directory: its source would go to the judge."""
+    root = await workspace.resolve(directory)
     cwd, real = await asyncio.gather(workspace.realpath(await workspace.working_dir()), workspace.realpath(root))
     if posixpath.commonpath([cwd, real]) != cwd:
         raise ModelRetry(f'`{directory}` is outside the working directory; smart_grep only searches inside it.')
-
-
-async def discover(workspace: Workspace, directory: str, glob: str | None = None) -> Discovery:
-    """Read and chunk every eligible file under `directory`, a workspace path.
-
-    Chunk paths are `directory` joined with the file's path below it, so they read the way the caller
-    spelled the directory: relative to the working directory, or absolute.
-    """
-    root = await workspace.resolve(directory)
-    await _require_inside_working_dir(workspace, root, directory)
-    paths, unreadable = await list_files(workspace, root, glob)
-    found = Discovery(files=len(paths), skipped=unreadable)
-    texts: list[tuple[str, str]] = []
-    total_bytes = 0
-    for offset in range(0, len(paths), _READ_BATCH):
-        batch = paths[offset : offset + _READ_BATCH]
-        contents = await asyncio.gather(*(_read(workspace, posixpath.join(root, path)) for path in batch))
-        for path, raw in zip(batch, contents):
-            shown = posixpath.normpath(posixpath.join(directory, path))
-            if isinstance(raw, OSError):
-                found.skipped.append((shown, raw.strerror or type(raw).__name__))
-                continue
-            total_bytes += len(raw)
-            if total_bytes > MAX_TOTAL_BYTES:
-                raise ModelRetry('Search exceeds 32 MiB of source. Narrow the directory or glob.')
-            if b'\0' in raw:
-                found.skipped.append((shown, 'binary'))
-                continue
-            try:
-                texts.append((shown, raw.decode('utf-8')))
-            except UnicodeDecodeError:
-                found.skipped.append((shown, 'not UTF-8'))
-    for path, chunks in await asyncio.to_thread(_chunk_all, texts):
-        if isinstance(chunks, LineTooLong):
-            found.skipped.append((path, str(chunks)))
-        else:
-            found.chunks.extend(chunks)
-    return found
-
-
-def _chunk_all(texts: list[tuple[str, str]]) -> list[tuple[str, list[Chunk] | LineTooLong]]:
-    """Chunk every file off the event loop; parsing a repo is CPU-bound."""
-    out: list[tuple[str, list[Chunk] | LineTooLong]] = []
-    for path, text in texts:
-        try:
-            out.append((path, source_chunks(text, path)[0]))
-        except LineTooLong as exc:
-            out.append((path, exc))
-    return out
+    return real

@@ -189,6 +189,9 @@ agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartFileSearch(model='
   installed and `TYPESAFE_API_KEY` is set (recommended), else the run's own model. Never TypeSafe-only.
 - `threshold=0.5` (tuned for Jev; retune for a language-model judge), `concurrency=8`, `guidance=None`
   (default discovery instructions; `''` for none).
+- `cache_index=False`: on, keeps up to four directories' indexes (per `glob`) in memory for the agent's
+  life; later searches re-read files but re-chunk only changed ones (content hash), and parallel searches
+  of one directory build it once. A search is capped at 200,000 files and 50M lines (`ModelRetry`).
 - Judge usage is not added to the run's usage or limits; bound cost with `candidates`. A failed judgment
   fails the search as a tool failure the model sees.
 - Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working

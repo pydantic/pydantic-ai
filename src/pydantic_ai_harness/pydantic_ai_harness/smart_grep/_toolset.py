@@ -7,6 +7,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
+from pydantic_ai_harness.smart_grep._index import MAX_CACHED_INDEXES, SnippetIndexes
 from pydantic_ai_harness.smart_grep._judge import JudgeModel, resolve_judge_model
 from pydantic_ai_harness.smart_grep._search import DEFAULT_CANDIDATES, SmartFileSearchResult, search_code
 
@@ -17,7 +18,8 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
     """Registers `smart_grep`, which searches the run's workspace and judges snippets with a model.
 
     Files are listed with `rg` and read through `ctx.workspace`, so the tool is only offered when the
-    workspace can run commands. A run with no workspace fails at its start.
+    workspace can run commands. A run with no workspace fails at its start. With `cache_index`, each
+    searched directory's index is kept on this toolset between searches and runs.
     """
 
     def __init__(
@@ -26,12 +28,14 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         model: JudgeModel | None,
         threshold: float,
         concurrency: int,
+        cache_index: bool = False,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
         self._model = model
         self._threshold = threshold
         self._concurrency = concurrency
+        self._indexes = SnippetIndexes(MAX_CACHED_INDEXES if cache_index else 0)
         self.add_function(self.smart_grep, name=TOOL_NAME)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -79,6 +83,7 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
                 model,
                 query,
                 directory,
+                indexes=self._indexes,
                 glob=glob,
                 limit=limit,
                 candidates=candidates,

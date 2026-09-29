@@ -1,4 +1,4 @@
-"""The search pipeline: discover -> shortlist -> judge -> rank -> excerpt."""
+"""The search pipeline: index -> shortlist -> judge -> rank -> excerpt."""
 
 from __future__ import annotations
 
@@ -8,9 +8,10 @@ from typing import Literal
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
-from pydantic_ai_harness.smart_grep._chunks import Chunk, discover
+from pydantic_ai_harness.smart_grep._chunks import Chunk, searchable_root
+from pydantic_ai_harness.smart_grep._index import SnippetIndexes, read_snippets
 from pydantic_ai_harness.smart_grep._judge import JudgeModel, judge
-from pydantic_ai_harness.smart_grep._retrieve import rank, terms
+from pydantic_ai_harness.smart_grep._retrieve import terms
 
 MAX_QUERY_CHARS = 2000
 DEFAULT_CANDIDATES = 128
@@ -150,6 +151,7 @@ async def search_code(
     query: str,
     directory: str,
     *,
+    indexes: SnippetIndexes,
     glob: str | None = None,
     limit: int = 5,
     candidates: int = DEFAULT_CANDIDATES,
@@ -163,14 +165,15 @@ async def search_code(
     limit = max(1, min(limit, MAX_LIMIT))
     candidates = max(1, min(candidates, MAX_CANDIDATES))
 
-    found = await discover(workspace, directory, glob)
-    selected = rank(query, found.chunks)[:candidates]
+    root = await searchable_root(workspace, directory)
+    found = await indexes.shortlist(workspace, root, glob, query, candidates)
+    selected = await read_snippets(workspace, root, directory, found.hits)
     coverage = SmartFileSearchCoverage(
         files=found.files,
-        snippets=len(found.chunks),
+        snippets=found.snippets,
         evaluated=len(selected),
         skipped_files=len(found.skipped),
-        selection_complete=len(selected) == len(found.chunks),
+        selection_complete=len(selected) == found.snippets,
     )
 
     scores = await judge(model, query, selected, concurrency=concurrency) if selected else []
@@ -188,7 +191,7 @@ async def search_code(
         )
     if not coverage.selection_complete:
         warnings.append(
-            f'Judged {len(selected)} of {len(found.chunks)} snippets picked by a lexical shortlist; code with '
+            f'Judged {len(selected)} of {found.snippets} snippets picked by a lexical shortlist; code with '
             'unrelated wording may be missed. Raise `candidates` or narrow the directory/glob.'
         )
     if found.skipped:

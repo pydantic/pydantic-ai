@@ -93,6 +93,15 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     concurrency: int = 8
     """How many snippets are judged at once."""
 
+    cache_index: bool = False
+    """Keep each searched directory's index in memory between searches, re-indexing only changed files.
+
+    Off, every search reads, chunks and indexes its directory from scratch. On, later searches of the same
+    directory still read every file to detect changes, but only re-chunk the ones that changed, and
+    parallel searches of it build the index once. Up to four directories (with their `glob`) are kept for
+    the life of the agent, so this holds memory in proportion to the source searched.
+    """
+
     guidance: str | None = None
     """Custom discovery guidance for the system prompt.
 
@@ -117,5 +126,8 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> SmartFileSearchToolset[AgentDepsT]:
         """Build the toolset providing `smart_grep`."""
         return SmartFileSearchToolset[AgentDepsT](
-            model=self.model, threshold=self.threshold, concurrency=self.concurrency
+            model=self.model,
+            threshold=self.threshold,
+            concurrency=self.concurrency,
+            cache_index=self.cache_index,
         )

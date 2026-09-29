@@ -1,4 +1,4 @@
-"""Tests for `SmartFileSearch`: chunking, the lexical shortlist, the pluggable judge, and the tool.
+"""Tests for `SmartFileSearch`: chunking, the pluggable judge, search, and the tool (the index is in `test_index.py`).
 
 Ported from Code Puppy's `code_puppy_core_plugins/jev_grep` tests. The judge is exercised two ways, to pin
 that it is pluggable: a fake `DecisionModel` answering the real Decisions protocol (the path TypeSafe's Jev
@@ -18,7 +18,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.decision import (
@@ -37,20 +37,20 @@ from pydantic_ai_harness import SmartFileSearch
 from pydantic_ai_harness.smart_grep import (
     SmartFileSearchResult,
     SmartFileSearchToolset,
-    _chunks,
+    _index,
     _judge,
-    _search as search_module,
 )
-from pydantic_ai_harness.smart_grep._chunks import Chunk, Discovery, LineTooLong, discover, source_chunks, windows
+from pydantic_ai_harness.smart_grep._chunks import Chunk, LineTooLong, source_chunks, windows
+from pydantic_ai_harness.smart_grep._index import SnippetIndexes
 from pydantic_ai_harness.smart_grep._judge import TYPESAFE_MODEL, judge, resolve_judge_model
-from pydantic_ai_harness.smart_grep._retrieve import rank, terms
+from pydantic_ai_harness.smart_grep._retrieve import terms
 from pydantic_ai_harness.smart_grep._search import search_code
 
 from ..conftest import agent_run_names
+from .conftest import CountingChunker
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
-from ..filesystem.conftest import tools_path
 
 pytestmark = pytest.mark.usefixtures('allow_model_requests')  # `FakeJev` is a real `DecisionModel`
 
@@ -134,11 +134,28 @@ async def _search(
     root: Path, model: Model, query: str = 'reject expired sessions', *, limit: int = 5, candidates: int | None = None
 ) -> SmartFileSearchResult:
     workspace = _workspace(root)
+    indexes = SnippetIndexes(0)
     if candidates is None:  # the tool's own default
-        return await search_code(workspace, model, query, '.', limit=limit, threshold=0.5, concurrency=8)
+        return await search_code(
+            workspace, model, query, '.', indexes=indexes, limit=limit, threshold=0.5, concurrency=8
+        )
     return await search_code(
-        workspace, model, query, '.', limit=limit, candidates=candidates, threshold=0.5, concurrency=8
+        workspace, model, query, '.', indexes=indexes, limit=limit, candidates=candidates, threshold=0.5, concurrency=8
     )
+
+
+class VanishingBackend(LocalWorkspaceBackend):
+    """Lists files normally, then fails to read the ones named `gone*` or `slow*`."""
+
+    async def read_bytes(self, path: str) -> bytes:
+        name = Path(path).name
+        if name.startswith('gone'):
+            raise FileNotFoundError(2, 'No such file or directory', path)
+        if name.startswith('slow'):
+            raise WorkspaceTimeoutError('read timed out')
+        if name.startswith('odd'):
+            raise OSError('odd failure')
+        return await super().read_bytes(path)
 
 
 # ---------------------------------------------------------------- chunks
@@ -199,103 +216,11 @@ def test_giant_line_raises_and_giant_window_halves() -> None:
     assert [(c.line, c.end_line) for c in halves] == [(1, 2), (3, 4)]
 
 
-async def test_discover_skips_binary_non_utf8_and_minified(tmp_path: Path) -> None:
-    (tmp_path / 'good.py').write_text(PY_SOURCE)
-    (tmp_path / 'bin.dat').write_bytes(b'abc\0def')
-    (tmp_path / 'latin.txt').write_bytes('caf\xe9'.encode('latin-1'))
-    (tmp_path / 'min.js').write_text('x' * 13_000)
-    found = await discover(_workspace(tmp_path), '.')
-    assert found.files == 4
-    assert sorted(reason.split(':')[0] for _, reason in found.skipped) == [
-        'binary',
-        'line exceeds 12000 characters',
-        'not UTF-8',
-    ]
-    assert {c.path for c in found.chunks} == {'good.py'}
-
-
-async def test_discover_respects_gitignore_and_reports_paths_as_spelled(tmp_path: Path) -> None:
-    (tmp_path / 'src').mkdir()
-    (tmp_path / 'src' / 'a.py').write_text('x = 1\n')
-    (tmp_path / 'src' / 'ignored.py').write_text('y = 2\n')
-    (tmp_path / '.gitignore').write_text('src/ignored.py\n')
-    (tmp_path / '.git').mkdir()
-    found = await discover(_workspace(tmp_path), 'src')
-    assert [c.path for c in found.chunks] == ['src/a.py']
-    found = await discover(_workspace(tmp_path), str(tmp_path / 'src'))
-    assert [c.path for c in found.chunks] == [str(tmp_path / 'src' / 'a.py')]
-    assert (await discover(_workspace(tmp_path), 'src', glob='*.txt')).chunks == []
-
-
-async def test_discover_stays_inside_the_working_directory(tmp_path: Path) -> None:
-    project, outside = tmp_path / 'project', tmp_path / 'outside'
-    project.mkdir()
-    outside.mkdir()
-    (outside / 'secret.py').write_text('token = 1\n')
-    (project / 'link').symlink_to(outside)
-    workspace = _workspace(project)
-    for directory in ('..', str(outside), 'link'):
-        with pytest.raises(ModelRetry, match='outside the working directory'):
-            await discover(workspace, directory)
-
-
-async def test_discover_enforces_byte_and_file_budgets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    (tmp_path / 'a.py').write_text('x = 1\n' * 50)
-    (tmp_path / 'b.py').write_text('y = 1\n')
-    monkeypatch.setattr(_chunks, 'MAX_TOTAL_BYTES', 10)
-    with pytest.raises(ModelRetry, match='32 MiB'):
-        await discover(_workspace(tmp_path), '.')
-    monkeypatch.setattr(_chunks, 'MAX_FILES', 1)
-    with pytest.raises(ModelRetry, match='exceeds 1 files'):
-        await discover(_workspace(tmp_path), '.')
-
-
-async def test_discover_without_ripgrep(tmp_path: Path) -> None:
-    bin_dir = tmp_path / 'bin'
-    bin_dir.mkdir()
-    workspace = Workspace(LocalWorkspaceBackend(tmp_path, env={'PATH': tools_path(bin_dir)}))
-    with pytest.raises(ToolFailed, match='needs ripgrep'):
-        await discover(workspace, '.')
-
-
-class VanishingBackend(LocalWorkspaceBackend):
-    """Lists files normally, then fails to read the ones named `gone*` or `slow*`."""
-
-    async def read_bytes(self, path: str) -> bytes:
-        name = Path(path).name
-        if name.startswith('gone'):
-            raise FileNotFoundError(2, 'No such file or directory', path)
-        if name.startswith('slow'):
-            raise WorkspaceTimeoutError('read timed out')
-        if name.startswith('odd'):
-            raise OSError('odd failure')
-        return await super().read_bytes(path)
-
-
-async def test_discover_skips_files_that_vanish_after_listing(tmp_path: Path) -> None:
-    (tmp_path / 'gone.py').write_text('x = 1\n')
-    (tmp_path / 'odd.py').write_text('x = 1\n')
-    (tmp_path / 'kept.py').write_text('y = 2\n')
-    found = await discover(Workspace(VanishingBackend(tmp_path)), '.')
-    assert found.skipped == [('gone.py', 'No such file or directory'), ('odd.py', 'OSError')]
-    assert [c.path for c in found.chunks] == ['kept.py']
-
-
 # ---------------------------------------------------------------- retrieve
 
 
 def test_terms_split_identifiers_and_drop_stopwords() -> None:
     assert terms('where is refreshToken_value for HTTPServer') == ['refresh', 'token', 'value', 'httpserver']
-
-
-def test_rank_prefers_lexical_and_synonym_hits() -> None:
-    a = Chunk(path='a.py', line=1, end_line=2, text='def render(): pass')
-    b = Chunk(path='b.py', line=1, end_line=2, text='def backoff(): attempt()')
-    c = Chunk(path='retry.py', line=1, end_line=2, text='x = 1')
-    ranked = rank('retry the request', [a, b, c])
-    assert ranked[-1] is a  # no overlap at all
-    assert {ranked[0], ranked[1]} == {b, c}
-    assert rank('anything', []) == []
 
 
 # ---------------------------------------------------------------- judge
@@ -427,10 +352,11 @@ async def test_excerpt_focuses_on_a_narrower_passing_block(monkeypatch: pytest.M
     block = Chunk(path='a.py', line=28, end_line=32, text='\n'.join(lines[27:32]), symbol='f')
     other = Chunk(path='a.py', line=2, end_line=3, text='\n'.join(lines[1:3]), symbol='f')
 
-    async def nested(workspace: Workspace, directory: str, glob: str | None = None) -> Discovery:
-        return Discovery(chunks=[whole, block, other], files=1)
+    def nested(text: str, path: str) -> tuple[list[Chunk], str]:
+        return [whole, block, other], 'python'
 
-    monkeypatch.setattr(search_module, 'discover', nested)
+    (tmp_path / 'a.py').write_text('\n'.join(lines))
+    monkeypatch.setattr(_index, 'source_chunks', nested)
     out = await _search(tmp_path, FakeJev('expired', hit=0.9, miss=0.5), 'expired')
     [match] = out.matches  # `block` collapses into `whole`, which ranks first on the tie; `other` fails
     assert (match.snippet_start_line, match.snippet_end_line) == (1, 40)
@@ -566,10 +492,27 @@ async def test_judge_runs_are_named_after_the_capability(capfire: CaptureLogfire
     assert agent_run_names(capfire).count('smart_grep') == 1
 
 
+@pytest.mark.parametrize(('cache_index', 'chunked'), [(True, 1), (False, 2)])
+async def test_cache_index_keeps_the_index_across_runs(
+    tmp_path: Path, chunker: CountingChunker, cache_index: bool, chunked: int
+) -> None:
+    (tmp_path / 'a.py').write_text('expired = True\n')
+    capability = SmartFileSearch(model=FakeJev('x'), cache_index=cache_index)
+    agent = Agent(_calls_smart_grep(), capabilities=[LocalWorkspace(tmp_path), capability])
+    await agent.run('find it')
+    await agent.run('find it again')
+    assert chunker.paths == ['a.py'] * chunked
+
+
 def test_capability_loads_from_an_agent_spec() -> None:
     spec = AgentSpec.model_validate(
-        {'model': 'test', 'capabilities': [{'SmartFileSearch': {'model': 'openai:gpt-5-mini', 'threshold': 0.6}}]}
+        {
+            'model': 'test',
+            'capabilities': [
+                {'SmartFileSearch': {'model': 'openai:gpt-5-mini', 'threshold': 0.6, 'cache_index': True}}
+            ],
+        }
     )
     agent = Agent.from_spec(spec, custom_capability_types=[SmartFileSearch])
     [capability] = [c for c in agent.root_capability.capabilities if isinstance(c, SmartFileSearch)]
-    assert (capability.model, capability.threshold) == ('openai:gpt-5-mini', 0.6)
+    assert (capability.model, capability.threshold, capability.cache_index) == ('openai:gpt-5-mini', 0.6, True)
