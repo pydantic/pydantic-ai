@@ -857,6 +857,22 @@ def test_profile() -> None:
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'seeds_function_parts'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False),  # rejects function parts in seeded turns
+        ('gemini-3.1-flash-live-preview', False),  # loses them on a resumption re-dial
+        ('gemini-3.8-live', True),
+        ('models/gemini-3.8-live-extended-thinking', True),
+        ('gemini-live-2.5-flash', False),  # not probed
+    ],
+)
+def test_profile_supports_seeding_function_parts(model_name: str, seeds_function_parts: bool) -> None:
+    # Verified live by seeding a tool call and result and asking about it, before and after a re-dial.
+    profile = GoogleRealtimeModel(model_name).profile
+    assert profile.get('google_supports_seeding_function_parts') is seeds_function_parts
+
+
+@pytest.mark.parametrize(
     ('model_name', 'seeds_audio'),
     [
         ('gemini-2.5-flash-native-audio-latest', False),  # closes the session on seeded audio
@@ -2023,6 +2039,159 @@ async def test_connect_seed_projects_tool_calls_as_text() -> None:
 
     turns = session.client_content[0]['turns']
     assert [(t.role, [p.text for p in t.parts]) for t in turns] == [('model', ['[Tool call-1: t({})]'])]
+
+
+async def test_connect_seeds_function_parts_as_initial_history_where_supported() -> None:
+    # Unit-level to pin what reaches the wire on each dial, which a cassette can't show for a re-dial.
+    # On a model that takes function parts in seeded turns, tool calls and results are seeded natively
+    # as the initial history: `history_config` on the first dial and `turn_complete` on the seed. A
+    # re-dial leaves `history_config` off, or the server would wait for history that never comes and take
+    # the next typed turn as history. The flag-off side is `test_connect_seed_projects_tool_calls_as_text`.
+    sessions = iter([_RecordingSession([]), _RecordingSession([[_turn('back')]])])
+    configs: list[genai_types.LiveConnectConfig] = []
+    seeded: list[_RecordingSession] = []
+
+    class _Connect:
+        def __init__(self, session: _RecordingSession) -> None:
+            self._session = session
+
+        async def __aenter__(self) -> _RecordingSession:
+            seeded.append(self._session)
+            return self._session
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: genai_types.LiveConnectConfig) -> _Connect:
+            configs.append(config)
+            try:
+                return _Connect(next(sessions))
+            except StopIteration:
+                raise ConnectionClosed(None, None)
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    model = GoogleRealtimeModel(
+        'gemini-3.8-live',
+        provider=GoogleProvider(client=client),
+        settings=GoogleRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Weather in Paris?')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call-1'),
+                ToolCallPart(tool_name='get_weather', args={'city': ''}, tool_call_id='call-2'),
+                ToolCallPart(tool_name='get_weather', args={'city': 'Lyon'}, tool_call_id='call-3'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='Hailing', tool_call_id='call-1'),
+                RetryPromptPart(tool_name='get_weather', content='City is required', tool_call_id='call-2'),
+                ToolReturnPart(
+                    tool_name='get_weather', content='Service down', tool_call_id='call-3', outcome='failed'
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='It is hailing.')]),
+    ]
+    async with _connect(model, 'x', messages=history) as conn:
+        _ = [e async for e in conn]
+
+    assert [config.history_config for config in configs] == [
+        genai_types.HistoryConfig(initial_history_in_client_content=True),
+        None,
+        None,
+    ]
+    [seed] = seeded[0].client_content
+    assert seed['turn_complete'] is True
+    assert [
+        (turn.role, [part.model_dump(exclude_none=True) for part in turn.parts]) for turn in seed['turns']
+    ] == snapshot(
+        [
+            ('user', [{'text': 'Weather in Paris?'}]),
+            (
+                'model',
+                [
+                    {'function_call': {'id': 'call-1', 'args': {'city': 'Paris'}, 'name': 'get_weather'}},
+                    {'function_call': {'id': 'call-2', 'args': {'city': ''}, 'name': 'get_weather'}},
+                    {'function_call': {'id': 'call-3', 'args': {'city': 'Lyon'}, 'name': 'get_weather'}},
+                ],
+            ),
+            (
+                'user',
+                [
+                    {'function_response': {'id': 'call-1', 'name': 'get_weather', 'response': {'output': 'Hailing'}}},
+                    {
+                        'function_response': {
+                            'id': 'call-2',
+                            'name': 'get_weather',
+                            'response': {'error': 'City is required\n\nFix the errors and try again.'},
+                        }
+                    },
+                    {
+                        'function_response': {
+                            'id': 'call-3',
+                            'name': 'get_weather',
+                            'response': {'error': 'Service down'},
+                        }
+                    },
+                ],
+            ),
+            ('model', [{'text': 'It is hailing.'}]),
+        ]
+    )
+    # The resumed session isn't seeded again.
+    assert seeded[1].client_content == []
+
+
+async def test_connect_seeds_text_only_history_as_before_where_function_parts_are_supported() -> None:
+    # Without tool calls to seed there are no function parts, so a model that takes them seeds text as
+    # inactive context, exactly as before, without `history_config`.
+    session = _RecordingSession([[_turn('hi')]])
+    captured: dict[str, Any] = {}
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session, captured)))
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My name is Alice.')]),
+        ModelResponse(parts=[TextPart(content='Nice to meet you!')]),
+    ]
+    async with _connect(model, 'x', messages=history) as conn:
+        _ = [e async for e in conn]
+
+    assert captured['config'].history_config is None
+    [seed] = session.client_content
+    assert seed['turn_complete'] is False
+
+
+async def test_connect_seeds_without_history_config_where_unsupported() -> None:
+    # A model that projects tool calls as text keeps seeding as inactive context, without `history_config`.
+    session = _RecordingSession([[_turn('hi')]])
+    captured: dict[str, Any] = {}
+    model = GoogleRealtimeModel(
+        'gemini-3.1-flash-live-preview', provider=GoogleProvider(client=_fake_client(session, captured))
+    )
+    history = [ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}', tool_call_id='call-1')])]
+    async with _connect(model, 'x', messages=history) as conn:
+        _ = [e async for e in conn]
+
+    assert captured['config'].history_config is None
+    [seed] = session.client_content
+    assert seed['turn_complete'] is False
+    assert [(t.role, [p.text for p in t.parts]) for t in seed['turns']] == [('model', ['[Tool call-1: t({})]'])]
+
+
+async def test_connect_without_history_leaves_history_config_off() -> None:
+    # Nothing to seed, so nothing for the server to wait for: `history_config` would hold the first typed
+    # turn back as history.
+    session = _RecordingSession([[_turn('hi')]])
+    captured: dict[str, Any] = {}
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session, captured)))
+    async with _connect(model, 'x') as conn:
+        _ = [e async for e in conn]
+
+    assert captured['config'].history_config is None
+    assert session.client_content == []
 
 
 async def test_connect_rejects_audio_only_user_turn() -> None:

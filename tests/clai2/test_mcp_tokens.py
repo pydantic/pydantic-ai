@@ -7,7 +7,7 @@ import keyring
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.auth.oauth import TokenStorageAdapter
-from keyring.errors import KeyringLocked, PasswordDeleteError
+from keyring.errors import KeyringLocked
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl, HttpUrl
 
@@ -16,27 +16,6 @@ from tests.clai2.menu_script import Script, pick, typed
 
 URL = 'https://mcp.example.com/mcp'
 Vault = dict[tuple[str, str], str]
-
-
-@pytest.fixture
-def vault(monkeypatch: pytest.MonkeyPatch) -> Vault:
-    entries: Vault = {}
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        if (service, account) not in entries:
-            raise PasswordDeleteError('Not found')  # pragma: no cover
-        del entries[service, account]
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
-    return entries
 
 
 def token() -> OAuthToken:
