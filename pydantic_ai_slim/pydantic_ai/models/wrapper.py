@@ -4,6 +4,8 @@ import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import timedelta
+from types import TracebackType
 from typing import Any
 
 from typing_extensions import Self
@@ -45,8 +47,13 @@ class WrapperModel(Model):
         await self.wrapped.__aenter__()
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
-        return await self.wrapped.__aexit__(*args)
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 
     async def request(
         self,
@@ -134,9 +141,20 @@ class WrapperModel(Model):
         return self.wrapped.profile
 
     @property
+    def context_window(self) -> int | None:
+        # Forwarded rather than read off `profile`: a wrapped `FallbackModel` has no profile but does
+        # have a context window (the smallest among its candidates).
+        return self.wrapped.context_window
+
+    @property
     def settings(self) -> ModelSettings | None:
         """Get the settings from the wrapped model."""
         return self.wrapped.settings
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        # `Model.resolve_cache_retention` returns `None`, so without this override normal attribute
+        # lookup succeeds and `__getattr__` never forwards.
+        return self.wrapped.resolve_cache_retention(model_settings)
 
     @property
     def base_url(self) -> str | None:

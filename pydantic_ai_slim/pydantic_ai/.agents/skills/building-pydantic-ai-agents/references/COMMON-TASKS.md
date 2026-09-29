@@ -12,7 +12,7 @@ Prefer the narrower task-family guides below so the agent loads only the materia
 - [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md) — approval, retries, `ToolReturn`, timeouts, validators, tool search, and tool-level deferred loading
 - [INPUT-AND-HISTORY.md](./INPUT-AND-HISTORY.md) — multimodal input, message history, `run_id` / `conversation_id`, history processors
 - [TESTING-AND-DEBUGGING.md](./TESTING-AND-DEBUGGING.md) — `TestModel`, `FunctionModel`, `capture_run_messages`, Logfire
-- [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTRATION-AND-INTEGRATIONS.md) — multi-agent patterns, graphs, A2A, direct API, durable execution, embeddings, evals, third-party tools
+- [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTRATION-AND-INTEGRATIONS.md) — multi-agent patterns, graphs, A2A, direct API, durable execution, embeddings, image generation, evals, third-party tools
 
 ## Add Capabilities to an Agent
 
@@ -97,6 +97,7 @@ Read only the relevant section in [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTR
 - [Direct API](./ORCHESTRATION-AND-INTEGRATIONS.md#call-the-model-without-using-an-agent)
 - [Durable Execution](./ORCHESTRATION-AND-INTEGRATIONS.md#use-durable-execution)
 - [Embeddings](./ORCHESTRATION-AND-INTEGRATIONS.md#use-embeddings-for-rag)
+- [Image Generation](./ORCHESTRATION-AND-INTEGRATIONS.md#generate-images)
 - [Third-Party Tools](./ORCHESTRATION-AND-INTEGRATIONS.md#use-langchain-tools)
 - [Custom Extensibility](./ORCHESTRATION-AND-INTEGRATIONS.md#build-custom-toolsets-models-or-agents)
 - [Evals](./ORCHESTRATION-AND-INTEGRATIONS.md#systematically-verify-agent-behavior-with-evals)

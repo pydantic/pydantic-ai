@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from temporalio.plugin import SimplePlugin
@@ -38,9 +39,21 @@ def _default_setup_logfire() -> Logfire:
 
 
 class LogfirePlugin(SimplePlugin):
-    """Temporal client plugin for Logfire."""
+    """Temporal client plugin for Logfire.
 
-    def __init__(self, setup_logfire: Callable[[], Logfire] = _default_setup_logfire, *, metrics: bool = True):
+    Args:
+        setup_logfire: Function that configures and returns a Logfire instance.
+        metrics: Whether to send Temporal metrics to Logfire.
+        metric_periodicity: How often to export Temporal metrics. Defaults to 60 seconds.
+    """
+
+    def __init__(
+        self,
+        setup_logfire: Callable[[], Logfire] = _default_setup_logfire,
+        *,
+        metrics: bool = True,
+        metric_periodicity: timedelta = timedelta(seconds=60),
+    ) -> None:
         try:
             import logfire  # noqa: F401 # pyright: ignore[reportUnusedImport]
             from opentelemetry.trace import get_tracer
@@ -53,6 +66,7 @@ class LogfirePlugin(SimplePlugin):
 
         self.setup_logfire = setup_logfire
         self.metrics = metrics
+        self.metric_periodicity = metric_periodicity
 
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='LogfirePlugin',
@@ -73,7 +87,13 @@ class LogfirePlugin(SimplePlugin):
                 headers = {'Authorization': f'Bearer {token}'}
 
                 config.runtime = Runtime(
-                    telemetry=TelemetryConfig(metrics=OpenTelemetryConfig(url=metrics_url, headers=headers))
+                    telemetry=TelemetryConfig(
+                        metrics=OpenTelemetryConfig(
+                            url=metrics_url,
+                            headers=headers,
+                            metric_periodicity=self.metric_periodicity,
+                        )
+                    )
                 )
 
         return await next(config)

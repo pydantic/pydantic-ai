@@ -595,7 +595,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # generator is already running`. That's exactly the case where a prefetch task exists, and its
                 # own cancellation (when the consumer's debounce is torn down) unwinds the generator and runs
                 # each segment's `request_stream(...)` teardown — so letting this pass still closes the
-                # connection. Mirrors the model adapters' `close_stream()` handling of the same error.
+                # connection. The model adapters' `close_stream()` avoid this race by routing through
+                # `PeekableAsyncStream.aclose()` (cancelling the in-flight pull first); the stitching generator
+                # here is not `PeekableAsyncStream`-wrapped, so it still needs the suppression.
                 if not _utils.is_async_generator_already_running(exc):
                     raise
 

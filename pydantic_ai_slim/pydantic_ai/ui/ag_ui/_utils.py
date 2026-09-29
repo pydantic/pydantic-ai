@@ -18,11 +18,22 @@ ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 
 Gates the field-based `tool_kind` round-trip in `dump_messages`/`load_messages`. The streaming
 carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated on
-`REASONING_VERSION` (0.1.13) — see `tool_kind_encrypted_value`.
+`REASONING_VERSION` — see `tool_kind_encrypted_value`.
 """
 
-REASONING_VERSION = (0, 1, 13)
-"""AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
+REASONING_VERSION = (0, 1, 11)
+"""AG-UI version at and above which we emit `REASONING_*` events rather than `THINKING_*`.
+
+0.1.11 is where the whole reasoning surface landed: the `REASONING_*` events, `ReasoningMessage`,
+and `ReasoningEncryptedValueEvent`. So this also gates whether a `ThinkingPart` survives
+`dump_messages`, and whether thinking signatures, `tool_kind` and a non-`'success'` `outcome` have
+a streaming carrier at all. `THINKING_*` carries none of them, and is deprecated upstream in favor
+of `REASONING_*` ([ag-ui#1050](https://github.com/ag-ui-protocol/ag-ui/pull/1050)).
+
+Equal to `ENCRYPTED_VALUE_VERSION` because `encrypted_value` shipped in that same release. They
+stay separate constants because they gate different surfaces — the event family here, the
+`ToolCall`/`ToolMessage` field there — and nothing guarantees they move together again.
+"""
 
 REASONING_MESSAGE_ROLE_VERSION = (0, 1, 14)
 """AG-UI version that changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
@@ -56,6 +67,9 @@ Keep this string stable — clients may persist `Interrupt.id` across page reloa
 
 FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 """Activity type for agent-generated files stored as AG-UI ActivityMessages."""
+
+COMPACTION_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_compaction'
+"""Activity type for compaction parts stored as AG-UI ActivityMessages."""
 
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
@@ -304,7 +318,7 @@ def rehydrate_tool_return_content(content: Any) -> Any:
     `ImageUrl`, `UploadedFile`, ...) come back as their subclasses. Image `BinaryContent` is narrowed to
     `BinaryImage`.
 
-    Only a parsed mapping or sequence is run through the discriminator, since nested multimodal items can
+    Only a parsed mapping or sequence is run back through the union, since nested multimodal items can
     only live inside those. A non-JSON string (plain-text return) and a parsed JSON scalar (`'123'`,
     `'true'`) are returned as the original string: content is text-only, so a scalar is indistinguishable
     from a string on the wire and rehydrating it would silently turn `'123'` into `123`. An

@@ -1,0 +1,691 @@
+"""Azure realtime support using the OpenAI GA or Azure AI Voice Live protocol."""
+
+from __future__ import annotations as _annotations
+
+import warnings
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
+from urllib.parse import urlencode, urlparse, urlunparse
+
+from anyio.to_thread import run_sync
+from openai import AsyncOpenAI
+from openai.types.realtime.realtime_audio_config_output import VoiceID
+from pydantic import BaseModel
+from typing_extensions import Required, TypedDict
+
+from ..exceptions import UserError
+from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
+from ..providers import Provider, infer_provider
+from ..providers.azure import AzureProvider
+from ..settings import ThinkingLevel
+from ..tools import ToolDefinition
+from ._openai_protocol import (
+    SemanticVAD,
+    ServerVAD,
+    map_event as _map_openai_event,
+    resolve_base_turn_detection,
+    resolve_transcription_model,
+    tool_choice_config,
+    tool_def_to_openai,
+    turn_detection_config,
+    with_realtime_query,
+)
+from ._openai_webrtc import relay_sdp_offer as _relay_sdp_offer
+from ._utils import resolve_advertised_tools
+from .codec import OutputTranscript, RealtimeCodecEvent
+from .model import RealtimeClientSecret, WebRTCAnswer
+from .openai import (
+    OpenAIRealtimeConnection,
+    OpenAIRealtimeModel,
+    OpenAIRealtimeModelName,
+    OpenAIRealtimeModelSettings,
+)
+from .profiles import RealtimeModelProfile, RealtimeModelProfileSpec, merge_realtime_profile
+from .settings import RealtimeModelSettings
+
+if TYPE_CHECKING:
+    from ..messages import ModelMessage
+    from ..models import ModelRequestParameters
+    from .model import RealtimeProviderSession
+
+__all__ = (
+    'AzureRealtimeModel',
+    'AzureRealtimeConnection',
+    'AzureRealtimeModelProfile',
+    'AzureRealtimeModelSettings',
+    'AzureTokenCredential',
+    'AzureVoiceLiveVoice',
+)
+
+LatestAzureRealtimeModelNames = Literal['gpt-realtime']
+AzureRealtimeModelName = OpenAIRealtimeModelName
+
+LatestAzureRealtimeTranscriptionModelNames = Literal['azure-speech', 'mai-transcribe']
+AzureRealtimeTranscriptionModelName = str | LatestAzureRealtimeTranscriptionModelNames
+
+AzureRealtimeApi = Literal['azure_openai', 'voice_live']
+"""An Azure realtime speech-to-speech API a model can be reached through: the Azure OpenAI GA realtime
+API (`/openai/v1/realtime`) or [Azure AI Voice Live](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live)
+(`/voice-live/realtime`, selected with [`azure_voice_live=True`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live])."""
+
+
+class AzureRealtimeModelProfile(RealtimeModelProfile, total=False):
+    """A [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] with the Azure-specific facts.
+
+    Read via [`AzureRealtimeModel.profile`][pydantic_ai.realtime.azure.AzureRealtimeModel]. Pass a partial
+    one as `profile=` to correct what's inferred from a deployment name that doesn't match its model.
+    """
+
+    azure_realtime_apis: frozenset[AzureRealtimeApi]
+    """Which Azure realtime APIs serve this model, when only one does — the constraint that routes it.
+
+    A model served only by Voice Live carries `{'voice_live'}` and routes there automatically; a GA-only
+    model carries `{'azure_openai'}` and rejects
+    [`azure_voice_live=True`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live].
+    Absent for a model served by *both* (e.g. `gpt-realtime`) or a name the table below doesn't recognize
+    (e.g. a future `gpt-realtime-3`): either way it defaults to GA and reaches Voice Live only when
+    `azure_voice_live=True` is set. Pass a `profile=` override to constrain a deployment named after
+    something the table can't place."""
+    azure_voice_live_cascade: bool
+    """Whether Voice Live serves this model as a cascade (Azure speech-to-text, then a chat model, then
+    Azure text-to-speech) rather than as a native-audio model.
+
+    Stamped for the recognized cascade models (e.g. `gpt-5`, `gpt-4.1`, `phi4-mm-realtime`). A cascade
+    rejects OpenAI's semantic VAD, so a `SemanticVAD` turn detection is sent as Voice Live's own
+    `azure_semantic_vad`, which has no `eagerness`. Pass it in a `profile=` override for a cascade
+    deployment named after something the table can't place."""
+
+
+# Azure realtime models whose serving API is *constrained*, keyed by that API. Deliberately lists only
+# the single-API models — a model served by both (`gpt-realtime`, `gpt-realtime-mini`, `gpt-realtime-1.5`,
+# and the `gpt-realtime-2` family) and any unrecognized name are left out, defaulting to GA and reaching
+# Voice Live only via an explicit `azure_voice_live=True`. So a future model found to be Voice-Live-only
+# is auto-routed simply by listing it here, while forward compatibility is preserved for names nobody has
+# classified yet. Bases are matched at a `-`/`.` boundary (see `_name_matches`) so a base doesn't swallow
+# a longer name (`gpt-5` matches `gpt-5.2` but not `gpt-50`); order matters, with the GA-only `-realtime`
+# variants checked before the bare cascade names that also start with `gpt-4o`.
+_AZURE_OPENAI: frozenset[AzureRealtimeApi] = frozenset({'azure_openai'})
+_VOICE_LIVE: frozenset[AzureRealtimeApi] = frozenset({'voice_live'})
+_AZURE_REALTIME_API_BASES: tuple[tuple[tuple[str, ...], frozenset[AzureRealtimeApi]], ...] = (
+    # GA-only realtime models — not served by Voice Live, so `azure_voice_live=True` is rejected.
+    (
+        (
+            'gpt-4o-realtime',
+            'gpt-4o-mini-realtime',
+            'gpt-realtime-translate',
+            'gpt-realtime-whisper',
+            'gpt-live-transcribe',
+        ),
+        _AZURE_OPENAI,
+    ),
+    # Voice-Live-only models — auto-routed there. Native-audio models, then the cascade chat families
+    # served via Azure speech-to-text and text-to-speech (`gpt-4o` also covers `gpt-4o-mini`; `gpt-5` and
+    # `gpt-4.1` cover their point releases like `gpt-5.2`).
+    (
+        (
+            'phi4-mm-realtime',
+            'azure-realtime',
+            'gpt-realtime-datazone',
+            'gpt-realtime-1.5-datazone',
+            'gpt-4o',
+            'gpt-4.1',
+            'gpt-5',
+            'phi4-mini',
+        ),
+        _VOICE_LIVE,
+    ),
+)
+
+
+# The Voice-Live-only models Voice Live runs as a cascade, rather than natively like `azure-realtime`.
+_VOICE_LIVE_CASCADE_BASES = ('phi4-mm-realtime', 'phi4-mini', 'gpt-4o', 'gpt-4.1', 'gpt-5')
+
+
+def _is_voice_live_cascade(model_name: str) -> bool:
+    return _default_azure_realtime_apis(model_name) == _VOICE_LIVE and any(
+        _name_matches(model_name, base) for base in _VOICE_LIVE_CASCADE_BASES
+    )
+
+
+def _name_matches(model_name: str, base: str) -> bool:
+    """Whether a deployment name is `base` or `base` followed by a `-`/`.` version or date boundary."""
+    return model_name == base or (model_name.startswith(base) and model_name[len(base)] in '-.')
+
+
+def _default_azure_realtime_apis(model_name: str) -> frozenset[AzureRealtimeApi] | None:
+    """The API that serves a constrained Azure realtime model, or `None` for a both-API or unknown name."""
+    return next(
+        (apis for bases, apis in _AZURE_REALTIME_API_BASES if any(_name_matches(model_name, base) for base in bases)),
+        None,
+    )
+
+
+def _route_voice_live(use_voice_live: bool, apis: frozenset[AzureRealtimeApi] | None, model_name: str) -> bool:
+    """Resolve whether to use Voice Live, given the explicit setting and the model's serving APIs.
+
+    A recognized Voice-Live-only model routes there automatically; a recognized GA-only model rejects the
+    setting. An unrecognized model (`apis is None`) is unconstrained — the setting decides.
+    """
+    if apis is None:
+        return use_voice_live
+    if use_voice_live and 'voice_live' not in apis:
+        raise UserError(
+            f'`{model_name}` is served by the Azure OpenAI GA realtime API, not Azure AI Voice Live, so '
+            '`azure_voice_live=True` cannot be used with it. Remove the setting, or choose a model that '
+            'Voice Live serves.'
+        )
+    if 'azure_openai' not in apis:  # Voice-Live-only: route there whether or not the setting was passed.
+        return True
+    return use_voice_live
+
+
+class AzureRealtimeConnection(OpenAIRealtimeConnection):
+    """A live WebSocket connection to Azure OpenAI's realtime API.
+
+    Reuses [`OpenAIRealtimeConnection`][pydantic_ai.realtime.openai.OpenAIRealtimeConnection] for the
+    shared GA wire protocol, naming Azure as the vendor so a connection that drops or rejects content
+    doesn't send someone debugging an Azure session to OpenAI's status page.
+    """
+
+    _provider_name = 'azure'
+    _provider_label = 'Azure OpenAI Realtime'
+
+
+class _AccessToken(Protocol):
+    # Read-only, so `azure.core.credentials.AccessToken` (a `NamedTuple`) matches.
+    @property
+    def token(self) -> str: ...
+
+
+class AzureTokenCredential(Protocol):
+    """Structural type for a synchronous Microsoft Entra ID token credential."""
+
+    def get_token(self, *scopes: str, **kwargs: Any) -> _AccessToken: ...
+
+
+_ENTRA_SCOPE = 'https://ai.azure.com/.default'
+
+
+class AzureVoiceLiveVoice(TypedDict, total=False):
+    """An Azure voice for an [Azure AI Voice Live](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to#audio-output-through-azure-text-to-speech) session.
+
+    Sent as the session's `voice` object as-is, so it takes the fields Voice Live documents for each
+    voice `type`. Set it with
+    [`azure_voice_live_voice`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_voice].
+    """
+
+    type: Required[Literal['azure-standard', 'azure-custom', 'azure-personal', 'azure-realtime-native']]
+    """The kind of voice: an Azure text-to-speech `azure-standard` (including HD) voice, an `azure-custom`
+    or `azure-personal` voice, or one of the `azure-realtime-native` voices of the `azure-realtime` model."""
+    name: Required[str]
+    """The voice name, e.g. `en-US-AvaMultilingualNeural`, `en-US-Ava:DragonHDLatestNeural`, or `ava`
+    for `azure-realtime-native`."""
+    endpoint_id: str
+    """The deployment endpoint ID of an `azure-custom` voice."""
+    model: str
+    """The base model of an `azure-personal` voice, e.g. `DragonLatestNeural`."""
+    temperature: float
+    """Variability in intonation and prosody, for Azure HD voices."""
+    rate: str
+    """Speaking rate, from `'0.5'` to `'1.5'`."""
+    pitch: str
+    """Pitch adjustment, e.g. `'+5%'`."""
+    volume: str
+    """Volume, e.g. `'loud'`."""
+    style: str
+    """Speaking style, e.g. `'cheerful'`, for voices that support styles."""
+    locale: str
+    """Locale to speak in, e.g. `'en-US'`, for multilingual voices."""
+    prefer_locales: list[str]
+    """Locales to prefer when a multilingual voice detects the language, e.g. `['en-US', 'en-GB']`."""
+    custom_lexicon_url: str
+    """URL of a custom lexicon that sets how the voice pronounces specific words."""
+
+
+class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
+    """Settings specific to Azure realtime models.
+
+    This inherits every [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]
+    field. When [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
+    is set, the Voice Live session config is built from the fields Voice Live's beta session object
+    has a counterpart for: `instructions`, `openai_voice` (by name, unless `azure_voice_live_voice` is
+    set), `turn_detection` (or `openai_turn_detection`, or `azure_voice_live_turn_detection`),
+    `openai_input_noise_reduction`, `thinking` (as `reasoning_effort`, on models whose profile reports
+    [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]),
+    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools, plus the
+    `azure_voice_live_*` settings.
+
+    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, and
+    `parallel_tool_calls` — are **silently ignored** under Voice Live; they still apply on the GA path.
+    Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
+    `'last_messages'`, not a retention ratio), so the two don't map onto each other.
+    """
+
+    azure_voice_live: bool
+    """Use the Azure AI Voice Live endpoint and beta session protocol instead of the GA endpoint.
+
+    Voice Live is a distinct Azure resource; [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]
+    reads its `AZURE_VOICELIVE_ENDPOINT` / `AZURE_VOICELIVE_API_KEY` / `AZURE_VOICELIVE_API_VERSION`
+    credentials as a fallback to the `AZURE_OPENAI_*` variables.
+    """
+    azure_voice_live_turn_detection: ServerVAD | SemanticVAD
+    """Voice Live server or semantic VAD config; only applies when `azure_voice_live=True`.
+
+    When present, it overrides `openai_turn_detection` and `turn_detection` on Voice Live. On a cascade
+    model (see [`azure_voice_live_cascade`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade]),
+    which rejects OpenAI's semantic VAD, it's sent as Voice Live's own `azure_semantic_vad`, which has
+    no `eagerness` setting.
+    """
+    azure_voice_live_voice: str | AzureVoiceLiveVoice
+    """The Azure voice for a Voice Live session; only applies when the session uses Voice Live.
+
+    A string is an Azure text-to-speech standard voice name, such as `'en-US-AvaMultilingualNeural'` or
+    the HD `'en-US-Ava:DragonHDLatestNeural'`. Pass an
+    [`AzureVoiceLiveVoice`][pydantic_ai.realtime.azure.AzureVoiceLiveVoice] for a custom, personal, or
+    `azure-realtime-native` voice, or to tune the rate, pitch, style, and so on.
+
+    Cascade models (e.g. `gpt-5`, `gpt-4.1`) and `phi4-mm-realtime` speak only through Azure voices and
+    reject `openai_voice`, so this is how to choose their voice. It takes precedence over
+    `openai_voice`, which native-audio models like `gpt-realtime` also accept under Voice Live.
+    """
+    azure_voice_live_temperature: float
+    """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
+
+    The GA realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
+    warning while a reasoning model like `gpt-5` is reasoning, since those models then accept only the
+    default.
+    """
+
+
+def _voice_live_turn_detection(settings: AzureRealtimeModelSettings, *, cascade: bool) -> dict[str, Any] | None:
+    """The Voice Live `turn_detection` payload, or `None` to disable VAD."""
+    if 'azure_voice_live_turn_detection' in settings:
+        turn_detection: ServerVAD | SemanticVAD | None = settings['azure_voice_live_turn_detection']
+    elif 'openai_turn_detection' in settings:
+        turn_detection = settings['openai_turn_detection']
+    elif 'turn_detection' in settings:
+        turn_detection = resolve_base_turn_detection(settings['turn_detection'])
+    else:
+        turn_detection = ServerVAD(type='server_vad')
+    if turn_detection is not None and turn_detection['type'] == 'semantic_vad' and cascade:
+        # The cascade models reject OpenAI's semantic VAD, so use Voice Live's own model-based one,
+        # which every model accepts; it has no `eagerness`.
+        return {
+            'type': 'azure_semantic_vad',
+            'create_response': turn_detection.get('create_response', True),
+            'interrupt_response': turn_detection.get('interrupt_response', True),
+        }
+    return turn_detection_config(turn_detection)
+
+
+def _cascade_model_is_reasoning(model_name: str, thinking: ThinkingLevel | None) -> bool:
+    """Whether a Voice Live cascade chat model will reason, which rules out a non-default temperature.
+
+    Mirrors the standard OpenAI adapter, which drops sampling parameters while reasoning is active:
+    Voice Live accepts the temperature when the session starts, then fails every response. Only asked
+    for a cascade: the native-audio reasoning models (`gpt-realtime-2*`) take a temperature while
+    reasoning.
+    """
+    profile = openai_model_profile(model_name)
+    if not profile.get('openai_supports_reasoning', False):
+        return False
+    if not profile.get('openai_supports_reasoning_effort_none', False):
+        return True
+    if thinking is not None:
+        return thinking is not False
+    return profile.get('thinking_enabled_by_default', False)
+
+
+class _VoiceLiveSession(BaseModel):
+    model: str | None = None
+
+
+class _VoiceLiveSessionCreated(BaseModel):
+    """The narrow slice of Voice Live's beta `session.created` frame the handshake reads."""
+
+    session: _VoiceLiveSession
+
+
+def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
+    """Map Voice Live's beta text events and delegate the remaining OpenAI-compatible events."""
+    event_type = data.get('type')
+    if event_type in ('response.text.delta', 'response.text.done'):
+        is_final = event_type == 'response.text.done'
+        content = data.get('text' if is_final else 'delta')
+        return OutputTranscript(
+            text=content if isinstance(content, str) else '',
+            is_final=is_final,
+            # Carried through like the shared OpenAI mapper does: the session keys part identity off
+            # `item_id`, so dropping it leaves the recorded `TextPart` without a provider id *and* stops
+            # a second output item in the same response from finalizing the first — two replies in one
+            # turn would accumulate into a single part.
+            item_id=item_id if isinstance(item_id := data.get('item_id'), str) and item_id else None,
+            output_text=True,
+        )
+    return _map_openai_event(data)
+
+
+class _VoiceLiveRealtimeConnection(AzureRealtimeConnection):
+    """An Azure realtime connection supporting Voice Live's beta text events.
+
+    Subclasses the GA Azure connection rather than the OpenAI one so a Voice Live session that drops or
+    rejects content names Azure too.
+    """
+
+    def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
+        return _map_voice_live_event(data)
+
+
+@dataclass(init=False)
+class AzureRealtimeModel(OpenAIRealtimeModel):
+    """Azure realtime model using the OpenAI GA protocol or Azure AI Voice Live.
+
+    The existing [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] supplies the Azure
+    resource endpoint and API key. The WebSocket transport does not use its OpenAI SDK client or
+    `api_version`. By default it connects to the GA `/openai/v1/realtime` endpoint; set
+    [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
+    to connect to `/voice-live/realtime` with the Voice Live beta session protocol. Both use an
+    `api-key` header.
+
+    Pass a Microsoft Entra ID `credential` (e.g. `azure.identity.DefaultAzureCredential()`) to
+    authenticate every request to the resource — the realtime WebSocket session *and* the browser
+    WebRTC signaling calls — with a bearer token instead of the `api-key` (needed when the resource is
+    locked to managed identity). For browser WebRTC the browser still only ever receives the short-lived
+    ephemeral secret, never the Entra token or the API key.
+
+    A model served only by Voice Live (e.g. the cascade chat models like `gpt-5`, or `phi4-mm-realtime`)
+    routes there automatically; a model served by both defaults to GA and needs `azure_voice_live=True`
+    for Voice Live; a GA-only model rejects the setting. See
+    [`AzureRealtimeModelProfile.azure_realtime_apis`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_realtime_apis].
+    """
+
+    _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = AzureRealtimeConnection
+    credential: AzureTokenCredential | None = None
+
+    def __init__(
+        self,
+        model: AzureRealtimeModelName,
+        *,
+        provider: Provider[AsyncOpenAI] | str = 'azure',
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfileSpec | None = None,
+        credential: AzureTokenCredential | None = None,
+    ) -> None:
+        """Create an Azure OpenAI realtime model.
+
+        Args:
+            model: The Azure *deployment* name, which is what the realtime URL and the profile lookup
+                use. Azure deployments are conventionally named after their model; when yours isn't,
+                `profile` is how to correct the facts inferred from the name.
+            provider: The provider supplying the resource endpoint and API key. Defaults to `'azure'`.
+            settings: [Model settings][pydantic_ai.realtime.RealtimeModelSettings] used as defaults
+                for realtime sessions.
+            profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
+                merged over the provider's — a partial dict, or a callable taking the resolved profile
+                and returning the one to use.
+            credential: Optional Microsoft Entra ID credential. When set, realtime requests use its
+                bearer tokens instead of the resource API key.
+        """
+        if credential is not None and provider == 'azure':
+            provider = AzureProvider.for_realtime(entra_authenticated=True)
+        super().__init__(model, provider=provider, settings=settings, profile=profile)
+        self.credential = credential
+
+    @staticmethod
+    def _resolve_provider(provider: Provider[AsyncOpenAI] | str) -> AzureProvider:
+        if isinstance(provider, str):
+            provider = AzureProvider.for_realtime() if provider == 'azure' else infer_provider(provider)
+        if not isinstance(provider, AzureProvider):
+            raise UserError("`AzureRealtimeModel` requires an `AzureProvider` or `provider='azure'`.")
+        return provider
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        """The Azure realtime profile, with the model's serving APIs and minus what Voice Live can't do.
+
+        Stamps [`azure_realtime_apis`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_realtime_apis]
+        for a recognized model (a `profile=` override wins), which routes between the GA API and Voice
+        Live. And because Voice Live negotiates WebRTC over its own WebSocket control channel rather than
+        the GA signaling endpoints this model inherits, a model configured for Voice Live reports no
+        WebRTC support and the signaling methods refuse. Voice Live selected per session instead can't be
+        seen from here, so those calls still refuse at the point of use.
+        """
+        profile = super().profile
+        if (apis := _default_azure_realtime_apis(self.model)) is not None and 'azure_realtime_apis' not in profile:
+            profile = merge_realtime_profile(AzureRealtimeModelProfile(azure_realtime_apis=apis), profile)
+        # Voice Live has no GA-style browser WebRTC, so strip it whenever this model will use Voice Live —
+        # forced by the setting, or because it's only served there and auto-routes.
+        resolved_apis = cast('AzureRealtimeModelProfile', profile).get('azure_realtime_apis')
+        forced = self.settings is not None and cast('AzureRealtimeModelSettings', self.settings).get('azure_voice_live')
+        if forced or (resolved_apis is not None and 'azure_openai' not in resolved_apis):
+            profile = merge_realtime_profile(profile, RealtimeModelProfile(supports_webrtc=False))
+        return profile
+
+    def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
+        """Mark a recognized Voice Live cascade model, taking `supports_thinking` from its chat model profile.
+
+        The OpenAI realtime profile only knows the `gpt-realtime-2*` reasoning models, but Voice Live
+        also serves reasoning chat models like `gpt-5` behind Azure speech-to-text and text-to-speech,
+        and applies `reasoning_effort` to them. A model that can't reason must stay excluded, because
+        Voice Live accepts the setting at session start and then fails every response for a model like
+        `gpt-4.1`.
+        """
+        if not _is_voice_live_cascade(self.model):
+            return profile
+        cascade = AzureRealtimeModelProfile(azure_voice_live_cascade=True)
+        if openai_model_profile(self.model).get('supports_thinking', False):
+            cascade['supports_thinking'] = True
+        return merge_realtime_profile(profile, cascade)
+
+    def _resolve_voice_live(self, model_settings: RealtimeModelSettings | None) -> bool:
+        """Whether this session uses Azure AI Voice Live rather than the GA realtime API — the sole authority.
+
+        `azure_voice_live` chooses the path for a model served by both; the model's recognized
+        [`azure_realtime_apis`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_realtime_apis]
+        then auto-route a Voice-Live-only model and reject `azure_voice_live=True` on a GA-only one, rather
+        than letting the wrong endpoint fail the handshake. An unrecognized model defaults to GA and
+        reaches Voice Live only when `azure_voice_live=True` is set.
+        """
+        use_voice_live = bool(
+            model_settings and cast('AzureRealtimeModelSettings', model_settings).get('azure_voice_live')
+        )
+        apis = cast('AzureRealtimeModelProfile', self.profile).get('azure_realtime_apis')
+        return _route_voice_live(use_voice_live, apis, self.model)
+
+    def _reject_webrtc_if_voice_live(self, settings: RealtimeModelSettings | None) -> None:
+        """Reject browser WebRTC signaling for a Voice Live session, explicit or auto-routed.
+
+        Voice Live negotiates WebRTC over its own WebSocket control channel, not the GA
+        `/realtime/client_secrets` + `/realtime/calls` path this class inherits, so GA signaling would
+        hit the wrong endpoint. Gate on `_resolve_voice_live` (the routing authority), not the raw
+        `azure_voice_live` setting, so a Voice-Live-only model that auto-routes there without the setting
+        (e.g. `gpt-5`) is rejected too rather than minting a GA secret for a Voice Live session. Shared by
+        `create_client_secret` (which also covers `answer_webrtc_offer`) and `connect_webrtc`.
+        """
+        if self._resolve_voice_live(settings):
+            raise UserError(
+                'Browser WebRTC is not yet supported for Azure AI Voice Live: Voice Live negotiates WebRTC '
+                'over its WebSocket control channel, which Pydantic AI does not implement yet. Use a WebSocket '
+                'session, or the GA Azure OpenAI realtime model for browser WebRTC.'
+            )
+
+    @property
+    def _azure_provider(self) -> AzureProvider:
+        assert isinstance(self._provider, AzureProvider)
+        return self._provider
+
+    def _realtime_ws_base(self) -> str:
+        # Azure exposes the GA realtime WebSocket under `/openai/v1/realtime`, regardless of the
+        # `api_version`/path the provider's `base_url` carries, so derive it from `azure_endpoint`.
+        parsed = urlparse(self._azure_provider.azure_endpoint)
+        return urlunparse(parsed._replace(scheme='wss', path='/openai/v1/realtime', query=''))
+
+    def _realtime_url(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> str:
+        if self._resolve_voice_live(model_settings):
+            # Voice Live is a distinct resource with its own coherent endpoint/version (see
+            # `AzureProvider.voice_live_*`); never the GA endpoint or a hard-coded version.
+            parsed = urlparse(self._azure_provider.voice_live_endpoint)
+            return urlunparse(
+                parsed._replace(
+                    scheme='wss',
+                    path='/voice-live/realtime',
+                    query=urlencode({'api-version': self._azure_provider.voice_live_api_version, 'model': self.model}),
+                )
+            )
+        return with_realtime_query(self._realtime_ws_base(), model=self.model)
+
+    def _webrtc_http_base(self) -> str:
+        parsed = urlparse(self._azure_provider.azure_endpoint)
+        return urlunparse(parsed._replace(scheme='https', path='/openai/v1/', query=''))
+
+    def _webrtc_calls_url(self) -> str:
+        return self._webrtc_url('realtime/calls', webrtcfilter='on')
+
+    async def answer_webrtc_offer(
+        self,
+        sdp_offer: str,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+    ) -> WebRTCAnswer:
+        secret = await self.create_client_secret(instructions=instructions, tools=tools, model_settings=model_settings)
+        return await _relay_sdp_offer(
+            http_client=self._http_client,
+            calls_url=self._webrtc_calls_url(),
+            ephemeral_token=secret.value,
+            provider_name=self.system,
+            model_name=self.model_name,
+            sdp_offer=sdp_offer,
+        )
+
+    async def create_client_secret(
+        self,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+        expires_after_seconds: int | None = None,
+    ) -> RealtimeClientSecret:
+        self._reject_webrtc_if_voice_live(self._merge_model_settings(model_settings))
+        return await super().create_client_secret(
+            instructions=instructions,
+            tools=tools,
+            model_settings=model_settings,
+            expires_after_seconds=expires_after_seconds,
+        )
+
+    @asynccontextmanager
+    async def connect_webrtc(
+        self,
+        session: RealtimeProviderSession,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[OpenAIRealtimeConnection]:
+        self._reject_webrtc_if_voice_live(self._merge_model_settings(model_settings))
+        async with super().connect_webrtc(
+            session,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
+        ) as connection:
+            yield connection
+
+    def _session_config(
+        self,
+        instructions: str,
+        tools: list[ToolDefinition] | None,
+        *,
+        model_settings: OpenAIRealtimeModelSettings | None,
+    ) -> dict[str, Any]:
+        settings = cast('AzureRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        if not self._resolve_voice_live(settings):
+            return super()._session_config(instructions, tools, model_settings=settings)
+
+        auto_transcription_model = 'whisper-1' if self.model.startswith('gpt-realtime') else 'azure-speech'
+        cascade = cast('AzureRealtimeModelProfile', self.profile).get('azure_voice_live_cascade', False)
+        transcription_model = resolve_transcription_model(
+            settings.get('input_transcription_model', 'auto'), default=auto_transcription_model
+        )
+        config: dict[str, Any] = {
+            'instructions': instructions,
+            'modalities': ['text'] if settings.get('output_modality') == 'text' else ['text', 'audio'],
+            'input_audio_format': 'pcm16',
+            'output_audio_format': 'pcm16',
+            'input_audio_sampling_rate': self.profile.get('audio_input_sample_rate', 24000),
+            'turn_detection': _voice_live_turn_detection(settings, cascade=cascade),
+        }
+        if transcription_model is not None:
+            config['input_audio_transcription'] = {'model': transcription_model}
+        if (noise_reduction := settings.get('openai_input_noise_reduction')) is not None:
+            config['input_audio_noise_reduction'] = {'type': noise_reduction}
+        if (azure_voice := settings.get('azure_voice_live_voice')) is not None:
+            config['voice'] = (
+                AzureVoiceLiveVoice(type='azure-standard', name=azure_voice)
+                if isinstance(azure_voice, str)
+                else azure_voice
+            )
+        elif voice := settings.get('openai_voice'):
+            if isinstance(voice, VoiceID):
+                # Voice Live's session schema addresses a voice by provider + *name*, with no place for
+                # an OpenAI custom-voice id, so accepting one would silently drop it.
+                raise UserError(
+                    'Azure AI Voice Live does not accept an OpenAI custom `VoiceID`; set `openai_voice` '
+                    'to a voice name instead.'
+                )
+            config['voice'] = {'type': 'openai', 'name': voice}
+        advertised_tools, tool_choice = resolve_advertised_tools(list(tools or []), settings.get('tool_choice'))
+        if advertised_tools:
+            config['tools'] = [tool_def_to_openai(tool) for tool in advertised_tools]
+        if (max_tokens := settings.get('max_tokens')) is not None:
+            config['max_response_output_tokens'] = max_tokens
+        if tool_choice is not None:
+            config['tool_choice'] = tool_choice_config(tool_choice)
+        thinking = settings.get('thinking')
+        if (temperature := settings.get('azure_voice_live_temperature')) is not None:
+            if cascade and _cascade_model_is_reasoning(self.model, thinking):
+                remedy = (
+                    'Set `thinking=False` to use it.'
+                    if openai_model_profile(self.model).get('openai_supports_reasoning_effort_none', False)
+                    else 'This model cannot turn reasoning off.'
+                )
+                warnings.warn(
+                    f'`azure_voice_live_temperature` is not supported while {self.model!r} is reasoning, '
+                    f'so it will be ignored. {remedy}',
+                    UserWarning,
+                )
+            else:
+                config['temperature'] = temperature
+        if thinking is not None and self.profile.get('supports_thinking', False):
+            # Voice Live takes the effort flat, as `reasoning_effort`, rather than GA's `reasoning.effort`.
+            # Unlike the Chat Completions API, it accepts `'none'` for `gpt-5` too (verified live).
+            config['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        return config
+
+    def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:
+        if self._resolve_voice_live(model_settings):
+            return _VoiceLiveRealtimeConnection
+        # The GA path: `_connection_type`, i.e. the Azure-labeled connection.
+        return super()._connection_class(model_settings)
+
+    def _session_model_name(self, created: dict[str, Any], model_settings: OpenAIRealtimeModelSettings) -> str | None:
+        if self._resolve_voice_live(model_settings):
+            # Voice Live's beta `session.created` has no GA `type` discriminator, so the SDK's
+            # `SessionCreatedEvent` rejects it; validate the narrow slice actually read instead.
+            return _VoiceLiveSessionCreated.model_validate(created).session.model
+        return super()._session_model_name(created, model_settings)
+
+    async def _auth_headers(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> dict[str, str]:
+        if (credential := self.credential) is not None:
+            # `get_token` is synchronous (and may perform I/O), so run it off the event loop. The token is
+            # cached by the credential, so this is cheap after the first call.
+            token = await run_sync(lambda: credential.get_token(_ENTRA_SCOPE))
+            return {'Authorization': f'Bearer {token.token}'}
+        # A Voice Live session authenticates against the Voice Live resource, so use its coherent key.
+        if self._resolve_voice_live(model_settings):
+            return {'api-key': self._azure_provider.voice_live_api_key}
+        return {'api-key': self._azure_provider.api_key}

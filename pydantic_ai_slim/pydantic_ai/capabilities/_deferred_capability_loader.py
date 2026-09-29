@@ -53,7 +53,7 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> st
     # The cost of keeping the list stable is that a loaded capability still appears as
     # "loadable". That is intentional and cheap: the model rarely re-loads something whose
     # instructions and tools it can already see, and if it does, the loader tool bounces the
-    # redundant call with an "already available" ModelRetry. One occasional wasted retry is
+    # redundant call with an "already active" ModelRetry. One occasional wasted retry is
     # far cheaper than busting the prefix cache on every load.
     catalog = {
         cap_id: await _resolve_capability_description(cap.get_description(), ctx)

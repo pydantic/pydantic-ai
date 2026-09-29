@@ -1,8 +1,45 @@
+---
+description: "Write your own Pydantic AI capability by subclassing AbstractCapability to bundle tools, instructions, settings and hooks, for guardrails or middleware."
+---
+
 # Building Custom Capabilities
 
 To build your own [capability](overview.md), subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction — and re-run at run setup on the replacement instance when [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns one (see [Per-run state isolation](#per-run-state-isolation)); [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] is always called per-run — and **lifecycle hooks** that fire during each run.
 
-Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-available capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
+Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-on capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
+
+Capabilities that cover a single fixed concern instead declare a stable default `id` — the built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch] uses `'web_search'`, [`Thinking`][pydantic_ai.capabilities.Thinking] uses `'thinking'`, and so on — so [durable execution](../durable_execution/overview.md) can identify what they contribute without you naming something you never constructed. Give your own capability a default `id` when it is one-off in the same way.
+
+Because the id is fixed, two of them can meet under one id, and what that means depends on where they came from.
+
+**Two on the same agent** are one configuration stated twice, so they merge field by field: a value only one of them states is kept, and a value both state takes the later one. That is what lets two packaged capabilities each bring a `WebSearch` and the agent reach both sets of domains. There is nothing to declare beyond the default `id` itself — writing one *is* the statement that an agent has one of these:
+
+```python {title="combine_capability.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class Retries(AbstractCapability[Any]):
+    limit: int = 3
+    id: str | None = 'retries'
+```
+
+When two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — a fixed default `id` is the wrong shape, because merging them would silently drop one. Derive the `id` from whatever distinguishes them instead: two identities then carry two ids and stay two capabilities, and two under one id are a genuine mistake that is reported. [`MCP`][pydantic_ai.capabilities.MCP] derives one from its server's host and last path segment, so servers that differ only in their port or in an earlier path segment still need distinct explicit `id`s.
+
+Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] only when composing takes more than merging fields — a budget that should take the *smaller* of two values, say.
+The default merge sees dataclass fields only, so a plain class with a fixed default `id` and instance configuration must override `combine`; otherwise repeated instances raise rather than silently dropping that configuration. A leading underscore does not change that: what matters is whether the merge can enumerate the attribute, not whether it is private.
+
+State you *derive* from those fields is the exception, and `cached_property` is how you say so. Merging discards the cached value, so the next read recomputes it against the merged fields — which is the answer `__post_init__` cannot give, since merging deliberately does not re-run it. State that has to be a field instead is recomputed in your own `combine`.
+
+**A capability supplied for a run** overrides its agent-level namesake outright — `agent.run(capabilities=[Thinking(effort='high')])` replaces the agent's `Thinking` rather than merging with it. A run states what *this* run does, so merging would let an agent-level setting the run meant to replace survive, and let an agent-level allow-list widen a restriction the run was passed to impose. `combine` is not consulted across layers.
+Unrelated capability classes cannot share an `id` across layers. A transparent wrapper that retains its wrapped capability's `id`, such as `prefix_tools()`, can replace that capability across layers; this does not allow different wrapper classes to merge within one layer.
+
+To keep two rather than resolving them, pass a distinct `id` to each, or `id=None` to opt back into the derived-and-disambiguated ids. An `id` you pass to a capability that declares no default is a name you chose, so passing the same one twice is reported as a collision rather than merged.
+
+One limit: for a capability that contributes a [native tool](../native-tools.md), these escapes do not dissolve the native tool's own `id`. Two differently-configured duplicates of a `WebSearch` still raise the native-tool-id conflict whether you give the capabilities distinct `id`s or `id=None` — only identical configurations avoid it.
 
 ```python {title="custom_capability_plain.py"}
 from typing import Any
@@ -23,7 +60,7 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     label: str
 ```
 
@@ -33,7 +70,7 @@ If you define a custom `__init__`, set only the metadata you want to expose. The
 from pydantic_ai.capabilities import AbstractCapability
 
 
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     def __init__(
         self,
         label: str,
@@ -48,7 +85,7 @@ class MyCapability(AbstractCapability[None]):
         self.label = label
 ```
 
-When [`defer_loading=True`](on-demand.md), provide a stable explicit `id`; history replay depends on it, and Pydantic AI rejects deferred capabilities without one. For always-available capabilities, omitting `id` still derives a run-local id from the class name.
+When [`defer_loading=True`](on-demand.md), provide a stable explicit `id`; history replay depends on it, and Pydantic AI rejects deferred capabilities without one. For always-on capabilities, omitting `id` still derives a run-local id from the class name.
 
 ## Typing dependencies
 
@@ -225,6 +262,8 @@ print(result.output)
 
 Instructions can also use [template strings](../agent-spec.md#template-strings) ([`TemplateStr('Hello {{name}}')`][pydantic_ai.template.TemplateStr]) for Handlebars-style templates rendered against the agent's [dependencies](../dependencies.md). In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete.
 
+Instructions from a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] reach the model as their own [instruction parts](../agent.md#instruction-parts), identified by `'capability:<capability id>'` — literal and computed alike, so an application that overrides that key controls everything the capability tells the model. To make one part addressable on its own, name it with [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], which keys it as `'capability:<capability id>:<name>'`. A capability without an `id` has no key for either.
+
 ## Providing model settings
 
 [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] returns [model settings](../agent.md#model-run-settings) as a dict or a callable for per-step settings.
@@ -293,7 +332,7 @@ class AdaptiveModel(AbstractCapability[Deps]):
 agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
 ```
 
-[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, message history, and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
+[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, the run's prompt, the messages the selected model will be sent (ending with the request being routed), and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
 
 A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step.
 
@@ -373,6 +412,7 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] `| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.agent.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [template strings](../agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.AgentModelSettings] `| None` | [Model settings](../agent.md#model-run-settings) dict, or a callable for per-step settings |
+| [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] | [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] `| None` | The run's [workspace](../workspace.md#supplying-a-workspace-from-a-capability): a backend for `ref` (fresh when `ref` is `None`), or `None` for a `ref` you don't recognize. Synchronous, no I/O. With several workspace capabilities, the first that returns one wins |
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `| None` | Static or per-step [model selection](#selecting-the-model) |
 | [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] | [`Model`][pydantic_ai.models.Model] `| None` | [Resolve a selected model ID](#resolving-model-ids) using the agent and run dependencies |
 
@@ -423,12 +463,12 @@ Capabilities passed directly to [`run()`][pydantic_ai.agent.AbstractAgent.run] o
 
 Binding hooks establish which capability participates in a run; lifecycle hooks then intercept the work it performs. The high-level order is:
 
-`for_agent()` → bootstrap model selection and resolution → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion
+`for_agent()` → bootstrap model selection and resolution → `get_workspace()` → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion
 
 | Phase | Capability work | What is available |
 |---|---|---|
 | Agent binding | [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] | Agent name, raw constructor model, toolsets, and other constructor configuration; no run dependencies or `RunContext` |
-| Run bootstrap | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], then [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] if the selection is a string | Dependencies, message history, usage, and the lower-precedence model through selection/resolution contexts; no complete `RunContext` yet |
+| Run bootstrap | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], then [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] if the selection is a string; then [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] | Dependencies, message history, usage, and the lower-precedence model through selection/resolution contexts. `get_workspace()` gets a `RunContext` with the bootstrap model but no tools yet |
 | Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
 | Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
 | Model request and response | Model request, tool, output, node, and event-stream [hooks](#hooking-into-the-lifecycle) | The fully prepared request and the live run state appropriate to each hook |
@@ -457,7 +497,7 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 | [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, handler: `[`WrapRunHandler`][pydantic_ai.capabilities.WrapRunHandler]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Wrap the entire run |
 | [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, error: BaseException) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Handle run errors (see [error hooks](#error-hooks)) |
 
-`wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with both [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.iter()`][pydantic_ai.agent.Agent.iter].
+`wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.iter()`][pydantic_ai.agent.Agent.iter], and [realtime sessions](../realtime/capabilities.md) — a realtime session is a run, so all four hooks fire once around it, with `wrap_run`'s handler resolving when the session closes. Check [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] to branch behavior, and use [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] (set once the session is connected) to interact with the live session.
 
 !!! warning "Tearing down tasks you spawn"
     A run is cancelled — via [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel], a [`CancellationToken`][pydantic_ai.CancellationToken], an `asyncio.wait_for` timeout, or an enclosing task group — by cancelling the single asyncio task that drives it. Work the run `await`s inline receives the `CancelledError` automatically; a task you start yourself with `asyncio.create_task(...)` runs on a **different** task and does **not**, so a capability that spawns tasks must tear them down itself.
@@ -564,11 +604,13 @@ See [Iterating Over an Agent's Graph](../agent.md#iterating-over-an-agents-graph
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, handler: `[`WrapModelRequestHandler`][pydantic_ai.capabilities.WrapModelRequestHandler]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Wrap the model call |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, error: Exception) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Handle model request errors (see [error hooks](#error-hooks)) |
 
-[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
+[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance. Mutate the context you were given, or return a `dataclasses.replace()` copy of it — either way, `model_id` and `streaming` carry over.
 
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
 
 `before_model_request` hooks see the full `request_context.messages` list, including any [message history](../message-history.md) passed to `agent.run()`, and can modify it.
+
+To change the [instructions](../agent.md#instruction-parts) for a request, rewrite `request_context.model_request_parameters.instruction_parts` — that's what the model is sent, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest] recorded in message history is re-rendered from it once the hooks have run, so history and traces show what was actually sent. Assigning to that message's `instructions` is not propagated back into the parts and does not reach the model.
 
 !!! note "Skip and chain behavior"
     All skip exceptions ([`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution]) short-circuit the hook chain: remaining capabilities' `before_*` hooks do not fire, and `after_*` hooks are not called for the skipped operation. A skip raised from `wrap_*` propagates immediately — inner capabilities' wrap hooks never execute.
@@ -646,6 +688,9 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
+!!! note "On a deferred capability"
+    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-on capability. Before that there is nothing for it to govern: an unloaded capability's tools are neither advertised to the model nor callable.
+
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
 from typing import Any
@@ -694,8 +739,9 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, stream: AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]) -> AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]` | Observe, filter, or transform streamed events |
+| [`on_event`][pydantic_ai.capabilities.on_event] | `@on_event(*event_types)` on an async `(self, ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, event: EventT) -> None` method | React to selected events without touching the rest of the stream |
 
-The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer.
+The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer. It also wraps a [realtime session's](../realtime/capabilities.md) event iterator, where the stream additionally contains realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
 
 When a consumer closes the event stream before exhausting it, Pydantic AI also closes each wrapper returned by `wrap_run_event_stream` if it provides an `aclose()` method. Custom wrappers should use `try`/`finally` for teardown and may safely await cleanup there, but must not yield events while handling `GeneratorExit` because the consumer has gone away.
 
@@ -755,6 +801,10 @@ class StreamAuditor(AbstractCapability[Any]):
 ```
 
 Matching against [`ToolCallEvent`][pydantic_ai.messages.ToolCallEvent] and [`ToolResultEvent`][pydantic_ai.messages.ToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently. [Deferred tool calls](../deferred-tools.md#observing-deferred-tool-calls-in-a-stream) additionally emit batch-level [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] / [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent].
+
+To react to a few event types rather than shape the whole stream, mark an async method with [`@on_event`][pydantic_ai.capabilities.on_event] instead. It receives events at the same point in the stream, filters by `isinstance` against the classes you pass it, and cannot change what other consumers see. Naming the classes also keeps your capability out of dispatch for everything else — see [Reacting to events](overview.md#reacting-to-events).
+
+Your capability can also publish its own events for other capabilities and the host application to react to, by defining namespaced [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] subclasses and awaiting [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from a hook or a tool it contributes. See [Capability events](overview.md#capability-events) for both sides of that, and [Which event type do I use?](../agent.md#which-event-type) for why a capability publishes these rather than application [`CustomEvent`][pydantic_ai.messages.CustomEvent]s.
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](../ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
@@ -829,6 +879,45 @@ Multiple capabilities can each handle a subset: dispatch accumulates results acr
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
+## Durable capability operations {#durable-capability-operations}
+
+A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.
+
+Runtime integrations receive these operations through the same typed backend as model and tool
+operations. See [Building a durable execution backend](../durable_execution/backends.md) when
+implementing an engine.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.models.test import TestModel
+
+
+class Summaries(AbstractCapability):
+    id = 'summaries'
+
+    async def before_run(self, ctx: RunContext) -> None:
+        summary = await self.summarize(ctx, ['one', 'two'])
+        assert summary == '2 messages'
+
+    @durable_operation(name='summarize')
+    async def summarize(self, ctx: RunContext, messages: list[str]) -> str:
+        return f'{len(messages)} messages'
+
+
+agent = Agent(TestModel(), capabilities=[Summaries()])
+```
+
+Mark each operation method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names and must remain stable, while the Python method can be freely renamed. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
+
+A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present. Dispatch is established once `for_run()` has returned, so an operation called from inside `for_run()` itself runs directly rather than durably.
+
+Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
+
+To branch on whether a hook is running in durable workflow code, check [`ctx.in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]. It is `True` inside a durable workflow or flow (like a Temporal or DBOS workflow) when the agent has a durability capability. It is `False` outside durable execution and inside the Temporal activities and DBOS steps where tools and model requests run. Prefect tasks inherit their flow's context, so it is `True` inside a Prefect task too.
+
+The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
+
 ## Wrapping capabilities
 
 [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] wraps another capability and delegates all methods to it — similar to [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] for toolsets. Subclass it to override specific methods while delegating the rest:
@@ -892,7 +981,7 @@ print(counter.count)
 #> 0
 ```
 
-When `for_run` returns a new instance, the capability's configuration is re-extracted from that replacement at run setup: [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools], and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] are re-invoked on it, and [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset], [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description], and all lifecycle hooks always run on it. The exception is model selection: [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] and bootstrap [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] run *before* `for_run` on the original instance, and the bootstrap selection is reused unless the replacement actually changes the model contribution — see [Model selection lifecycle and limitations](#model-selection-lifecycle-and-limitations).
+When `for_run` returns a new instance, the capability's configuration is re-extracted from that replacement at run setup: [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools], and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] are re-invoked on it, and [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset], [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description], and all lifecycle hooks always run on it. The exceptions are model and workspace selection: [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], bootstrap [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id], and [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] run *before* `for_run` on the original instance, so `for_run` can already use `ctx.workspace`. The bootstrap model selection is reused unless the replacement actually changes the model contribution — see [Model selection lifecycle and limitations](#model-selection-lifecycle-and-limitations). `for_run` can't change the workspace selected before it; to use a different one for a run, pass it as `workspace=`.
 
 Never mutate `self` inside `for_run` — return a new instance instead. When `for_run` returns the original unchanged, the configuration cached at agent construction is reused, so mutations to `self` would not be picked up.
 
@@ -906,7 +995,7 @@ To register a dynamic capability, pass a function that takes [`RunContext`][pyda
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequest, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 
@@ -936,7 +1025,9 @@ def user_skill(ctx: RunContext[str]) -> AbstractCapability[str] | None:
 agent = Agent(TestModel(), deps_type=str, capabilities=[user_skill])
 
 result = agent.run_sync('hi', deps='alice')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> You can use the refunds skill (role: admin).
 ```
 
@@ -1021,7 +1112,9 @@ assert combined.capabilities[1] is rate_limit_hooks
 
 ### Sharing state between capabilities
 
-Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar]: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first.
+Capabilities don't have direct access to each other. To tell other capabilities that something happened, publish a [capability event](overview.md#capability-events): the publisher awaits [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] and any interested capability reacts with [`@on_event`][pydantic_ai.capabilities.on_event], with no shared object between them and no ordering requirement on the `capabilities` list.
+
+To share a value rather than announce an occurrence, use a [`contextvars.ContextVar`][contextvars.ContextVar] set from an async function: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first. A sync [`Hooks`](../hooks.md) function can't be the writer: it runs on a separate thread, so values it sets are not visible to the rest of the run.
 
 ### Testing custom capabilities
 
@@ -1143,6 +1236,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, AgentSpec
+from pydantic_ai.agent.spec import CapabilitySpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -1156,7 +1250,10 @@ class RateLimit(AbstractCapability[Any]):
 # In YAML: `- RateLimit: {rpm: 30}`
 # In Python:
 agent = Agent.from_spec(
-    AgentSpec(model='test', capabilities=[{'RateLimit': {'rpm': 30}}]),
+    AgentSpec(
+        model='test',
+        capabilities=[CapabilitySpec(name='RateLimit', arguments={'rpm': 30})],
+    ),
     custom_capability_types=[RateLimit],
 )
 ```

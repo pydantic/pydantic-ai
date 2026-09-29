@@ -1,46 +1,62 @@
-# Model Providers
+---
+description: "Find supported model developers, cloud platforms, inference services, gateways and local servers, with setup guides, model selection and fallback configuration."
+---
 
-Pydantic AI is model-agnostic and has built-in support for multiple model providers:
+# Models and Providers
 
-* [OpenAI](openai.md)
-* [Anthropic](anthropic.md)
-* [Gemini](google.md) (via two different APIs: Gemini API and Google Cloud, formerly known as Vertex AI)
-* [xAI](xai.md)
-* [Bedrock](bedrock.md)
-* [Cerebras](cerebras.md)
-* [Cohere](cohere.md)
-* [Groq](groq.md)
-* [Hugging Face](huggingface.md)
-* [Mistral](mistral.md)
-* [OpenRouter](openrouter.md)
-* [Z.AI](zai.md)
+Pydantic AI supports model developers, cloud platforms, inference services, gateways, and local model servers. Find your service below and follow its setup guide for installation, authentication, and supported features.
 
-## OpenAI-compatible Providers
+## Provider directory
 
-In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
+Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to select a provider by its prefix. Some routes require an explicit model or client instead; each setup guide shows the available options.
 
-- [Alibaba Cloud Model Studio (DashScope)](openai.md#alibaba-cloud-model-studio-dashscope)
-- [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [DeepSeek](openai.md#deepseek)
-- [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models) (retired, deprecated)
-- [Heroku](openai.md#heroku-ai)
-- [LiteLLM](openai.md#litellm)
-- [Nebius AI Studio](openai.md#nebius-ai-studio)
-- [Ollama](openai.md#ollama)
-- [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
-- [Perplexity](openai.md#perplexity)
-- [SambaNova](openai.md#sambanova)
-- [Together AI](openai.md#together-ai)
-- [Vercel AI Gateway](openai.md#vercel-ai-gateway)
+| Provider and setup | Service | Model selection |
+| --- | --- | --- |
+| [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
+| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
+| [Anthropic](anthropic.md) | Model developer | `anthropic:` |
+| [Google / Gemini API](google.md) | Model developer | `google:` |
+| [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
+| [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
+| [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
+| [Alibaba Cloud / Qwen (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope) | Cloud platform; model developer | `alibaba:` |
+| [Cerebras](cerebras.md) | Inference platform | `cerebras:` |
+| [Cohere](cohere.md) | Model developer | `cohere:` |
+| [Crusoe](crusoe.md) | Inference platform | `crusoe:` |
+| [DeepSeek](deepseek.md) | Model developer | `deepseek:`; explicit Responses model |
+| [Fireworks AI](compatible-apis.md#fireworks-ai) | Inference platform | `fireworks:` |
+| [GitHub Copilot](github-copilot.md) | Subscription access | `github-copilot:` |
+| [Groq](groq.md) | Inference platform | `groq:` |
+| [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
+| [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
+| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
+| [Mistral](mistral.md) | Model developer | `mistral:` |
+| [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
+| [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
+| [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
+| [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
+| [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
+| [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
+| [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
+| [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
+| [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
+| [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |
+| [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |
+| [vLLM](compatible-apis.md#vllm) | Self-hosted inference | `vllm:` |
+| [xAI](xai.md) | Model developer | `xai:` |
+| [Z.AI](zai.md) | Model developer | `zai:` |
 
-Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
-for testing and development.
+The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
 
-To use each model provider, you need to configure your local environment and make sure you have the right
-packages installed. If you try to use the model without having done so, you'll be told what to install.
+For an OpenAI-compatible endpoint not listed here, see [Other endpoints](compatible-apis.md#other-endpoints); for any other API, implement a [custom model](#custom-models).
 
-## Models and Providers
+For testing and development, use [`TestModel`](../api/models/test.md) or [`FunctionModel`](../api/models/function.md).
+
+### OpenAI-compatible Providers {#openai-compatible-providers}
+
+Many entries in the directory use OpenAI-compatible APIs. Their setup guides cover which model class to use; [Other compatible APIs](compatible-apis.md) explains custom endpoints and model profiles.
+
+## Models, providers, and profiles {#models-and-providers}
 
 Pydantic AI uses a few key terms to describe how it interacts with different LLMs:
 
@@ -67,9 +83,9 @@ When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted 
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
-### Inspecting a model's profile
+### Inspecting a model's profile {#inspecting-a-models-profile}
 
-A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile` — for example [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports tool calling, native JSON-schema output, or a specific native tool before relying on it:
+A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict` whose keys are all optional, so you read capability flags with `.get()` on `model.profile` — for example [`supports_text_output`][pydantic_ai.profiles.ModelProfile.supports_text_output], [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports text generation, tool calling, native JSON-schema output, or a specific native tool before relying on it:
 
 ```python
 from pydantic_ai.models.test import TestModel
@@ -78,16 +94,20 @@ from pydantic_ai.native_tools import WebSearchTool
 model = TestModel()
 profile = model.profile
 
-print(profile['supports_tools'])
+print(profile.get('supports_tools'))
 #> True
-print(profile['supports_json_schema_output'])
+print(profile.get('supports_text_output'))
+#> True
+print(profile.get('supports_json_schema_output'))
 #> False
-print(WebSearchTool in profile['supported_native_tools'])
+print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
 
-`model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so direct key access like `profile['supports_tools']` works. If you supply `profile=` as a callable (or otherwise have a partial profile dict), use `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`) to tolerate missing keys.
-Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
+`model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
+Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
+
+The profile also carries the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]: the maximum number of tokens it can handle in a single request, or `None` when unknown. Every model, including a `FallbackModel` and wrappers like [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel], exposes it as [`model.context_window`][pydantic_ai.models.AbstractModel.context_window]; a fallback model reports the smallest window among its candidates, so history that fits it fits whichever candidate answers. Inside a run, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reports the fraction in use, or `None` when it cannot be calculated. See [Compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) for an example that handles this case.
 
 ## HTTP Client Lifecycle
 
@@ -112,7 +132,7 @@ If you provide your own `http_client`, you are responsible for closing it yourse
 ## Custom Models
 
 !!! note
-    If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](openai.md#openai-compatible-models) instead.
+    If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](compatible-apis.md) instead.
 
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
@@ -202,6 +222,14 @@ When a provider returns a 4xx or 5xx response, Pydantic AI raises a
 attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
 surface headers, such as gRPC-based providers).
 
+When [OpenAI](openai.md), [Anthropic](anthropic.md), the [Google Gemini API](google.md),
+[Amazon Bedrock](bedrock.md), or [Groq](groq.md) reports that a requested model identifier is
+unavailable, Pydantic AI adds a close known match to the error message when one exists. The
+suggestion is also available as
+[`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id]. This is
+best-effort guidance after the provider rejects a request, not local validation: unknown model
+identifiers remain valid so custom deployments and newly released models continue to work.
+
 The motivating use case is propagating the `Retry-After` header from a 429 response to a
 caller's own HTTP client.  A convenience property
 [`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses that header and
@@ -247,7 +275,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 !!! note
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
 
-    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client).
+    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client) or a [custom Anthropic client](anthropic.md#custom-http-client). See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
@@ -362,8 +390,8 @@ contains all the exceptions encountered during the `run` execution.
     in Python 3.11+, we use the [`exceptiongroup`](https://github.com/agronholm/exceptiongroup) backport
     package for earlier Python versions:
 
-    ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
-    from exceptiongroup import catch
+    ```python {title="fallback_model_failure.py" test="skip"}
+    from exceptiongroup import BaseExceptionGroup, catch
 
     from pydantic_ai import Agent, ModelAPIError
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -450,8 +478,8 @@ print(result.output)
     The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
     output. A `'length'` finish reason on an empty or thinking-only response raises
     [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
-    the token limit mid-thinking), and an empty response with a `'content_filter'` finish reason raises
-    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
+    the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
+    reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
     regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as

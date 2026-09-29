@@ -3,12 +3,11 @@ from __future__ import annotations as _annotations
 import os
 import warnings
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TypeAlias, overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
@@ -30,6 +29,9 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
+# Below the guard on purpose: `anthropic` requires `httpx2`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx2`.
+import httpx2
 
 AsyncAnthropicClient: TypeAlias = (
     AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -40,6 +42,7 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
+    'claude-sonnet-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -51,6 +54,10 @@ restriction the top-level prompt set, it refuses every time where Opus 5 complie
 a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
 entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
 
+`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
+top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
+so the entry costs nothing measurable and keeps the instruction's operator authority.
+
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
 """
 
@@ -59,6 +66,7 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
+    'claude-sonnet-5-5',
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
@@ -113,6 +121,12 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),
+            AnthropicModelProfile(
+                # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
+                # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
+                # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
+                default_cache_retention=timedelta(minutes=5)
+            ),
         )
 
     @overload
@@ -120,7 +134,11 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
 
     @overload
     def __init__(
-        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx.AsyncClient | None = None
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -129,7 +147,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         api_key: str | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicClient | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         """Create a new Anthropic provider.
 
@@ -144,7 +162,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 [`AsyncAnthropicFoundry`](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry), or
                 [`AsyncAnthropicVertex`](https://docs.anthropic.com/en/api/claude-on-vertex-ai).
                 If provided, the `api_key` and `http_client` arguments will be ignored.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
         if anthropic_client is not None:
             assert http_client is None, 'Cannot provide both `anthropic_client` and `http_client`'
@@ -160,12 +178,13 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             if http_client is not None:
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
             else:
-                http_client = create_async_http_client()
+                http_client = create_async_httpx2_client()
                 self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
+                self._http_client_factory = create_async_httpx2_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert isinstance(http_client, httpx2.AsyncClient)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 

@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, cast
 
-from pydantic_ai._utils import is_async_callable
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.models import KnownModelName, Model, ModelResolutionContext
 from pydantic_ai.tools import AgentDepsT
 
@@ -34,11 +33,7 @@ class ResolveModelId(AbstractCapability[AgentDepsT]):
         *,
         model_id: KnownModelName | str,
     ) -> Model | None:
-        if is_async_callable(self.resolver):
-            resolver = cast(Callable[[ModelResolutionContext[Any], str], Awaitable[Model | None]], self.resolver)
-            return await resolver(ctx, model_id)
-        resolver = cast(Callable[[ModelResolutionContext[Any], str], Model | None], self.resolver)
-        return resolver(ctx, model_id)
+        return await await_maybe(self.resolver(ctx, model_id))
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
-from ._cost import best_effort_price
+from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -24,7 +24,7 @@ from ._output import (
     run_image_process_hooks,
     run_output_with_hooks,
 )
-from ._run_context import AgentDepsT, RunContext
+from ._run_context import AgentDepsT, RunContext, dispatch_event_stream, recorded_workspace_ref
 from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
@@ -34,6 +34,7 @@ from .output import (
 from .tool_manager import ToolManager
 from .tools import DeferredToolRequests
 from .usage import RunUsage, UsageLimits
+from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
@@ -55,6 +56,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _model_request_parameters: models.ModelRequestParameters
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
+    _carried_workspace_ref: WorkspaceRef | None = field(default=None, repr=False)
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
@@ -156,7 +158,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield text
 
     async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation and closing the underlying connection.
+        """Cancel local stream consumption and request provider shutdown.
+
+        Whether this stops remote generation or closes the underlying transport depends on the provider SDK.
 
         This stops only the current model response; the run continues. To end the whole run,
         use [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] or
@@ -196,7 +200,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     @property
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
-        return self._raw_stream_response.get()
+        response = self._raw_stream_response.get()
+        response.workspace_ref = recorded_workspace_ref(self._run_ctx.workspace, self._carried_workspace_ref)
+        return response
 
     @property
     def usage(self) -> RunUsage:
@@ -238,6 +244,25 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # Final validation with `allow_partial=False` (default)
         self._cached_output = await self.validate_response_output(self.response)
         return deepcopy(self._cached_output)
+
+    def _settled_output(self) -> tuple[OutputDataT, str | None]:
+        """The validated output and the name of the output tool that produced it, if any.
+
+        Every path that consumes a stream to the end validates the response and caches the result,
+        so by then `_cached_output` holds it. Cancelling does not: it marks the stream complete
+        without a final response, and there is no output to settle on.
+        """
+        if self._cached_output is None and self.cancelled:
+            raise exceptions.UserError(
+                'The stream was cancelled before it produced an output, so this run has no settled '
+                'result. The messages recorded up to the interruption are still available from '
+                '`all_messages()`.'
+            )
+        final_result_event = self._raw_stream_response.final_result_event
+        return (
+            cast(OutputDataT, self._cached_output),
+            final_result_event.tool_name if final_result_event is not None else None,
+        )
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -393,7 +418,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
             self._events_iterator = aiter(
-                self._root_capability.wrap_run_event_stream(self._run_ctx, stream=self._events_iter(base_iter))
+                self._root_capability.wrap_run_event_stream(
+                    self._run_ctx, stream=dispatch_event_stream(self._run_ctx, self._events_iter(base_iter))
+                )
             )
 
         return self._pull_shared(self._events_iterator)
@@ -521,6 +548,54 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self._stream_response = stream_response
         self._on_complete = on_complete
         self._run_result = run_result
+        self._traceparent_value: str | None = None
+        """Captured when the stream finishes, while the agent run span is still open.
+
+        A settled result is for handing the run to code that outlives the stream, which is exactly
+        when the span has closed and the ambient trace context is gone, so it cannot be read lazily.
+        """
+
+    @property
+    def result(self) -> AgentRunResult[OutputDataT]:
+        """This run as an [`AgentRunResult`][pydantic_ai.run.AgentRunResult], once the stream has finished.
+
+        A `StreamedRunResult` reads its values off the stream that is producing them, so it lives only as
+        long as that stream does. `AgentRunResult` is the settled form of the same run — the same output,
+        messages, usage and IDs — and it has a
+        [serialized shape](../message-history.md#storing-complete-run-results) you can store and load. Reach
+        for this to hand the run to code that outlives the stream.
+
+        Raises:
+            UserError: If the stream hasn't finished, or was cancelled before producing an output,
+                so the run has no settled output to settle on.
+        """
+        from ._agent_graph import GraphAgentState
+        from .run import AgentRunResult
+
+        if (run_result := self._run_result) is not None:
+            return run_result
+        elif self._stream_response is not None:
+            if not self.is_complete:
+                raise exceptions.UserError(
+                    'The run is still streaming, so it has no settled result yet. Await `stream_output()`, '
+                    '`stream_text()`, `stream_response()` or `get_output()` first.'
+                )
+            output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
+            return AgentRunResult(
+                output=output,
+                _output_tool_name=output_tool_name,
+                _state=GraphAgentState(
+                    message_history=self._all_messages,
+                    usage=self.usage,
+                    run_id=self.run_id,
+                    conversation_id=self.conversation_id,
+                    metadata=self.metadata,
+                ),
+                _new_message_index=self._new_message_index,
+                _traceparent_value=self._traceparent_value,
+            )
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.
@@ -707,6 +782,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return None
 
     @property
+    def workspace(self) -> Workspace:
+        """The workspace used by this run."""
+        if self._run_result is not None:
+            return self._run_result.workspace
+        elif self._stream_response is not None:
+            return self._stream_response._run_ctx.workspace  # pyright: ignore[reportPrivateUsage]
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    @property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -769,16 +854,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self._all_messages.append(message)
 
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
+        from ._instrumentation import current_otel_traceparent
+
         if self.is_complete:
             return
         self.is_complete = True
+        self._traceparent_value = current_otel_traceparent()
         if message is not None:
             self._record_response(message)
         if self._on_complete is not None:
             await self._on_complete()
 
     async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation and closing the underlying connection.
+        """Cancel local stream consumption and request provider shutdown.
+
+        Whether this stops remote generation or closes the underlying transport depends on the provider SDK.
 
         The interrupted response state is recorded in the message history so that
         `all_messages()` includes it.
@@ -1004,6 +1094,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
         return self._streamed_run_result.metadata
+
+    @property
+    def workspace(self) -> Workspace:
+        """The workspace used by this run."""
+        return self._streamed_run_result.workspace
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""

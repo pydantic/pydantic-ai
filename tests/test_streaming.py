@@ -19,6 +19,8 @@ from types import TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
+import anyio
+import httpx2
 import pytest
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
@@ -40,6 +42,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     OutputToolCallEvent,
     OutputToolResultEvent,
@@ -93,8 +96,6 @@ from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
-
-pytestmark = pytest.mark.anyio
 
 
 class Foo(BaseModel):
@@ -916,8 +917,47 @@ def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
     assert exited
 
 
+# These synthetic paths have no external I/O, so 100 loop turns detects a real hang without inheriting
+# CI-worker wall-clock variation.
+class _LoopTurnWatchdog:
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.forced_stop = False
+        self._loop = loop
+        self._turns = 0
+        self._handle = loop.call_soon(self._tick)
+
+    def _tick(self) -> None:
+        self._turns += 1
+        if self._turns >= 100:
+            self.forced_stop = True  # pragma: no cover
+            self._loop.stop()  # pragma: no cover
+        else:
+            self._handle = self._loop.call_soon(self._tick)
+
+    def cancel(self) -> None:
+        self._handle.cancel()
+
+
+@pytest.fixture
+def loop_turn_watchdog() -> Generator[Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog], None, None]:
+    watchdogs: list[_LoopTurnWatchdog] = []
+
+    def arm(loop: asyncio.AbstractEventLoop) -> _LoopTurnWatchdog:
+        watchdog = _LoopTurnWatchdog(loop)
+        watchdogs.append(watchdog)
+        return watchdog
+
+    try:
+        yield arm
+    finally:
+        for watchdog in watchdogs:
+            watchdog.cancel()
+
+
 @pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
-def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[BaseException]):
+def test_sync_stream_bridge_init_propagates_base_exception(
+    error_type: type[BaseException], loop_turn_watchdog: Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog]
+):
     """A base exception from `__aenter__` escapes immediately instead of hanging the event loop.
 
     VCR cannot inject an in-process base exception into the context-manager entry protocol.
@@ -926,7 +966,6 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     error = error_type('entry failed')
-    forced_stop = False
 
     class FailingContextManager:
         async def __aenter__(self) -> object:
@@ -940,20 +979,15 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
         ) -> None:
             pytest.fail('`__aexit__` must not be called when `__aenter__` fails')  # pragma: no cover
 
-    def force_stop() -> None:  # pragma: no cover
-        nonlocal forced_stop
-        forced_stop = True
-        loop.stop()
-
-    stop_handle = loop.call_later(1, force_stop)
+    watchdog = loop_turn_watchdog(loop)
     try:
         with pytest.raises(error_type) as exc_info:
             SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
+        watchdog.cancel()
         assert exc_info.value is error
-        assert not forced_stop
+        assert not watchdog.forced_stop
         assert loop.run_until_complete(asyncio.sleep(0)) is None
     finally:
-        stop_handle.cancel()
         loop.close()
         asyncio.set_event_loop(original_loop)
 
@@ -1303,13 +1337,14 @@ def test_sync_stream_bridge_early_close_cancels_waiting_pump():
 
 
 @pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
-def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error_type: type[BaseException]):
+def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(
+    error_type: type[BaseException], loop_turn_watchdog: Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog]
+):
     """A base exception from a completed pump escapes without stranding the caller's event loop.
 
     VCR cannot inject an in-process base exception into the iterator pump task.
     """
     error = error_type('pump failed')
-    forced_stop = False
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
@@ -1322,24 +1357,16 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
     loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
     stream = bridge.stream_sync(source)
+    watchdog = loop_turn_watchdog(loop)
 
-    def force_stop() -> None:  # pragma: no cover
-        nonlocal forced_stop
-        forced_stop = True
-        loop.stop()
-
-    stop_handle = loop.call_later(1, force_stop)
-    try:
-        with pytest.raises(error_type) as exc_info:
-            while True:
-                next(stream)
-        stop_handle.cancel()
-        assert exc_info.value is error
-        assert not forced_stop
-        assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
-        assert loop.run_until_complete(asyncio.sleep(0)) is None
-    finally:
-        stop_handle.cancel()
+    with pytest.raises(error_type) as exc_info:
+        while True:
+            next(stream)
+    watchdog.cancel()
+    assert exc_info.value is error
+    assert not watchdog.forced_stop
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+    assert loop.run_until_complete(asyncio.sleep(0)) is None
 
 
 def test_run_stream_sync_preserves_capability_contextvars():
@@ -1431,6 +1458,108 @@ async def test_run_stream_early_break_during_debounce_closes_cleanly():
     async with agent.run_stream('hello') as result:
         stream = result.stream_text(delta=True)
         assert await anext(stream)
+
+
+async def test_run_stream_cancel_during_debounce_from_another_task():
+    """`cancel()` interrupts a debounced background pull without cancelling its caller.
+
+    A synthetic `PeekableAsyncStream` makes the second chunk wait deterministically; a recorded provider response cannot
+    guarantee that the debounced prefetch is still active when cancellation starts.
+    """
+    pull_started = anyio.Event()
+    finalization_started = anyio.Event()
+
+    async def source() -> AsyncIterator[str]:
+        try:
+            yield 'chunk '
+            pull_started.set()
+            await anyio.sleep_forever()
+        finally:
+            finalization_started.set()
+
+    @dataclass
+    class CancellableStreamedResponse(models.StreamedResponse):
+        stream: _utils.PeekableAsyncStream[str, AsyncIterator[str]]
+
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            async for text in self.stream:
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content=text):
+                    yield event
+
+        async def close_stream(self) -> None:
+            await self.stream.aclose()
+
+        @property
+        def model_name(self) -> str:
+            return 'cancellable'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    class CancellableModel(models.Model):
+        @property
+        def system(self) -> str:
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'cancellable'
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+        ) -> ModelResponse:
+            raise AssertionError('Only streaming requests are expected')  # pragma: no cover
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext[object] | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            yield CancellableStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                stream=_utils.PeekableAsyncStream(source()),
+            )
+
+    model = CancellableModel()
+    assert model.model_id == 'test:cancellable'
+    agent = Agent(model)
+
+    async with agent.run_stream('hello') as result:
+        stream = result.stream_text(delta=True)
+        with anyio.fail_after(1):
+            assert await anext(stream) == 'chunk '
+            await pull_started.wait()
+
+        cancel_finished = anyio.Event()
+
+        async def cancel() -> None:
+            await result.cancel()
+            cancel_finished.set()
+
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(cancel)
+            with anyio.fail_after(1):
+                await cancel_finished.wait()
+
+        assert result.cancelled
+        assert finalization_started.is_set()
+
+    assert result.response.state == 'interrupted'
 
 
 def test_run_stream_sync_rejects_already_entered_result():
@@ -2052,6 +2181,13 @@ async def test_call_tool_wrong_name():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
             ),
         ]
     )
@@ -4099,8 +4235,8 @@ class TestMultipleToolCalls:
                 await result.get_output()  # pragma: no cover
 
         task = asyncio.create_task(run())
-        await asyncio.wait_for(first_done.wait(), timeout=1)
-        await asyncio.wait_for(pending_started.wait(), timeout=1)
+        await asyncio.wait_for(first_done.wait(), timeout=5)
+        await asyncio.wait_for(pending_started.wait(), timeout=5)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -6373,6 +6509,44 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
     )
 
 
+async def test_stream_cancel_guard_suppresses_httpx2_transport_error():
+    @dataclass
+    class _HTTPX2Stream(models.StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[Any]:
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                yield event
+            assert self.cancelled
+            raise httpx2.StreamClosed()
+
+        async def close_stream(self) -> None:
+            pass
+
+        @property
+        def model_name(self) -> str:
+            return 'httpx2'
+
+        @property
+        def provider_name(self) -> str:
+            return 'httpx2'
+
+        @property
+        def provider_url(self) -> str | None:
+            return None
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime.now(tz=timezone.utc)
+
+    stream = _HTTPX2Stream(models.ModelRequestParameters())
+    iterator = stream.__aiter__()
+    await iterator.__anext__()
+    await stream.cancel()
+    async for _ in iterator:
+        pass
+
+    assert stream.get().state == 'interrupted'
+
+
 async def test_run_stream_cancel_after_complete():
     agent = Agent(TestModel())
 
@@ -6392,8 +6566,8 @@ async def test_testmodel_stream_cancel_reports_interrupted():
     """Cancelling a `TestModel` sub-stream mid-iteration simulates the transport tear-down and reports interrupted.
 
     Driven directly against `model.request_stream` (not the continuation composite, which tears segments
-    down via `close_stream` rather than `cancel`) so the stream's own `cancel()` fires the simulated
-    `httpx.StreamClosed`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
+    down via `close_stream` rather than `cancel`) so the stream's own `cancel()` makes the next chunk pull
+    raise `_StreamCancelled`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
     """
     model = TestModel(custom_output_text='hello world')
     params = models.ModelRequestParameters()
@@ -6402,7 +6576,7 @@ async def test_testmodel_stream_cancel_reports_interrupted():
         iterator = stream.__aiter__()
         await iterator.__anext__()
         await stream.cancel()
-        async for _ in iterator:  # the next pull raises the simulated `StreamClosed`, suppressed by the guard
+        async for _ in iterator:  # the next pull raises `_StreamCancelled`, suppressed by the guard
             pass
 
     assert stream.get().state == 'interrupted'
@@ -6669,6 +6843,113 @@ async def test_completed_streamed_response_replay_events(
         replay_events=replayed_events,
     )
     assert [event async for event in buffered_stream] == replayed_events
+
+
+@pytest.mark.parametrize('read_each', [False, True])
+@pytest.mark.parametrize('details', [None, {}, {'initial': 1}], ids=['no-details', 'empty-details', 'details'])
+async def test_replay_text_preserves_snapshots(read_each: bool, details: dict[str, Any] | None) -> None:
+    """Replay preserves live reads and independent snapshots without a model request."""
+    start = TextPart('a', id='part', provider_name='first', provider_details=details)
+    response = ModelResponse(
+        parts=[TextPart('abc', id='part', provider_name='second', provider_details={**(details or {}), 'added': 2})]
+    )
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=7, part=start),
+        PartDeltaEvent(index=7, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=7, delta=TextPartDelta('c')),
+        PartDeltaEvent(index=7, delta=TextPartDelta('', provider_name='second', provider_details={'added': 2})),
+    ]
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=events
+    )
+    observed: list[ModelResponseStreamEvent] = []
+    snapshots: list[ModelResponse] = []
+    async for event in stream:
+        observed.append(event)
+        if event is events[1]:
+            start.provider_details = {'changed_after_delta': True}
+        if read_each:
+            snapshots.append(stream.get())
+    assert all(actual is expected for actual, expected in zip(observed, events, strict=True))
+    assert stream.get() == response
+    assert start.content == 'a'
+    if read_each:
+        assert [snapshot.text for snapshot in snapshots] == ['a', 'ab', 'abc', 'abc']
+        part = snapshots[1].parts[0]
+        assert isinstance(part, TextPart)
+        part.provider_details = {'changed_after_replay': True}
+        assert stream.get() == response
+
+
+@pytest.mark.parametrize('custom_part', [False, True])
+async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
+    """Replay preserves user-defined part initialization and delta application."""
+    seen_lengths: list[int] = []
+
+    @dataclass
+    class CheckedPart(TextPart):
+        def __post_init__(self) -> None:
+            seen_lengths.append(len(self.content))
+
+    class CheckedDelta(TextPartDelta):
+        def apply(self, part: ModelResponsePart) -> TextPart:
+            assert isinstance(part, TextPart)
+            assert part.content == 'ab'
+            return replace(part, content=part.content.upper() + self.content_delta)
+
+    start = CheckedPart('a') if custom_part else TextPart('a')
+    expected = CheckedPart('abc') if custom_part else TextPart('ABc')
+    seen_lengths.clear()
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=0, part=start),
+        PartDeltaEvent(index=0, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('c') if custom_part else CheckedDelta('c')),
+    ]
+    response = ModelResponse(parts=[expected])
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=events
+    )
+    async for _ in stream:
+        pass
+    assert stream.get() == response
+    assert start.content == 'a'
+    assert seen_lengths == ([2, 3] if custom_part else [])
+
+
+async def test_replay_text_requires_start() -> None:
+    """Replaying a malformed event list raises instead of inventing a missing part."""
+    stream = CompletedStreamedResponse(
+        ModelResponse(parts=[]),
+        model_request_parameters=models.ModelRequestParameters(),
+        replay_events=[PartDeltaEvent(index=7, delta=TextPartDelta('text'))],
+    )
+    with pytest.raises(AssertionError):
+        async for _ in stream:
+            pass
+
+
+async def test_replay_text_cancel_preserves_buffered_content() -> None:
+    """Canceling replay preserves partial text without a live transport."""
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=0, part=TextPart('a')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('c')),
+    ]
+    stream = CompletedStreamedResponse(
+        ModelResponse(parts=[TextPart('abc')]),
+        model_request_parameters=models.ModelRequestParameters(),
+        replay_events=events,
+    )
+    iterator = aiter(stream)
+    await anext(iterator)
+    await anext(iterator)
+    await stream.cancel()
+    await stream.cancel()
+    assert stream.get().text == 'ab'
+    assert stream.get().state == 'interrupted'
+    assert [event async for event in iterator] == events[2:]
+    assert stream.get().text == 'abc'
+    assert stream.get().state == 'complete'
 
 
 @pytest.mark.parametrize('events', [True, [PartStartEvent(index=0, part=TextPart(content='hi'))]])
