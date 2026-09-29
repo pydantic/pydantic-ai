@@ -58,6 +58,12 @@ The ref is `WorkspaceRef(provider='ssh', id='dev@build-box:/srv/app')`, availabl
 
 `SSHWorkspace` has the full authority of the remote user. Neither `working_dir` nor a [FileSystem](filesystem.md) root jails shell commands. Do not pass your local environment to the host: choose the variables the command needs with `env=`, which is kept out of the capability's `repr`.
 
+`env=` values travel inside the command that `ssh` sends, so while a command runs they are visible in process listings (`ps`) to other users on both this machine and the host. Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
+
+## Platforms
+
+The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorkspace`](../workspace.md#platforms): constructing `SSHWorkspace` on Windows raises `NotImplementedError`. The host needs a POSIX `sh` and the usual file utilities.
+
 ## Telemetry
 
 `SSHWorkspace` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the workspace on the agent run span as `pydantic_ai.workspace.provider` (`ssh`) and `pydantic_ai.workspace.id` (the host and directory, recorded even without `include_content`, because it identifies the environment rather than content), and each command or file operation a tool makes runs inside that tool call's span.
