@@ -10298,7 +10298,7 @@ async def test_openai_responses_image_generation_store_false(
 
     The API resolves an `image_generation_call` input item by its ID alone, and even an item carrying
     its `result` inline fails with a 404 when the response that produced it wasn't stored. So the
-    call is left out of the replay, like any other server-side item that can't be sent back.
+    call is left out of the replay.
     """
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
