@@ -22,7 +22,6 @@
 
 ### Checklist
 
-- [ ] Any **AI generated code** has been reviewed line-by-line by the human PR author, who stands by it.
 - [ ] No **breaking changes** in accordance with the [version policy](https://github.com/pydantic/pydantic-ai/blob/main/docs/version-policy.md).
 - [ ] Any permitted **compatibility impact** has a label, warning, migration, release note, and exact API-check waiver.
 - [ ] **PR title** is fit for the [release changelog](https://github.com/pydantic/pydantic-ai/releases).

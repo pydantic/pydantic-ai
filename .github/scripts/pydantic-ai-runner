@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "pydantic-ai-slim[anthropic,mcp]",
+#   "pydantic-ai-slim[anthropic,mcp,retries]",
 #   # The file/shell tools (Bash/Read/Write/Edit/Grep/Glob/LS) are backed by
 #   # harness FileSystem/Shell; the adjacent script lock pins the production
 #   # dependency graph and hashes.

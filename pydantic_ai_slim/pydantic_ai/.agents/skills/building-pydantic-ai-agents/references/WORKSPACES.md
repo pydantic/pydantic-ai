@@ -19,8 +19,8 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 isolation: `working_dir` is only the default directory and the base for relative paths, not a jail
 or a security boundary. Use it only for trusted work. `working_dir` is required; a relative path
 such as `'.'` resolves against the current directory at construction, and a leading `~` is
-expanded; the caller owns that directory. Commands inherit only `PATH` and
-`HOME` from the agent process, with `env` and then the per-call `env` layered on top. Never pass `os.environ` wholesale: it hands the
+expanded; the caller owns that directory. Commands inherit only `PATH`,
+`HOME`, and the locale variables `LANG`, `LC_ALL`, and `LC_CTYPE` from the agent process, with `env` and then the per-call `env` layered on top. Never pass `os.environ` wholesale: it hands the
 model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`. Two
 `LocalWorkspace`s share the default id `local_workspace` and combine into the last one (none of
 the earlier one's settings carry over); give one a distinct `id` to keep both.
@@ -81,7 +81,8 @@ in it; after `workspace='new'` nothing is carried forward.
 The core does not create or destroy environments at run boundaries; the application owns
 SDK retries (outside durable execution), cleanup, TTL and pause/stop through the provider's SDK or run hooks. `Workspace.backend` reaches
 the concrete backend for provider-specific methods (not from workflow code under durable
-execution). Sandbox providers (Modal, E2B, Sprites) ship as capabilities in the
+execution). Sandbox providers (Modal, E2B, Sprites), `SSHWorkspace` for a remote host, and `BubblewrapSandbox`
+for sandboxing another workspace's commands ship as capabilities in the
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). Check a custom backend by
 subclassing `pydantic_ai.workspaces.conformance.WorkspaceBackendSuite` and providing its `backend`
 fixture.

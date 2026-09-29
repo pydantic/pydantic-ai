@@ -6,6 +6,7 @@ __pycache__
 .dev.vars
 /scratch/
 /.coverage
+/.testmon-cache/
 env*/
 /TODO.md
 /postgres-data/
@@ -79,6 +80,8 @@ AGENTS.override.md
 !.claude/plans/
 !.claude/skills/
 .claude/skills/*
+!.claude/skills/add-new-model
+!.claude/skills/adding-a-provider-api-feature
 !.claude/skills/adopt-pr
 !.claude/skills/branch-context/
 .claude/skills/branch-context/*

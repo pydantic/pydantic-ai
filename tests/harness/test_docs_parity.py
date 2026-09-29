@@ -96,9 +96,17 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 
 _DOCS_DIR = _ROOT / '../../docs/harness'
 # `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
-# and `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, so the
-# capability-page checks do not apply to either.
-_NON_CAPABILITY_PAGES = {'clai2.md', 'examples.md', 'gh-aw.md', 'index.md', 'media.md', 'mutation-testing.md'}
+# `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `durable-execution.md` is a
+# guide across capabilities, so the capability-page checks do not apply to them.
+_NON_CAPABILITY_PAGES = {
+    'clai2.md',
+    'durable-execution.md',
+    'examples.md',
+    'gh-aw.md',
+    'index.md',
+    'media.md',
+    'mutation-testing.md',
+}
 _ACP_PAGE = 'acp.md'
 
 _SOURCE_LINK = 'github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/'
@@ -134,6 +142,10 @@ _CAPABILITY_PAGE_META = {
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
+    'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
+    'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
+    'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),
     'repo-context.md': ('repo_context', 'Repo Context'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'researcher.md': ('researcher', 'Researcher'),
@@ -366,7 +378,7 @@ def _blown_out_block(path: Path) -> str:
     text = path.read_text(encoding='utf-8')
     assert _BLOWN_OUT_MARKER in text, f'{path.relative_to(_ROOT)} lost its blown-out keep-in-sync marker'
     after = text.split(_BLOWN_OUT_MARKER, 1)[1]
-    match = re.search(r'```python\n(.*?)```', after, flags=re.DOTALL)
+    match = re.search(r'```python[^\n]*\n(.*?)```', after, flags=re.DOTALL)
     assert match, f'{path.relative_to(_ROOT)} has no python block after the blown-out marker'
     return match.group(1)
 
@@ -382,10 +394,9 @@ def test_blown_out_example_is_identical_across_surfaces(surface: str) -> None:
 
 def test_blown_out_example_matches_coder_defaults() -> None:
     block = _blown_out_block(_ROOT / _BLOWN_OUT_SURFACES[0])
-    assert "capabilities=[Coder('.')]" in block
-    assert "name='coder'" in block
+    assert "capabilities=[LocalWorkspace('.'), Coder()]" in block
     example = (_ROOT / 'examples/coding_agent.py').read_text(encoding='utf-8')
-    assert "name='coder'" in example and 'capabilities=[Coder(workspace or Path.cwd())]' in example
+    assert "name='coder'" in example and "capabilities=[LocalWorkspace(workspace or '.'), Coder()]" in example
 
 
 @pytest.mark.parametrize('surface', ['README.md', '../../docs/harness/index.md'])
