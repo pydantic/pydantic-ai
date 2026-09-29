@@ -5,7 +5,12 @@ Most use a fake `bwrap` that records its arguments, so they run anywhere; the la
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import os
+import shutil
+import socket
+import tempfile
 from pathlib import Path
 
 import anyio
@@ -19,12 +24,14 @@ from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
+    WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
+from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
 
 from .._fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
@@ -43,8 +50,9 @@ def tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRemoteTools:
 def _sandbox_args(working_dir: str, *, network: bool = False) -> str:
     return ' '.join(
         [
-            '--die-with-parent --new-session --unshare-user-try --unshare-ipc --unshare-uts --unshare-cgroup-try',
-            *([] if network else ['--unshare-net']),
+            '--die-with-parent --new-session --unshare-user --unshare-ipc --unshare-uts --unshare-cgroup-try',
+            *([] if network else ['--unshare-net --seccomp 3']),
+            '--cap-drop ALL',
             '--ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run',
             *(
                 [
@@ -99,15 +107,36 @@ async def test_network_is_shared_only_when_asked(tools: FakeRemoteTools, tmp_pat
     await workspace.run(['true'])
 
     assert tools.bwrap_calls[0].startswith(_sandbox_args(working_dir, network=True))
+    assert not (tools.bin_dir / 'seccomp-filter').exists()
 
 
-async def test_file_methods_go_to_the_wrapped_workspace(tools: FakeRemoteTools, tmp_path: Path) -> None:
+async def test_without_network_bwrap_gets_the_socket_filter(tools: FakeRemoteTools, tmp_path: Path) -> None:
     workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
 
-    await workspace.write_text('notes.txt', 'hello')
+    result = await workspace.run(['sh', '-c', 'cat; printf done'])
 
-    assert await workspace.read_text('notes.txt') == 'hello'
-    assert tools.bwrap_calls == []
+    # The filter arrived on descriptor 3, and the command still reads an empty stdin.
+    assert tools.seccomp_filter == base64.b64decode(NETWORK_FILTER_BASE64)
+    assert (result.exit_code, result.stdout) == (0, 'done')
+
+
+async def test_file_methods_run_in_the_sandbox(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """So a symlink swapped in after a path check can't lead a write out of the sandbox."""
+    workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+    working_dir = await workspace.working_dir()
+
+    await workspace.make_dir('docs')
+    await workspace.write_text('docs/notes.txt', 'hello')
+
+    assert await workspace.read_text('docs/notes.txt') == 'hello'
+    assert await workspace.exists('docs/notes.txt')
+    assert (await workspace.stat('docs/notes.txt')).size == 5
+    assert [entry.name for entry in await workspace.list_dir('docs')] == ['notes.txt']
+    assert await workspace.realpath('docs/../docs/notes.txt') == f'{working_dir}/docs/notes.txt'
+    await workspace.remove('docs')
+    assert not (tmp_path / 'docs').exists()
+    assert tools.bwrap_calls
+    assert all(call.startswith(_sandbox_args(working_dir)) for call in tools.bwrap_calls)
 
 
 async def test_a_failing_command_checks_the_sandbox_once(tools: FakeRemoteTools, tmp_path: Path) -> None:
@@ -153,6 +182,11 @@ async def test_read_only_inside_the_sandbox_still_refuses_commands(tmp_path: Pat
     assert workspace.read_only is True
     with pytest.raises(WorkspaceReadOnlyError):
         await workspace.run(['true'])
+    # A read-only workspace runs no commands, so its files are read from the host.
+    (tmp_path / 'notes.txt').write_text('hello')
+    assert await workspace.read_text('notes.txt') == 'hello'
+    with pytest.raises(WorkspaceReadOnlyError):
+        await workspace.write_text('notes.txt', 'changed')
 
 
 async def test_bubblewrap_around_ssh_sandboxes_commands_on_the_remote_host(
@@ -223,6 +257,39 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
             assert (await workspace.run(['test', '-e', str(marker)])).exit_code == 1
         finally:
             marker.unlink()
+
+    async def test_file_methods_cannot_write_through_a_symlink_out_of_the_working_dir(self, tmp_path: Path) -> None:
+        outside = tmp_path / 'outside.txt'
+        outside.write_text('host')
+        (tmp_path / 'work').mkdir()
+        (tmp_path / 'work' / 'link').symlink_to(outside)
+        workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'work')))
+
+        # The write fails, or lands in the sandbox's private `/tmp`: either way the host file is untouched.
+        with contextlib.suppress(OSError, WorkspaceError):
+            await workspace.write_text('link', 'escaped')
+
+        assert outside.read_text() == 'host'
+
+    async def test_without_network_host_unix_sockets_are_unreachable(self, tmp_path: Path) -> None:
+        # Not under `/tmp`, which the sandbox replaces anyway: the filter must stop it, not a mount.
+        directory = Path(tempfile.mkdtemp(prefix='pydantic-ai-bwrap-sock-', dir='/var/tmp'))
+        server = socket.socket(socket.AF_UNIX)
+        try:
+            server.bind(str(directory / 'host.sock'))
+            server.listen()
+            connect = f'import socket; socket.socket(socket.AF_UNIX).connect({str(directory / "host.sock")!r})'
+            sandboxed = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+            networked = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), network=True)
+
+            blocked = await sandboxed.run(['python3', '-c', connect])
+            allowed = await networked.run(['python3', '-c', connect])
+
+            assert blocked.exit_code != 0 and 'PermissionError' in blocked.stderr
+            assert allowed.exit_code == 0
+        finally:
+            server.close()
+            shutil.rmtree(directory)
 
     async def test_host_daemon_sockets_are_hidden(self, tmp_path: Path) -> None:
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))

@@ -8,6 +8,7 @@ from types import ModuleType
 
 import anyio
 import pytest
+from pydantic import BaseModel
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -206,17 +207,17 @@ async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, mon
     (package / 'plugin.py').write_text('import clai_missing_dependency\n')
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
-    # Saved by a CLAI version that shipped a `slack` built-in; this one does not.
-    harness.store.save_plugin(PluginSettings(id='slack', factory='pydantic_clai2.slack'))
+    # Saved by a CLAI version that shipped a `retired` built-in; this one does not.
+    harness.store.save_plugin(PluginSettings(id='retired', factory='pydantic_clai2.retired'))
     harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
     harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
     await harness.loader.load_all()
     states = {entry.name: entry.state for entry in harness.loader.entries()}
-    assert states['slack'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.slack'"
+    assert states['retired'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.retired'"
     assert states['gone'] == "enabled, failed: ModuleNotFoundError: No module named 'clai_gone'"
     assert harness.text == ("Plugin 'broken': ModuleNotFoundError: No module named 'clai_missing_dependency'\n")
-    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.slack'"):
-        await harness.loader.command(['enable', 'slack'])
+    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.retired'"):
+        await harness.loader.command(['enable', 'retired'])
 
 
 async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
@@ -295,6 +296,23 @@ async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) 
     assert message.startswith('Disabled counter. Delete ')
     assert not harness.store.plugins()[0].enabled
     assert harness.loader.entries()[0].state == 'disabled'
+
+
+async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:
+    """Another CLAI process may replace the declaration while this one has the plugin loaded."""
+
+    class Chosen(BaseModel):
+        level: int
+
+    harness = Harness(tmp_path)
+    path = harness.write('counter')
+    await harness.loader.load('counter')
+    newer = PluginSettings(id='counter', factory='counter:activate', path=str(path), settings={'level': 1})
+    harness.store.save_plugin(newer)
+    host = harness.loader.entries()[0].host
+    assert host is not None
+    host.save_settings(Chosen(level=2))
+    assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
 
 
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:
