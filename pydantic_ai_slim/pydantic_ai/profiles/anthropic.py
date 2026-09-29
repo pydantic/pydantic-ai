@@ -126,6 +126,15 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Translated (with a deprecation warning) whenever profiles are merged.
     """
 
+    anthropic_rejects_max_tokens_beyond_context_window: bool
+    """Whether the model rejects a request whose input plus `max_tokens` exceeds its context window. Default: `False`.
+
+    Claude models older than Claude Sonnet 4.5 answer such a request with a 400, where later models accept it and stop
+    at the context window. When True, a request that doesn't set `max_tokens` gets the lower default of 4096, so a
+    conversation close to the context window still fits. It's also set for Claude 3 and 3.5, whose maximum output
+    (4,096 or 8,192 tokens) is below the higher default.
+    """
+
     anthropic_binds_thinking_blocks: bool
     """Whether the model binds each thinking block to the conversation prefix that produced it. Default: `False`.
 
@@ -257,6 +266,27 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
 
+    # Before Claude Sonnet 4.5, Anthropic rejects a request whose input plus `max_tokens` exceeds the context window:
+    # Bedrock's `claude-sonnet-4-20250514` answers 192K input tokens plus 16384 with a 400 (`Input is too long for
+    # requested model.`) and accepts 192K plus 4096, where Haiku 4.5 accepts 192K plus 16384. Claude 3 and 3.5 also
+    # need the lower default, since their maximum output is 4,096 or 8,192 tokens.
+    rejects_max_tokens_beyond_context_window = model_name in (
+        'claude-opus-4',
+        'claude-sonnet-4',
+    ) or model_name.startswith(
+        (
+            'claude-3',
+            'claude-4-',
+            'claude-opus-4-0',
+            'claude-opus-4-1',
+            'claude-opus-4-2',
+            'claude-opus-4@',
+            'claude-sonnet-4-0',
+            'claude-sonnet-4-2',
+            'claude-sonnet-4@',
+        )
+    )
+
     # Anthropic documents these models as thinking when the request omits `thinking`; Fable 5, Fable 5.1, Opus 5,
     # Opus 5.5 and Sonnet 5 return thinking tokens live with no thinking parameter, where Opus 4.8 and Sonnet 4.6
     # return none.
@@ -361,6 +391,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_task_budgets=supports_task_budgets,
         supports_forced_tool_choice=supports_forced_tool_choice,
         anthropic_binds_thinking_blocks=binds_thinking_blocks,
+        anthropic_rejects_max_tokens_beyond_context_window=rejects_max_tokens_beyond_context_window,
         supported_native_tools=supported_native_tools,
     )
     if supports_tool_search:
