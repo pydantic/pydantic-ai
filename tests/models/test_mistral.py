@@ -3045,7 +3045,7 @@ async def test_model_validation_error_raises_model_http_error(allow_model_reques
         with pytest.raises(ModelHTTPError) as exc_info:
             if stream:
                 async with Agent(m).run_stream('hello') as result:
-                    await result.get_output()
+                    await result.get_output()  # pragma: no cover — the error raises while the stream opens
             else:
                 await Agent(m).run('hello')
 
