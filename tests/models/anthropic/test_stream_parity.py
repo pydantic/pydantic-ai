@@ -100,9 +100,8 @@ async def test_recorded_streams_match_the_complete_message(monkeypatch: pytest.M
     # Guards against a cassette format change silently leaving nothing to compare.
     assert len(streams) > 200
 
-    mismatches: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    streamed: dict[str, dict[str, Any]] = {}
+    complete: dict[str, dict[str, Any]] = {}
     for name, interaction in streams.items():
-        streamed, complete = await _streamed_and_complete(interaction, monkeypatch)
-        if streamed != complete:
-            mismatches[name] = streamed, complete
-    assert mismatches == {}
+        streamed[name], complete[name] = await _streamed_and_complete(interaction, monkeypatch)
+    assert streamed == complete
