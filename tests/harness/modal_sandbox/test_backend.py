@@ -12,6 +12,8 @@ import sys
 import threading
 import time
 import types
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -190,9 +192,16 @@ class TestRun:
             ('/work', {'A': '1', 'B': '2'}),
         ]
 
-    async def test_fractional_timeout_rounds_up_to_a_modal_deadline(self, fake_modal: FakeModal) -> None:
+    async def test_fractional_timeout_rounds_up_to_a_modal_deadline(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Modal takes whole seconds and reads 0 as "no timeout", so a sub-second deadline
         # must not floor to unbounded.
+        @asynccontextmanager
+        async def no_client_deadline(*_args: Any, **_kwargs: Any) -> AsyncGenerator[None]:
+            yield
+
+        monkeypatch.setattr(_backend, 'command_deadline', no_client_deadline)
         backend = await started()
         await backend.run(['x'], timeout=0.5)
         assert fake_modal.sandboxes[0].exec_calls[-1].timeout == 1
