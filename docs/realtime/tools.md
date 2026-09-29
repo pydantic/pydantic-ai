@@ -36,8 +36,9 @@ structured [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with its `ret
 silently degraded: OpenAI and Azure OpenAI deliver text and images as a follow-up user message;
 Gemini Live's tool results are JSON-only, so text is folded into the result and any binary
 attachment raises [`UserError`][pydantic_ai.exceptions.UserError]
-([#7362](https://github.com/pydantic/pydantic-ai/issues/7362)); media a provider can't carry
-(audio and documents everywhere; images also on xAI) likewise raises before anything is sent.
+([#7362](https://github.com/pydantic/pydantic-ai/issues/7362)); media Pydantic AI can't deliver yet
+(audio and documents everywhere; images also on xAI, which has no image input) likewise raises
+before anything is sent.
 If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
@@ -73,11 +74,40 @@ Every tool runs in the background, so a slow tool does not block session events,
 turn tracking. [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps each
 result adjacent to its call even when calls finish out of order.
 
-Whether the model continues speaking while it waits is provider-specific. Inspect the
-[`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]
-profile flag. OpenAI and Azure models generally fill the gap; Gemini pauses unless the
-[`google_async_tool_calls`](gemini.md#asynchronous-tool-calls) setting — which declares the tools
-`NON_BLOCKING` to the Live API — is enabled on a supported model.
+When one response calls several tools, each result goes back to the model as its tool finishes, but the
+model is asked to answer only once all of them are in, so it answers them together, once, rather than
+answering the first result while its siblings are still running.
+
+Whether the *model* keeps the conversation going while a tool runs — speaking (typically saying
+what it's doing) and answering the user before the result is back — depends on the model. Its
+profile's [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode]
+says which:
+
+| Mode | Models | Tool calls |
+| --- | --- | --- |
+| `'always'` | OpenAI (GPT-Live and gpt-realtime), Azure OpenAI, xAI, `gemini-3.8-live-extended-thinking` | The model keeps talking; there's no mode that waits |
+| `'optional'` | Gemini native-audio models, `gemini-3.8-live` | The model waits for the result, unless the session asks otherwise |
+| `'never'` | Other Gemini Live models | The model waits for the result |
+
+On an `'optional'` model, set the shared
+[`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to
+have it keep talking. The setting doesn't change what an `'always'` or `'never'` model does, so a
+cross-provider app can set it once for every model: it takes effect wherever the model offers the
+choice, and is ignored elsewhere.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeModelSettings
+
+agent = Agent(instructions='Look up orders with the tool, and keep the caller company while it runs.')
+realtime = agent.realtime(
+    'google:gemini-3.8-live', model_settings=RealtimeModelSettings(async_tool_calls=True)
+)
+```
+
+Async tool calls pay off for tools that take a noticeable moment. With a fast tool, the result can
+arrive just as the model starts speaking, cutting that reply short. See
+[Asynchronous tool calls](gemini.md#asynchronous-tool-calls) for how Gemini runs them.
 
 ## Native tools
 
@@ -172,18 +202,21 @@ This applies to both ways a call is deferred — raising
 tool is still advertised to the model, exactly as in a standard run; calling it opens the approval
 flow rather than running the tool.
 
-!!! warning "The handler answers from policy, not from a person"
-    The handler must return a decision promptly — it is a programmatic policy resolver, not an approval
-    UI. It runs as a background task like the tool itself, so it never blocks the session's events, but
-    what the *conversation* does while it thinks is provider-specific in exactly the way
-    [concurrent tool execution](#concurrent-tool-execution) describes: OpenAI and Azure carry on, while
-    Gemini holds the model's turn until the result arrives. On Gemini a slow handler therefore reads as
-    assistant silence, and if the user speaks into that gap the provider cancels the pending call
-    outright (recorded as [a synthetic cancellation](#function-tools)).
+!!! warning "A slow handler is a pending tool call"
+    The handler runs as a background task like the tool itself, so it never blocks the session's
+    events, and it can take as long as it needs, for example awaiting an answer from a person through
+    your own UI. What the *conversation* does in the meantime depends on the model's
+    [async tool call mode](#concurrent-tool-execution). A model that keeps talking carries on, and may
+    tell the user the action is done before it is, so tell it in the instructions to wait for the
+    result before confirming. A model that waits holds its turn, so a slow handler reads as assistant
+    silence, and on Gemini the user speaking into that gap cancels the pending call outright (recorded
+    as [a synthetic cancellation](#function-tools)).
 
-Asking a human mid-call and resuming on their answer is not supported yet: a realtime session cannot
-pause and return a `DeferredToolRequests` output for an out-of-band result. Resolve the request
-during the call, or move that workflow to a standard agent run.
+What a session can't do is pause and return a `DeferredToolRequests` output for an out-of-band
+result, as a standard run does
+([#7301](https://github.com/pydantic/pydantic-ai/issues/7301)). Resolve the request during the call,
+from policy or by asking a person from inside the handler, or move that workflow to a standard agent
+run.
 
 [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
 informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
@@ -246,8 +279,9 @@ and may reply, call a tool, or move on. To add context without prompting a turn,
 response is in progress. Reach for `enqueue()` for a follow-up that should wait its turn, and for
 `send()` to interject into a gap.
 
-Multimodal content and model responses are rejected because the realtime live-input channel cannot
-preserve their standard-run semantics.
+Model responses are rejected because the realtime live-input channel can't preserve their
+standard-run semantics; multimodal content isn't routed yet
+([#7300](https://github.com/pydantic/pydantic-ai/issues/7300)).
 
 ## Ending the session from a tool
 

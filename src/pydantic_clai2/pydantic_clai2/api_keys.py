@@ -6,24 +6,28 @@ import re
 import sqlite3
 from collections.abc import Generator
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from typing import Protocol
 
 from prompt_toolkit import PromptSession
-from pydantic import BaseModel, Field, SecretStr, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
 
 from pydantic_ai.exceptions import UserError
 
 from ._rendering import markdown_style
-from .credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from .credential_store import credentials_path, delete_credentials, load_codex_credentials, save_codex_credentials
 from .menu_worker import menu_key, run_worker
 
 
 class KeyReference(BaseModel):
     """A name resolved from the credential store, not a cached secret."""
 
-    name: str = Field(min_length=1)
+    model_config = ConfigDict(extra='forbid')
+
+    # The pattern `normalize_name` gives every `/keys` label; it also rejects most pasted tokens, such as `ghp_...`.
+    name: str = Field(pattern=r'^[A-Z_][A-Z0-9_]*$')
 
 
 def resolve_key(*, token: SecretStr | KeyReference) -> str:
@@ -33,17 +37,42 @@ def resolve_key(*, token: SecretStr | KeyReference) -> str:
     keys = load_keys()
     if token.name not in keys:
         raise UserError(
-            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through /add_model.'
+            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure the connection that uses it.'
         )
     return keys[token.name].get_secret_value()
+
+
+@dataclass(frozen=True, kw_only=True)
+class SavedKey:
+    """A capability's `auth` function: the named key's current value, looked up on every run.
+
+    Plugins keep only the name in their settings. Replacing the key in `/keys` reaches the next
+    run of every plugin that names it; deleting it fails that run closed with `setup` as the fix.
+    """
+
+    name: str
+    setup: str
+
+    def __call__(self, ctx: object, /) -> str:
+        """Resolve now, so a stale value is never reused."""
+        keys = load_keys()
+        if self.name not in keys:
+            raise UserError(f'Saved API key {self.name} is missing. {self.setup}')
+        return keys[self.name].get_secret_value()
 
 
 def save_key_connection(*, account: str, token: SecretStr | KeyReference, value: str) -> None:
     """Validate references and save atomically with respect to key renames and deletions."""
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again through /add_model.')
+            raise UserError('The selected API key no longer exists. Select a saved key again.')
         save_codex_credentials(account=account, value=value)
+
+
+def forget_connection(*, account: str) -> None:
+    """Drop a saved connection, and with it any key reference it held; the keys themselves stay."""
+    with key_transaction():
+        delete_credentials(account=account)
 
 
 class SecretPrompt(Protocol):
@@ -91,14 +120,23 @@ def _load_keys() -> dict[str, SecretStr]:
         raise UserError('Stored API keys are invalid. Repair the api-keys credential bundle.') from None
 
 
-def save_key(*, name: str, value: str) -> str:
-    """Save one key without touching unrelated credentials or SQLite."""
+class KeyExistsError(ValueError):
+    """`save_key(replace=False)` found a key of that name, which other connections may share."""
+
+
+def save_key(*, name: str, value: str, replace: bool = True) -> str:
+    """Save one key without touching unrelated credentials or SQLite.
+
+    `replace=False` checks and saves under one lock, so a key another process just created is not overwritten.
+    """
     name = normalize_name(name=name)
     value = value.strip()
     if not value:
         raise ValueError('An API key is required.')
     with key_transaction():
         keys = _load_keys()
+        if not replace and name in keys:
+            raise KeyExistsError(f'{name} is already saved.')
         keys[name] = SecretStr(value)
         _save_keys(keys=keys)
     path = credentials_path(account='api-keys')
@@ -117,16 +155,20 @@ class _Credential(BaseModel):
     token: SecretStr | KeyReference = Field(default_factory=lambda: SecretStr(''))
 
 
+_KEY_ACCOUNTS = ('vllm', 'openrouter', 'pylon')
+"""Credential accounts whose `token` may name a saved key, so a rename cannot strand them."""
+
+
 def key_users(*, name: str) -> list[str]:
-    """Find saved provider references without exposing their inline credentials."""
+    """Find saved provider and plugin references without exposing their inline credentials."""
     users: list[str] = []
-    for account in ('vllm', 'openrouter'):
+    for account in _KEY_ACCOUNTS:
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
                 credential = _Credential.model_validate_json(raw)
             except ValidationError:
-                raise UserError(f'Reconfigure the invalid {account} connection through /add_model first.') from None
+                raise UserError(f'Reconfigure the invalid {account} connection first.') from None
             if isinstance(credential.token, KeyReference) and credential.token.name == name:
                 users.append(account)
     return users

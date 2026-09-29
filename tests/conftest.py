@@ -374,10 +374,6 @@ def anyio_backend(pytestconfig: pytest.Config) -> str:
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # coverage reads Python source files while collecting coverage data. Remove these once
-    # https://github.com/cbornet/blockbuster/pull/69 is released in a compatible version.
-    ('os.stat', 'coverage/python.py', 'get_python_source'),
-    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
     # example printing from inside a running event loop trips the detector on the harness's own
     # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
@@ -751,12 +747,15 @@ def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
     if vcr.play_count == 0 and not strict_usage:
         return
 
-    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
-    if unused_indexes:
-        pytest.fail(
-            f'Cassette {vcr.path} did not play all interactions: '
-            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
-        )
+    # Each protocol numbers its interactions from 0, and `play_counts` only covers HTTP.
+    unused = {
+        'HTTP': [index for index in range(len(vcr.interactions)) if vcr.play_counts.get(index, 0) == 0],
+        'gRPC': [index for index, played in enumerate(vcr.grpc_played_indices) if not played],
+        'WebSocket': [index for index, played in enumerate(vcr.ws_played_indices) if not played],
+    }
+    if any(unused.values()):
+        details = '; '.join(f'unused {protocol} indexes: {indexes}' for protocol, indexes in unused.items() if indexes)
+        pytest.fail(f'Cassette {vcr.path} did not play all interactions: {details}')
 
 
 @pytest.fixture(autouse=True)

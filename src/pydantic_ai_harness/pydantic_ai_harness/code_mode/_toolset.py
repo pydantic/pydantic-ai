@@ -545,6 +545,23 @@ def _sanitize_tool_name(name: str) -> str:
     return sanitized or '_'
 
 
+def _warn_missing_return_schemas(names: Sequence[str]) -> None:
+    """Warn once for every tool whose sandbox signature will show `-> Any`.
+
+    Without a return schema the model gets no type information about the return shape,
+    which limits code mode effectiveness. MCP servers commonly omit output schemas, so the
+    tools are named in one warning rather than one warning each.
+    """
+    if not names:
+        return
+    if len(names) == 1:
+        message = f'CodeMode: tool {names[0]!r} has no return schema; its signature will show `-> Any`'
+    else:
+        listed = ', '.join(repr(name) for name in names)
+        message = f'CodeMode: {len(names)} tools have no return schema ({listed}); their signatures will show `-> Any`'
+    warnings.warn(f'{message}, which may reduce code mode effectiveness.', UserWarning, stacklevel=3)
+
+
 def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
     """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
 
@@ -1279,6 +1296,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """
         callable_defs: dict[str, ToolDefinition] = {}
         sanitized_to_original: dict[str, str] = {}
+        missing_return_schema: list[str] = []
         for name, tool in wrapped_tools.items():
             td = tool.tool_def
 
@@ -1297,23 +1315,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     stacklevel=2,
                 )
                 continue
-            # Warn when a sandboxed tool has no return schema -- the generated
-            # signature will show `-> Any`, giving the model no type information
-            # about the return shape, which limits code mode effectiveness.
             if td.return_schema is None and name not in self._warned_deferred:
-                self._warned_deferred.add(name)
-                warnings.warn(
-                    f'CodeMode: tool {name!r} has no return schema; '
-                    f'its signature will show `-> Any`, which may reduce code mode effectiveness.',
-                    UserWarning,
-                    stacklevel=2,
-                )
+                missing_return_schema.append(name)
 
             if safe_name != name:
                 sanitized_to_original[safe_name] = name
                 td = replace(td, name=safe_name)
 
             callable_defs[safe_name] = td
+        _warn_missing_return_schemas(missing_return_schema)
+        # Recorded only once warned, so a warning escalated to an error is raised again next time.
+        self._warned_deferred.update(missing_return_schema)
         return callable_defs, sanitized_to_original
 
     @staticmethod

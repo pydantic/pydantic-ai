@@ -27,7 +27,7 @@ import tempfile
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from unittest import mock
 
@@ -132,19 +132,20 @@ def run_block(
 
 
 def _run_temporal_script(example: CodeExample) -> dict[str, object]:
-    """Run `example` as a script file against a local Temporal dev server on `localhost:7233`."""
+    """Run `example` as a script file against a local Temporal dev server."""
     from temporalio.testing import WorkflowEnvironment
 
     # The block runs its own `asyncio.run(main())`, so the server lives on a portal thread's loop.
     async def start() -> WorkflowEnvironment:
-        return await WorkflowEnvironment.start_local(port=7233)  # pyright: ignore[reportUnknownMemberType]
+        return await WorkflowEnvironment.start_local()  # pyright: ignore[reportUnknownMemberType]
 
     with start_blocking_portal() as portal:
         env = portal.call(start)
         try:
             # Temporal validates a workflow by re-importing its module, so `__main__` must be a
             # real file, as with `python example.py`; `exec` would leave pytest as `__main__`.
-            return _run_script(example)
+            address = env.client.service_client.config.target_host
+            return _run_script(replace(example, source=example.source.replace(_TEMPORAL_ADDRESS, address)))
         finally:
             portal.call(env.shutdown)
 

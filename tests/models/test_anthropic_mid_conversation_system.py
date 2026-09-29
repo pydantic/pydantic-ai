@@ -763,7 +763,10 @@ async def test_mid_conversation_system_prompt_on_bedrock(
     )
 
 
-async def test_native_tool_availability_delta(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-8', 'claude-sonnet-5-5'])
+async def test_native_tool_availability_delta(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, model_name: str
+):
     """A framework tool reveal reaches the model, which then calls the tool it just learned about.
 
     A delta arriving on its own has the same problem a lone system prompt does — nothing legal to
@@ -777,7 +780,7 @@ async def test_native_tool_availability_delta(allow_model_requests: None, anthro
     `lookup_refund_policy` or its `order_id` parameter, so a call to it can only have come from the
     reveal.
     """
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     tool = ToolDefinition(
         name='lookup_refund_policy',
         description='Look up the refund policy for an order.',
