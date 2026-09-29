@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._run_resolution import resolve_capability_for_run
+from ._run_resolution import record_partial_run_capability_resolution, resolve_capability_for_run
 from .abstract import AbstractCapability, CapabilityOrdering
 from .wrapper import WrapperCapability
 
@@ -92,7 +92,9 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             return None
         return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
 
-    async def _resolve_capability(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+    async def _resolve_capability(
+        self, ctx: RunContext[AgentDepsT], *, capture_partial: bool = False
+    ) -> AbstractCapability[AgentDepsT] | None:
         capability = self.capability_func(ctx)
         if inspect.isawaitable(capability):
             capability = await capability
@@ -100,10 +102,16 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             return None
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
         capability = capability.for_agent(ctx.agent)
+        if capture_partial:
+            # The child may create state and then raise in `for_run`. Preserve it for setup
+            # cleanup even though this dynamic wrapper will not return a resolved instance.
+            record_partial_run_capability_resolution(
+                self, ResolvedDynamicCapability(wrapped=capability, dynamic_toolset=self.get_toolset())
+            )
         return await resolve_capability_for_run(capability, ctx)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        capability = await self._resolve_capability(ctx)
+        capability = await self._resolve_capability(ctx, capture_partial=True)
         if capability is None:
             return self
         return ResolvedDynamicCapability(wrapped=capability, dynamic_toolset=self.get_toolset())

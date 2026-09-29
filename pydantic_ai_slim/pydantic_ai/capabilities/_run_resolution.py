@@ -31,6 +31,11 @@ class RunCapabilityResolutions:
 
 
 _current_resolutions: ContextVar[RunCapabilityResolutions | None] = ContextVar('_current_resolutions', default=None)
+# A capability may appear more than once and resolve concurrently. Keep the active occurrence
+# in task-local state so a child created mid-resolution can be attached to the right parent.
+_current_resolution: ContextVar[tuple[RunCapabilityResolutions, object, int] | None] = ContextVar(
+    '_current_resolution', default=None
+)
 _setup_error_dispatch: ContextVar[object | None] = ContextVar('_setup_error_dispatch', default=None)
 
 
@@ -73,12 +78,30 @@ def resolve_capability_for_run(
     occurrence = resolutions.reserve(capability) if resolutions is not None else None
 
     async def resolve() -> AbstractCapability[AgentDepsT]:
-        resolved = await capability.for_run(ctx)
+        token: Token[tuple[RunCapabilityResolutions, object, int] | None] | None = None
         if resolutions is not None and occurrence is not None:
-            resolutions.record(capability, occurrence, resolved)
-        return resolved
+            token = _current_resolution.set((resolutions, capability, occurrence))
+        try:
+            resolved = await capability.for_run(ctx)
+            if resolutions is not None and occurrence is not None:
+                resolutions.record(capability, occurrence, resolved)
+            return resolved
+        finally:
+            if token is not None:
+                _current_resolution.reset(token)
 
     return resolve()
+
+
+def record_partial_run_capability_resolution(
+    capability: AbstractCapability[AgentDepsT], resolved: AbstractCapability[AgentDepsT]
+) -> None:
+    """Retain an accessible child when its enclosing `for_run` has not finished yet."""
+    active = _current_resolution.get()
+    if active is not None:
+        resolutions, resolving, occurrence = active
+        if resolving is capability:
+            resolutions.record(capability, occurrence, resolved)
 
 
 def replace_resolved_run_capabilities(

@@ -983,6 +983,38 @@ async def test_setup_failure_calls_on_run_error_on_resolved_capability(dynamic: 
     assert cleaned == ['resolved']
 
 
+async def test_setup_failure_cleans_dynamic_child_that_fails_in_for_run() -> None:
+    cleaned: list[int] = []
+    first_ready = asyncio.Event()
+    calls = 0
+
+    class Child(AbstractCapability[object]):
+        def __init__(self, instance: int) -> None:
+            self.instance = instance
+
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            if self.instance == 1:
+                first_ready.set()
+                return self
+            await first_ready.wait()
+            raise RuntimeError('dynamic child setup failed')
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append(self.instance)
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    def dynamic_child(ctx: RunContext[object]) -> AbstractCapability[object]:
+        nonlocal calls
+        calls += 1
+        return Child(calls)
+
+    dynamic = DynamicCapability(dynamic_child)
+    with pytest.raises(RuntimeError, match='dynamic child setup failed'):
+        await Agent(TestModel()).run('go', capabilities=[CombinedCapability([dynamic, dynamic])])
+
+    assert cleaned == [2, 1]
+
+
 async def test_setup_failure_calls_on_run_error_for_each_repeated_resolved_capability() -> None:
     cleanup_order: list[int] = []
     second_resolution_complete = asyncio.Event()
