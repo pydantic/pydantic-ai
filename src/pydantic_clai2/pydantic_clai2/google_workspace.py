@@ -220,7 +220,7 @@ class SettingsSource(Generic[DepsT]):
 
 
 async def configure(host: PluginHost[DepsT], args: list[str], *, runners: Runners = TERMINAL) -> str:
-    """Open the settings menu; Esc closes it with every edit already saved."""
+    """Open the settings menu; Esc or Save & close leaves it with every edit already saved."""
     if args:
         raise ValueError('Usage: /google_workspace (opens the settings menu)')
     source = SettingsSource(host)
@@ -241,6 +241,7 @@ async def configure(host: PluginHost[DepsT], args: list[str], *, runners: Runner
 def activate(host: PluginHost[DepsT]) -> None:
     """Load without a token so `/google_workspace` is available to supply one; every run needs it."""
     host.settings(GoogleWorkspaceSettings)
+    host.configure(partial(configure, host, []))
     host.commands.register(
         Command(
             name='google_workspace',

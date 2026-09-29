@@ -517,16 +517,17 @@ disabled. It gives the agent the tools of Google's hosted Workspace MCP servers
 through harness [`GoogleWorkspace`](../../docs/harness/google-workspace.md). It needs a
 Google OAuth access token whose scopes cover the products you select.
 
-Enable it, then open its settings menu:
+Turning it on (Space in `/plugins`, or `/plugins enable google_workspace`) opens
+its settings menu. Open it again later with `C` in `/plugins`,
+`/plugins configure google_workspace`, or:
 
 ```text
-/plugins enable google_workspace
 /google_workspace
 ```
 
-`/google_workspace` opens a full-screen menu with one row per setting. Up/Down
-moves, Enter edits a row, `r` puts a row back to its default, and Esc closes.
-Each change is saved to the plugin's declaration as soon as you make it and applies
+The settings menu is full-screen with one row per setting. Up/Down moves, Enter
+edits a row, `r` puts a row back to its default, and **Save & close** or Esc
+leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
 from the next turn, without reloading. Run `/google_workspace` again at any time
 to change a setting or pick a different key.
 
@@ -561,9 +562,7 @@ environment variable is not read; key names are labels, not environment variable
 **Not configurable here.** The token decides the Google account and its OAuth
 scopes. `GoogleWorkspace` takes a ready-made access token and has no OAuth client
 ID, client secret, or scope settings, so there is nothing about the OAuth client to
-store: mint the token with your own OAuth client and save it in `/keys`. Enabling
-from the `/plugins` menu does not open this menu, because that menu already owns
-the screen; the load warning points you to `/google_workspace`.
+store: mint the token with your own OAuth client and save it in `/keys`.
 
 Declarations still work for scripted setups:
 
@@ -978,13 +977,11 @@ settings = host.settings(NotifySettings)
 
 Bad or missing values fail at startup with a message naming your plugin.
 
-To edit settings from inside the plugin, for example from a settings menu it
-registers as a command, call `host.save_settings(model)`. It stores the values
-that differ from the model's defaults on the plugin's declaration right away, and
-`host.settings(Model)` returns them from then on. Read them per run (for example in
-a capability function passed to `host.add`) so an edit reaches the next turn
-without a reload. Keep secrets out: settings are plain SQLite, so store a
-`/keys` name instead. `google_workspace` is a worked example.
+To edit settings from inside the plugin, call `host.save_settings(model)` (see
+[`@host.configure`](#offer-a-settings-menu-hostconfigure)); `host.settings(Model)`
+returns them from then on. Read them per run (for example in a capability
+function passed to `host.add`) so an edit also reaches the next turn from a
+plugin command, without a reload. `google_workspace` is a worked example.
 CLAI ignores unknown names in its own saved settings and preserves their values for
 other versions or branches. This does not relax validation of plugin declarations
 or `host.settings(Model)`.

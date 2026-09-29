@@ -25,7 +25,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.google_workspace import GoogleWorkspaceSettings
 from pydantic_clai2.plugin_loader import PluginLoader
-from pydantic_clai2.plugin_menu import PluginMenu
+from pydantic_clai2.plugin_menu import Configure, PluginMenu
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.menu_script import Script, pick
@@ -259,9 +259,7 @@ async def test_menu_edits_options_and_saves_each_one_immediately(tmp_path: Path)
     source.reset(rows['include_instructions'])
     source.reset(rows['services'])
     [declaration] = [plugin for plugin in store.plugins() if plugin.id == 'google_workspace']
-    assert declaration.settings == {}
-    [entry] = [entry for entry in plugins.entries() if entry.name == 'google_workspace']
-    assert entry.builtin
+    assert declaration.settings == GoogleWorkspaceSettings().model_dump(mode='json')
     await plugins.close('exit')
 
 
@@ -315,8 +313,10 @@ def test_declared_as_a_disabled_builtin_that_enables_from_the_menu(tmp_path: Pat
     asyncio.run(plugins.load_all())
     assert plugins.capabilities() == []
     menu = PluginMenu(plugins, apply=apply)
-    [item] = menu.items()
-    menu.toggle(Redraw(), item)
+    [item, _save_and_close] = menu.items()
+    opened = menu.toggle(Redraw(), item)
+    assert opened is not None and opened.item is not None
+    assert opened.item.value == Configure('google_workspace')
     assert menu.notice is None
     assert 'enabled, loaded' in menu.details(item)
     [factory] = plugins.capabilities()
