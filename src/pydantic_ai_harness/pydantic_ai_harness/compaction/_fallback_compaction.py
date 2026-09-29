@@ -42,6 +42,8 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     subclasses are never caught.
     """
 
+    strategy_id = 'fallback'
+
     fallback_chain: Sequence[CompactionStrategy[AgentDepsT]]
     fallback_on: tuple[type[Exception], ...] = (ModelAPIError, FallbackExceptionGroup)
 
@@ -122,7 +124,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
             return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='fallback',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self._compact_pinned(messages, request_ctx),
             tokenizer=self.tokenizer,

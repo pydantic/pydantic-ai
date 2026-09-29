@@ -64,6 +64,8 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    strategy_id = 'tiered'
+
     tiers: Sequence[CompactionStrategy[AgentDepsT]]
     """Strategies to apply in order, cheap-to-expensive.  The last is typically a summarizer."""
 
@@ -210,7 +212,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='tiered',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self._escalate(messages, request_ctx, target, request_context.model_request_parameters),
             tokenizer=self.tokenizer,
