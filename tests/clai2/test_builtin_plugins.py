@@ -18,7 +18,18 @@ from pydantic_clai2.plugin_menu import PluginMenu
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.settings_store import SettingsStore
 
-CURATED = {'coder', 'ask_user', 'repo_context', 'compaction', 'persistence', 'logfire', 'notifications', 'mcp'}
+CURATED = {
+    'coder',
+    'ask_user',
+    'repo_context',
+    'compaction',
+    'persistence',
+    'logfire',
+    'notifications',
+    'mcp',
+    'github',
+}
+OPT_IN = {'github'}
 
 
 class Menu:
@@ -40,9 +51,9 @@ def _apply(action: Coroutine[object, object, object]) -> None:
     asyncio.run(action)
 
 
-def test_builtins_are_the_curated_enabled_set() -> None:
+def test_builtins_are_the_curated_set_with_opt_in_integrations_off() -> None:
     assert sorted(plugin.id for plugin in DEFAULT_PLUGINS) == sorted(CURATED)
-    assert all(plugin.enabled for plugin in DEFAULT_PLUGINS)
+    assert {plugin.id for plugin in DEFAULT_PLUGINS if not plugin.enabled} == OPT_IN
 
 
 def test_menu_offers_no_uncurated_harness_capabilities(tmp_path: Path) -> None:
