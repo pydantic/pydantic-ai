@@ -2236,18 +2236,22 @@ class AgentRealtime(Generic[AgentDepsT]):
         ) as resolved:
             # Current while the offer is answered, as while a session connects: a model can consult the
             # agent it belongs to (GPT-Live delegates to the agent's own model by default).
-            # Passed only when there is some, so a `RealtimeModel` written before the parameter existed keeps
-            # working without history.
-            history: dict[str, Sequence[_messages.ModelMessage]] = (
-                {'message_history': self._message_history} if self._message_history else {}
-            )
             with set_current_run_context(resolved.run_context):
+                if self._message_history:
+                    return await resolved.model.answer_webrtc_offer(
+                        sdp_offer,
+                        instructions=resolved.instructions,
+                        tools=resolved.model_request_parameters.function_tools,
+                        model_settings=resolved.model_settings,
+                        message_history=self._message_history,
+                    )
+                # Without history the keyword isn't passed, so a `RealtimeModel` written before it existed
+                # keeps working.
                 return await resolved.model.answer_webrtc_offer(
                     sdp_offer,
                     instructions=resolved.instructions,
                     tools=resolved.model_request_parameters.function_tools,
                     model_settings=resolved.model_settings,
-                    **history,
                 )
 
     async def create_client_secret(self, *, expires_after_seconds: int | None = None) -> RealtimeClientSecret:

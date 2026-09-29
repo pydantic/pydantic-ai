@@ -501,6 +501,25 @@ async def test_agent_answer_webrtc_offer(openai_api_key: str) -> None:
     assert answer.sdp.startswith('v=0')
 
 
+async def test_answer_webrtc_offer_leaves_history_to_the_sideband() -> None:
+    """The Realtime API's calls endpoint takes no conversation items (it rejects `session.input`, checked live).
+
+    So the offer carries none, and the history is seeded once, by the sideband when it attaches.
+    """
+    sessions: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = request.content.decode()
+        sessions.append(json.loads(body.split('Content-Type: application/json\r\n\r\n', 1)[1].split('\r\n--', 1)[0]))
+        return httpx2.Response(201, text=SAMPLE_SDP_ANSWER, headers={'Location': '/v1/realtime/calls/rtc_abc'})
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+    history = [ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])]
+    await model.answer_webrtc_offer(SAMPLE_SDP_OFFER, message_history=history)
+
+    assert 'Ada' not in json.dumps(sessions)
+
+
 async def test_answer_webrtc_offer_missing_location() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(201, text=SAMPLE_SDP_ANSWER)  # no Location header
