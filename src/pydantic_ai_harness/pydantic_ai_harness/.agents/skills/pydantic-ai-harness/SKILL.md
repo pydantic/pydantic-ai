@@ -83,7 +83,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
-`E2BSandbox` and `SpritesSandbox` work the same way. See
+`E2BSandbox`, `SpritesSandbox`, and `DockerSandbox('python:3.13-slim')` (a local Docker or Podman container, no extra) work the same way. See
 [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) for credentials, lifetimes, and sharing a
 workspace between runs.
 
