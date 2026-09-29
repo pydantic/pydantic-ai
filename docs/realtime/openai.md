@@ -453,7 +453,7 @@ the provider-agnostic workflows.
 | Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
-| Reconnection | Full feature support | With a [`reconnect`](lifecycle.md#reconnecting) policy, a session stored with `openai_live_store=True` is forked, keeping the conversation on OpenAI's side; otherwise the text of the [completed history is replayed](lifecycle.md#state-restoration) into a new session |
+| Reconnection | Full feature support | With a [`reconnect`](lifecycle.md#reconnecting) policy, a session stored with `openai_live_store=True` is forked, keeping the conversation on OpenAI's side; otherwise the text of the [completed history is replayed](lifecycle.md#state-restoration) into a new session, as much of its recent end as Live's seeding caps allow |
 
 #### What raises
 
