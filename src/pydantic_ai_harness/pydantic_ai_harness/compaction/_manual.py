@@ -10,7 +10,7 @@ from opentelemetry.trace import NoOpTracer
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.compaction._shared import SupportsFocus, compact_with_span
+from pydantic_ai_harness.compaction._shared import SupportsFocus, compact_with_span, strategy_id
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
@@ -127,8 +127,9 @@ async def compact_now(
     )
     return await compact_with_span(
         ctx,
-        strategy=type(focused).__name__,
+        strategy=strategy_id(focused),
         messages=messages,
         compact=lambda: focused.compact(messages, ctx),
         tokenizer=tokenizer,
+        emits=False,
     )

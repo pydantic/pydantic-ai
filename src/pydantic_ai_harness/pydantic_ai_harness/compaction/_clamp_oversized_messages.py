@@ -80,6 +80,8 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    strategy_id = 'clamp_oversized_messages'
+
     max_part_tokens: int | None = None
     """Clamp a part whose estimated token count exceeds this value. `None` disables this trigger."""
 
@@ -180,7 +182,7 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
         request_ctx = context_for_request(ctx, request_context)
         request_context.messages = await compact_with_span(
             request_ctx,
-            strategy='ClampOversizedMessages',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,

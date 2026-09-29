@@ -1,0 +1,382 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '169'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      instructions: You are a helpful math assistant. Give short answers.
+      model: gpt-4o-mini
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_08c971828c85c4d4006a8f9af99c6c87d1a88453c153fa5cc4","object":"response","created_at":1787796217,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_08c971828c85c4d4006a8f9af99c6c87d1a88453c153fa5cc4","object":"response","created_at":1787796217,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","type":"message","status":"in_progress","content":[],"role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"2","item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"obfuscation":"u6AbCwi0020UCTB","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" +","item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"obfuscation":"krwMtvJmwhfJ7G","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"obfuscation":"YTxZ4A9uwWdcUWu","output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"2","item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"obfuscation":"Wu4WKfMuhKCotzG","output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" =","item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"obfuscation":"7NgMhaYze1AWk9","output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"obfuscation":"Xvl8HLOOszBC8rL","output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"4","item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"obfuscation":"3jylhaKi6RuEM9I","output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"obfuscation":"jVF5OOYdG8CA3LA","output_index":0,"sequence_number":11}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","logprobs":[],"output_index":0,"sequence_number":12,"text":"2 + 2 = 4."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"2 + 2 = 4."},"sequence_number":13}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"2 + 2 = 4."}],"role":"assistant"},"output_index":0,"sequence_number":14}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_08c971828c85c4d4006a8f9af99c6c87d1a88453c153fa5cc4","object":"response","created_at":1787796217,"status":"completed","background":false,"completed_at":1787796219,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[{"id":"msg_08c971828c85c4d4006a8f9afb739c87d1b401234e3cd42e94","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"2 + 2 = 4."}],"role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":29,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":9,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":38},"user":null,"metadata":{}},"sequence_number":15}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '283'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '258'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      - content: 2 + 2 = 4.
+        role: assistant
+      - content: And 3+3?
+        role: user
+      instructions: You are a helpful math assistant. Give short answers.
+      model: gpt-4o-mini
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0d8f57ee10bf6ae4006a8f9afbfca487d1986ce8a5f6b026ca","object":"response","created_at":1787796220,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0d8f57ee10bf6ae4006a8f9afbfca487d1986ce8a5f6b026ca","object":"response","created_at":1787796220,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","type":"message","status":"in_progress","content":[],"role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"3","item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"obfuscation":"lVhsGOWSrugKteR","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" +","item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"obfuscation":"YL53IpIc0jZk2L","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"obfuscation":"1CLBn4OjESKvti8","output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"3","item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"obfuscation":"rZDd11fi9gd6NRQ","output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" =","item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"obfuscation":"1byN7AXU3svJBy","output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"obfuscation":"ScFk87CvtHyM8yj","output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"6","item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"obfuscation":"belwOgq4137sLby","output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"obfuscation":"uLP4BCep8lR9Bky","output_index":0,"sequence_number":11}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","logprobs":[],"output_index":0,"sequence_number":12,"text":"3 + 3 = 6."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"3 + 3 = 6."},"sequence_number":13}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"3 + 3 = 6."}],"role":"assistant"},"output_index":0,"sequence_number":14}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0d8f57ee10bf6ae4006a8f9afbfca487d1986ce8a5f6b026ca","object":"response","created_at":1787796220,"status":"completed","background":false,"completed_at":1787796224,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[{"id":"msg_0d8f57ee10bf6ae4006a8f9b00230887d1b08a23b23413b564","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"3 + 3 = 6."}],"role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":51,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":9,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":60},"user":null,"metadata":{}},"sequence_number":15}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '149'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '290'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      - content: 2 + 2 = 4.
+        role: assistant
+      - content: And 3+3?
+        role: user
+      - content: 3 + 3 = 6.
+        role: assistant
+      instructions: You are a helpful math assistant. Give short answers.
+      model: gpt-4o-mini
+    uri: https://api.openai.com/v1/responses/compact
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3959'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '3174'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1787796227
+      id: resp_05d83fb410978bbd016a8f9b009ec487d188c6fa5bf7f6c3ac
+      object: response.compaction
+      output:
+      - content:
+        - text: What is 2+2?
+          type: input_text
+        id: msg_05d83fb410978bbd016a8f9b00a4e487d1b936f1ca18efe295
+        role: user
+        status: completed
+        type: message
+      - content:
+        - text: And 3+3?
+          type: input_text
+        id: msg_05d83fb410978bbd016a8f9b00a51c87d1a651724591b16ae1
+        role: user
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABqj5sDNyZeD6k_HfCoxvLitd0zAB2cTvfSZtXhZqPfm4EuxFJHRMYQM97TqAtIE9W0DqaaHd6opJBoQDLNxiqjFjeck1HE8E4VFl1JnuoebNBzCPyPELjUhzKf42zVSr4OQ559AcOZPeT1q2nhqA-snJcnxrZCrB6wrI7tvA7C_GYvUhJQQBqqXbQSwR98x5rAYO9sB5MqiafuzA2Z9JGOdGfluTtQWUIy0MmDEve038Ggro9AW8Qt_8sUPPjIA8EAo-ECqdbBS7zOgwoAqgyuj4rbJI7dBw4DduH8rBkrMmK4GIRN6HK84754jMA1LyzBuaRF9uHgdQTykJoN5FC3kivVNQ_Qj3GCCdA7mPFDnr_wI3o7ZqnohRPrZ0bjoenAeUc97JgbMwGLmXYCC2xlRC9AqnSUWRP-uJq-O5X4CwnyOwFwIHs6-PAPMmZMbh5xSI9E--ejj5S1YwezfP9a6R83lB6suX2ZcBFKu2u2-_j7KfVLmDuL_XSJjFEPBhkUJnF06b3G3LNl6fh5jHqgBWEt6cAaq3W2cgDMEsfthsKWufqsxJTNa6veGGjnlkDSzQqoTkv7gGnEbu69dZAlGEPQChXhNhQWGKAANAvYtevyGjOWO3a2TwLOiiyfRJkxOzEV8zhO2Pbt1rKLjYvzlVdAtoS3BpOCiqlOSTBTq2PzZeb8NbhgpCH6Zu63VETSspakEGnMp9rccsG1ALDb_ZBfPGh-nV3p6WOwWOSJ7KDbyn-mnaW2nwsHVKhUJ6bVGCx3bsXg3E-fDGRW4Pj7gylMEwrZO050cSQKo30cnTtAoyTwA1EuOtfG65rPPNj650ZbM8Z3gXKF4iR057_XbZ1xnrFi7ggamGf7i7p0x6lP8EJvSsecDYQ4dyP0n6Kej2d7ezyXV6iBe1mhqUkLNLSomn5quMMBCLGU51IoX4UXPPY_1_3-ZbyW0R2f9DUoq42-ZH24KRDdVPmsT75YKRHmopp3bhtCitIsvNF62zoATgtE5wMPJX8JBHO44LZcPTmb4Zm-KnG8j610X8nQ2mKxj2DmqLw28pCyPAgvFmpBAu_UKq8WPF5PZtbsxwQKfzi0Jrhmm4-l7yYq3L7t99r1NuG-igu4hNrIRWLTRddVgOAT7Rm9MHaffkeFOoJc7OyDlMrW1LJkK1-o2FlA9ZCC0uMDG_nvrHWLxlErN658z75EWUG6MfJaAaRVzwsAzxdHBYvMEZrgsdgvJYd4G7eeynMru6ZbCKH5SibDkE7QlC3TZHJ9r4Qr8khKY_eq8DE9YV_6uGmx7UM5YxOH6UrBagJuJOQAdJGbGGOmne0mSwdYJpw7ETnxFBmS8zT9reP7HwmnTb4Lg28Vxv72ABq4n0QuIwPfTrqeMNb7ZnHPEuj9xP1pTPicxI7n13dUgZjFCA3PKZoEshMCAaiZcgsvTXIoBnGFRnq5og5M6ZEFFeYVcTLHD2W8vFXexfnnU4yc3_6WIYURWhp6tVHijwSAQ5DF30rUvXsOVJ1q6TsoNmqmeg7IukGRSTlOjIb7CoXvYqKHdj0eBScUcWJPOlhtl6drYqZuZ_VfAX6-r8XL_6w6GIZX8rTwvzcZsPpgF9Ht9gpJ0IIHOhPtEyWVVSPIGC0gHo6ZyxPIe2G23FC4_32hhluEqirde8B0xXC0MC8YYR3g7KdCQeq9WwerghXC1xDhegjSFfpNxVLD4wDnNlzqyqatOxa7-0YfbQ84wTLw9ocA9cvpQdzRz3HDVjiUX85s7xqQapQSXc90--yi7UR3slAZfdRzXX8GgXgRCT7JDajzPF8k1URIsTRroiKNv6UBuAD2FEsXd2E2yZqFKVCF8DHHWm-XoNjDA0mkZZq17Nw03EaMcE_IfsiBSqNmu6P0ga3ibmLjGrju-yCMTkHWBKiyGybiiDd2tJ75-zqZBFXsl-1XVynEpQoyVGwmW1yC8mcdI2rTNEBNBdYZUAfcsK94m3vtt6ABK21igjIMgD-P3ymvYzlraupteAPaFXbC8u_yARg8Swdgrv1hLnjogF3Q0IcFBqnu_jarMvYcfxKowle7xw-GauzYaviMeRGV3Qz7QpRw9tW_8NOwYq6xlxadmD4LBvQ8CqitbWHFf1GitymKcYB5Qs2UMUM3gIRGevGFgmIkaBBdAtBJORxV1YBzZD9ypWpMgopPOCoA27lEJ1Fmv2yCofMb6TuOIo8cfJsx1GfDO-X8Fxh7eooqEBDCb-BgqtytsdyLr9jtcWcHm-96Ytnl4ea8i89ACpSbU_L_ryN5ePcGz1I0upNBfSjgC4O9G71a9v5tZZk2KjKQVwV-ZBh6uUgLbjZLP7vPN1fnr40BXyf8GsgWUuPcLSQfbsGi4q7fjeSZeqk6t4VBQuLAAVHh0Lcu9tsZrM5urqNL0tDJvrj8U9u15oOT43irurLNZR4PSkIqIK9ZzcaMtUd-fKOUJmGOsk_atOQ0I428kmM_KxJjSC2HNw64E27Vu75-J1mXxiYrZbrOJHKnE9hIzPKUiDIodXNp6MFXpchgvzceH8BJJxfMmQLNUncqa_Rbs34r5Tbeugyw8yVA_SQCKdYmuHnfF2NhSc0HSEgwwRsjYA2ykYrU2qAA47OPql8vslhGN7J9DkNOthSHf2ezqlOESBMuHraGi6dxmuI7B57MokubLLQwlNhyMoafxSjp3Mj3C3FIbmkEIbTNblDkjo_DUTV2GJRbeFU1NnYSFbNYnfTlCilQD2rQikuPPEoNK8tLObssX-6ckA6CK0KrdAxKsxPZ-eUUb2xgH0_YTPjvtgdOdGWGnNTzOxN-GZBe3d37zTpXgCw1NVOiP5eMEuNjB4eC4PNUFYEpKUgtrUuWGg_p96yO-BtumSLahCfV4iHHtsFnpGIc_0gTV3omeD-21qpZXlHG-J6w794_kn4mpjUNF_mPTxzNhjwwQqkXMJGrLyDk3zqtqxTXmdu850NzJk6hy4kCPHzc-3Wobb2ZgnNbjod6sjIrj8xLq1voX3PfjgMRpoWWtZsgdMYg6krPg4sTRhChIXOEmaabfHu8hyQOliyKxDD9xaD_J2DYKZmC4mZFQgKY4L0khOZhTyaVdPtg4M8WUA7G1p1gT5pcVSnxTfME8rPuNpK7ZV3t4wACD5DMdFic
+        id: cmp_05d83fb410978bbd016a8f9b01f27487d1934e3b6fc9d3cbdb
+        type: compaction
+      usage:
+        input_tokens: 156
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 178
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 334
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3426'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - encrypted_content: gAAAAABqj5sDNyZeD6k_HfCoxvLitd0zAB2cTvfSZtXhZqPfm4EuxFJHRMYQM97TqAtIE9W0DqaaHd6opJBoQDLNxiqjFjeck1HE8E4VFl1JnuoebNBzCPyPELjUhzKf42zVSr4OQ559AcOZPeT1q2nhqA-snJcnxrZCrB6wrI7tvA7C_GYvUhJQQBqqXbQSwR98x5rAYO9sB5MqiafuzA2Z9JGOdGfluTtQWUIy0MmDEve038Ggro9AW8Qt_8sUPPjIA8EAo-ECqdbBS7zOgwoAqgyuj4rbJI7dBw4DduH8rBkrMmK4GIRN6HK84754jMA1LyzBuaRF9uHgdQTykJoN5FC3kivVNQ_Qj3GCCdA7mPFDnr_wI3o7ZqnohRPrZ0bjoenAeUc97JgbMwGLmXYCC2xlRC9AqnSUWRP-uJq-O5X4CwnyOwFwIHs6-PAPMmZMbh5xSI9E--ejj5S1YwezfP9a6R83lB6suX2ZcBFKu2u2-_j7KfVLmDuL_XSJjFEPBhkUJnF06b3G3LNl6fh5jHqgBWEt6cAaq3W2cgDMEsfthsKWufqsxJTNa6veGGjnlkDSzQqoTkv7gGnEbu69dZAlGEPQChXhNhQWGKAANAvYtevyGjOWO3a2TwLOiiyfRJkxOzEV8zhO2Pbt1rKLjYvzlVdAtoS3BpOCiqlOSTBTq2PzZeb8NbhgpCH6Zu63VETSspakEGnMp9rccsG1ALDb_ZBfPGh-nV3p6WOwWOSJ7KDbyn-mnaW2nwsHVKhUJ6bVGCx3bsXg3E-fDGRW4Pj7gylMEwrZO050cSQKo30cnTtAoyTwA1EuOtfG65rPPNj650ZbM8Z3gXKF4iR057_XbZ1xnrFi7ggamGf7i7p0x6lP8EJvSsecDYQ4dyP0n6Kej2d7ezyXV6iBe1mhqUkLNLSomn5quMMBCLGU51IoX4UXPPY_1_3-ZbyW0R2f9DUoq42-ZH24KRDdVPmsT75YKRHmopp3bhtCitIsvNF62zoATgtE5wMPJX8JBHO44LZcPTmb4Zm-KnG8j610X8nQ2mKxj2DmqLw28pCyPAgvFmpBAu_UKq8WPF5PZtbsxwQKfzi0Jrhmm4-l7yYq3L7t99r1NuG-igu4hNrIRWLTRddVgOAT7Rm9MHaffkeFOoJc7OyDlMrW1LJkK1-o2FlA9ZCC0uMDG_nvrHWLxlErN658z75EWUG6MfJaAaRVzwsAzxdHBYvMEZrgsdgvJYd4G7eeynMru6ZbCKH5SibDkE7QlC3TZHJ9r4Qr8khKY_eq8DE9YV_6uGmx7UM5YxOH6UrBagJuJOQAdJGbGGOmne0mSwdYJpw7ETnxFBmS8zT9reP7HwmnTb4Lg28Vxv72ABq4n0QuIwPfTrqeMNb7ZnHPEuj9xP1pTPicxI7n13dUgZjFCA3PKZoEshMCAaiZcgsvTXIoBnGFRnq5og5M6ZEFFeYVcTLHD2W8vFXexfnnU4yc3_6WIYURWhp6tVHijwSAQ5DF30rUvXsOVJ1q6TsoNmqmeg7IukGRSTlOjIb7CoXvYqKHdj0eBScUcWJPOlhtl6drYqZuZ_VfAX6-r8XL_6w6GIZX8rTwvzcZsPpgF9Ht9gpJ0IIHOhPtEyWVVSPIGC0gHo6ZyxPIe2G23FC4_32hhluEqirde8B0xXC0MC8YYR3g7KdCQeq9WwerghXC1xDhegjSFfpNxVLD4wDnNlzqyqatOxa7-0YfbQ84wTLw9ocA9cvpQdzRz3HDVjiUX85s7xqQapQSXc90--yi7UR3slAZfdRzXX8GgXgRCT7JDajzPF8k1URIsTRroiKNv6UBuAD2FEsXd2E2yZqFKVCF8DHHWm-XoNjDA0mkZZq17Nw03EaMcE_IfsiBSqNmu6P0ga3ibmLjGrju-yCMTkHWBKiyGybiiDd2tJ75-zqZBFXsl-1XVynEpQoyVGwmW1yC8mcdI2rTNEBNBdYZUAfcsK94m3vtt6ABK21igjIMgD-P3ymvYzlraupteAPaFXbC8u_yARg8Swdgrv1hLnjogF3Q0IcFBqnu_jarMvYcfxKowle7xw-GauzYaviMeRGV3Qz7QpRw9tW_8NOwYq6xlxadmD4LBvQ8CqitbWHFf1GitymKcYB5Qs2UMUM3gIRGevGFgmIkaBBdAtBJORxV1YBzZD9ypWpMgopPOCoA27lEJ1Fmv2yCofMb6TuOIo8cfJsx1GfDO-X8Fxh7eooqEBDCb-BgqtytsdyLr9jtcWcHm-96Ytnl4ea8i89ACpSbU_L_ryN5ePcGz1I0upNBfSjgC4O9G71a9v5tZZk2KjKQVwV-ZBh6uUgLbjZLP7vPN1fnr40BXyf8GsgWUuPcLSQfbsGi4q7fjeSZeqk6t4VBQuLAAVHh0Lcu9tsZrM5urqNL0tDJvrj8U9u15oOT43irurLNZR4PSkIqIK9ZzcaMtUd-fKOUJmGOsk_atOQ0I428kmM_KxJjSC2HNw64E27Vu75-J1mXxiYrZbrOJHKnE9hIzPKUiDIodXNp6MFXpchgvzceH8BJJxfMmQLNUncqa_Rbs34r5Tbeugyw8yVA_SQCKdYmuHnfF2NhSc0HSEgwwRsjYA2ykYrU2qAA47OPql8vslhGN7J9DkNOthSHf2ezqlOESBMuHraGi6dxmuI7B57MokubLLQwlNhyMoafxSjp3Mj3C3FIbmkEIbTNblDkjo_DUTV2GJRbeFU1NnYSFbNYnfTlCilQD2rQikuPPEoNK8tLObssX-6ckA6CK0KrdAxKsxPZ-eUUb2xgH0_YTPjvtgdOdGWGnNTzOxN-GZBe3d37zTpXgCw1NVOiP5eMEuNjB4eC4PNUFYEpKUgtrUuWGg_p96yO-BtumSLahCfV4iHHtsFnpGIc_0gTV3omeD-21qpZXlHG-J6w794_kn4mpjUNF_mPTxzNhjwwQqkXMJGrLyDk3zqtqxTXmdu850NzJk6hy4kCPHzc-3Wobb2ZgnNbjod6sjIrj8xLq1voX3PfjgMRpoWWtZsgdMYg6krPg4sTRhChIXOEmaabfHu8hyQOliyKxDD9xaD_J2DYKZmC4mZFQgKY4L0khOZhTyaVdPtg4M8WUA7G1p1gT5pcVSnxTfME8rPuNpK7ZV3t4wACD5DMdFic
+        id: cmp_05d83fb410978bbd016a8f9b01f27487d1934e3b6fc9d3cbdb
+        type: compaction
+      - content: And 5+5?
+        role: user
+      instructions: You are a helpful math assistant. Give short answers.
+      model: gpt-4o-mini
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_05d83fb410978bbd006a8f9b03f95487d1b3d07c1be64e5ecd","object":"response","created_at":1787796228,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_05d83fb410978bbd006a8f9b03f95487d1b3d07c1be64e5ecd","object":"response","created_at":1787796228,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","type":"message","status":"in_progress","content":[],"role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"5","item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"obfuscation":"Q0tI65MOffxg0EW","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" +","item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"obfuscation":"ACbqGTagXibYWT","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"obfuscation":"tvscVxq7cCEzAPD","output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"5","item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"obfuscation":"jN4uyrTDMfH6Zyd","output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" =","item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"obfuscation":"N3Qyp7dz2C39X6","output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"obfuscation":"oKt5w4mnaK1hbAA","output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"10","item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"obfuscation":"AeaM9F1iXrdqPl","output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"obfuscation":"mrvhiCmYEJdpJTa","output_index":0,"sequence_number":11}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","logprobs":[],"output_index":0,"sequence_number":12,"text":"5 + 5 = 10."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"5 + 5 = 10."},"sequence_number":13}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"5 + 5 = 10."}],"role":"assistant"},"output_index":0,"sequence_number":14}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_05d83fb410978bbd006a8f9b03f95487d1b3d07c1be64e5ecd","object":"response","created_at":1787796228,"status":"completed","background":false,"completed_at":1787796229,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful math assistant. Give short answers.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[{"id":"msg_05d83fb410978bbd006a8f9b05907487d1a0d1020d9e3f3720","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"5 + 5 = 10."}],"role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":286,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":9,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":295},"user":null,"metadata":{}},"sequence_number":15}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '182'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

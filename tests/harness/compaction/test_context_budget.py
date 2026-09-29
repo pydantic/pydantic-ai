@@ -33,7 +33,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness.compaction import (
     DEFAULT_CONTEXT_WINDOW,
@@ -1171,6 +1171,17 @@ class TestCompactNow:
 
         assert seen == ['the auth refactor']
 
+    async def test_suppresses_lifecycle_events_for_composed_strategies(self):
+        strategy: TieredCompaction[None] = TieredCompaction(
+            tiers=[SlidingWindowCompaction(max_tokens=1, keep_messages=2)],
+            target_tokens=1,
+        )
+
+        with patch.object(RunContext, 'emit', new_callable=AsyncMock) as emit:
+            await compact_now(strategy, _history(4), model=TestModel())
+
+        emit.assert_not_awaited()
+
 
 class TestCompactNowSummarizes:
     """`compact_now` driving a strategy that really calls a model."""
@@ -1226,7 +1237,6 @@ class TestCompactNowSpan:
         return [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'compact_messages']
 
     async def test_emits_the_compaction_span(self, capfire: CaptureLogfire):
-
         strategy: SlidingWindowCompaction[None] = SlidingWindowCompaction(max_tokens=1, keep_messages=2)
 
         await compact_now(strategy, _history(4), model=TestModel(), tracer=get_tracer('test'))
@@ -1235,7 +1245,7 @@ class TestCompactNowSpan:
         assert len(spans) == 1
         attrs = spans[0]['attributes']
         assert attrs['gen_ai.conversation.compacted'] is True
-        assert attrs['compaction.strategy'] == 'SlidingWindowCompaction'
+        assert attrs['compaction.strategy'] == 'sliding_window'
         assert attrs['compaction.messages_before'] > attrs['compaction.messages_after']
 
     async def test_the_span_is_measured_with_the_tokenizer_it_was_given(self, capfire: CaptureLogfire):
@@ -1251,7 +1261,6 @@ class TestCompactNowSpan:
         assert attributes['compaction.tokens_before'] == characters, 'the 4-characters heuristic was used instead'
 
     async def test_no_span_when_the_history_is_unchanged(self, capfire: CaptureLogfire):
-
         tiered: TieredCompaction[None] = TieredCompaction(
             tiers=[SlidingWindowCompaction(max_tokens=1, keep_messages=2)],
             target_tokens=1_000_000,
@@ -1262,7 +1271,6 @@ class TestCompactNowSpan:
         assert self._spans(capfire) == []
 
     async def test_the_span_names_the_focused_strategy(self, capfire: CaptureLogfire):
-
         tiered: TieredCompaction[None] = TieredCompaction(
             tiers=[SlidingWindowCompaction(max_tokens=1, keep_messages=2)],
             target_tokens=1,
@@ -1270,7 +1278,18 @@ class TestCompactNowSpan:
 
         await compact_now(tiered, _history(6), model=TestModel(), focus='auth', tracer=get_tracer('test'))
 
-        assert self._spans(capfire)[0]['attributes']['compaction.strategy'] == 'TieredCompaction'
+        assert self._spans(capfire)[0]['attributes']['compaction.strategy'] == 'tiered'
+
+    async def test_the_span_uses_an_explicit_strategy_id(self, capfire: CaptureLogfire):
+        class NamedStrategy:
+            strategy_id = 'persisted_name'
+
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
+                return messages[1:]
+
+        await compact_now(NamedStrategy(), _history(3), model=TestModel(), tracer=get_tracer('test'))
+
+        assert self._spans(capfire)[0]['attributes']['compaction.strategy'] == 'persisted_name'
 
     async def test_a_default_tracer_records_nothing(self, capfire: CaptureLogfire):
         strategy: SlidingWindowCompaction[None] = SlidingWindowCompaction(max_tokens=1, keep_messages=2)
@@ -1300,7 +1319,6 @@ class TestWithFocus:
 
 class TestNewExports:
     def test_capability_exposed_at_top_level(self):
-
         assert pydantic_ai_harness.ReportContextUsage is compaction.ReportContextUsage
 
 
@@ -1334,7 +1352,6 @@ class TestPositionalCompatibility:
         assert WarnNearLimits(10, 1_000, 2_000).max_total_tokens == 2_000
 
     def test_the_new_fields_stay_keyword_only(self):
-
         cases = [
             (SlidingWindowCompaction, 'max_fraction'),
             (SummarizingCompaction, 'max_fraction'),

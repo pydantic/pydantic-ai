@@ -314,6 +314,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    strategy_id = 'summarizing'
+
     model: str | Model | None = None
     """Model used to generate summaries.
 
@@ -626,7 +628,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         by = summarizer or 'the summarizer model'
         record_receipt(
             ReceiptInfo(
-                strategy='SummarizingCompaction',
+                strategy=self.strategy_id,
                 dropped_messages=len(to_summarize),
                 dropped_tokens=dropped_tokens,
                 by=by,
@@ -665,7 +667,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='SummarizingCompaction',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,

@@ -56,6 +56,8 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    strategy_id = 'deduplicate_file_reads'
+
     file_key: Callable[[ToolCallPart], str | None]
     """Map a tool call to a stable file key, or `None` if it is not a file read."""
 
@@ -150,7 +152,7 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
                 return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='DeduplicateFileReads',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,
