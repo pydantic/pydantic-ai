@@ -26,7 +26,7 @@ def default_render_number(value: float | int) -> str:
 
     * If the value is an integer, format it as an integer.
     * If the value is a float, include at least one decimal place and at least 3 significant figures.
-    * Non-finite floats are rendered as 'inf', '-inf', or 'nan'.
+    * Non-finite floats are rendered as `inf`, `-inf`, or `nan`.
     """
     # If it's an int, just return its string representation.
     if isinstance(value, int):
