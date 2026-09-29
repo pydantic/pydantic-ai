@@ -365,8 +365,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await super()._send_event(event)
 
     async def _send_audio(self, frame: dict[str, Any]) -> None:
-        # Marked first, so a clear made while the frame is on its way knows there's audio to discard.
-        self._audio_uncommitted = True
+        # Marked first, so a clear made while the frame is on its way knows there's audio to discard. Audio
+        # kept back lands after anything sent meanwhile, so it's xAI's latest input once it goes out.
+        self._audio_uncommitted = self._audio_is_latest_input = True
         self._sent_audio.append(frame)
         await super()._send_event(frame)
 

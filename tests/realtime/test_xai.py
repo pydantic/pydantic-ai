@@ -1642,3 +1642,36 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
         'response.create',
     ]
     assert _appended(replacement) == [_AUDIO.data, _OTHER_AUDIO.data]
+
+
+async def test_audio_kept_back_during_a_reply_is_the_latest_input_once_sent() -> None:
+    """Audio kept back behind a reply lands after text sent meanwhile, so once a request commits it, a bare
+    request after that is refused rather than sent and dropped."""
+    ws = FakeWebSocket(
+        [
+            _response_frame('response.created', 'r0'),
+            _transcript_delta('r0'),
+            _response_frame('response.done', 'r0'),
+            _response_frame('response.created'),
+            _response_frame('response.done'),
+            json.dumps({'type': 'input_audio_buffer.cleared'}),
+        ]
+    )
+    conn = _manual(ws)
+    events = conn.__aiter__()
+    assert isinstance(await events.__anext__(), OutputTranscript)
+    await conn.send(_AUDIO)
+    await conn.send(TextContext('Some context.'))
+    assert isinstance(await events.__anext__(), ResponseDone)
+    await conn.send(CreateResponse())  # commits the audio sent once the reply ended
+    assert isinstance(await events.__anext__(), ResponseDone)
+    await conn.send(CreateResponse())
+    rest = [event async for event in events]
+
+    assert _sent_types(ws) == [
+        'conversation.item.create',
+        'input_audio_buffer.append',
+        'response.create',
+        'input_audio_buffer.clear',
+    ]
+    assert InputRejected(3, refused='response') in rest
