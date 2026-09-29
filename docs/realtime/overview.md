@@ -151,7 +151,7 @@ and quirks:
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | [OpenAI](openai.md) | ✓ | ✓ (GPT-Live: [backend only](openai.md#images-go-to-the-backend)) | ✓ (GPT-Live: ✗) | ✓ (GPT-Live: ✗) | ✓ | `gpt-realtime-2*` models (GPT-Live: ✗, set the [backend](openai.md#reasoning) effort) | Replays local history (GPT-Live: ✗, open a new session) |
 | [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
-| [Google Gemini](gemini.md) | ✓ | ✓ | ✗ | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
+| [Google Gemini](gemini.md) | ✓ | ✓ | Vertex `gemini-live-2.5-flash` only | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✓ | `grok-voice-latest` and `-think-` models | ✓, with a `reconnect` policy |
 
 For portable branching, inspect [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]
@@ -266,12 +266,12 @@ fit for a product, two alternatives sit outside it:
 | Limitation | Tracking |
 | --- | --- |
 | SIP is not built in; bridge telephony through a provider such as Twilio. | [Connecting a frontend](deployment.md#siptelephony-bridge) |
-| New tools cannot be advertised mid-session, so `defer_loading=True` tools and tool-contributing capabilities are [rejected](capabilities.md#deferred-capability-loading). | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
-| Realtime-specific exchange hooks are not yet available; use supported [tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190), [#7191](https://github.com/pydantic/pydantic-ai/issues/7191) |
+| Pydantic AI fixes a session's tools when it connects (OpenAI and xAI accept mid-session tool updates), so `defer_loading=True` tools and tool-contributing capabilities are [rejected](capabilities.md#deferred-capability-loading). | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
+| Realtime-specific exchange hooks are not yet available; use [run and tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |
 | Dynamic instructions are resolved once when the session connects. | [#7303](https://github.com/pydantic/pydantic-ai/issues/7303) |
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
-| Interactive human-in-the-loop tool approval is not supported: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves approvals [from policy, immediately](tools.md#deferred-and-approval-required-tools). | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
+| A session can't pause for tool approval: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves each request [during the call](tools.md#deferred-and-approval-required-tools), which can include awaiting a person's answer. | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
 | Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text parts and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
 | Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |
 | GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai.md#the-turn-boundary-is-inferred) |

@@ -274,6 +274,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # A prefix match like every other id check here, so a dated or `-preview` snapshot of the model
     # gets the same flags: an exact match would send such a snapshot a thinking level it rejects.
     is_3_8_live = model_name.startswith('gemini-3.8-live') and not is_extended_thinking
+    # Vertex's half-cascade Live model (plus its pinned `-NNN`/`@` versions), which differs from the
+    # native-audio ones in a few ways below.
+    is_half_cascade = re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -292,14 +295,16 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         async_tool_call_mode = 'optional'
     profile: GoogleRealtimeModelProfile = {
         'supports_image_input': True,
-        # Every general-purpose Live model is audio-only: a session asking for `TEXT` is closed with
+        # The speech-to-speech Live models are audio-only: a session asking for `TEXT` is closed with
         # `1007 The requested combination of response modalities (TEXT) is not supported by the
         # model`. Verified live against all four the Developer API serves — the three
         # `gemini-2.5-flash-native-audio-*` variants *and* `gemini-3.1-flash-live-preview` — bare
         # (no transcription or speech config, which make no difference to the error), with the dict
         # and typed config forms, and on both `v1alpha` and `v1beta`. Google's docs describe the
         # half-cascade 3.1 model as supporting `TEXT`; the API disagrees, so this follows the API.
-        # Output transcription, on by default, is how a Live session gets text.
+        # Output transcription, on by default, is how a Live session gets text. Vertex's half-cascade
+        # `gemini-live-2.5-flash` is the exception that does answer in text (verified live 2026-09-28
+        # through the gateway).
         #
         # The one Live model that *is* text-only is `gemini-robotics-er-2-streaming-preview`, which
         # conversely rejects `AUDIO`. It isn't a speech-to-speech model and isn't advertised in
@@ -307,10 +312,16 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # `profile={'supports_text_output': True}`, which is what that override is for. Reporting
         # `False` by default keeps the common case failing closed with a clear error rather than an
         # opaque handshake rejection.
-        'supports_text_output': False,
+        'supports_text_output': is_half_cascade,
         'supports_session_seeding': True,
         'supports_seeding_images': True,
-        'supports_seeding_audio': False,
+        # Verified live 2026-09-28 by seeding a spoken fact as audio and asking about it:
+        # `gemini-3.1-flash-live-preview` and `gemini-3.8-live` recall it every time, while
+        # `gemini-3.8-live-extended-thinking` recalled it 1 time in 4 and `gemini-2.5-flash-native-audio-latest`
+        # closes the session (`1007 Precondition check failed`). Only the verified models, so a newer Live
+        # model seeds the transcript until its profile says otherwise.
+        'supports_seeding_audio': model_name.startswith(('gemini-3.1-flash-live', 'gemini-3.8-live'))
+        and not is_extended_thinking,
         'audio_input_sample_rate': 16000,
         'audio_output_sample_rate': 24000,
         # Search grounding only. Google's Live tool matrix lists code execution and URL context as
@@ -359,9 +370,7 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # tool-round parity cassettes). Matched exactly (plus its pinned `-NNN`/`@` versions), not by family:
     # a model sending only one boundary would never finish an empty answer. `GoogleRealtimeModel.profile`
     # keeps it on for Vertex AI only, the one surface it was verified on.
-    profile['google_closes_tool_call_turn_separately'] = (
-        re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
-    )
+    profile['google_closes_tool_call_turn_separately'] = is_half_cascade
     # Verified live 2026-09-25 with `enable_affective_dialog`: `gemini-3.1-flash-live-preview` refuses the
     # handshake with `1007 Request contains an invalid argument`, and `gemini-3.8-live` and
     # `gemini-3.8-live-extended-thinking` accept it and then close the session with that same `1007` on the
