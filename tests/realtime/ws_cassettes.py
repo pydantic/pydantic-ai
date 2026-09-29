@@ -386,22 +386,16 @@ class ReplayWebSocket:
             # that calls `recv()` directly (GPT-Live keeps a single read in flight as its own task) is
             # only visible by the frames it consumes, so wait while it keeps consuming them. With nobody
             # consuming them at all, this is the genuine "sent a frame the recording doesn't have" case.
-            while isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
-                if self._readers:
+            # A recorded frame of idle audio belongs to the connection's pump, which sends it on its own
+            # turn: another send waits for it to go out first, then drains whatever follows it the same way.
+            while isinstance(interaction, CassetteMessage) and (
+                interaction.direction == 'received'
+                or (self.pumps_audio and not _is_audio_send(actual) and _is_audio_send(interaction.data))
+            ):
+                if interaction.direction == 'received' and self._readers:
                     await self._condition.wait()
                 elif not await self._progressed():
                     break
-                interaction = self._peek()
-            # A recorded frame of idle audio belongs to the connection's pump, which sends it on its own
-            # turn: another send waits for it to go out first.
-            while (
-                self.pumps_audio
-                and not _is_audio_send(actual)
-                and isinstance(interaction, CassetteMessage)
-                and interaction.direction == 'sent'
-                and _is_audio_send(interaction.data)
-                and await self._progressed()
-            ):
                 interaction = self._peek()
             if not isinstance(interaction, CassetteMessage) or interaction.direction != 'sent':
                 raise AssertionError(

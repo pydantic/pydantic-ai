@@ -628,6 +628,7 @@ async def test_replay_holds_other_sends_behind_recorded_idle_audio() -> None:
         RealtimeCassette(
             interactions=[
                 CassetteMessage(direction='sent', data=silence),
+                CassetteMessage(direction='received', data={'type': 'server.event'}),
                 CassetteMessage(direction='sent', data=context),
             ]
         )
@@ -639,6 +640,8 @@ async def test_replay_holds_other_sends_behind_recorded_idle_audio() -> None:
     assert not send_context.done()
     await replay.wait_for_pumped_audio_turn()
     await replay.send(json.dumps(silence))
+    # A provider frame recorded after the silence is drained before the context send claims its slot.
+    assert json.loads(await replay.recv()) == {'type': 'server.event'}
     await asyncio.wait_for(send_context, timeout=5)
 
 
