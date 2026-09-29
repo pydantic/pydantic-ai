@@ -1557,7 +1557,7 @@ class TestStopEscalation:
         job = await _job(ts, _ctx(shell_dir), command_id)
         with anyio.fail_after(10):
             while (await job.status())[0]:
-                await anyio.sleep(0.01)
+                await anyio.sleep(0.01)  # pragma: lax no cover
         await job.cleanup()
         assert (await job.status())[0] is False
 

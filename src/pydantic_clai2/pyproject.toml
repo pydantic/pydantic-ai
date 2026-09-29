@@ -46,12 +46,14 @@ dependencies = [
 typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 
 [project.urls]
-Homepage = "https://pydantic.dev/docs/ai/harness/clai2/"
+Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2"
 Source = "https://github.com/pydantic/pydantic-ai"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.scripts]
 clai2 = "pydantic_clai2.__main__:main"
+# Matches the distribution name so `uvx pydantic-clai2` works without `--from`.
+pydantic-clai2 = "pydantic_clai2.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_clai2"]

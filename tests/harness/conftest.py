@@ -41,6 +41,7 @@ __all__ = (
     'IsPartialDict',
     'IsStr',
     'agent_run_names',
+    'ignore_source_reads_left_open',
     'skip_temporal_sandbox_on_314',
 )
 
@@ -50,6 +51,12 @@ skip_temporal_sandbox_on_314 = pytest.mark.skipif(
     '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
 )
 """Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14."""
+
+# On 3.14 coverage reads a module's source while the test runs; when Temporal's workflow sandbox
+# interrupts that read, the file is left for the garbage collector to close. Only `.py` files match.
+ignore_source_reads_left_open = pytest.mark.filterwarnings(
+    "ignore:unclosed file <_io.BufferedReader name='[^']*\\.py'>:ResourceWarning"
+)
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False

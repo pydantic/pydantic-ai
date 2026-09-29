@@ -43,19 +43,18 @@ async def main(prior_history=()):
         await session.send('Continue where we left off.')
 ```
 
-Providers replay native function calls where their protocol permits. Gemini represents seeded tool
-calls and results as readable text because Live cannot put function parts in seeded turns. Thinking
-signatures and provider-native execution metadata are omitted because they belong to the session
-that produced them.
+Seeded tool calls and results are replayed as native function calls where the provider's protocol
+permits, and as readable text where it doesn't. Thinking signatures and provider-native execution
+metadata are omitted because they belong to the session that produced them.
 
 Content-less speech parts are skipped because they carry no replayable content. Unsupported content
 raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently dropped. Video,
 documents, uploaded-file references, and model-generated files cannot be seeded.
 
-Speech transcripts are preferred over retained audio. OpenAI and Azure OpenAI can replay retained
-user audio when no transcript exists; Gemini and xAI cannot. Assistant speech always needs a
-transcript for seeding. Check `supports_session_seeding`, `supports_seeding_images`, and
-`supports_seeding_audio` on the
+Speech transcripts are preferred over retained audio. Where no transcript exists, retained user
+audio is replayed on models whose profile sets `supports_seeding_audio`, as long as it was recorded
+at the model's input sample rate. Assistant speech always needs a transcript for seeding. Check
+`supports_session_seeding`, `supports_seeding_images`, and `supports_seeding_audio` on the
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] (see
 [Provider support](overview.md#provider-support) for how profiles resolve) before constructing
 portable flows.
@@ -106,14 +105,14 @@ token usage over the model's
 
 | Provider | Source |
 | --- | --- |
-| OpenAI GPT-Live | Reported by Live |
-| OpenAI and Azure OpenAI Realtime, Gemini Live | Latest response's `total_tokens` over the context window, when the window is known |
+| OpenAI | GPT-Live: reported by Live. gpt-realtime: latest response's `total_tokens` over the context window, when the window is known |
+| Azure OpenAI, Gemini Live | Latest response's `total_tokens` over the context window, when the window is known |
 | xAI Grok Voice | `None`: a response's usage counts only the input it added, not the whole conversation |
 
 The value is `None` until it can be calculated, and it can go down during a session: providers
 compact or truncate the conversation server-side as it grows, and none of them report when that
 happens. To control how the provider manages a long conversation, use
-[`openai_truncation`](openai.md#settings) on OpenAI Realtime and Azure OpenAI or
+[`openai_truncation`](openai.md#gpt-realtime-settings) on OpenAI gpt-realtime and Azure OpenAI or
 [`google_context_compression`](gemini.md#settings) on Gemini. To carry a long conversation on
 elsewhere, [hand it off to a text agent](#handing-off-to-a-text-agent) or seed a new session with a
 summary.
