@@ -164,14 +164,23 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
             except UserError as error:
                 # A request the router can never make, such as files sent to a decision model,
                 # is a configuration problem, so it surfaces rather than routing to `default`.
-                span.set_attribute('model_router.error.type', type(error).__name__)
+                if span.is_recording():
+                    span.set_attributes(
+                        {
+                            'model_router.choice': picked,
+                            'model_router.fallback_reason': 'error',
+                            'model_router.mode': self.mode,
+                            'model_router.run_step': ctx.run_step,
+                            'model_router.error.type': type(error).__name__,
+                        }
+                    )
                 raise
             except Exception as error:
                 candidate, error_type = None, type(error).__name__
             if candidate is None:
                 fallback_reason = 'error'
                 if span.is_recording():
-                    span.set_attribute('model_router.error.type', str(error_type))
+                    span.set_attribute('model_router.error.type', error_type)
                     span.set_status(Status(StatusCode.ERROR, 'Router request failed; used the default choice.'))
             elif (
                 probability is not None

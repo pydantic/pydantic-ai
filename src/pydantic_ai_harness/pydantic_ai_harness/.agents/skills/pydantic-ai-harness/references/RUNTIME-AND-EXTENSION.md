@@ -48,7 +48,7 @@ agent = Agent(
 The router receives the parent run's message history, including files, and its request counts toward
 the same usage limits. Keep it in the same trust boundary as the selectable models: model selection
 runs before input guardrails and request wrappers. Router failures and picks below
-`probability_threshold=` use `default`; configuration errors and request-time `UserError`s propagate.
+`probability_threshold` use `default`; configuration errors and request-time `UserError`s propagate.
 Under core durable execution the routing call is durable, and every selectable model must also be
 registered in the durability capability's `models=` mapping. `ModelRouter` is Python-only and cannot
 be loaded from an agent spec.

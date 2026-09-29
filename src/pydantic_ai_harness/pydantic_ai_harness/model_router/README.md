@@ -81,7 +81,7 @@ Set `probability_threshold` when constructing `ModelRouter` to reject a pick the
 
 The probability is read from `provider_details['probabilities']['choice'][<pick>]`, which is what a decision model such as TypeSafe reports for a pick-one field. It is not the field's `provider_details['confidence']`, which measures something else. A router model that reports no probability for its pick keeps its pick, so ordinary language models route without provider-specific metadata, and the threshold has no effect on them.
 
-If the router model raises at request time, returns invalid model behavior after its normal output retries, or returns an unknown key, `ModelRouter` selects `default` and the main run continues. A `UserError` is the exception: it means the request can never succeed as configured, so it propagates. Cancellation is not converted into a fallback either.
+If the router model raises at request time or returns invalid model behavior after its normal output retries, such as an unknown key, `ModelRouter` selects `default` and the main run continues. A `UserError` is the exception: it means the request can never succeed as configured, so it propagates. Cancellation is not converted into a fallback either.
 
 Configuration mistakes do not fall back. An empty menu, an unknown `default`, a `probability_threshold` outside `0` to `1`, and a `router_model` Pydantic AI cannot resolve all raise `UserError` from the `ModelRouter` constructor, so a typo surfaces immediately instead of routing every request to `default` for the life of the agent.
 
