@@ -859,16 +859,23 @@ class TestMarkdownConverter:
         """An empty item never needs an expensive numeric start attribute."""
 
         class UnparsedStart(str):
-            def isdecimal(self) -> bool:
-                raise AssertionError('empty list start was parsed')
+            pass
 
         html = '<ol><li></li></ol>'
         soup = BeautifulSoup(html, 'html.parser')
         ordered_list = soup.ol
         assert ordered_list is not None
         ordered_list['start'] = UnparsedStart('9' * 100_000)
-        with patch('pydantic_ai.common_tools.web_fetch.BeautifulSoup', return_value=soup):
+        with (
+            patch('pydantic_ai.common_tools.web_fetch.BeautifulSoup', return_value=soup),
+            patch.object(
+                UnparsedStart,
+                'isdecimal',
+                side_effect=AssertionError('empty list start was parsed'),
+            ) as isdecimal,
+        ):
             assert _convert_html(html)[1] == ''
+            isdecimal.assert_not_called()
 
     def test_ordered_list_start_is_scanned_once(self):
         """A shared invalid start attribute is parsed once for the whole list."""
