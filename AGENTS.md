@@ -66,9 +66,9 @@ All changes need to:
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
 - have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking
 - update/add all relevant documentation, following the existing voice and patterns
-- update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), while repository workflow skills live under [.claude/skills/](.claude/skills/)
+- update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), Pydantic AI Harness skills in [src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/](src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/), while repository workflow skills live under [.claude/skills/](.claude/skills/)
 
-When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged. The "AI generated code" checkbox should always be checked manually by the user in the UI, not by the agent.
+When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged.
 
 PR titles feed directly into the release changelog. Write one as an imperative sentence naming the change — no `fix:` / `docs:` / `chore:` prefix, which belongs on the commit subject and not on the title — and wrap every code identifier (class names, keyword arguments, module paths, CLI flags, env vars, file paths) in backticks. Check the convention against merged PRs rather than commit subjects, which follow a different one: `gh pr list --state merged --limit 20`.
 
@@ -98,6 +98,8 @@ The repo contains a `uv` workspace defining multiple Python packages:
 - `pydantic-graph` in `pydantic_graph/`: the type-hint based [graph library](docs/graph.md) that powers the agent loop
 - `pydantic-evals` in `pydantic_evals/`: the [evaluation framework](docs/evals.md) for evaluating the arbitrary stochastic functions including LLMs and agents
 - `clai` in `clai/`: a [CLI](docs/cli.md) (with an optional [web UI](docs/web.md)) to chat with Pydantic AI agents
+- `pydantic-ai-harness` in `src/pydantic_ai_harness/`: the [capability library](docs/harness/index.md) built on the packages above, with tests in `tests/harness/` and a contributor guide in `src/pydantic_ai_harness/AGENTS.md`. Released as `0.X.Y` alongside pydantic-ai `2.X.Y`.
+- `pydantic-clai2` in `src/pydantic_clai2/`: a capability-aware terminal client built on the harness, with tests in `tests/clai2/` and a guide in `src/pydantic_clai2/AGENTS.md`. Released with the harness.
 - `pydantic-ai` defined in `pyproject.toml` at the root, bringing in the packages above as well as the optional dependency groups for all model providers and select integrations.
 
 ## Development workflow
@@ -111,7 +113,7 @@ The project uses:
 - `pyright` via `make typecheck`
 - `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
-    - `pytest-recording` and `vcrpy` for recording and playing back requests to model APIs
+    - `cassetter` for recording and playing back requests to model APIs
 - Documentation is published by [pydantic/unified-docs](https://github.com/pydantic/unified-docs).
   `docs/navigation.yml` owns the Pydantic AI sidebar, routes, and redirects; `tests/test_examples.py`
   tests all code examples in the docs (including docstrings).
@@ -124,12 +126,12 @@ Do not use subprocesses to test logic that can run in-process. Starting another 
 
 ## When to verify
 
-Pre-commit runs `make lint`, `make format`, and `make typecheck-changed` automatically on every commit; that last one skips `tests/` files you did not change since it last passed (the first run checks every file), and CI additionally runs the whole type check and test suite. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
+Pre-commit runs `make lint` and `make format` automatically on every commit. CI runs the repository-wide type check, test, and coverage gates. Do not run repository-wide Pyright, pytest, or coverage locally. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
 
 - typecheck a single file: `PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py`
 - run a single test: `uv run pytest path/to/test.py::test_name`
 
-Avoid `make typecheck` and `make test` between edits — both are slow and the pre-commit/CI gates cover them at the right time.
+Avoid `make typecheck` and `make test` — both are slow and CI covers them at the right time.
 
 # Coding Guidelines
 

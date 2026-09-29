@@ -1,3 +1,7 @@
+---
+description: "A simple Pydantic AI example that constructs a validated Pydantic model from free-form text input, using structured output with any supported model."
+---
+
 # Pydantic Model
 
 Simple example of using Pydantic AI to construct a Pydantic model from a text input.
