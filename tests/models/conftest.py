@@ -9,7 +9,7 @@ from pydantic import JsonValue
 from ..conftest import RequestCapture, try_import
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.google import GoogleProvider

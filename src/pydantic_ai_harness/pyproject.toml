@@ -56,7 +56,9 @@ temporal = ["pydantic-ai-slim[temporal]=={{ major }}.{{ minor }}.{{ patch }}{% i
 dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # `logfire.variables` needs `pydantic_handlebars.extract_dependencies` (0.2.1), which logfire does not require.
 logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-handlebars>=0.2.1"]
-modal = ["modal>=1.5.0"]
+modal = ["modal>=1.5.2"]
+e2b = ["e2b>=2.48.0"]
+sprites = ["sprites-py>=0.7.0,<0.8"]
 dynamic-workflow = ["pydantic-monty>=1.0.0,<2"]
 # The SDK breaks across minors, so cap per minor.
 acp = ["agent-client-protocol>=0.11,<0.12"]

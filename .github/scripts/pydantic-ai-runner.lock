@@ -16,10 +16,11 @@ exclude-newer-span = "P7D"
 pydantic-monty-runtime = false
 pydantic-handlebars = false
 pydantic-extra-types = false
-pydantic-core = false
 pydantic = false
+pydantic-core = false
 pydantic-ai-harness = false
 logfire-api = false
+cassetter = false
 listentome = false
 logfire = false
 pydantic-settings = false
@@ -27,7 +28,7 @@ pydantic-monty-client = false
 genai-prices = false
 pydantic-monty = false
 termflow-md = "2026-09-24T16:36:46Z"
-anthropic = "2026-09-22T16:25:39Z"
+anthropic = "2026-09-28T18:04:04Z"
 openai = "2026-09-23T00:08:49Z"
 google-genai = "2026-09-22T17:23:02Z"
 
@@ -36,7 +37,7 @@ requirements = [
     { name = "logfire" },
     { name = "opentelemetry-instrumentation-httpx" },
     { name = "pydantic-ai-harness", editable = "../../src/pydantic_ai_harness" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "mcp"], editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "mcp", "retries"], editable = "../../pydantic_ai_slim" },
 ]
 
 [[package]]
@@ -62,7 +63,7 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "1.8.0"
+version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -73,9 +74,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/65/b8/f4de0e90bbd641e86a1d6b20e017442033a2c1d2f5381799f82057115bd7/anthropic-1.8.0.tar.gz", hash = "sha256:9c1783ed90f409617749a61c5ab98e20624a572626f2e0a15cea03ed8e1401e5", size = 1221762, upload-time = "2026-09-22T16:25:38.167Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/18/0a/1ab3bf53a672fd9dd42d3208e335940049431b79781b2a9b324203d30c38/anthropic-1.9.0.tar.gz", hash = "sha256:da5191a0af0b853a797fc0c6b09fc5b05cb5d9da063ba80fdd03c736abe81b6c", size = 1243092, upload-time = "2026-09-28T18:04:03.005Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5b/18/5d25a703b66ba34e9277f875f692a3bea3b0ff4d47ee5d188521a01cdd2a/anthropic-1.8.0-py3-none-any.whl", hash = "sha256:79a4516a21e64fd7b15be1a49ebf544bd6376c96a971a77365358823a2717bc6", size = 1348276, upload-time = "2026-09-22T16:25:36.515Z" },
+    { url = "https://files.pythonhosted.org/packages/15/2a/67c1b2ddf91be3112856ed74b96d1576f00dd423e4f20bb251aa144fbd6b/anthropic-1.9.0-py3-none-any.whl", hash = "sha256:a7fe05a9e4b72113b934501698df5d56484ac89f05677f0f793f8bfddb15cfff", size = 1360651, upload-time = "2026-09-28T18:04:01.452Z" },
 ]
 
 [[package]]
@@ -1135,6 +1136,7 @@ requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<2" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
+    { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.48.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },
     { name = "genai-prices", specifier = ">=0.0.71" },
@@ -1142,7 +1144,7 @@ requires-dist = [
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "json-repair", specifier = ">=0.58.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
-    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.0" },
+    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "../../pydantic_ai_slim" },
@@ -1172,11 +1174,12 @@ requires-dist = [
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
+    { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "stackone", "temporal", "youdotcom"]
+provides-extras = ["acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -1199,11 +1202,15 @@ anthropic = [
 mcp = [
     { name = "fastmcp-slim", extra = ["client"] },
 ]
+retries = [
+    { name = "httpx" },
+    { name = "tenacity" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10,<1" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.8.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.9.0" },
     { name = "anyio", specifier = ">=4.7.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.63" },
@@ -1689,6 +1696,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/eb/e3/7c1dc7381d9f8ab7d854328ebfa884e62cb3f3d8549ddfd37c7814f42afa/starlette-1.3.1.tar.gz", hash = "sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0", size = 2703240, upload-time = "2026-06-12T09:23:11.602Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6", size = 73632, upload-time = "2026-06-12T09:23:10.017Z" },
+]
+
+[[package]]
+name = "tenacity"
+version = "9.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413, upload-time = "2026-02-07T10:45:33.841Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926, upload-time = "2026-02-07T10:45:32.24Z" },
 ]
 
 [[package]]

@@ -4,12 +4,15 @@ genai-prices is the first source. Add another (models.dev, a provider API) as on
 function returning `CatalogModel`s and merge it in `catalog()`.
 """
 
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
+from importlib.metadata import metadata
 
 from genai_prices.data_snapshot import get_snapshot
 
 from pydantic_ai.models import known_model_names
+from pydantic_ai.providers import infer_provider_class
 
 from . import github_copilot
 
@@ -37,6 +40,27 @@ class CatalogModel:
 def runnable_providers() -> frozenset[str]:
     """Provider prefixes that `infer_model` accepts."""
     return frozenset(name.partition(':')[0] for name in known_model_names()) | EXTRA_PROVIDERS
+
+
+def check_installed(name: str) -> None:
+    """Raise `ValueError` with install commands if the SDK for `name`'s provider is missing here.
+
+    Core imports provider SDKs lazily, so without this a missing extra only surfaces on the next turn.
+    """
+    provider = name.partition(':')[0]
+    try:
+        infer_provider_class(provider)
+    except ValueError:
+        return  # Not a core provider, like CLAI's own `vllm:`; the turn resolves or reports it.
+    except ImportError as exc:
+        where = f'the Python CLAI2 runs on ({sys.executable})'
+        if provider not in (metadata('pydantic-clai2').get_all('Provides-Extra') or ()):
+            raise ValueError(f'Cannot use {name} with {where}: {exc}') from exc
+        raise ValueError(
+            f'Cannot use {name}: the `{provider}` extra is not installed in {where}. '
+            f'Install it there with `pip install "pydantic-ai-slim[{provider}]"`, '
+            f'or from a pydantic-ai checkout run `uv run --package pydantic-clai2 --extra {provider} clai2`.'
+        ) from exc
 
 
 def genai_prices_models() -> list[CatalogModel]:

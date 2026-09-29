@@ -13,15 +13,15 @@ calls that are harmless to re-run or discard. Everything else waits for eager or
 execution.
 
 The sandbox gets Monty's `OSAccess` (isolated environment, host clock, in-memory scratch files)
-and, when the run's `FileSystem` allows it, a mount of that file system's working directory at
-its real path (`workspace_mount`). There is no network in the sandbox; anything remote goes
-through a wrapped tool such as `shell`.
+and, when the run's `FileSystem` allows it (`_mount_mode`) and the run's workspace is this machine,
+a mount of the workspace's working directory at its real path (`_workspace_mount`). A sandbox
+plugin's workspace is not mounted: the host directory is not the filesystem its tools act on.
+There is no network in the sandbox; anything remote goes through a wrapped tool such as `shell`.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from pathlib import Path
-from typing import TypeGuard
+from typing import Literal, TypeGuard
 
 from pydantic_monty import MountDir, OSAccess
 
@@ -36,8 +36,11 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.messages import AgentStreamEvent, RetryPromptPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.code_mode import (
     CodeMode,
+    CodeModeToolset,
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
     SpeculativeCallMissedEvent,
@@ -138,7 +141,10 @@ determines how fast it runs:
 """
 
 
-WORKSPACE_GUIDANCE: Mapping[str | None, str] = {
+_MountMode = Literal['read-write', 'read-only']
+"""How much of the working directory the run's `FileSystem` lets the sandbox mount."""
+
+_WORKSPACE_GUIDANCE: Mapping[str | None, str] = {
     'read-write': """\
 - The workspace is mounted read-write at its real absolute path: use
   `pathlib.Path` to read, write, glob, and stat project files directly.""",
@@ -149,28 +155,39 @@ WORKSPACE_GUIDANCE: Mapping[str | None, str] = {
     None: """\
 - No host directory is mounted: `pathlib.Path` only reaches in-memory scratch
   files. Use the file functions to read project files.""",
+    'remote': """\
+- The workspace is not on this machine, so it is not mounted: `pathlib.Path`
+  only reaches in-memory scratch files. Use the file functions to read and
+  write project files.""",
 }
-"""The `GUIDANCE` line for each `workspace_mount` mode, `None` when nothing is mounted."""
+"""The `GUIDANCE` line for each `_MountMode`, `None` when the file system allows no mount, and
+`'remote'` when it would but the workspace is a sandbox rather than this machine."""
 
 
-def guidance(mount: MountDir | None) -> str:
+def guidance(mount: _MountMode | Literal['remote'] | None) -> str:
     """Code Puppy's guidance, describing the workspace the sandbox actually has."""
-    return GUIDANCE.format(workspace=WORKSPACE_GUIDANCE[None if mount is None else mount.mode])
+    return GUIDANCE.format(workspace=_WORKSPACE_GUIDANCE[mount])
+
+
+def _is_local(workspace: Workspace) -> bool:
+    """Whether the run's workspace is a directory on this machine, which a host mount can reach."""
+    ref = workspace.ref
+    return ref is not None and ref.provider == 'local'
 
 
 def _is_capability(capability: AgentCapability[AgentDepsT]) -> TypeGuard[AbstractCapability[AgentDepsT]]:
     return isinstance(capability, AbstractCapability)
 
 
-def workspace_mount(granted: Sequence[AgentCapability[AgentDepsT]]) -> MountDir | None:
+def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]]) -> _MountMode | None:
     """Mount only what the run's `FileSystem` already lets its tools reach, or nothing.
 
     `pathlib` calls on a mount never pass through `FileSystem`'s checks, so an unconditional
     read-write mount of the working directory let sandboxed code read or overwrite files the
-    caller had restricted (Veria, #1078). The mount is its working directory, and only when it
-    registers `read_file`, since `pathlib` reads any file's content. It is writable only when it
-    may also write every file there: `write_file` registered, not `read_only`, and no
-    `protected_patterns`. A mount cannot express `allowed_patterns` or `denied_patterns`, so either one
+    caller had restricted (Veria, #1078). The mount is the workspace's working directory, which
+    `root_dir` always contains, and only when the file system registers `read_file`, since
+    `pathlib` reads any file's content. It is writable only when it may also write every file there: `write_file` registered, not `read_only`, and no
+    `read_only_patterns`. A mount cannot express `allowed_patterns` or `denied_patterns`, so either one
     leaves the sandbox unmounted, as do zero or several file systems and any capability function
     or `DynamicCapability`, which may only resolve to a file system at run time.
     """
@@ -186,9 +203,50 @@ def workspace_mount(granted: Sequence[AgentCapability[AgentDepsT]]) -> MountDir 
     tools = set(file_system.tools)
     if file_system.allowed_patterns or file_system.denied_patterns or 'read_file' not in tools:
         return None
-    writable = 'write_file' in tools and not file_system.read_only and not file_system.protected_patterns
-    directory = str(Path(file_system.root_dir if file_system.cwd is None else file_system.cwd).resolve())
-    return MountDir(virtual_path=directory, host_path=directory, mode='read-write' if writable else 'read-only')
+    writable = 'write_file' in tools and not file_system.read_only and not file_system.read_only_patterns
+    return 'read-write' if writable else 'read-only'
+
+
+async def _workspace_mount(workspace: Workspace, mode: _MountMode | None) -> MountDir | None:
+    """The run's working directory at its real path, when `mode` allows a mount and the workspace is local.
+
+    A sandbox plugin's workspace lives elsewhere, so a host mount would hand `pathlib` a different
+    filesystem than the one the file tools act on. A read-only workspace is mounted read-only.
+    """
+    if mode is None or not _is_local(workspace):
+        return None
+    directory = await workspace.working_dir()
+    return MountDir(virtual_path=directory, host_path=directory, mode='read-only' if workspace.read_only else mode)
+
+
+@dataclass
+class _MountWorkspace(WrapperToolset[AgentDepsT]):
+    """Give `CodeMode`'s toolset this run's `_workspace_mount`, once the run's workspace is known."""
+
+    mode: _MountMode | None = None
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        code_mode = self.wrapped
+        assert isinstance(code_mode, CodeModeToolset)
+        mount = await _workspace_mount(ctx.workspace, self.mode)
+        return await replace(code_mode, mount=mount).for_run(ctx)
+
+
+@dataclass
+class WorkspaceCodeMode(CodeMode[AgentDepsT]):
+    """`CodeMode` whose mount is the run's local working directory, limited to `mount_mode`.
+
+    Core selects the run's workspace after capabilities' `for_run`, so the mount is resolved in the
+    toolset's `for_run`, which runs after the selection.
+    """
+
+    mount_mode: _MountMode | None = None
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        """`CodeMode`'s toolset, mounted per run by `_MountWorkspace`."""
+        code_mode = super().get_wrapper_toolset(toolset)
+        assert code_mode is not None
+        return _MountWorkspace(code_mode, mode=self.mount_mode)
 
 
 def _sandboxed(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
@@ -219,12 +277,17 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """Fold code tools in, teach the snippet shape, stream tool arguments, and count outcomes."""
 
     counters: SpeculationCounters
-    mount: MountDir | None = None
-    """The sandbox's `workspace_mount`, so the guidance describes it."""
+    mount: _MountMode | None = None
+    """The sandbox's `_mount_mode`, so the guidance describes it."""
 
-    def get_instructions(self) -> str:
-        """Code Puppy's guidance, with CLAI's tool and argument names."""
-        return guidance(self.mount)
+    def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
+        """Code Puppy's guidance, with CLAI's tool and argument names and the run's actual mount."""
+
+        def describe(ctx: RunContext[AgentDepsT]) -> str:
+            local = self.mount is None or _is_local(ctx.workspace)
+            return guidance(self.mount if local else 'remote')
+
+        return describe
 
     def get_model_settings(self) -> AnthropicModelSettings:
         """Anthropic buffers a tool call's input by default, which leaves eager execution no runway.
@@ -338,19 +401,19 @@ def speculative_capabilities(
 
     `granted` is every other capability the run binds; the sandbox mount follows its `FileSystem`.
     """
-    mount = workspace_mount(granted)
+    mode = _mount_mode(granted)
     return [
-        CodeMode(
+        WorkspaceCodeMode(
             tools=_sandboxed,
             # `SpeculativeExecution.prepare_tools` writes the declarations from `SPECULATIVE_TOOLS`.
             speculate='declared',
             # Eager runs each streamed statement as it closes; speculation launches the
             # read-only calls beyond that frontier, and the eager feed claims them.
             eager=True,
-            mount=mount,
+            mount_mode=mode,
             os_access=OSAccess(),
         ),
         EagerTiming(),
-        SpeculativeExecution(counters, mount),
+        SpeculativeExecution(counters, mode),
         ShowSandboxCalls(),
     ]
