@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     CachePoint,
     CompactionPart,
     FilePart,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -3714,7 +3715,7 @@ def test_turn_complete_reports_whether_more_is_expected(status: str | None, more
         ('RESPONSE_REJECTED', None),
     ],
 )
-def test_turn_complete_reason_maps_to_finish_reason(reason: str, finish_reason: str | None) -> None:
+def test_turn_complete_reason_maps_to_finish_reason(reason: str, finish_reason: FinishReason | None) -> None:
     conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()))
     events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
         genai_types.LiveServerMessage(
