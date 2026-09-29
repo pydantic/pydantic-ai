@@ -19,7 +19,12 @@ from typing import TYPE_CHECKING
 from pydantic_ai_harness.tool_output_limits._payload import TruncationStrategy
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterable
+
+    from pydantic_ai.agent import EventStreamHandler
+    from pydantic_ai.messages import AgentStreamEvent
     from pydantic_ai.models import Model
+    from pydantic_ai.tools import RunContext
 
 _DEFAULT_TRUNCATE_CHARS = 4_000
 _DEFAULT_PREVIEW_CHARS = 1_000
@@ -83,11 +88,25 @@ class Summarize:
     the built-in agent receives the parent usage limits and reserves one request from a finite
     request limit for the pending parent request. Falls back to `then` on a binary payload or a
     failed call.
+
+    The summary request is non-streaming unless `event_stream_handler` is set. Supplying any
+    handler selects the streaming request path, which is what a summarizer endpoint that
+    rejects non-streaming requests needs; pass `drain_summary_events` to take that path
+    without handling the events.
     """
 
     model: str | Model | None = None
     summarize: SummarizeFunc | None = None
     then: Action | None = None
+    event_stream_handler: EventStreamHandler[object] | None = None
+    """If set, this handler is passed to the nested summary run, so the summarizer's own
+    model-streaming events surface to the caller.
+
+    Setting it also selects the streaming request path for the summary request. Left `None`,
+    the request is non-streaming, which is what an endpoint that rejects streaming requests
+    needs. The handler receives the summary run's own `RunContext`, never the outer run's,
+    and the outer `Agent.run(...)` handler is not inherited. Ignored when `summarize` is set,
+    since a custom callable performs no model request."""
 
 
 Action = Passthrough | Truncate | Spill | Summarize
@@ -99,3 +118,17 @@ class Band:
 
     over: int
     action: Action
+
+
+async def drain_summary_events(
+    _ctx: RunContext[object],
+    events: AsyncIterable[AgentStreamEvent],
+) -> None:
+    """An `event_stream_handler` that consumes summary events and discards them.
+
+    Pass this as `Summarize(event_stream_handler=drain_summary_events)` when the summary
+    endpoint requires a streaming request but the events themselves are not wanted. Supplying
+    any handler selects the streaming request path; this one just discards what it receives.
+    """
+    async for _ in events:
+        pass
