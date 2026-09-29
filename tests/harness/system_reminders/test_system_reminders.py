@@ -906,7 +906,7 @@ class TestEndToEnd:
         sent = _all_text(captured['messages'])
         assert '<plan-reminder>' in sent
         assert '<system-reminder>' in sent
-        # Neither ephemeral reminder is persisted.
+        # The plan reminder is appended to history when the plan changes; the system reminder stays ephemeral.
         durable = _all_text(result.all_messages())
-        assert '<plan-reminder>' not in durable
+        assert '<plan-reminder>' in durable
         assert '<system-reminder>' not in durable

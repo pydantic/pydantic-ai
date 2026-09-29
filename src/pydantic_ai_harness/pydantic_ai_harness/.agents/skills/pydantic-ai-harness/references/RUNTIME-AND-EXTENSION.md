@@ -110,8 +110,8 @@ Gotchas:
 
 - Shapes a test sees: when a streamed model request fails, the saved history (default read included)
   ends with an empty or partial-text `ModelResponse`. With `Planning`, a scripted model receives the
-  last user prompt as `[text, CachePoint(...)]` plus a plan-reminder `UserPromptPart` (neither is
-  stored). Assert on the parts you need, not exact message shapes.
+  last user content as `[..., CachePoint(...)]` (not stored), and a plan-reminder `UserPromptPart` in
+  its own `ModelRequest` whenever the plan changed (stored). Assert on the parts you need, not exact message shapes.
 - `run_id` is per `Agent.run`. Reusing one instance with the same explicit `run_id` raises `ValueError`.
   Group turns with `conversation_id=` on `Agent.run`.
 - A derived `run_id` longer than 200 characters raises `ValueError`, so keep `agent_name` short.

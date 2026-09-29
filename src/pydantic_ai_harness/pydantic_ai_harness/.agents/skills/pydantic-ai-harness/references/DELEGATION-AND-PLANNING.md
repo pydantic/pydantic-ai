@@ -21,9 +21,9 @@ Start with `SubAgents` when unsure; its sub-agents move to a `DynamicWorkflow` c
 
 ## Planning
 
-Gives the model plan tools and re-shows the current plan as an ephemeral reminder at the tail of each
-request (never written to `message_history`, never in the system prompt), so plan edits do not break
-the prompt cache.
+Gives the model plan tools and appends the current plan to `message_history` as a reminder whenever
+it changes (never in the system prompt), so history stays append-only and plan edits do not break the
+prompt cache.
 
 ```python
 from pydantic_ai import Agent
@@ -60,7 +60,7 @@ Key parameters:
 - `guidance=None`: `None` = built-in guidance, `''` = none, a string replaces it.
 - `store=None`: `None` = fresh in-memory plan per run. Pass a `PlanStore` to persist.
 - `store_resolver=None`: `Callable[[RunContext], PlanStore]`, wins over `store` (per-tenant stores).
-- `enable_subtasks=False`, `inject=True` (the tail reminder), `cache_ttl='5m'` (`'5m'` or `'1h'`).
+- `enable_subtasks=False`, `inject=True` (the plan reminder), `cache_ttl='5m'` (`'5m'` or `'1h'`).
 - `tools=None`: allowlist, e.g. `tools=['write_plan']`. Naming a tool the mode does not register
   raises `ValueError`; so does an unknown key in `descriptions`.
 
@@ -87,7 +87,7 @@ Gotchas:
 
 - `SqlitePlanStore(':memory:')` raises `ValueError`; use `InMemoryPlanStore`. The SQLite file lives on
   the agent's host, not in the workspace.
-- The reminder reads the store on every model request; a store that raises fails the run. Wrap the
+- `Planning` reads the store on every model request to compare the plan with the last reminder; a store that raises fails the run. Wrap the
   store yourself for fallback behaviour.
 - `parent_id`, `depends_on`, and `blocked` are rejected by `write_plan` unless `enable_subtasks=True`.
 - Events: `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, `PlanCompletedEvent`,
