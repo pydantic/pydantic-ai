@@ -571,7 +571,8 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         if self._idle_audio_task is not None:
             return
-        self._input_audio_end = _pump_clock()
+        # Audio sent before the pump started still plays out first.
+        self._input_audio_end = max(self._input_audio_end, _pump_clock())
         self._idle_audio_task = asyncio.create_task(self._pump_idle_audio(), name='openai-live-idle-audio')
 
     async def _pump_idle_audio(self) -> None:
@@ -674,11 +675,16 @@ class OpenAILiveConnection(RealtimeConnection):
         while True:
             # Never cancel the pending `recv()`: a cancelled read can drop the frame it already holds,
             # so the turn clock is a timeout on the wait rather than on the read.
-            done, _ = await asyncio.wait({pending}, timeout=self._silence_timeout())
+            waiting: set[asyncio.Task[Any]] = {pending}
+            if (pump := self._idle_audio_task) is not None and not pump.done():
+                # A pump that fails wakes this wait, so its failure surfaces now rather than at the next frame.
+                waiting.add(pump)
+            done, _ = await asyncio.wait(waiting, timeout=self._silence_timeout(), return_when=asyncio.FIRST_COMPLETED)
             if self._closed:
                 # `aclose()` cancelled the read while we were waiting on it.
                 return
-            if done:
+            self._raise_if_idle_audio_failed()
+            if pending in done:
                 finished, pending = pending, self._start_read()
                 try:
                     raw = finished.result()
@@ -700,7 +706,6 @@ class OpenAILiveConnection(RealtimeConnection):
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
             for event in self._expire_quiet_turn():
                 yield event
-            self._raise_if_idle_audio_failed()
 
     def _raise_if_idle_audio_failed(self) -> None:
         """Re-raise what stopped the idle-audio pump, rather than let the session go quietly deaf to text.

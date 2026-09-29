@@ -2076,17 +2076,33 @@ async def test_audio_sent_in_a_burst_holds_the_pump_back_until_it_has_played(mon
     assert connection._idle_frame_due() == pytest.approx(7.1 + 0.3)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_a_failed_idle_pump_ends_the_session_loudly() -> None:
-    """A pump that died of anything but the socket going away would leave text deferred forever, so it raises."""
-    connection = _connection(idle_audio=True)
+async def test_a_failed_idle_pump_ends_the_session_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pump that died of anything but the socket going away would leave text deferred forever, so it raises.
 
-    async def broken() -> None:
+    The socket here stays quiet, so it is the pump's failure itself that has to wake the read loop.
+    """
+
+    async def broken(self: OpenAILiveConnection) -> None:
         raise RuntimeError('pump broke')
 
-    connection._idle_audio_task = asyncio.create_task(broken())  # pyright: ignore[reportPrivateUsage]
-    await asyncio.sleep(0)
-    with pytest.raises(RuntimeError, match='pump broke'):
-        connection._raise_if_idle_audio_failed()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(OpenAILiveConnection, '_pump_idle_audio', broken)
+    connection = OpenAILiveConnection(_FakeWebSocket([]), idle_audio=True)  # pyright: ignore[reportArgumentType]
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(RuntimeError, match='pump broke'):
+        async for _ in connection:
+            pass  # pragma: no cover
+    await connection.aclose()
+
+
+async def test_audio_sent_before_the_pump_starts_still_plays_out_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [5.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+    connection = _AudioSink()
+    await connection.send(BinaryAudio(data=bytes(48000), media_type='audio/pcm'))  # one second
+
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    assert connection._idle_frame_due() == pytest.approx(6.3)  # pyright: ignore[reportPrivateUsage]
+    await connection.aclose()
 
 
 async def test_the_idle_pump_streams_silence_until_closed() -> None:
