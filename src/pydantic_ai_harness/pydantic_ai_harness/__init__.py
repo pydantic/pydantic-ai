@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
+    from .model_router import ModelChoice, ModelRouter
     from .ordinal import Ordinal
     from .planning import Planning
     from .posthog import PostHog
@@ -106,6 +107,8 @@ __all__ = [
     'Memory',
     'ModalSandbox',
     'ModalSandboxBackend',
+    'ModelChoice',
+    'ModelRouter',
     'Ordinal',
     'OutputBlocked',
     'OutputGuardrail',
@@ -169,6 +172,8 @@ _CAPABILITY_EXPORTS = {
     'ManagedPrompt': 'logfire',
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
+    'ModelChoice': 'model_router',
+    'ModelRouter': 'model_router',
     'Ordinal': 'ordinal',
     'Planning': 'planning',
     'PostHog': 'posthog',
