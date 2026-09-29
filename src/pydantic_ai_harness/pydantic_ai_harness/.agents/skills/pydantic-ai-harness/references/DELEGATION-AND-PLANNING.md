@@ -204,8 +204,10 @@ Gotchas:
 - Agent `name` must be a valid Python identifier; `WorkflowAgent(agent, name=..., description=...)`
   (from `pydantic_ai_harness.dynamic_workflow`) renames without editing the agent.
 - `task` is keyword-only in the script. A structured `output_type` arrives as a `dict`: `r['field']`.
-- The parent `run(usage_limits=...)` is not forwarded into children; use `sub_agent_usage_limits` or
-  `max_agent_calls`. With shared usage and concurrent fan-out, token limits are best-effort.
+- With `forward_usage=True` (default) the parent `run(usage_limits=...)` bounds the whole tree
+  (minus one `tool_calls_limit` slot, and without `count_tokens_before_request`);
+  `sub_agent_usage_limits` replaces it. Under concurrent fan-out these limits are best-effort; use
+  `max_agent_calls` for an exact ceiling.
 - Workflows do not nest: do not give catalog agents `DynamicWorkflow`.
 - Sandbox: no third-party imports, no clock/randomness/filesystem/env. A child failure raises
   `RuntimeError` in the script; uncaught, the whole script retries.

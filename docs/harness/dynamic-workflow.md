@@ -129,15 +129,14 @@ A hard, host-enforced ceiling on the number of sub-agent runs in one parent run.
 
 ### `sub_agent_usage_limits` and `forward_usage` -- bounding cost
 
-`sub_agent_usage_limits` is a `UsageLimits` applied to each sub-agent run. `forward_usage` controls whether the whole tree shares one usage counter:
+`forward_usage` controls whether the whole tree shares the parent run's usage counter and limits. `sub_agent_usage_limits` is a `UsageLimits` that replaces the limits each sub-agent run would otherwise enforce:
 
-| `forward_usage` | Counter | What the limit means |
+| `forward_usage` | Counter | Limits on each sub-agent run |
 | --- | --- | --- |
-| `True` (default) | the parent's `usage` is shared across the tree | a tree-wide cap. Under concurrent fan-out it is best-effort: several sub-agents can pass the check before any of them adds to the count. |
-| `False` | each sub-agent run counts on its own | per-run limits. A per-run `total_tokens_limit` of `T` with `max_agent_calls` of `N` bounds the tree to roughly `N * T` tokens. |
+| `True` (default) | the parent's `usage` is shared across the tree | `sub_agent_usage_limits` if set, else the `usage_limits` passed to the parent `run()`. Either way it is a tree-wide cap, checked against the shared counter. Under concurrent fan-out it is best-effort: several sub-agents can pass the check before any of them adds to the count. |
+| `False` | each sub-agent run counts on its own | `sub_agent_usage_limits` if set, else pydantic-ai's default. These are per-run limits: a per-run `total_tokens_limit` of `T` with `max_agent_calls` of `N` bounds the tree to roughly `N * T` tokens. |
 
-!!! warning "The parent `run()` usage limit is not forwarded"
-    The `usage_limits` you pass to the parent `run()` is not forwarded into sub-agents -- it is re-checked only at the parent's own request boundaries. To bound sub-agents, set `sub_agent_usage_limits`; for an exact ceiling on the number of runs, use `max_agent_calls`.
+When the parent's limits are forwarded, two fields change. One `tool_calls_limit` slot is held back for the `run_workflow` call itself, which is only counted once it returns. `count_tokens_before_request` is not forwarded, since a sub-agent can run on a model without `count_tokens` support, so token and cost ceilings are checked against each sub-agent response rather than ahead of its request. For an exact ceiling on the number of runs, use `max_agent_calls`.
 
 ### `resource_limits` -- guarding the script itself
 
@@ -241,7 +240,7 @@ DynamicWorkflow(                  # all parameters are keyword-only
     max_retries=3,
     forward_usage=True,
     inherit_model=False,          # True -> sub-agents run with the parent run's resolved model
-    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> pydantic-ai default
+    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent's if forward_usage, else default
     resource_limits=None,         # None -> backstop (256 MB, no time cap);
                                   # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
     id=None,                      # required when defer_loading=True

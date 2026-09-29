@@ -52,6 +52,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
+from pydantic_ai_harness._usage import forwarded_usage_limits
 
 # Set while a workflow script is executing, so a sub-agent that itself tries to run a workflow can
 # be refused -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
@@ -477,7 +478,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     """Maximum retries for the `run_workflow` tool (syntax/runtime errors count as retries)."""
 
     forward_usage: bool = True
-    """Share the parent run's `usage` accumulator with sub-agents. See
+    """Share the parent run's `usage` accumulator and `usage_limits` with sub-agents. See
     `DynamicWorkflow.forward_usage` for what is and is not forwarded."""
 
     inherit_model: bool = False
@@ -485,7 +486,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     See `DynamicWorkflow.inherit_model` for when to use this."""
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the forwarded parent limits.
     See `DynamicWorkflow.sub_agent_usage_limits` for the budgeting semantics."""
 
     resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None = None
@@ -645,12 +646,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
 
         This exists precisely because `usage_limits` cannot give an exact ceiling here:
         core's own limit check is split from its increment by the model-request `await`
-        (a TOCTOU race -- N gathered sub-agents all pass the check before any increments;
-        measured ~20x overshoot), and `RunContext` exposes `usage` but not `usage_limits`,
-        so the parent's configured limit can't be forwarded to sub-agents at all.
-        TODO: file upstream on pydantic-ai -- (a) expose `usage_limits` on `RunContext`,
-        (b) atomic reserve-then-request in the run loop. Until then, tree-wide token caps
-        stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
+        (a TOCTOU race -- N gathered sub-agents all pass the check before any increments),
+        so the parent's limits forwarded with `forward_usage` stay best-effort under
+        fan-out. TODO: file upstream on pydantic-ai -- atomic reserve-then-request in the
+        run loop.
         """
         if self._call_count >= self.max_agent_calls:
             raise _BudgetExhausted(self.max_agent_calls)
@@ -668,7 +667,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 deps=ctx.deps,
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
-                usage_limits=self.sub_agent_usage_limits,
+                usage_limits=self._sub_agent_usage_limits(ctx),
             )
             return to_jsonable_python(result.output)
         except Exception as exc:
@@ -678,6 +677,17 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             if isinstance(exc, _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES):
                 message = f'{message}: {exc}'
             raise RuntimeError(message) from exc
+
+    def _sub_agent_usage_limits(self, ctx: RunContext[AgentDepsT]) -> UsageLimits | None:
+        """The limits a sub-agent run enforces: the configured override, else the parent's.
+
+        The parent's ceilings ride along with its shared `usage`, making the budget tree-wide;
+        see `forwarded_usage_limits` for the fields that cannot pass through as-is. With an
+        isolated counter they would be per-run caps the user never asked for, so none are forwarded.
+        """
+        if self.sub_agent_usage_limits is not None:
+            return self.sub_agent_usage_limits
+        return forwarded_usage_limits(ctx.usage_limits) if self.forward_usage else None
 
     def _build_type_check_stubs(self) -> str:
         """Render sub-agent signatures as stubs for Monty's static type checker.

@@ -901,6 +901,72 @@ async def test_sub_agent_usage_limits_generous_allows_run() -> None:
     assert out == 'done'
 
 
+def _ctx_with_limits(usage_limits: UsageLimits, usage: RunUsage) -> RunContext[object]:
+    return RunContext[object](
+        deps=None, model=TestModel(), usage=usage, usage_limits=usage_limits, prompt=None, messages=[], run_step=1
+    )
+
+
+async def test_parent_usage_limits_forwarded_past_the_default_request_limit() -> None:
+    # The parent's 200-request budget, not pydantic-ai's default of 50, bounds the sub-agent.
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent('done')])
+    ctx = _ctx_with_limits(UsageLimits(request_limit=200), RunUsage(requests=50))
+    assert await _run_script(ts, "await sub(task='x')", ctx) == 'done'
+    assert ctx.usage.requests == 51
+
+
+async def test_parent_usage_limits_forwarded_below_the_default_request_limit() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
+    ctx = _ctx_with_limits(UsageLimits(request_limit=3), RunUsage(requests=3))
+    with pytest.raises(ModelRetry, match='The next request would exceed the request_limit of 3'):
+        await _run_script(ts, "await sub(task='x')", ctx)
+
+
+async def test_sub_agent_usage_limits_override_forwarded_parent_limits() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], sub_agent_usage_limits=UsageLimits(request_limit=4))
+    ctx = _ctx_with_limits(UsageLimits(request_limit=200), RunUsage(requests=4))
+    with pytest.raises(ModelRetry, match='The next request would exceed the request_limit of 4'):
+        await _run_script(ts, "await sub(task='x')", ctx)
+
+
+async def test_parent_usage_limits_not_forwarded_with_isolated_usage() -> None:
+    # An isolated counter would turn the parent's tree-wide ceiling into a per-run cap.
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent('done')], forward_usage=False)
+    ctx = _ctx_with_limits(UsageLimits(request_limit=1), RunUsage(requests=1))
+    assert await _run_script(ts, "await sub(task='x')", ctx) == 'done'
+
+
+async def test_count_tokens_before_request_not_forwarded() -> None:
+    # `TestModel` has no `count_tokens`, so inheriting the flag would fail the sub-agent run.
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent('done')])
+    ctx = _ctx_with_limits(UsageLimits(input_tokens_limit=10_000, count_tokens_before_request=True), RunUsage())
+    assert await _run_script(ts, "await sub(task='x')", ctx) == 'done'
+
+
+async def test_parent_tool_calls_limit_holds_across_the_tree() -> None:
+    # `run_workflow` itself is counted once it returns, so a sub-agent tool call under a parent
+    # `tool_calls_limit=1` would land the tree at 2.
+    sub: Agent[object, str] = Agent(TestModel(custom_output_text='done'), name='sub')
+
+    @sub.tool_plain
+    def helper() -> str:  # pragma: no cover - the limit trips before the call
+        return 'used'
+
+    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': "await sub(task='x')"})])
+        return ModelResponse(parts=[TextPart('finished')])
+
+    agent = Agent(FunctionModel(parent_model), capabilities=[DynamicWorkflow(agents=[sub])])
+    with capture_run_messages() as messages:
+        result = await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=1))
+    assert result.output == 'finished'
+    assert result.usage.tool_calls == 0
+    retry = messages[2].parts[0]
+    assert isinstance(retry, RetryPromptPart)
+    assert 'exceed the tool_calls_limit of 0' in str(retry.content)
+
+
 # --- Errors / output shapes ------------------------------------------------
 
 
