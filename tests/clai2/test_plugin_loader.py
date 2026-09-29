@@ -245,6 +245,30 @@ async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
         await harness.loader.load('clash')
 
 
+async def test_saved_settings_persist_and_a_failed_start_after_saving_can_load_again(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'tuned.py').write_text(
+        'from pydantic import BaseModel\n'
+        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'class Tuned(BaseModel):\n'
+        '    level: int = 1\n'
+        'def activate(host: PluginHost) -> None:\n'
+        "    @host.on('session_start')\n"
+        '    async def started(event: SessionStart) -> None:\n'
+        '        level = host.settings(Tuned).level\n'
+        '        host.save_settings(Tuned(level=level + 1))\n'
+        '        if level == 1:\n'
+        "            raise RuntimeError('first start fails')\n"
+    )
+    await harness.loader.load_all()
+    [entry] = harness.loader.entries()
+    assert entry.state == 'enabled, failed: RuntimeError: first start fails'
+    assert harness.store.plugins()[0].settings == {'level': 2}
+    await harness.loader.load('tuned')
+    assert harness.loader.entries()[0].state == 'enabled, loaded'
+    assert harness.store.plugins()[0].settings == {'level': 3}
+
+
 async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('counter', end_body='pass')
