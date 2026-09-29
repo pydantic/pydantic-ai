@@ -1,6 +1,7 @@
 from importlib.metadata import version as _metadata_version
 
 from ._cancel import CancellationToken
+from ._json_schema import UseEnumMemberDocstrings
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -49,6 +50,7 @@ from .exceptions import (
     ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
+    UsageExtractionFailedWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -154,7 +156,16 @@ from .native_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
-from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .output import (
+    BoolCriteria,
+    Choice,
+    Choices,
+    NativeOutput,
+    PromptedOutput,
+    StructuredDict,
+    TextOutput,
+    ToolOutput,
+)
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -235,6 +246,7 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
+    'UsageExtractionFailedWarning',
     'ModelRetry',
     'ToolFailed',
     'ModelAPIError',
@@ -345,6 +357,7 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'UseEnumMemberDocstrings',
     # toolsets
     'AbstractToolset',
     'AgentToolset',
@@ -383,6 +396,9 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    'Choice',
+    'Choices',
+    'BoolCriteria',
     # template
     'TemplateStr',
     # format_prompt

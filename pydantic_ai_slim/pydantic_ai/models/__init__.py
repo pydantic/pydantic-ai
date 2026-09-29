@@ -66,6 +66,7 @@ from ..messages import (
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
@@ -379,8 +380,28 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     run_step: int
     """The request step being selected, starting at `1`."""
 
+    prompt: str | Sequence[UserContent] | None = None
+    """The run's user prompt, as [`RunContext.prompt`][pydantic_ai.tools.RunContext.prompt] holds it.
+
+    When a run resumes from a history ending in a request, without a new prompt, this is that request's prompt.
+    """
+
     messages: list[ModelMessage]
-    """The message history available before this request step."""
+    """The messages the selected model will be sent for this step, ending with the request being routed.
+
+    This is what [`RunContext.messages`][pydantic_ai.tools.RunContext.messages] holds for the step, minus
+    what is only added once the model is selected: the request's
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] and, on a fresh run's first step,
+    its system prompt parts. Earlier requests keep the instructions they were sent with.
+
+    When a run resumes from a response with tool calls still to run, the step's request is their
+    results, which don't exist before the model is selected, so the messages end with that response.
+    They also end with the response when it's a suspended one being continued, as no request is sent.
+
+    It's a new list, so adding or removing messages doesn't change the run's. Don't change the
+    messages in it: they're the run's own, except for the request being routed on a run's first
+    step, which is built for selection, so changing it has no effect on what's sent.
+    """
 
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
@@ -615,6 +636,55 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_request_parameters
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether this request will think, judged from the unified `thinking` setting and the profile.
+
+        Reads `params.thinking`, falling back to `model_settings` for callers that run before
+        `prepare_request` moves the setting over. Adapters with provider-specific thinking settings
+        override this, since those take precedence.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            thinking = (model_settings or {}).get('thinking')
+        if thinking is False and not self.profile.get('thinking_always_enabled', False):
+            return False
+        if thinking:
+            return True
+        return self.profile.get('thinking_always_enabled', False) or self.profile.get(
+            'thinking_enabled_by_default', False
+        )
+
+    def _forced_tool_choice_disables_thinking(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether forcing a tool call would stop this request from thinking.
+
+        See [`forced_tool_choice_disables_thinking`][pydantic_ai.profiles.ModelProfile.forced_tool_choice_disables_thinking].
+        """
+        return self.profile.get('forced_tool_choice_disables_thinking', False) and self._request_thinks(
+            model_settings, model_request_parameters
+        )
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        """The output mode for a structured `output_type` that doesn't pick one.
+
+        Tool Output forces a call to the output tool on every request that can't end with text, so where that
+        would stop the model from thinking, Native Output is used instead if the model supports it.
+        """
+        mode = self.profile.get('default_structured_output_mode', 'tool')
+        if (
+            mode == 'tool'
+            and model_request_parameters.output_tools
+            and self.profile.get('supports_json_schema_output', False)
+            and self._forced_tool_choice_disables_thinking(model_settings, model_request_parameters)
+        ):
+            return 'native'
+        return mode
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -653,7 +723,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
+        params = params.with_default_output_mode(self._default_structured_output_mode(model_settings, params))
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -688,6 +758,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             raise UserError('Native structured output is not supported by this model.')
         if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
+        if params.allow_text_output and not self.profile.get('supports_text_output', True):
+            raise UserError(
+                'Text output is not supported by this model. Give the agent one structured `output_type`, '
+                'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
+            )
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
@@ -927,8 +1002,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             pass
         elif callable(user):
             # The callable form's result bypasses `merge_profile`, so translate deprecated key
-            # spellings here too.
-            resolved = _translate_legacy_profile_keys(user(resolved))
+            # spellings here too. It starts from `resolved`, so a current spelling it carries
+            # over unchanged doesn't count as set.
+            base = ModelProfile(**resolved)  # the callable may mutate its argument in place
+            resolved = _translate_legacy_profile_keys(user(resolved), base)
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
@@ -1691,6 +1768,10 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'typesafe':
+        from .typesafe import TypeSafeModel
+
+        return TypeSafeModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

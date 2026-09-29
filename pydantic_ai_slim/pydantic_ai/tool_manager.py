@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from pydantic import ValidationError
 
-from . import messages as _messages
+from . import _usage_attribution, messages as _messages
 from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
@@ -45,6 +45,9 @@ ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_even
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
+
+InlineDeferredRequestsHandler = Callable[[DeferredToolRequests], Awaitable[None]]
+"""Internal callback for observing a deferred call before a capability handler is asked to resolve it."""
 
 InlineDeferredResultHandler = Callable[[DeferredToolRequests, DeferredToolResults], Awaitable[None]]
 """Internal callback for observing a deferred call that a capability resolved inline."""
@@ -1029,7 +1032,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validated, usage=usage, wrap_validation_errors=wrap_validation_errors
             )
         except SkipToolExecution as e:
-            usage.tool_calls += 1
+            _usage_attribution.record_tool_call(usage)
             tool_result = e.result
 
         # Only record success when wrapping is requested, mirroring the `failed_tools` gating:
@@ -1070,7 +1073,7 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        usage.tool_calls += 1
+        _usage_attribution.record_tool_call(usage)
 
         return tool_result
 
@@ -1081,6 +1084,7 @@ class ToolManager(Generic[AgentDepsT]):
         approved: bool = False,
         metadata: Any = None,
         wrap_validation_errors: bool = True,
+        on_deferred_requests: InlineDeferredRequestsHandler | None = None,
         on_inline_deferred: InlineDeferredResultHandler | None = None,
         on_validate: ToolValidationHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
@@ -1104,6 +1108,8 @@ class ToolManager(Generic[AgentDepsT]):
                 retry-budget state is left untouched — useful for nested callers (e.g.
                 sandboxed tool dispatch) where the call shouldn't consume the agent's
                 retry budget and the raw exception is what the caller wants to surface.
+            on_deferred_requests: Internal callback invoked with a deferred call's requests before the
+                capability handler is asked to resolve it.
             on_inline_deferred: Internal callback invoked when a capability resolves a deferred call inline.
             on_validate: Internal callback invoked with the argument-validation outcome before execution.
 
@@ -1173,6 +1179,7 @@ class ToolManager(Generic[AgentDepsT]):
                 call,
                 exc,
                 wrap_validation_errors=wrap_validation_errors,
+                on_deferred_requests=on_deferred_requests,
                 on_inline_deferred=on_inline_deferred,
             )
 
@@ -1200,6 +1207,7 @@ class ToolManager(Generic[AgentDepsT]):
         exc: CallDeferred | ApprovalRequired,
         *,
         wrap_validation_errors: bool = True,
+        on_deferred_requests: InlineDeferredRequestsHandler | None = None,
         on_inline_deferred: InlineDeferredResultHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
@@ -1244,6 +1252,10 @@ class ToolManager(Generic[AgentDepsT]):
             calls=[call] if isinstance(exc, CallDeferred) else [],
             metadata={call.tool_call_id: exc.metadata} if exc.metadata else {},
         )
+        if on_deferred_requests is not None:
+            # Before the handler, as the graph emits `DeferredToolRequestsEvent`: a handler may take a
+            # while (e.g. awaiting a person), and the caller can surface the pending request meanwhile.
+            await on_deferred_requests(requests)
         deferred_results = await self.resolve_deferred_tool_calls(requests)
         if deferred_results is None:
             raise exc

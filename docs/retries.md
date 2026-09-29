@@ -1,3 +1,7 @@
+---
+description: "Configure retries in Pydantic AI: HTTP transport retries for rate limits and 5xx errors, provider SDK retries, tool and output retries, and how they multiply."
+---
+
 # Retries
 
 "Retry" means seven different things in an agent run, at seven different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.
@@ -413,7 +417,7 @@ See [Bedrock: Configuring Retries](models/bedrock.md#configuring-retries) for co
 
 Between the transport and the model sits one more layer the agent never sees: the provider SDK's own client, which re-issues failed requests before your code hears about them. Its defaults, retryable errors, and configuration differ by provider, so size `M` from the client you use. A [retrying transport](#transport-retries) sits *below* this client, so the two stack rather than replacing each other: configuring one never disables the other.
 
-See the provider-specific settings for [OpenAI](models/openai.md#custom-openai-client), [Anthropic](models/anthropic.md#custom-http-client), [Google](models/google.md#http-retries), [Groq](models/groq.md#sdk-retries), [Cohere](models/cohere.md#sdk-retries), and [AWS Bedrock](models/bedrock.md#configuring-retries).
+See the provider-specific settings for [OpenAI](models/openai.md#custom-openai-client), [Anthropic](models/anthropic.md#custom-http-client), [Google](models/google.md#http-retries), [Groq](models/groq.md#sdk-retries), [Cohere](models/cohere.md#sdk-retries), [TypeSafe](models/typesafe.md#sdk-retries), and [AWS Bedrock](models/bedrock.md#configuring-retries).
 
 ## Model fallback is not a retry
 

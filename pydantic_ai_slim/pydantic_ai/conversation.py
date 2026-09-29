@@ -31,7 +31,7 @@ class Conversation:
     it starts every turn's [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget over from zero.
 
     It is a plain dataclass of serializable fields, so it round-trips through
-    [Pydantic](../storage.md) like the rest of a message history.
+    [Pydantic](../persistence.md) like the rest of a message history.
     """
 
     _: KW_ONLY
