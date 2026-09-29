@@ -15,7 +15,7 @@ pytest.importorskip('pydantic_ai.mcp')
 
 from typing import Any
 
-from pydantic_ai import Agent, ToolsetTool
+from pydantic_ai import Agent, RunUsage, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
@@ -218,11 +218,12 @@ class TestFakeServerModelsImplicitSessions:
         # Proves the fake models a real `MCPToolset`: I/O with no session open opens a transient
         # implicit one, so the `implicit_sessions == 0` assertions above are meaningful.
         server = FakeMCPToolset(id='calc')
-        await server._require_session()
+        ctx = RunContext(deps=object(), model=_add_then_done_model(), usage=RunUsage())
+        await server.get_tools(ctx)
         assert server.implicit_sessions == 1
 
         async with server:
-            await server._require_session()
+            await server.get_tools(ctx)
         assert server.implicit_sessions == 1
 
 
