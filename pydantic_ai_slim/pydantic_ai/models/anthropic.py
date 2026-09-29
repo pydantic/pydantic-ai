@@ -154,6 +154,7 @@ try:
         Omit,
         omit as OMIT,
     )
+    from anthropic.lib.streaming import BetaAsyncMessageStream
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaAdvisorTool20260301Param,
@@ -339,12 +340,59 @@ _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
+# https://platform.claude.com/docs/en/api/errors#http-errors
+_ERROR_TYPE_STATUS_CODES = {
+    'invalid_request_error': 400,
+    'authentication_error': 401,
+    'billing_error': 402,
+    'permission_error': 403,
+    'not_found_error': 404,
+    'request_too_large': 413,
+    'rate_limit_error': 429,
+    'api_error': 500,
+    'timeout_error': 504,
+    'overloaded_error': 529,
+}
+
+
+def _error_status_code(error: APIStatusError) -> int:
+    """The HTTP status of an Anthropic error, including one reported in a stream after a 200 response.
+
+    An error event in a stream arrives after the response status was already 200, so the SDK raises it with that
+    status; the error `type` identifies the status the same error has on a non-streaming request.
+    """
+    if error.status_code >= 400:
+        return error.status_code
+    body = error.body
+    if _utils.is_str_dict(body) and _utils.is_str_dict(error_body := body.get('error')):
+        if isinstance(error_type := error_body.get('type'), str) and error_type in _ERROR_TYPE_STATUS_CODES:
+            return _ERROR_TYPE_STATUS_CODES[error_type]
+    return error.status_code
+
+
+def _is_expired_container_error(error: APIStatusError) -> bool:
+    """Whether Anthropic rejected a request because the container it reuses has expired.
+
+    Anthropic answers an expired container with a 404 `not_found_error`, and earlier with a 500.
+    """
+    status_code = _error_status_code(error)
+    if status_code == 500:
+        return True
+    body = error.body
+    return (
+        status_code == 404
+        and _utils.is_str_dict(body)
+        and _utils.is_str_dict(error_body := body.get('error'))
+        and str(error_body.get('message', '')).startswith('Container not found')
+    )
+
+
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
-        if (status_code := e.status_code) >= 400:
+        if (status_code := _error_status_code(e)) >= 400:
             body: object | None = e.body
             suggested_model_id = None
             if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
@@ -1006,22 +1054,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        try:
-            response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-            return self._process_response(response, model_request_parameters, model_settings)
-        except ValueError as e:
-            if 'Streaming is required' in str(e):
-                # Anthropic SDK requires streaming for high max_tokens; fall back transparently
-                # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
-                stream = await self._messages_create(messages, True, model_settings, model_request_parameters)
-                async with stream:
-                    streamed_response = await self._process_streamed_response(
-                        stream, model_request_parameters, model_settings
-                    )
-                    async for _ in streamed_response:
-                        pass
-                    return streamed_response.get()
-            raise  # pragma: no cover
+        response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        return self._process_response(response, model_request_parameters, model_settings)
 
     async def count_tokens(
         self,
@@ -1235,29 +1269,47 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             betas: set[str],
             thinking_override: dict[str, object] | None,
         ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
-            return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
-                system=system_prompt or OMIT,
-                messages=anthropic_messages,
-                model=self._model_name,
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                mcp_servers=mcp_servers or OMIT,
-                output_config=output_config or OMIT,
-                betas=sorted(betas) or OMIT,
-                stream=stream,
-                cache_control=auto_cache_control or OMIT,
-                thinking=thinking,
-                stop_sequences=model_settings.get('stop_sequences', OMIT),
-                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
-                metadata=model_settings.get('anthropic_metadata', OMIT),
-                context_management=context_management or OMIT,
-                container=container_param or OMIT,
-                service_tier=_resolve_anthropic_service_tier(model_settings),
-                speed=self._effective_speed(model_settings, anthropic_profile),
-                extra_headers=extra_headers,
-                extra_body=_build_extra_body(model_settings, thinking_override),
-            )
+            async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+                return await self.client.beta.messages.create(
+                    max_tokens=model_settings.get(
+                        'max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)
+                    ),
+                    system=system_prompt or OMIT,
+                    messages=anthropic_messages,
+                    model=self._model_name,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    mcp_servers=mcp_servers or OMIT,
+                    output_config=output_config or OMIT,
+                    betas=sorted(betas) or OMIT,
+                    stream=stream,
+                    cache_control=auto_cache_control or OMIT,
+                    thinking=thinking,
+                    stop_sequences=model_settings.get('stop_sequences', OMIT),
+                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
+                    metadata=model_settings.get('anthropic_metadata', OMIT),
+                    context_management=context_management or OMIT,
+                    container=container_param or OMIT,
+                    service_tier=_resolve_anthropic_service_tier(model_settings),
+                    speed=self._effective_speed(model_settings, anthropic_profile),
+                    extra_headers=extra_headers,
+                    extra_body=_build_extra_body(model_settings, thinking_override),
+                )
+
+            if stream:
+                return await send(True)
+            try:
+                return await send(False)
+            except ValueError as e:
+                if 'Streaming is required' not in str(e):  # pragma: no cover
+                    raise
+                # The SDK refuses a non-streaming request it expects to take over 10 minutes, which a large
+                # `max_tokens` implies. Stream it and accumulate the final message instead, so the response is
+                # processed exactly like a non-streaming one.
+                raw_stream = await send(True)
+                assert isinstance(raw_stream, AsyncStream)
+                async with raw_stream:
+                    return await BetaAsyncMessageStream(raw_stream, output_format=NOT_GIVEN).get_final_message()
 
         retry_container = container
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
@@ -1265,7 +1317,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return await create(container, initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
                 if (
-                    error.status_code == 500
+                    _is_expired_container_error(error)
                     and container_from_history
                     and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
@@ -3136,10 +3188,18 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
     # <https://platform.claude.com/docs/en/about-claude/pricing>). The rest of
     # `cache_creation_input_tokens` is priced at the five-minute rate, so the one-hour count is all pricing needs.
     # In streaming, only the start event carries the split, so it's kept in `details` to survive the merge.
+    # The one-hour count is capped at the total it's part of: after a compaction iteration's cache write, the final
+    # event resets `cache_creation_input_tokens` without resending the split, so a message accumulated from a stream
+    # keeps the start event's stale one-hour count.
     if (
         isinstance(response_usage, BetaUsage)
         and response_usage.cache_creation is not None
-        and (ephemeral_1h_input_tokens := response_usage.cache_creation.ephemeral_1h_input_tokens)
+        and (
+            ephemeral_1h_input_tokens := min(
+                response_usage.cache_creation.ephemeral_1h_input_tokens,
+                response_usage.cache_creation_input_tokens or 0,
+            )
+        )
     ):
         details['ephemeral_1h_input_tokens'] = ephemeral_1h_input_tokens
 

@@ -1,150 +1,248 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '302'
+      - "302"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
-          type: text
-        role: user
-      model: claude-sonnet-4-5-20250929
-      stream: false
-      thinking:
-        budget_tokens: 1024
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+            type: text
+        model: claude-sonnet-4-5-20250929
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 1024
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1809'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-9d60a6435f6621668cc1360fdeb966c2-bf9c3b31d17fe788-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - data: EvgFCkYIBxgCKkBmxKtCnM3xlr1zpw0Ik4FY0bnznKLdj7THnWO4shd9HwIVkqwnbh16iMbUaK/y21Cf3e2zpej0nWdCG/JL5N0xEgywjBGi+v35EN0uLGcaDK+qOqA2s01rnZ0ZLiIwAHciryf6vOoMFDZlnCyaZHZW3oO8qmEGf/zyZgLzdE3WMFC1WxzUOnJDHiRRbAbVKt8EjEfzriU8Jbhw38s6vbMj6ZkQW7xHrQqPoYbDJlnBuZKdj0n+9XmYNTqGbgChQnsCdFT47uxmimkxRzas5L/pE9XbElYde8WAB0zDdbdSRhROBmDWuCsUh6JFtH9ydDWhxrQ2IU0pFQD/SrGLVueS1g/DfZgZNT/G3a+inH5lxQ+cXgF8hUmpe0sM6Gbl8Yf5g9yNt4La+JobgcRC/rNktNgnSnuyBtpl2YPyloWmlOn+hqF0xgPcUhoH+pLefiophUwJ3mjL4NIC4/S6TI5QP3CEuK03uT2STVWh2L3caF3SNCSV7faVE3aElTGjpRsHXCTujLe7CLGkhY7PL7/t8dfyQELFaPrh2O84UIJOvU/PRwN1KfrlVNi67IWs5s90EIg/byHE3EFdboXseLaxO878W01qzoYB30z0zbME7we8I0v2sDi1wzZDgTDffeqF1C9x6BU2jV/hK0NrvhShHowZdD4IizQAaC8MiBoFpkcI6MfoXWVV0vxTLL+Wl3/Rvfzu/nsNSmgeT3DcX1yUYw/CqjeWMA1mEipfVSCav7yWLGhd3JC2BfoQvtxqbOFXQXVXcZBn9X62rzKQTq47xAtl46X18UAP0sx9bb/oeUDbalE57KnVan68zdAN5jmUP5MOq/KO7xadmFKw+yQjORgKqb3Et6AriIrafjra+gNn5ciWpO7IdgOBpQ11LkFz8KlBaK+wRrZRJ8kfBKx8dm9SHp69Dck9CNH4HGd+IjX/hcC+ZMBBMJ38OGK/LpFq7lCP5FldWx8SCh3/NyJXEjDLMdB6OosO0nmiVWAgZhgB
-        type: redacted_thinking
-      - text: |-
-          I notice that your message appears to contain a command or trigger phrase that's attempting to access internal systems or special behaviors. I'm not able to respond to such requests.
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3rnnuVjmSHr8jV6m4t","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":93,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}     }
 
-          Instead, I'd be happy to have a regular conversation or help you with legitimate questions or tasks. Is there something specific I can assist you with today?
-        type: text
-      id: msg_01TbZ1ZKNMPq28AgBLyLX3c4
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 92
-        output_tokens: 196
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '1831'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
-          type: text
-        role: user
-      - content:
-        - data: EvgFCkYIBxgCKkBmxKtCnM3xlr1zpw0Ik4FY0bnznKLdj7THnWO4shd9HwIVkqwnbh16iMbUaK/y21Cf3e2zpej0nWdCG/JL5N0xEgywjBGi+v35EN0uLGcaDK+qOqA2s01rnZ0ZLiIwAHciryf6vOoMFDZlnCyaZHZW3oO8qmEGf/zyZgLzdE3WMFC1WxzUOnJDHiRRbAbVKt8EjEfzriU8Jbhw38s6vbMj6ZkQW7xHrQqPoYbDJlnBuZKdj0n+9XmYNTqGbgChQnsCdFT47uxmimkxRzas5L/pE9XbElYde8WAB0zDdbdSRhROBmDWuCsUh6JFtH9ydDWhxrQ2IU0pFQD/SrGLVueS1g/DfZgZNT/G3a+inH5lxQ+cXgF8hUmpe0sM6Gbl8Yf5g9yNt4La+JobgcRC/rNktNgnSnuyBtpl2YPyloWmlOn+hqF0xgPcUhoH+pLefiophUwJ3mjL4NIC4/S6TI5QP3CEuK03uT2STVWh2L3caF3SNCSV7faVE3aElTGjpRsHXCTujLe7CLGkhY7PL7/t8dfyQELFaPrh2O84UIJOvU/PRwN1KfrlVNi67IWs5s90EIg/byHE3EFdboXseLaxO878W01qzoYB30z0zbME7we8I0v2sDi1wzZDgTDffeqF1C9x6BU2jV/hK0NrvhShHowZdD4IizQAaC8MiBoFpkcI6MfoXWVV0vxTLL+Wl3/Rvfzu/nsNSmgeT3DcX1yUYw/CqjeWMA1mEipfVSCav7yWLGhd3JC2BfoQvtxqbOFXQXVXcZBn9X62rzKQTq47xAtl46X18UAP0sx9bb/oeUDbalE57KnVan68zdAN5jmUP5MOq/KO7xadmFKw+yQjORgKqb3Et6AriIrafjra+gNn5ciWpO7IdgOBpQ11LkFz8KlBaK+wRrZRJ8kfBKx8dm9SHp69Dck9CNH4HGd+IjX/hcC+ZMBBMJ38OGK/LpFq7lCP5FldWx8SCh3/NyJXEjDLMdB6OosO0nmiVWAgZhgB
-          type: redacted_thinking
-        - text: |-
-            I notice that your message appears to contain a command or trigger phrase that's attempting to access internal systems or special behaviors. I'm not able to respond to such requests.
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"EooCCpsBCBIYAipAH9yMh50nMosxdP3q71FDdw6Z+ZPzJuiFuyaffpTU/yPwJKCH8ttFsqMvyZH2twka/lsjXMK1jFbdG5qjBV8q0jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDMJpczwa8FCXQKWJwRoMUA4/WHeExukjWn06IjCKSuk+u0962v4BcURpg+F7UCYzkoaOdI6OianWZZYpOZg7qwy/3f7oEwoZc5y4bbMqHCqYm6JDaybB2cs2LiNLHshMBwj0fttD7CadqAcYAQ=="}           }
 
-            Instead, I'd be happy to have a regular conversation or help you with legitimate questions or tasks. Is there something specific I can assist you with today?
-          type: text
-        role: assistant
-      - content:
-        - text: What was that?
-          type: text
-        role: user
-      model: claude-sonnet-4-5-20250929
-      stream: false
-      thinking:
-        budget_tokens: 1024
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '1931'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      content:
-      - data: EtUFCkYIBxgCKkAE46qlfUcG4eBdm3DIVpKC/XPkzbryCwgjw+VMiyBJuOckAZlcdrHdQ1wbm0uy7p/RXSF39IIg88HGTbNxXRC+Egw0sa1913mfkLIPfGsaDAi7hUxVkFwA1fUPQCIwdjvc27hKsweSC97pnKArq+2A8W16RwtK1yz5jB9ZmSXySv5TT+O9ySYoypDs/XFYKrwEAqO72GZyZyt38BSY7fpKUGDMHhvKbbe6+TPPErQH6VqAvqMC7X8HXXKY4M/KSounTPn3AtONNHNXBtORIzob303+aRKL2RypqPAgOwdkZDtvRomxxB2d9p04YhS8l3yyH+W6d9WFmzyHGHrvgujMGIzCdiQ1kmmPV4y8PPnyXevA+HoKD1ByZD8RjoIzrG2UsEJZrn5PyWgaoeoy778obQp21YHGzOgu91PnyrI/875+EJi0ECnAJtLlO/hhRAp3tAxXeOoWuzhDxeZeZ2aa+TO72+2M9YEvaVVPZFaa5VEjbjaJADS8O5ITWMgrDreAFdFKD9jo1K9NbireV2ybdHpHoDQBnoINNh9KMlK/gLbDxgVbvWh+2tV4qXhKyuuO77JMFNCe2b0bityyt7MT7Qu3/heND9QX8AQ8SLGg5hLF8d0q2F/3jFM4xRAEoVm4W42uft3wJjp1YNqTU4/fEgTwvg/b3mzFxPSUyKGlsXIJM4PC6WEPcN4GbVV2uwEP4cJlXHlm0Dx2kzqGHhlinnSJ2QYG/1mByZoa1UM2QSxIqJnyxDvd0+w8Tr6vLoMdmuYmXswroNMahvwGdUO7GU7/Ci7C+yrYMDyk82sDW5p9hgq0tVQB4oH44w50B00rSdI1Ny35Kb2nMuzbwm46YO9IWtBg9FT8B4fNYOcu5JGSKKlWe9PYPsfhVJ9TxuziNTGXcHZpGnP0O7RQuxbbTC/nCTfUix+GQKV3kFUSBBGPwtw3kct4D3I1a/UYAQ==
-        type: redacted_thinking
-      - text: "That message appeared to be an attempt to use a special command or trigger phrase, possibly trying to access
-          internal systems or special behaviors in my design. \n\nThese kinds of strings (sometimes called \"jailbreak attempts\"
-          or \"prompt injections\") typically try to bypass my normal operation or guidelines. I'm designed to recognize such
-          attempts and respond appropriately by declining them and offering to have a regular conversation instead.\n\nIs
-          there something I can actually help you with today?"
-        type: text
-      id: msg_012oSSVsQdwoGH6b2fryM4fF
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 168
-        output_tokens: 232
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"Eo4CCpsBCBIYAipAmMWKoH9HNKM/vBvvqjFoWnKtP/SZ8whJlgcw47YfKqsIuJVKlQgeno0O9Q5XmbyKPVcL3UwTCAWFHy75Myn9MjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDF0KSmPrwo14oE7IrhoMGsNYfreDEtVi3aGOIjC0yz8J9WxEhTsQKehe5YZL6LPPSwlTqlyI8f7xSc+k1KVEmVDerb6l1q7M4023CtgqILxCcLqvm6lXUpOW/vEBxexZp/UZ2Trw09n/4Wjog7rQGAE="}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"EoUCCpsBCBIYAipAd1D7xHnYI7Iaj9RtZZErYnDMNJSLoAhFxdl0kOimsnmSZekzeWiOzoB8hUaH+3IiQX9a8TlyGOpHcvoXyI6fOzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDHx4sZDZQvE5Hv4jdhoM6IkYuw8iy8ojqdyeIjCnaUvFrl+F7KT/4ru4hJHodh64dMDdwlfc3NMlCFSzHxQPDuxcxHfSJF9kbf3asXIqF7zJtQ17Ww7jeNRqZDE+Ugc2hgnnKidTGAE="}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"redacted_thinking","data":"EoUCCpsBCBIYAipAAPNRhJay4OBsISJ3whh3W0mW71/dBuf4cyf7Usm6cBkmBB3vBW/1f7Nu8wTO3PdFcX32cvPh2gMGNBCGqoVZxjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDGgmeg20oDmdmO+WAxoMMPO3xmz1C8GfzEsoIjDnOHwtxGycCGuPnHqyA0vIVGi3YNR79jx1kLAes0IoxCjSo1OGoxSyjkiyDBvB8xAqF/74fzU3phaMGRPh5LH7KVSAX9N/b8CGGAE="}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"redacted_thinking","data":"EoUCCpsBCBIYAipAt93hMwAUITUT8vRj3P1zP8wDpy8cGbg6TSzo8Nu1OLZ/KI85VKsx8wmBzKT5vZ1oQk2AlBOj8qaidVAWs3U40jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDHUFiB9s3RZPHbByPhoMpsls4vsZuzSiW+YTIjBVRKlpnlN/I6aH3ZiG29lh+nsdleLdEBMelEavhOa0bnm/vZkU0zLbIFqcQXaAGJwqF+V6CtNFy9Awrtdtw8piPZS9olY1ECf7GAE="}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"redacted_thinking","data":"EpECCpsBCBIYAipA807vlniuRjCauOQgX4j6tO2ZX78FKRRuyNlyPfeJM+isoaJfMgN4+c3kitNNOQ7XCNlItp7z88W4BD2LIJv0hTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDGLhDSJkNcQtI4oOgxoM9m0C2/Sfkb+a4OGHIjCw8YiIz1z61jFUUMbFMyhh4uqvncLi/ZNbAyKnws5G9quT//QJSnxEb+jWBUQiJtoqI0gP/qiUW2YpYpN9WBHSCHKozQjIxnYN4AUdB41wAHi0AQQeGAE="}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"redacted_thinking","data":"EogCCpsBCBIYAipASkJZNro5FFOXaALlIWzQB5IzWjoFUZriDuw9n8SSN7d/oUoLfnFCq9lcbjDRfXb/0PNfrh9Q6PumvBwxcj0zsTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDKopudzsdbwwibsbFRoM2Z/KjZmWGxsSAWPlIjCq0fMCNLJ2gdRE8cXFF7EVzVDBZJCVHwuYUhyMsUaRSpkrFScXQzEFTxM+mkQTb2MqGmd1UJwl9A7CfuqXNsGXJ0otGFUwEqrsg9XKGAE="}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":7,"content_block":{"type":"redacted_thinking","data":"EoYCCpsBCBIYAipAEMvBBA44yqWX8YEStsSfy/LX4OTRl6kp7FfvwC9usWnSZ+osjGluLckDjaFmpMxMz9TjzUr0tO9BtXUpahC7VjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDG5QavHRwX7Qgvg+kBoMeQBY3kmYolRdhvtNIjCiC5jGPUHRVi997vH/HLKQqeQfDdUxFtgATb9HcgdNiCQvQN2o4v2MskF4GQt+Lm4qGN52S91DsNfcNRPDWwaoPe7Ofpm8+nIRaBgB"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":7        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":8,"content_block":{"type":"redacted_thinking","data":"EoUCCpsBCBIYAipAleHfoRlIHgShmMFVtnYe9RLSvp3Le+SLfeJSaTrGRjpN1vfFGHe4EAI7/k4pb21/ZWLHyL66IvpGLYt/mLiJDDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDC76Bb+jYIaSYC+NthoMUUA4xpeBgZ6EqGJnIjC5iHbHRQ8qNDJJ7ufuEIJh5B5TILHX0Ec2Pz3GCl6hepewrGY8Z9F5gtTAeoQlCUgqF60BWTh70tywlfFR1kadudwVkIL9WoE2GAE="}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":8  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":9,"content_block":{"type":"redacted_thinking","data":"EoUCCpsBCBIYAipA0cseH+TPpgp+qDv72u9HQYoNPitHp9CsDhN2z3EXbAiRTbtbJ8p7W+Z2XkFCWtXCe/cFWBb58O+EM9RloI7hBTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDnYPXmrY2l/ES70IxoMpV5cNf5VX8FO39VWIjDoiV5sJqV/Ax7Xo9VsO87RZw2TI9yqYIXE2KYClmZTlS5JVUieBSkh5wpeMcRezs8qF+VuuEAoi1oycalCq2vz7QH64UeG0PHpGAE="}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":9  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":10,"content_block":{"type":"redacted_thinking","data":"EosCCpsBCBIYAipAdm9icQomEjWp9KtaGiMt5gk1ty9DmJPbO64UzyVLFUG+7dcfCJWPdrarhJPbYQ361i1HtPltfbOr/419257MZDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDAmv+QC6dt5YGbWLRoMGbJamRgO+lkk5fVkIjATnk+BlMANoHjyYJfKR7UJGlnEGEHFkUDeeHUZz5cyJrSrvaywc/w+DOycIJteOB4qHWLvY/Vge55WwqRSIxw9qkWTC/ijF9YAY+16ikGkGAE="}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":10          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":11,"content_block":{"type":"redacted_thinking","data":"EoECCpsBCBIYAipAkT5OGi6VzkaHnQbbow57bdA875NMBfn2QQFvttZ+wX97zz6zq/+J/vfC/lMis+kqq437+SCWrXyLCUAnsmXCqjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDAfdVzzG0I6wB3WDCBoMwM4YbpShITieuQnaIjBEGiXDSI/Nj0F23b10/jjUwdA/BrpidKVhp39Ca2O1Csa3kiT4VBqFPgwYKbZXxLEqE28bVdDfoP3cYyelQtbTtvq15xwYAQ=="}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":11          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":12,"content_block":{"type":"redacted_thinking","data":"Ep0CCpsBCBIYAipA2ueHQgwCDMEL10dJu97awrRChX+DN2KykcXtUgzE3qQ61JVxOtjvuQrEthv5qOIwZ3uFrtkTKzojm6oqYpLyxzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDC1KjNf6V+1+EGKxixoMO2Kp7l5isW+WHeAlIjC+f8yuo8JD5Iccl2+60K9vWO1eHttt2tANHcMAF5Fq+Hpu2WuKJCEVPfUVdS1UZYYqL9bFQiJzkghISfeG2JY0EmykxrfXe8gnJCwmj8uOdkvMtmYjDlBaNtADOM8NeG83GAE="}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":12      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":13,"content_block":{"type":"redacted_thinking","data":"EooCCpsBCBIYAipAnyGYjy8HCN8w1/OafPQCiD+mM3COjnP5c3AfIhqK3HXoQPWf2p25PZ3OMkb9i2cdCiihW3JtpbtWYPaE6DEnLjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDHMeRHbDqw3J6yJcShoMvRqDDrScCx/OspthIjDvBQXL6EQSGdgYfP56496VMGzbbkeE8ZOoc62r1g497pnpwQksZSvV7uAvavm5m8YqHPLHK02HoG+DpnIxdRAoxElfaoyDYXEx1vStIP4YAQ=="}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":13               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":14,"content_block":{"type":"redacted_thinking","data":"EoMCCpsBCBIYAipAD2ywCaRBOX5Hf1BeUkFBvm9uQQCDtCVOjIKDrvwTbHWmvIDz3eJrNJbNnGJdh7x+e+OJj0sTdfF6gNPXouXbjTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDNmecdK0me4x+bKtaBoMWcapZ0HyIKWSxioDIjCNSQ+pdwOUrk9hlHJbC9emWDnLzOIm8zeA3SKlV3WCRbsj+l2N5R+ikPdd4Lx+tl4qFRjQ+/NCuPp1y5MpF80IiW3g52f6RBgB"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":14              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":15,"content_block":{"type":"redacted_thinking","data":"EpQCCpsBCBIYAipAv9iTTLcXBS05pQEK7JZtrXzJt/VRrkwSs9Otq2PjJm3XZeuwUXWHmdBbBd1OmT8qL8RDxwZibyH3fRs3OkFDMjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDDuZQOXBJcvTLoEghoMqtCfiThgyAplNlvtIjClhEx3NoM32aDW6B8pnwiFXABth5ySMfmOUE4w7lLykzy3qfXKSSvWZ7W/ks/SRYcqJovkfvy8RXwYltIx08pUzEAnM1GTHwxkPAEw5YmXds9OCY77TAfWGAE="}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":15             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":16,"content_block":{"type":"redacted_thinking","data":"EoICCpsBCBIYAipAVFcPPoGZ/bmhIbIqZr92W22YWB4lcIsAuw8/dB+Dl0idBZk16as63EgFp+1A5q2eWbjZF8iBpj3sBGGTwbjzUDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDBF7v9UG/PbFhd/K8RoMf5VWE+PD9OfGuLLTIjBdu1DapxOL/cAw5Swl0DwtZhScTiNRPrBz7GcYsYFR29+3uOBJKDupJrkwyBR1aQcqFCYX9zV3TXxeOfohV3QKG4NEWKzGGAE="}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":16             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":17,"content_block":{"type":"redacted_thinking","data":"EokCCpsBCBIYAipAj2VE+nAfNXWLXOin/znOFcHmLQtkDs193UW72grgHHEwEaXHFufEsnTL1xgebvtIb+yc+T6AMfJXdtWoy+s34TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDELyrfuP7BKcvDXmtBoMxZnkJrd2ayCMM1ptIjB4RkTub0EVy/OMVtm704OCGNtEFgBM+M2Q8pOxA6ACxc3XA1dO1trGKp95LO0IGgkqG1aVsunOTEF/s/sKdlp08+iE/mLwMyC4rQ2+5xgB"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":17    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":18,"content_block":{"type":"redacted_thinking","data":"Ev4BCpsBCBIYAipAj2VE+nAfNXWLXOin/znOFcHmLQtkDs193UW72grgHHEwEaXHFufEsnTL1xgebvtIb+yc+T6AMfJXdtWoy+s34TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDLJpl9m6PnsRQLdrThoM0Xj0fME4CDrD3HEdIjAYdC7z/+ESv+/sC5AoifK/YfjJJ8I+R9k7KEit9Km1gQ5E9MIrFsDfK9Hc3AGJt40qEGi34TLrV5BUZiX7zPB+q7YYAQ=="}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":18              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":19,"content_block":{"type":"text","text":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":"I don't have"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" any special response"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" to that"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" string"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":". It appears"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" to be a test or trigger phrase"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":","}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" but I don"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":"'t have"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" hidden"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" modes"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" or secret"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" instructions that"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" can"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" be activated"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" by"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" specific"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" strings.\n\nIs"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" there something I"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":19,"delta":{"type":"text_delta","text":" can help you with today?"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":19           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":93,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":103,"output_tokens_details":{"thinking_tokens":47}}         }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-09-29T16:31:23.004019+00:00

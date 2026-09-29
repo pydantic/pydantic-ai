@@ -273,10 +273,12 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
 
-    # The `max_tokens` Anthropic's Models API reports for each model.
+    # The `max_tokens` Anthropic's Models API reports for each model. Mythos 5 isn't reachable with our credentials;
+    # Anthropic documents Mythos 5.1 as having Fable 5.1's capabilities.
     if model_name.startswith(
         (
             'claude-fable-5',
+            'claude-mythos-5',
             'claude-opus-4-6',
             'claude-opus-4-7',
             'claude-opus-4-8',
