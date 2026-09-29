@@ -843,6 +843,7 @@ async def _run_prompt(
         show_tool_output=settings.tool_output,
         shell_lines=settings.shell_lines,
         grep_lines=settings.grep_lines,
+        tool_arg_chars=settings.tool_arg_chars,
         renderers=renderers,
     )
     status.streamed_chars = 0
