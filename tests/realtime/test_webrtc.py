@@ -808,7 +808,11 @@ async def test_hang_up_ends_a_sideband_call_and_closes_the_session() -> None:
         await session.close()
         assert model.hung_up == []
     async with Agent().realtime(model).session(provider_session=_CALL) as session:
+        # Hung up while the session is listening to the call, as a watchdog or stop button would.
+        listening = asyncio.create_task(anext(aiter(session), None))
+        await asyncio.sleep(0.01)
         await session.hang_up()
+        assert await listening is None
         assert model.hung_up == ['rtc_call']
         # Hanging up again is a no-op, as closing again is.
         await session.hang_up()
