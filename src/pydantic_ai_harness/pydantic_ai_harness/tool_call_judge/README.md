@@ -65,7 +65,7 @@ The judging model returns only the literal `yes`, `no`, or `unsure`, not a free-
 
 ## Which tools are judged
 
-`tools` is a [`ToolSelector`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/), the same selector the other tool-scoped capabilities take:
+`tools` is a [`ToolSelector`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.ToolSelector), the same selector the other tool-scoped capabilities take:
 
 | Value | Judges |
 |---|---|

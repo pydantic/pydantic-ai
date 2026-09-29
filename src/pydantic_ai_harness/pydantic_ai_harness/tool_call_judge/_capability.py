@@ -151,7 +151,7 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
     runs. A blocked call returns `denial_message` to the model and the tool body never executes.
 
     `tools` is a
-    [`ToolSelector`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-selectors):
+    [`ToolSelector`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.ToolSelector):
     `'all'` (the default), a list of tool names, a metadata match, or a predicate. Calls to tools
     the selector does not match run unjudged.
 
