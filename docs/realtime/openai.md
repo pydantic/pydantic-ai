@@ -244,7 +244,7 @@ only happens once audio is flowing.
 
 Seeding is text-only in the same spirit: [`message_history=`](history.md#seeding-a-session) replays
 text, transcripts, and thinking text, with tool rounds rendered as readable text because the protocol
-has nowhere to put function parts (as on [Gemini Live](gemini.md)). Audio and images in seeded history
+has nowhere to put function parts. Audio and images in seeded history
 raise [`UserError`][pydantic_ai.exceptions.UserError] rather than being dropped. Live accepts up to 128
 seeded messages and 8,192 tokens in total, so seed a long conversation with its recent end. Within a
 session, Live manages its own context: once it nears the limit, it continues from a summary of the
