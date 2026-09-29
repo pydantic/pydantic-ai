@@ -1618,8 +1618,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
                 )
             except exceptions.FallbackExceptionGroup as e:
-                # No response reaches history, but a response a `FallbackModel` rejected was still billed.
+                # No response reaches history, but a response a `FallbackModel` rejected was still billed,
+                # so it counts towards the run's usage and its token and cost limits. A limit it exceeds is
+                # what stopped the run, so that's raised, with the group as its cause.
                 _record_attempts_usage(ctx.state.usage, e.attempts)
+                if ctx.deps.usage_limits:  # pragma: no branch
+                    try:
+                        ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+                        ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
+                    except exceptions.UsageLimitExceeded as limit_exceeded:
+                        raise limit_exceeded from e
                 raise
             _handler_response = response
             return response

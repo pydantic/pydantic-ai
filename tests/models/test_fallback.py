@@ -1890,6 +1890,28 @@ async def test_all_rejected_usage_counts_towards_the_run() -> None:
     )
 
 
+async def test_all_rejected_usage_counts_towards_token_limits() -> None:
+    """When every response is rejected and their usage exceeds a limit, the limit is raised, caused by the group."""
+
+    def reject_all(response: ModelResponse) -> bool:
+        return True
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('response')], usage=RequestUsage(input_tokens=60))
+
+    model = FallbackModel(
+        FunctionModel(respond, model_name='primary'),
+        FunctionModel(respond, model_name='fallback'),
+        fallback_on=reject_all,
+    )
+
+    with pytest.raises(
+        UsageLimitExceeded, match='Exceeded the input_tokens_limit of 100 \\(input_tokens=120\\)'
+    ) as exc_info:
+        await Agent(model).run('test', usage_limits=UsageLimits(input_tokens_limit=100))
+    assert isinstance(exc_info.value.__cause__, FallbackExceptionGroup)
+
+
 async def test_rejected_usage_counts_towards_token_limits() -> None:
     def reject_primary(response: ModelResponse) -> bool:
         return response.model_name == 'primary'
