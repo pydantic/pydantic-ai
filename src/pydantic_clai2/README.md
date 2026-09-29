@@ -364,7 +364,7 @@ no agent telemetry spans.
 ## Codex authentication
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6-sol` and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at

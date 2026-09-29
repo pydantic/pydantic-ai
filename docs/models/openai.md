@@ -37,7 +37,7 @@ agent = Agent('openai:gpt-6-sol')
 ```
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together.
+For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
 
 Or initialise the model directly with just the model name:
 

@@ -356,10 +356,9 @@ def test_openai_gpt_5_6():
 def test_openai_gpt_6_astra():
     """Not a VCR test: this pins the resolved GPT-6 Astra profile against drift.
 
-    Pinned from OpenAI's model guide and docs (the model is not callable from this environment
-    yet): reasons by default with no `effort='none'`, supports `reasoning.mode` and
-    `reasoning.context='all_turns'`, native `tool_search`, prompt cache breakpoints, and no
-    `minimal` effort. Unlike GPT-5.6 it does not list image output.
+    Reasons by default with no `effort='none'`, supports `reasoning.mode` and
+    `reasoning.context='all_turns'`, native `tool_search`, image generation, prompt cache
+    breakpoints, and no `minimal` effort.
     """
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -368,6 +367,7 @@ def test_openai_gpt_6_astra():
         {
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
@@ -419,6 +419,27 @@ def test_openrouter_gpt_6_sol_luna(model_name: str):
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_supports_reasoning_effort_none') is True
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.parametrize('model_name', ['gpt-6.1-sol', 'gpt-6.1-sol-2026-09-29'])
+def test_openai_gpt_6_1_sol(model_name: str):
+    """GPT-6.1 Sol resolves GPT-6 Astra's capabilities, not GPT-6 Sol's: it rejects `effort='none'`."""
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
+
+
+@pytest.mark.parametrize('model_name', ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol-pro', 'openai/gpt-6.1-sol-20260929'])
+def test_openrouter_gpt_6_1_sol(model_name: str):
+    """OpenRouter's published GPT-6.1 Sol routes retain the OpenAI reasoning capabilities."""
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled') is True
     assert profile.get('openai_responses_supports_reasoning_mode') is True
     assert profile.get('openai_responses_supports_reasoning_context') is True
 
