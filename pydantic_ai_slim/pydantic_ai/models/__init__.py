@@ -487,19 +487,58 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # TODO(v3): remove along with `resolve_prompt_cache_retention`.
+        legacy = cls.__dict__.get('resolve_prompt_cache_retention')
+        if legacy is not None and 'resolve_cache_retention' not in cls.__dict__:
+            warnings.warn(
+                f'`{cls.__name__}` overrides `resolve_prompt_cache_retention`, which is deprecated; '
+                'override `resolve_cache_retention` instead.',
+                PydanticAIDeprecationWarning,
+                # Past `ABCMeta.__new__`, to the class statement.
+                stacklevel=3,
+            )
+            # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
+            cls.resolve_cache_retention = legacy
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by provider-specific model settings.
 
         The model's default settings are merged with the per-request `model_settings`. Only provider-specific settings
         are currently considered; a future unified cache setting is not yet an input. If multiple active settings
         request different retention periods, the longest period wins because any longer-lived cache breakpoint can
         keep the corresponding prompt prefix available. Models without a provider-specific retention setting return
-        `None`.
+        `None`, in which case the provider's
+        [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention] applies.
         """
         return None
 
+    @deprecated(
+        '`resolve_prompt_cache_retention` is deprecated, use `resolve_cache_retention` instead.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Deprecated alias of [`resolve_cache_retention`][pydantic_ai.models.Model.resolve_cache_retention]."""
+        # A subclass that still overrides this name reaches this base implementation only through its
+        # own `super()` call, and `__init_subclass__` routed `resolve_cache_retention` to that override,
+        # so dispatching on `self` would recurse. Continue with the implementation above the outermost
+        # legacy override instead, which is what that `super()` call means.
+        legacy_owner = next(
+            (
+                klass
+                for klass in reversed(type(self).__mro__)
+                if klass is not Model and 'resolve_prompt_cache_retention' in klass.__dict__
+            ),
+            None,
+        )
+        if legacy_owner is None:
+            return self.resolve_cache_retention(model_settings)
+        # `super()` with a class found at runtime is untyped, but that class is a `Model` subclass.
+        return cast('Model[Any]', super(legacy_owner, self)).resolve_cache_retention(model_settings)
+
     @staticmethod
-    def _max_prompt_cache_retention(
+    def _max_cache_retention(
         *cache_settings: bool | Literal['5m', '1h'] | None,
     ) -> timedelta | None:
         if '1h' in cache_settings:
@@ -705,7 +744,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings
+        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
+        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
             supports_thinking = self.profile.get('supports_thinking', False)

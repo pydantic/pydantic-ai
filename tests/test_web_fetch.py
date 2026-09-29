@@ -9,10 +9,9 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import anyio
 import httpx2
 import pytest
-from markdownify import markdownify
+from markdownify import MarkdownConverter, markdownify
 
 from pydantic_ai._utils import using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
@@ -685,40 +684,31 @@ class TestWebFetchLocalTool:
             ):
                 await tool('https://example.com')
 
-    async def test_nested_html_conversion_keeps_event_loop_responsive(self):
-        """A deeply nested definition list cannot occupy a worker and delay other coroutines for seconds."""
+    async def test_nested_html_is_rejected_before_conversion(self):
+        """A deeply nested definition list is rejected by the up-front estimate, before `markdownify` walks it.
+
+        Converting this page means rescanning and re-indenting its text at each of the 120 levels, which
+        took over 30 seconds of worker time before the estimate existed, so the estimate has to reject the
+        page before that walk starts rather than midway through it.
+        """
         html = '<dd>' * 120 + 'line\n' * 150_000 + '</dd>' * 120
-        finished = anyio.Event()
-        heartbeat_delays: list[float] = []
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response(html),
+            ),
+            patch.object(
+                MarkdownConverter, 'convert_soup', autospec=True, side_effect=MarkdownConverter.convert_soup
+            ) as convert_soup,
+        ):
+            tool = WebFetchLocalTool(max_content_length=50_000, allow_local_urls=False, timeout=30)
+            with pytest.raises(
+                ModelRetry, match=r'Failed to convert https://example\.com: the document is too complex'
+            ):
+                await tool('https://example.com')
 
-        async def heartbeat() -> None:
-            previous = time.perf_counter()
-            while not finished.is_set():
-                await anyio.sleep(0.01)
-                now = time.perf_counter()
-                heartbeat_delays.append(now - previous)
-                previous = now
-
-        started = time.perf_counter()
-        async with anyio.create_task_group() as task_group:
-            task_group.start_soon(heartbeat)
-            await anyio.sleep(0)
-            try:
-                with patch(
-                    'pydantic_ai.common_tools.web_fetch.safe_download',
-                    new_callable=AsyncMock,
-                    return_value=_html_response(html),
-                ):
-                    tool = WebFetchLocalTool(max_content_length=50_000, allow_local_urls=False, timeout=30)
-                    with pytest.raises(
-                        ModelRetry, match=r'Failed to convert https://example\.com: the document is too complex'
-                    ):
-                        await tool('https://example.com')
-            finally:
-                finished.set()
-
-        assert time.perf_counter() - started < 60
-        assert heartbeat_delays and max(heartbeat_delays) < 0.5
+        convert_soup.assert_not_called()
 
     @pytest.mark.parametrize('charset', ['idna', 'rot_13', 'base64_codec'])
     async def test_undecodable_charset_raises_model_retry(self, charset: str):

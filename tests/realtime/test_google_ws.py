@@ -22,7 +22,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RequestUsage, RunContext
+from pydantic_ai import Agent, RequestUsage, RunContext, ToolReturn
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -482,6 +482,55 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert session.usage.total_tokens == final.usage.total_tokens
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'async_tool_calls'),
+    [('gemini-3.1-flash-live-preview', False), ('gemini-3.8-live', False), ('gemini-3.8-live', True)],
+)
+async def test_tool_result_image(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    model_name: str,
+    async_tool_calls: bool,
+) -> None:
+    """An image a tool returns goes in the function response, and the model sees it.
+
+    The tool's text says nothing about the picture, so naming the fruit means the model read the image.
+    Covers a blocking call and an async one, whose result is scheduled to cut into the speech.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(model_name, provider=provider)
+    agent = Agent(instructions='Use take_photo when asked what is on the table, then answer in one short sentence.')
+    image = BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+
+    @agent.tool_plain
+    async def take_photo() -> ToolReturn:
+        """Take a photo of the table."""
+        return ToolReturn(return_value='Photo taken.', content=[image])
+
+    # An async call's turn completes alongside the call, and the answer comes in a turn of its own.
+    turns = 2 if async_tool_calls else 1
+    async with agent.realtime(model, model_settings={'async_tool_calls': async_tool_calls}).session() as session:
+        await session.send('What fruit is on the table?')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turns -= 1
+                    if not turns:
+                        break
+
+    [response] = sent_frames_containing(cassette, 'Photo taken.')
+    [function_response] = response['toolResponse']['functionResponses']
+    assert [part['inlineData']['mimeType'] for part in function_response['parts']] == ['image/jpeg']
+    answer = ' '.join(
+        part.transcript or ''
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'kiwi' in answer.lower()
+
+
 async def test_asap_enqueue_waits_for_response_boundary(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -632,6 +681,69 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     assert 'alice' in transcript and 'teal' in transcript
 
 
+async def test_message_history_function_part_seeding(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Seeded tool calls and results go in as native function parts on 3.8, and the model reads them.
+
+    The tool result carries a detail the model can't guess, so a correct answer shows it read the
+    `function_response` rather than the text around it.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_weather', content='Hailing, wind code ZEBRA-7', tool_call_id='call_1')]
+        ),
+        ModelResponse(parts=[TextPart(content='It is hailing in Paris.')]),
+    ]
+
+    async with agent.realtime(model, message_history=history).session() as session:
+        await session.send('What wind code did the weather tool return?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, '"setup"')
+    # `google-genai` sends the field in snake case, which the API accepts.
+    assert setup['setup']['historyConfig'] == {'initial_history_in_client_content': True}
+    [seeded] = sent_frames_containing(cassette, 'wind code ZEBRA-7')
+    assert seeded == snapshot(
+        {
+            'client_content': {
+                'turns': [
+                    {'parts': [{'text': 'What is the weather in Paris?'}], 'role': 'user'},
+                    {
+                        'parts': [{'functionCall': {'id': 'call_1', 'args': {'city': 'Paris'}, 'name': 'get_weather'}}],
+                        'role': 'model',
+                    },
+                    {
+                        'parts': [
+                            {
+                                'functionResponse': {
+                                    'id': 'call_1',
+                                    'name': 'get_weather',
+                                    'response': {'output': 'Hailing, wind code ZEBRA-7'},
+                                }
+                            }
+                        ],
+                        'role': 'user',
+                    },
+                    {'parts': [{'text': 'It is hailing in Paris.'}], 'role': 'model'},
+                ],
+                'turnComplete': True,
+            }
+        }
+    )
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse) and isinstance(reply.parts[0], SpeechPart)
+    assert 'zebra' in (reply.parts[0].transcript or '').lower()
+
+
 async def test_message_history_audio_seeding(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
@@ -716,6 +828,10 @@ def test_profile_allow_seeding() -> None:
         google_supports_affective_dialog=True,
         # A typed turn doesn't see an image sent just before it as a video frame (verified live).
         google_text_turns_see_video_frames=False,
+        # 2.5 guesses at media in a function response, so tool results carry text only.
+        google_supported_mime_types_in_tool_returns=(),
+        # 2.5 rejects function parts in seeded turns, so seeded tool calls go in as text.
+        google_supports_seeding_function_parts=False,
         google_closes_tool_call_turn_separately=False,
     )
 

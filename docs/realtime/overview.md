@@ -149,8 +149,8 @@ and quirks:
 
 | Provider | Audio output | Image input | Text output | [Browser WebRTC](deployment.md#browser-webrtc-server-sideband) | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| [OpenAI](openai.md) | ✓ | ✓ (GPT-Live: [backend only](openai.md#images-go-to-the-backend)) | ✓ (GPT-Live: ✗) | ✓ | ✓ | `gpt-realtime-2*` models (GPT-Live: ✗, set the [backend](openai.md#reasoning) effort) | Replays local history (GPT-Live: ✗, open a new session) |
-| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
+| [OpenAI](openai.md) | ✓ | ✓ (GPT-Live: [backend only](openai.md#images-go-to-the-backend)) | ✓ (GPT-Live: ✗) | ✓ | ✓ | `gpt-realtime-2*` models; GPT-Live's [backend](openai.md#reasoning) | Replays local history (GPT-Live: ✗, open a new session) |
+| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
 | [Google Gemini](gemini.md) | ✓ | ✓ | Vertex `gemini-live-2.5-flash` only | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✓ | `grok-voice-latest` and `-think-` models | ✓, with a `reconnect` policy |
 
@@ -273,7 +273,6 @@ fit for a product, two alternatives sit outside it:
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
 | A session can't pause for tool approval: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves each request [during the call](tools.md#deferred-and-approval-required-tools), which can include awaiting a person's answer. | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
 | Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text parts and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
-| Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |
 | GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai.md#the-turn-boundary-is-inferred) |
 | GPT-Live bills audio duration rather than tokens, and no `UsageLimits` field caps a session by duration; a `cost_limit` bounds it once the duration is priced. | [#8371](https://github.com/pydantic/pydantic-ai/issues/8371) |
 | GPT-Live has no user-text turn: `send('...')` and `enqueue()` deliver text as context to the speaking model, and only while audio is flowing. | [GPT-Live text input](openai.md#text-is-context-not-a-user-turn) |

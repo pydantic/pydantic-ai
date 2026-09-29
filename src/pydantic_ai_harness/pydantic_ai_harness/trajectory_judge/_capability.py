@@ -68,6 +68,9 @@ _JUDGE_INSTRUCTIONS = (
     'interruption.'
 )
 
+_TRUNCATED = ' [truncated]'
+_ELIDED = '\n[...]\n'
+
 _PROMPT_HEADER = "Review the running agent's recent trajectory and deliver your verdict."
 
 
@@ -139,8 +142,9 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     """Evaluate every N model requests within the run."""
 
     window: int = 20_000
-    """Sliding token window: each evaluation sees at most this many tokens of the most
-    recent trajectory (estimated at ~4 characters per token), rendered as a transcript."""
+    """Sliding token window: each evaluation sees at most this many tokens of the trajectory
+    (estimated at ~4 characters per token), rendered as a transcript. A longer transcript keeps
+    the original request (up to half the window) followed by the most recent tail."""
 
     name: str | None = None
     """Name used to attribute steering messages. Defaults to the judge `agent`'s `name`
@@ -363,33 +367,61 @@ def _claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
 
 
 def _judge_prompt(messages: Sequence[ModelMessage], window: int) -> str:
-    """The judge's user prompt: the rendered trajectory, clamped to the window's tail."""
-    transcript = html.escape(_render_transcript(messages), quote=False)
+    """The judge's user prompt: the rendered trajectory, clamped to the window.
+
+    When the transcript exceeds the window, the original request is kept ahead of the most
+    recent tail: the judge measures drift against the goal, so the goal must survive tool
+    results that would otherwise push it out. The request takes at most half the window and
+    is truncated with a marker beyond that.
+    """
+    request, rest = _render_transcript(messages)
+    request = html.escape(request, quote=False)
+    rest = html.escape(rest, quote=False)
+    transcript = f'{request}\n{rest}' if request and rest else request or rest
     max_chars = window * _CHARS_PER_TOKEN
-    if len(transcript) > max_chars:
-        transcript = transcript[-max_chars:]
+    if len(transcript) <= max_chars:
+        return _prompt_with(transcript)
+    request_budget = max_chars // 2
+    if not request or request_budget <= len(_TRUNCATED):
+        return _prompt_with(transcript[-max_chars:])
+    if len(request) > request_budget:
+        request = request[: request_budget - len(_TRUNCATED)] + _TRUNCATED
+    remaining = max_chars - len(request)
+    if len(rest) < remaining:
+        return _prompt_with(f'{request}\n{rest}' if rest else request)
+    return _prompt_with(f'{request}{_ELIDED}{rest[len(_ELIDED) - remaining :]}')
+
+
+def _prompt_with(transcript: str) -> str:
     return f'{_PROMPT_HEADER}\n\n<trajectory>\n{transcript}\n</trajectory>'
 
 
-def _render_transcript(messages: Sequence[ModelMessage]) -> str:
-    """Render the trajectory as judge-readable lines.
+def _render_transcript(messages: Sequence[ModelMessage]) -> tuple[str, str]:
+    """Render the trajectory as judge-readable lines, split into the original request and the rest.
 
-    System prompts and thinking parts are omitted: the judge evaluates observable behavior
-    (what was asked, said, called, and returned), not the agent's configuration or private
-    reasoning.
+    The original request is the user prompts and user speech sent before the agent's first
+    response or tool activity, including responses that render nothing (thinking only). System prompts and thinking parts are omitted: the judge evaluates observable
+    behavior (what was asked, said, called, and returned), not the agent's configuration or
+    private reasoning.
     """
+    request: list[str] = []
     lines: list[str] = []
+    user_lines = request
     for message in messages:
+        if isinstance(message, ModelResponse):
+            user_lines = lines
         for part in message.parts:
             if isinstance(part, UserPromptPart):
                 text = _prompt_text(part.content)
                 if text:
-                    lines.append(f'user: {text}')
+                    user_lines.append(f'user: {text}')
             elif isinstance(part, ToolReturnPart):
+                user_lines = lines
                 lines.append(f'tool {part.tool_name} returned: {part.model_response_str()}')
             elif isinstance(part, NativeToolReturnPart):
                 lines.append(f'native tool {part.tool_name} returned: {part.model_response_str()}')
             elif isinstance(part, RetryPromptPart):
+                user_lines = lines
                 lines.append(f'retry ({part.tool_name or "output"}): {part.model_response()}')
             elif isinstance(part, TextPart):
                 if part.content:
@@ -399,8 +431,8 @@ def _render_transcript(messages: Sequence[ModelMessage]) -> str:
             elif isinstance(part, NativeToolCallPart):
                 lines.append(f'assistant called native tool {part.tool_name} with {part.args_as_json_str()}')
             elif isinstance(part, SpeechPart) and part.transcript:
-                lines.append(f'{part.speaker}: {part.transcript}')
-    return '\n'.join(lines)
+                (user_lines if part.speaker == 'user' else lines).append(f'{part.speaker}: {part.transcript}')
+    return '\n'.join(request), '\n'.join(lines)
 
 
 @runtime_checkable
