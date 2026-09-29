@@ -390,6 +390,8 @@ class TestOpenAI:
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(8192)
 
+    # tiktoken downloads its encoding only when no earlier test has cached it, so the recording is played only on a cold cache.
+    @pytest.mark.vcr(on_unplayed='ignore')
     async def test_count_tokens(self, embedder: Embedder):
         count = await embedder.count_tokens('Hello, world!')
         assert count == snapshot(4)

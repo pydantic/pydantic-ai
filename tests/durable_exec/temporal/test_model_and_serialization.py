@@ -383,6 +383,8 @@ async def test_temporal_model_stream_direct(client: Client):
             )
 
 
+# Logfire looks up the project from a background thread, which may not reach the recorded request before the test ends.
+@pytest.mark.vcr(on_unplayed='ignore')
 async def test_logfire_plugin(client: Client):
     def setup_logfire(send_to_logfire: bool = True, metrics: Literal[False] | None = None) -> Logfire:
         instance = logfire.configure(local=True, metrics=metrics)

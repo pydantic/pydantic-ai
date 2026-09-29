@@ -271,7 +271,7 @@ dev = [
     "mongomock-motor>=0.0.36",
     "redis>=8.1.0",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
-    "cassetter>=0.13.0",
+    "cassetter>=0.14.0",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -453,6 +453,8 @@ strict = true
 anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+# Fail a passing test that leaves recorded interactions unplayed; opt out with `@pytest.mark.vcr(on_unplayed="ignore")`.
+vcr_on_unplayed = "fail"
 markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",

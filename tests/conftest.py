@@ -712,11 +712,6 @@ def pytest_addoption(parser: Any) -> None:
         default=False,
         help='Run live gateway smoke tests that make real paid model requests.',
     )
-    parser.addoption(
-        '--strict-vcr-cassette-usage',
-        action='store_true',
-        help='Fail when a loaded VCR cassette has no interactions played, not only when playback leaves a stale tail.',
-    )
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -737,37 +732,6 @@ def vcr_config() -> dict[str, Any]:
         'before_record_response': cassette_hooks.before_record_response,
         'uri_normalizer': cassette_hooks.normalize_uri,
     }
-
-
-def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
-    if vcr.play_count == 0 and not strict_usage:
-        return
-
-    # Each protocol numbers its interactions from 0, and `play_counts` only covers HTTP.
-    unused = {
-        'HTTP': [index for index in range(len(vcr.interactions)) if vcr.play_counts.get(index, 0) == 0],
-        'gRPC': [index for index, played in enumerate(vcr.grpc_played_indices) if not played],
-        'WebSocket': [index for index, played in enumerate(vcr.ws_played_indices) if not played],
-    }
-    if any(unused.values()):
-        details = '; '.join(f'unused {protocol} indexes: {indexes}' for protocol, indexes in unused.items() if indexes)
-        pytest.fail(f'Cassette {vcr.path} did not play all interactions: {details}')
-
-
-@pytest.fixture(autouse=True)
-def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
-    yield
-    setup_report = getattr(request.node, 'rep_setup', None)
-    call_report = getattr(request.node, 'rep_call', None)
-    if any(
-        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
-    ):
-        return
-    if vcr is None or vcr.record_mode != RecordMode.NONE or vcr.all_played:
-        return
-
-    strict_usage = bool(request.config.getoption('--strict-vcr-cassette-usage'))
-    check_vcr_cassette_usage(vcr, strict_usage)
 
 
 @pytest.fixture(autouse=True)
