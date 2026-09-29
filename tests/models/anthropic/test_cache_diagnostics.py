@@ -25,10 +25,10 @@ from ...conftest import RequestCapture, try_import
 with try_import() as imports_successful:
     from anthropic import (
         AsyncAnthropic,
-        AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
-        AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicVertex,
     )
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
