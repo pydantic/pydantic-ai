@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "1388"
+      - "1365"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 4096
+        max_tokens: 16384
         messages:
         - role: user
           content:
@@ -29,12 +29,9 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDIxTOu9kjOGGTcx3XBoMIdbMycq7X8VBi9V5IjD2PXLfzLxixtIdv86lHqLYGbGYUjPuvy323id4b6s7k9WKBkYGUVayrgEai9jXcRgq4APY/wbVDZbcsxL+gZ5ZeV9TfvBshVZ0lnOfwu0rIvo+SMzGVgR+DgIzhwAQfSCcJ3tLgdBI6jJdRZKjJKCT7S5LF+uzxZZ+qjHRQ/3jG2/FZXUFN3sVyWvoMAntrcHhP8iFGUl6x4zZaFFsEOuzkooe/XsfKuB7U9ulvw8WJvBdwmNrmQB0qlcQTDdfcquDtrRMrwTfUv/sVnxSY9doyv5NL9Oq2/sXlY0n+GUZBcts7ZlnE0bkh/o80DyLXZnZXSGbaB4AM+gtypz9YHE5sgTJCeyuI5DFMYG7wMSaUBuBpFviim+OSa7bWDS8jQVsuIGf09SL++PRW9JiCJS0HtM1A5sDBsjzQGfAvW51TEu0Muz/1BHCMk8OGo7WAUdxu6FSenqal6Xkhzstu5Kbiv+oj8RLcaqKYK3pM/AAvizHfigAwd9cFpSVBawo+l9QYtYOtDNoebRHypZHP5vrKtQmTK2j20Zev1d8twy7vlsfG9UUek01mSzes5stj+pn45JH4Yo/LRpdLeIb5K77t9rVJx7YKpkU1MWbyalcKNxfbOxljQjt/fbAf1rnk6voexLh1ynaiBiMnb/ruFHhpvNrLiLbbBNIU6G2SXOmqmlq8wyYdzuICPPEL1AeTqoJ/h4YAQ==
+              CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDDGW2gS7TgOR+pS0OhoMuCVPSNZL0XvvMkqjIjDT/TERjoM3rKglD83TMq91krvEpmnGsG2Peowx1SNcb2D1J05qE0i1J+0A1wyRDnoq4AOfeDfBDni3/xYaEHwttIFWkNSzrjWn1Do22gXuy/kg45c2jgEK9/ZGfFoWiqFx+bdOHLJjPKmaf8Z99LMukjBWrqHmm9F9BKibyl4ZlCuhAF5QfnecNzc9O3EfdP+eNcomEJYpqgYxNBT7Dpe5X7gerDozL2tdibKApE6Aj/DJzV38AFvEpYAa0QJNX2tACrzCV0bDfwwlzzT3jPfF18144UReC+OvpfqECOHHpOGavTYvKM4t7J/HyAcbwABOVEcQe0KfsbuJYFPIkbH+VVzKCoY1TUw7pYOxJMwXKradQNY6xwnuKi6ZYe00m4tYYy+4gjBgAm8DplndgYn3H4qGdqe8BUAQLASz52kOZu6x6L7BWmZqSvw5xHmVCGGdb/NrtNX92MuTGvb/LUg/k2OT+xqOw5Dj9sZ5ydmPT5ndXeNqF78Vvvk95dsp0YUT0pPOq5DigStbK+Jsg9GgHRI7DZOQ2WoN9kq3V9S7us2S6FYrskiGENoOpmFiqobVx7c0YGjhJDTJwSTjDqH50ifhWZDpTzkzUWOfry72AjrnldmQjSqbqtIIa2Y7MkVVUL1eFZ6KPiBKv8/uiID07kmqbD3Asw7hX1WKAOQFOQrLhy7W/oCdXwLmkwIm8mxZw1oYAQ==
             type: thinking
-          - text: |-
-              **17 × 23 = 391**
-
-              17 × 20 = 340 and 17 × 3 = 51, and 340 + 51 = 391.
+          - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**
             type: text
         - role: user
           content:
@@ -61,7 +58,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ed2b2291efb95e4f1f21ef58fe7e69b2-00271c322c74d3fe-01
+      - 00-2bfadc0d85d80829dd6c37bf5c5d96da-1e1d6f3919c17da7-01
       transfer-encoding:
       - chunked
       vary:
@@ -73,8 +70,8 @@ interactions:
         error:
           type: invalid_request_error
           message: "messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \"drop_block\". The `system` prompt differs from the one this block was created with."
-        request_id: req_011CfWMeeWaFuAwMvWXqqk6N
-  recorded_at: 2026-09-28T19:03:26.400348+00:00
+        request_id: req_011CfWguFfmvx1C6ALgwHdE6
+  recorded_at: 2026-09-28T23:15:54.246506+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -82,11 +79,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "284"
+      - "285"
       content-type:
       - application/json
       host:
@@ -94,7 +91,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 4096
+        max_tokens: 16384
         messages:
         - role: user
           content:
@@ -119,7 +116,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-08feb3fe3debdafd81519432a32b4330-b30de5b18989677e-01
+      - 00-1bb1f843eff42e80d2964001fdfd2c2d-5671645c5bd98890-01
       transfer-encoding:
       - chunked
       vary:
@@ -128,19 +125,16 @@ interactions:
       type: json
       content:
         model: claude-sonnet-5-5
-        id: msg_011CfWMeabgrWSuw3iNyFTR4
+        id: msg_011CfWguBm8kLiXwv5tkzMKu
         type: message
         role: assistant
         content:
         - type: thinking
           thinking: ""
           signature: >-
-            CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDIxTOu9kjOGGTcx3XBoMIdbMycq7X8VBi9V5IjD2PXLfzLxixtIdv86lHqLYGbGYUjPuvy323id4b6s7k9WKBkYGUVayrgEai9jXcRgq4APY/wbVDZbcsxL+gZ5ZeV9TfvBshVZ0lnOfwu0rIvo+SMzGVgR+DgIzhwAQfSCcJ3tLgdBI6jJdRZKjJKCT7S5LF+uzxZZ+qjHRQ/3jG2/FZXUFN3sVyWvoMAntrcHhP8iFGUl6x4zZaFFsEOuzkooe/XsfKuB7U9ulvw8WJvBdwmNrmQB0qlcQTDdfcquDtrRMrwTfUv/sVnxSY9doyv5NL9Oq2/sXlY0n+GUZBcts7ZlnE0bkh/o80DyLXZnZXSGbaB4AM+gtypz9YHE5sgTJCeyuI5DFMYG7wMSaUBuBpFviim+OSa7bWDS8jQVsuIGf09SL++PRW9JiCJS0HtM1A5sDBsjzQGfAvW51TEu0Muz/1BHCMk8OGo7WAUdxu6FSenqal6Xkhzstu5Kbiv+oj8RLcaqKYK3pM/AAvizHfigAwd9cFpSVBawo+l9QYtYOtDNoebRHypZHP5vrKtQmTK2j20Zev1d8twy7vlsfG9UUek01mSzes5stj+pn45JH4Yo/LRpdLeIb5K77t9rVJx7YKpkU1MWbyalcKNxfbOxljQjt/fbAf1rnk6voexLh1ynaiBiMnb/ruFHhpvNrLiLbbBNIU6G2SXOmqmlq8wyYdzuICPPEL1AeTqoJ/h4YAQ==
+            CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDDGW2gS7TgOR+pS0OhoMuCVPSNZL0XvvMkqjIjDT/TERjoM3rKglD83TMq91krvEpmnGsG2Peowx1SNcb2D1J05qE0i1J+0A1wyRDnoq4AOfeDfBDni3/xYaEHwttIFWkNSzrjWn1Do22gXuy/kg45c2jgEK9/ZGfFoWiqFx+bdOHLJjPKmaf8Z99LMukjBWrqHmm9F9BKibyl4ZlCuhAF5QfnecNzc9O3EfdP+eNcomEJYpqgYxNBT7Dpe5X7gerDozL2tdibKApE6Aj/DJzV38AFvEpYAa0QJNX2tACrzCV0bDfwwlzzT3jPfF18144UReC+OvpfqECOHHpOGavTYvKM4t7J/HyAcbwABOVEcQe0KfsbuJYFPIkbH+VVzKCoY1TUw7pYOxJMwXKradQNY6xwnuKi6ZYe00m4tYYy+4gjBgAm8DplndgYn3H4qGdqe8BUAQLASz52kOZu6x6L7BWmZqSvw5xHmVCGGdb/NrtNX92MuTGvb/LUg/k2OT+xqOw5Dj9sZ5ydmPT5ndXeNqF78Vvvk95dsp0YUT0pPOq5DigStbK+Jsg9GgHRI7DZOQ2WoN9kq3V9S7us2S6FYrskiGENoOpmFiqobVx7c0YGjhJDTJwSTjDqH50ifhWZDpTzkzUWOfry72AjrnldmQjSqbqtIIa2Y7MkVVUL1eFZ6KPiBKv8/uiID07kmqbD3Asw7hX1WKAOQFOQrLhy7W/oCdXwLmkwIm8mxZw1oYAQ==
         - type: text
-          text: |-
-            **17 × 23 = 391**
-
-            17 × 20 = 340 and 17 × 3 = 51, and 340 + 51 = 391.
+          text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**
         container: null
         stop_reason: end_turn
         stop_sequence: null
@@ -152,10 +146,10 @@ interactions:
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
-          output_tokens: 78
+          output_tokens: 66
           output_tokens_details:
             thinking_tokens: 30
           service_tier: standard
           inference_geo: global
         diagnostics: null
-  recorded_at: 2026-09-28T19:03:26.152887+00:00
+  recorded_at: 2026-09-28T23:15:54.054728+00:00

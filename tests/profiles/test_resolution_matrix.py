@@ -210,6 +210,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'tool_deferral_mode': 'standalone',
         }
@@ -240,6 +241,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supports_task_budgets': True,
             'tool_deferral_mode': 'standalone',
         }
@@ -258,6 +260,7 @@ def test_anthropic_claude_haiku_4_5():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -278,6 +281,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
             ),
@@ -760,6 +764,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -826,6 +831,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -856,6 +862,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
@@ -1059,6 +1066,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1249,6 +1257,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -1975,6 +1984,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
             ),
@@ -2094,6 +2104,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -2212,6 +2223,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
