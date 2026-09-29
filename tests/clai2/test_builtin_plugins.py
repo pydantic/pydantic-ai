@@ -29,8 +29,9 @@ CURATED = {
     'mcp',
     'github',
     'google_workspace',
+    'pylon',
 }
-OPT_IN = {'github', 'google_workspace'}
+OPT_IN = {'github', 'google_workspace', 'pylon'}
 
 
 class Menu:

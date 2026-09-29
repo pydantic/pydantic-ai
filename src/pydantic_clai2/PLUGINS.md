@@ -388,8 +388,9 @@ order plugin instructions, renderers, and status segments are consulted in.
 declared. It does not list every public harness capability for Space-enable:
 hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
-CLAI plugins written for them, such as the disabled built-in
-[`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools).
+CLAI plugins written for them, such as the disabled built-ins
+[`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools) and
+[`pylon`](#pylon-support-issues-and-accounts-in-pylon).
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -646,6 +647,72 @@ Earlier versions listed `google_workspace` as a raw harness entry,
 or off in the menu, CLAI now loads this plugin in its place and keeps your on or off
 choice. A declaration you added with its own settings under that factory is kept
 as written.
+
+### `pylon`: support issues and accounts in Pylon
+
+`pylon` (`pydantic_clai2.pylon`) gives the agent harness
+[`Pylon`](../../docs/harness/pylon.md): Pylon's hosted MCP tools for
+searching, reading, creating, and updating support issues, looking up and
+updating accounts, and looking up contacts. It starts disabled;
+`/plugins enable pylon` turns it on. The agent acts as the Pylon user who signed
+in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
+
+#### Configuring Pylon
+
+Turning the plugin on opens its settings menu, like any plugin with a
+[`@host.configure`](#offer-a-settings-menu-hostconfigure) menu. `C` in
+`/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
+change anything, including the key. Type to filter the rows. Enter edits a row,
+`R` restores its default, and **Save & close** or Esc leaves the menu. Each
+change is saved to the plugin's settings as soon as you make it and applies from
+the next run, with no reinstall.
+
+| Row | Default | Does |
+|---|---|---|
+| Sign-in (`auth`) | Named key from /keys (`"key"`) | `"key"` connects with a `/keys` entry. `"browser"` signs in through the browser |
+| Key (/keys) | not chosen | shown only for `"key"`. Enter opens the saved-key picker, and `R` forgets the choice. Stored as a name, not in settings |
+| Read-only tools (`read_only`) | `false` | keep only the tools Pylon's server labels read-only |
+| Server instructions (`include_instructions`) | `true` | pass Pylon's own server instructions to the agent |
+
+`/pylon status` prints the current setup without opening the menu, and
+`/pylon key` goes straight to the key picker. A declaration can also carry the
+settings as JSON, since none of them are secret:
+
+```text
+/plugins add pylon pydantic_clai2.pylon '{"read_only": true}'
+```
+
+Pylon's endpoint (`https://mcp.usepylon.com`) is fixed and there is no
+workspace or organization field. The token decides which Pylon organization
+and user the agent acts as.
+
+#### Keys: `/keys` holds the secret, Pylon holds its name
+
+The token lives in [`/keys`](#saved-api-keys), not in plugin settings, which are
+plaintext SQLite. The Key row uses the shared saved-key picker, which is
+searchable, and Esc cancels it. Choose an existing key, or choose **Enter a
+different API key** to type a masked token. CLAI saves that token in `/keys` as
+`PYLON_ACCESS_TOKEN`, the name harness `Pylon` documents. If that name already
+exists, CLAI asks before replacing it, since other connections may use it. The
+name is only a label: CLAI does not read an exported `PYLON_ACCESS_TOKEN`.
+
+Only the key's name is saved, in the credential store beside the vLLM and
+OpenRouter connections. Each run looks up the key's current value, so replacing
+it in `/keys` takes effect on the next run. A key Pylon uses cannot be renamed
+in `/keys`. Deleting it makes Pylon runs fail with an error naming the key until
+you restore it or choose another. Until a key is chosen, runs get no Pylon
+tools. This applies outside a terminal and after cancelling the menu.
+
+Several connections and plugins can share one named key by pointing at the same
+name. For example, a GitHub plugin and Copilot tooling can both reference
+`GITHUB_TOKEN`, so replacing it once updates both.
+
+Pylon only accepts OAuth access tokens, not its REST API keys. With the
+**Browser sign-in** option, CLAI signs in for you: the first run that uses Pylon
+opens the browser, as `/mcp` servers with OAuth do, and waits up to five minutes
+for you to finish. Those tokens stay in the keyring (account `mcp-plugin_pylon`,
+or a private `0600` file when there is no keyring). They are refreshed as
+needed and never touch `/keys` or plugin settings.
 
 ## Managing plugins
 
@@ -1117,7 +1184,8 @@ async def configure() -> str:
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
 
-The built-in `github` plugin is a complete example.
+The built-in `github` and [`pylon`](#configuring-pylon) plugins are complete
+examples; `pylon` also steps out of the menu worker to run the async key picker.
 
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
@@ -1238,10 +1306,11 @@ numbers, and underscores, starting with a letter or underscore. Saving an existi
 name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
 the secret on the command line.
 
-When saved keys exist, vLLM's token prompt and OpenRouter's **Enter API key** flow
-show a searchable list of names. Choose one, enter a different key privately, or
-choose **No API key** for vLLM. `/google_workspace` offers the same list for the
-`google_workspace` plugin. Esc closes the picker without connecting. Browser
+When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
+and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools)
+and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
+searchable list of names. Choose one, enter a different key privately, or
+choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.
 
 Named keys use the existing credential backend, separate from provider logins and
@@ -1251,7 +1320,7 @@ Key values never appear in the picker or confirmation. Names are labels, not
 exported environment variables. Selecting a saved key stores a reference, not a copy. Discovery and each new
 turn resolve its current value. Replacing a key updates connections that reference
 it. Deleting it makes those connections fail until you restore the same name or
-reconfigure them. Keys referenced by saved connections cannot be renamed. A cross-process lock
+reconfigure them. Keys referenced by saved connections, including Pylon's, cannot be renamed. A cross-process lock
 serializes key changes and connection saves so concurrent CLAI sessions do not
 overwrite each other's key edits. The lock file contains no credentials.
 

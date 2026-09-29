@@ -37,6 +37,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, ClassVar, Literal, cast
+from urllib.parse import quote
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json
@@ -66,12 +67,16 @@ from ..messages import (
     UserPromptPart,
 )
 from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
-from ..models.openai import _map_usage as map_openai_usage  # pyright: ignore[reportPrivateUsage]
+from ..models.openai import (
+    _map_api_errors as map_openai_api_errors,  # pyright: ignore[reportPrivateUsage]
+    _map_usage as map_openai_usage,  # pyright: ignore[reportPrivateUsage]
+)
 from ..providers import Provider, infer_provider
 from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
+    RealtimeHandshakeError,
     expect_event,
     map_connect_errors,
     openai_websocket_auth_headers,
@@ -97,7 +102,7 @@ from .codec import (
     ToolResult,
     TruncateOutput,
 )
-from .model import RealtimeModel
+from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer, WebRTCSession
 from .profiles import RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings
 
@@ -106,6 +111,7 @@ try:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
+        DataChannelConfigParam,
         DelegationCreatedEvent,
         ErrorEvent,
         InputTranscriptDeltaEvent,
@@ -114,8 +120,10 @@ try:
         ResponseEvent,
         ServerEvent,
         SessionClosedEvent,
+        SessionStartedEvent,
         SessionUsageUpdatedEvent,
     )
+    from openai.types.live.media_session_config_param import MediaSessionConfigParam
     from openai.types.responses import (
         Response,
         ResponseCompletedEvent,
@@ -212,6 +220,10 @@ _live_error_adapter: TypeAdapter[_LiveErrorFrame] = TypeAdapter(_LiveErrorFrame)
 #: an ordinary end of the call.
 _ABNORMAL_CLOSE_REASONS = frozenset({'expired', 'content', 'connection_lost'})
 
+#: What a WebRTC browser may do over its data channel unless `openai_live_data_channel` says otherwise:
+#: nothing, since the sideband runs the session.
+_CLOSED_DATA_CHANNEL: DataChannelConfigParam = {'allowed_client_events': [], 'allowed_server_events': []}
+
 #: The PCM16 sample rates Live accepts. (It also takes 8 kHz G.711, which isn't PCM16.)
 _LIVE_PCM_RATES = frozenset({16000, 24000})
 _response_stream_event_adapter: TypeAdapter[ResponseStreamEvent] = TypeAdapter(ResponseStreamEvent)
@@ -286,6 +298,18 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
 
     openai_live_store: bool
     """Whether OpenAI stores the session so it can later be forked or downloaded. Defaults to `False`."""
+
+    openai_live_data_channel: DataChannelConfigParam
+    """Which Live events the browser on a [WebRTC call](https://pydantic.dev/docs/ai/realtime/openai#browser-webrtc)
+    may send and receive over its data channel.
+
+    Defaults to none either way. The browser holds only the media: the server's sideband runs the session,
+    and an open channel would let the browser change the conversation (by appending instructions or
+    context) and read what the sideband sees, starting with the backend's instructions and tool
+    definitions in `session.started`. Allow specific events, such as `session.output_transcript.delta` for
+    live captions, when the browser needs them. The sideband is never restricted, and a WebSocket
+    session has no data channel, so this applies only to
+    [`answer_webrtc_offer`][pydantic_ai.realtime.openai_live.OpenAILiveModel.answer_webrtc_offer]."""
 
 
 DEFAULT_LIVE_INSTRUCTIONS = (
@@ -442,8 +466,12 @@ class OpenAILiveConnection(RealtimeConnection):
         audio_rate: int = 24000,
         provider_name: str = 'openai',
         provider_url: str = '',
+        forwards_output_audio: bool = True,
     ) -> None:
         self._ws = ws
+        # A WebRTC sideband sees the call's output audio too, but the browser is what plays it, so it
+        # only drives the turn clock here.
+        self._forwards_output_audio = forwards_output_audio
         self._model_name = model_name
         self._backend_model = backend_model
         self._provider_name = provider_name
@@ -824,11 +852,15 @@ class OpenAILiveConnection(RealtimeConnection):
         user's turn, and the idle track between their words would cut one utterance into many. A longer
         quiet stretch is not forwarded: it is most likely the end of the reply, or a wait on delegated
         work, and forwarding it would end every reply with seconds of silence.
+
+        On a WebRTC sideband the browser plays the audio, so nothing is forwarded and voice only drives
+        the turn clock.
         """
         if _is_voiced(pcm):
             self._pause_ms = 0.0
-            return [*self._open_response(), AudioDelta(data=pcm)]
-        if self._pause_ms is None:
+            events = self._open_response()
+            return [*events, AudioDelta(data=pcm)] if self._forwards_output_audio else events
+        if self._pause_ms is None or not self._forwards_output_audio:
             return []
         # A chunk that crosses the allowance is cut at it, on a sample boundary, so the pause forwarded
         # doesn't depend on how Live happened to chunk the track.
@@ -1289,6 +1321,129 @@ class OpenAILiveModel(RealtimeModel):
 
     def _live_url(self) -> str:
         return realtime_websocket_url(self._provider.base_url, path=_LIVE_WEBSOCKET_PATH)
+
+    def _sideband_url(self, session_id: str) -> str:
+        """The WebSocket a trusted server attaches to an existing Live session's control plane with."""
+        return realtime_websocket_url(
+            self._provider.base_url, path=f'{_LIVE_WEBSOCKET_PATH}/{quote(session_id, safe="")}/attach'
+        )
+
+    async def create_client_secret(
+        self,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+        expires_after_seconds: int | None = None,
+    ) -> RealtimeClientSecret:
+        """GPT-Live has no ephemeral client secrets, so this always raises.
+
+        Negotiate the call from your server with
+        [`answer_webrtc_offer`][pydantic_ai.realtime.openai_live.OpenAILiveModel.answer_webrtc_offer] instead,
+        so the browser never needs a token.
+        """
+        raise UserError(
+            'OpenAI GPT-Live has no ephemeral client secrets, so `create_client_secret()` is unavailable. '
+            "Relay the browser's SDP offer from your server with `answer_webrtc_offer()` instead."
+        )
+
+    async def answer_webrtc_offer(
+        self,
+        sdp_offer: str,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+    ) -> WebRTCAnswer:
+        """Start a Live session for a browser's WebRTC offer, and return the SDP answer and the session to attach to.
+
+        Live's configuration is fixed when the session starts, so everything is set here: the voice and
+        instructions, and the delegated backend with the agent's instructions and tools. The browser's
+        data channel is closed unless `openai_live_data_channel` opens it. The audio format is negotiated
+        by WebRTC, so the profile's sample rates don't apply.
+        """
+        settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
+        self._reject_unsupported(settings)
+        session_config = self._session_config(
+            instructions=instructions or '', tools=list(tools) if tools else None, messages=[], settings=settings
+        )
+        # WebRTC negotiates the audio format on the media transport, and Live rejects one set here.
+        del session_config['audio']['format']
+        if not session_config['audio']:
+            del session_config['audio']
+        session_config['client'] = {'data_channel': settings.get('openai_live_data_channel', _CLOSED_DATA_CHANNEL)}
+        with map_openai_api_errors(self.model_name):
+            created = await self.client.live.create(
+                session=cast(MediaSessionConfigParam, session_config),
+                transport={'type': 'webrtc', 'sdp': sdp_offer},
+            )
+        return WebRTCAnswer(
+            sdp=created.transport.sdp,
+            session=WebRTCSession(provider_name=self.system, session_id=created.session.id),
+        )
+
+    @asynccontextmanager
+    async def connect_webrtc(
+        self,
+        session: RealtimeProviderSession,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[OpenAILiveConnection]:
+        """Attach a sideband to a Live session started by [`answer_webrtc_offer`][pydantic_ai.realtime.openai_live.OpenAILiveModel.answer_webrtc_offer].
+
+        The session was fully configured when it started, and Live can't reconfigure it, so the sideband
+        only runs it: it executes the backend's tool calls and records the conversation, while the browser
+        holds the audio. For the same reason it can't be seeded with `message_history`.
+        """
+        if session.provider_name != self.system:
+            raise UserError(
+                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
+                f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
+                'same model/provider.'
+            )
+        if seed_input_items(messages, provider_name=self.system):
+            raise UserError(
+                'An OpenAI GPT-Live session takes its history when it starts, so a WebRTC sideband attaching to '
+                'one cannot seed `message_history`. Start the session without it, or connect over WebSockets.'
+            )
+        settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
+        self._reject_unsupported(settings)
+        handshake_timeout = settings.get('handshake_timeout', 30.0)
+
+        cm: AbstractAsyncContextManager[ClientConnection] | None = None
+        connection: OpenAILiveConnection | None = None
+        try:
+            with map_connect_errors(self.model):
+                headers = await openai_websocket_auth_headers(self.client)
+                inject_trace_context(headers)
+                opening = websockets.connect(self._sideband_url(session.session_id), additional_headers=headers)
+                ws = await opening.__aenter__()
+                cm = opening
+                # Live replays `session.started` to every connection that attaches, with the configuration
+                # the session started with.
+                started_frame = await expect_event(ws, _SESSION_STARTED_EVENT, timeout=handshake_timeout)
+                try:
+                    started = SessionStartedEvent.model_validate(started_frame)
+                except ValidationError as e:
+                    raise RealtimeHandshakeError(f'Malformed `{_SESSION_STARTED_EVENT}` event: {e}') from e
+            delegation = started.session.delegation
+            connection = OpenAILiveConnection(
+                ws,
+                model_name=started.session.model,
+                backend_model=delegation.responses.model if delegation and delegation.type == 'responses' else None,
+                turn_silence_ms=settings.get('openai_live_turn_silence_ms', DEFAULT_TURN_SILENCE_MS),
+                provider_name=self.system,
+                provider_url=self._provider.base_url,
+                forwards_output_audio=False,
+            )
+            yield connection
+        finally:
+            if connection is not None:
+                await connection.aclose()
+            if cm is not None:  # pragma: no branch
+                await cm.__aexit__(None, None, None)
 
     @asynccontextmanager
     async def connect(

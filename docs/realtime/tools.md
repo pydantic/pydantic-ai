@@ -141,8 +141,7 @@ async def main():
 
 An unsupported native tool with a configured local fallback is replaced before connection. Without
 a fallback, opening the session raises [`UserError`][pydantic_ai.exceptions.UserError]. Provider and
-model-specific combinations—including Gemini grounding, URL context, and function-tool
-restrictions—are canonical on the [Gemini provider page](gemini.md#native-tools).
+model-specific combinations—including Gemini grounding and URL context—are canonical on the [Gemini provider page](gemini.md#native-tools).
 
 ## Deferred and approval-required tools
 
@@ -211,17 +210,19 @@ flow rather than running the tool.
     silence, and on Gemini the user speaking into that gap cancels the pending call outright (recorded
     as [a synthetic cancellation](#function-tools)).
 
+As in a standard run, a deferred call emits a
+[`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] *before* the handler
+runs, and a [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] once it has
+resolved the call. A consumer can therefore relay the pending request, for example to the person a
+handler is waiting on, while the handler is still deciding. If nothing resolves the call — no
+handler is installed, or it declines — no results event follows and the call is refused as
+described above.
+
 What a session can't do is pause and return a `DeferredToolRequests` output for an out-of-band
 result, as a standard run does
 ([#7301](https://github.com/pydantic/pydantic-ai/issues/7301)). Resolve the request during the call,
 from policy or by asking a person from inside the handler, or move that workflow to a standard agent
 run.
-
-[`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
-informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
-consumer can observe what was asked and decided. It is not a hook to respond to — unlike the same
-event in a standard run, nothing waits for the consumer, and no event is emitted when no handler is
-installed and the call is refused.
 
 Tools registered with `defer_loading=True` are rejected in a realtime session for a related reason;
 see [Deferred capability loading](capabilities.md#deferred-capability-loading).
