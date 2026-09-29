@@ -11,7 +11,9 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 from __future__ import annotations as _annotations
 
 import asyncio
+import io
 import json
+import wave
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -630,6 +632,47 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     assert 'alice' in transcript and 'teal' in transcript
 
 
+async def test_message_history_audio_seeding(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """A seeded user turn with retained audio and no transcript is heard by a 3.x model.
+
+    `gemini-3.8-live` takes audio in seeded turns, so the user's words reach it as audio rather than
+    being refused for lack of a transcript, as they are on 2.5.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes(assets_path.joinpath('my_name_is_alice_16khz.pcm').read_bytes())
+    history = [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', audio=BinaryContent(buffer.getvalue(), media_type='audio/wav'))]
+        ),
+        ModelResponse(parts=[TextPart(content='Nice to meet you!')]),
+    ]
+
+    async with agent.realtime(model, message_history=history).session() as session:
+        await session.send('What is my name?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [seeded] = sent_frames_containing(cassette, 'Nice to meet you!')
+    assert [(turn['role'], [list(part) for part in turn['parts']]) for turn in seeded['client_content']['turns']] == [
+        ('user', [['inlineData']]),
+        ('model', [['text']]),
+    ]
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse) and isinstance(reply.parts[0], SpeechPart)
+    assert 'alice' in (reply.parts[0].transcript or '').lower()
+
+
 @pytest.mark.usefixtures('no_genai_prices_context_window')
 def test_profile_allow_seeding() -> None:
     """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
@@ -645,7 +688,7 @@ def test_profile_allow_seeding() -> None:
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_output_truncation=False,
-        supports_text_output=False,  # every Live model rejects a TEXT response modality
+        supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         supports_session_seeding=True,
         supports_webrtc=False,
         supports_seeding_images=True,

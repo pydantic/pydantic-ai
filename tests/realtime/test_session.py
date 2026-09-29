@@ -8370,6 +8370,14 @@ async def test_realtime_session_does_not_execute_an_approval_gated_tool_without_
         events = [e async for e in session]
 
     assert executed == []
+    # As in a run, the request is announced before (here: in place of) a handler resolving it, and no
+    # results follow a request nothing resolved.
+    lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
+    assert lifecycle == [
+        DeferredToolRequestsEvent(
+            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+        )
+    ]
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert isinstance(result.part, ToolReturnPart)
     assert 'requires approval' in str(result.part.content)
@@ -8422,6 +8430,52 @@ async def test_realtime_session_executes_an_approval_gated_tool_once_approved() 
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.content == 'transferred'
     assert result.part.outcome == 'success'
+
+
+async def test_realtime_session_announces_a_deferred_call_before_its_handler_resolves_it() -> None:
+    """`DeferredToolRequestsEvent` reaches the consumer while the handler is still deciding.
+
+    A unit test because it pins event ordering against a handler that waits on the consumer, which a
+    recording can't: a handler awaiting a person's answer only works if the consumer can see the
+    request to ask them. As in a run, the requests come before the handler and the results after it.
+    """
+    agent, executed = _approval_agent()
+    answer: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+
+    async def ask_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: await answer for call in requests.approvals})
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    events: list[RealtimeEvent] = []
+    with anyio.fail_after(5):
+        async with agent.realtime(
+            model, capabilities=[HandleDeferredToolCalls(handler=ask_a_person)]
+        ).session() as session:
+            async for event in session:
+                events.append(event)
+                if isinstance(event, DeferredToolRequestsEvent):
+                    assert executed == []
+                    answer.set_result(True)
+
+    assert executed == ['ran']
+    tool_events = [
+        event
+        for event in events
+        if isinstance(
+            event, (FunctionToolCallEvent, DeferredToolRequestsEvent, DeferredToolResultsEvent, FunctionToolResultEvent)
+        )
+    ]
+    assert [type(event) for event in tool_events] == [
+        FunctionToolCallEvent,
+        DeferredToolRequestsEvent,
+        DeferredToolResultsEvent,
+        FunctionToolResultEvent,
+    ]
+    result = tool_events[-1]
+    assert isinstance(result, FunctionToolResultEvent)
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.content == 'transferred'
 
 
 async def test_deferred_call_does_not_consume_the_tool_call_limit() -> None:
@@ -11236,3 +11290,28 @@ async def test_run_context_context_window_used_in_a_session() -> None:
             pass
 
     assert observed == [0.4]
+
+
+async def test_user_turn_anchored_to_refused_content_is_still_recorded() -> None:
+    """The user started speaking right after content the provider then refused: their turn outlives its anchor.
+
+    The refusal takes the content back out of history, so the place the turn was anchored to is gone; the turn is
+    kept anyway, at the end, rather than lost.
+    """
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        return [
+            RealtimeInputSpeechStartEvent(item_id='item_u1'),
+            InputRejected(index, refused='content'),
+            _REFUSAL,
+            InputTranscript('hello', is_final=True, item_id='item_u1'),
+        ]
+
+    session = RealtimeSession(_AnswersEachInput(answer))
+    async with session:
+        await session.send('refused', respond=False)
+        for _ in range(20):  # let the pump read everything
+            await asyncio.sleep(0)
+        assert session.all_messages() == snapshot(
+            [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')], timestamp=IsDatetime())]
+        )
