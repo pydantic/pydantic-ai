@@ -68,8 +68,8 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    # `max_choice_options` and `max_score_levels` stay `None`: they are the API's to enforce, and it refuses a
-    # request over its limits with an error response.
+    # `max_choice_options` and `max_score_levels` stay `None`: limits belong to the model behind the URL, so they come
+    # from the profile for the model name, and where it sets none the API refuses a request over them itself.
 
     _model_name: SystemOneModelName = field(repr=False)
     _provider: Provider[httpx2.AsyncClient] = field(repr=False)

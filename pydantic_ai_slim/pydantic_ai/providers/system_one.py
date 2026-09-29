@@ -8,13 +8,16 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.decision import decision_model_profile
+from pydantic_ai.profiles.typesafe import typesafe_model_profile
 from pydantic_ai.providers import Provider
 
 
 class SystemOneProvider(Provider[httpx2.AsyncClient]):
     """Provider for the `POST /v1/systemone` decisions API, at a URL of your choosing.
 
-    Decision models such as [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and
+    [`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel] speaks the API; this provider says where it is,
+    how to authenticate, and, through the profile for the model name, what the model there can be asked. Decision
+    models such as TypeSafe's Jev, [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and
     [Laya](https://huggingface.co/convaiinnovations/laya) are available over this API.
     """
 
@@ -37,6 +40,9 @@ class SystemOneProvider(Provider[httpx2.AsyncClient]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        # TypeSafe's Jev is behind this API too, and its limits hold whichever client reaches it.
+        if model_name.startswith('jev-'):
+            return typesafe_model_profile(model_name)
         return decision_model_profile(model_name)
 
     def __init__(

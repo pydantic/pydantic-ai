@@ -44,6 +44,7 @@ from pydantic_ai.models.decision import (
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles.decision import DecisionModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -56,8 +57,8 @@ with try_import() as logfire_imports_successful:
 
 
 class InMemoryDecisionModel(DecisionModel[None]):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, *, profile: DecisionModelProfile | None = None):
+        super().__init__(profile=profile)
         self.requests: list[DecisionRequest] = []
 
     @property
@@ -885,6 +886,20 @@ async def test_levels_over_score_limit_are_a_pick_one(allow_model_requests: None
     question = model.requests[0].questions['score']
     assert isinstance(question, ChoiceQuestion)
     assert question.criteria == {str(level): f'Level {level}' for level in range(11)}
+
+
+async def test_profile_score_limit(allow_model_requests: None):
+    """A limit in the profile is the model's own, so a class without one keeps to it."""
+    model = InMemoryDecisionModel(profile=DecisionModelProfile(decision_max_score_levels=10))
+    await Agent(model, output_type=ElevenLevelReview).run('Score this.')
+    assert isinstance(model.requests[0].questions['score'], ChoiceQuestion)
+
+
+async def test_profile_score_limit_overrides_the_class(allow_model_requests: None):
+    """A profile that sets no limit lifts the class's, as for a model behind the same API that has none."""
+    model = TenLevelDecisionModel(profile=DecisionModelProfile(decision_max_score_levels=None))
+    await Agent(model, output_type=ElevenLevelReview).run('Score this.')
+    assert isinstance(model.requests[0].questions['score'], ScoreQuestion)
 
 
 async def test_levels_over_score_limit_can_be_optional(allow_model_requests: None):

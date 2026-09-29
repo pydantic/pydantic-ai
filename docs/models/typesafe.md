@@ -120,7 +120,7 @@ The prompt is only the ticket; the questions are on the output type: its docstri
 
 Jev answers the questions in one request in parallel, so asking several costs little more than asking one: a field you only need on some inputs costs tokens rather than time.
 
-What one request can carry is limited, and `TypeSafeModel` keeps to the first two before a request is sent:
+What one request can carry is limited, and `TypeSafeModel` keeps to the first two before a request is sent, as does [`SystemOneModel`](system-one.md#typesafes-jev) for a `jev-*` model name, since they come with Jev's profile:
 
 - **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type, so 255 tools is already one too many once the output type is counted beside them. A 256th option is a 400 from the API, so a question over it is refused with a [`UserError`][pydantic_ai.exceptions.UserError] instead.
 - **10 levels in one rubric.** An 11th is a 400 from the API, so eleven or more whole numbers from 0 are not a rubric, and are [asked as a pick-one](decision.md#what-each-field-type-does) instead.

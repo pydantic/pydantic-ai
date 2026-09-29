@@ -14,7 +14,7 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.system_one import SystemOneModel, SystemOneModelSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.profiles.decision import decision_model_profile
+from pydantic_ai.profiles.decision import DecisionModelProfile, decision_model_profile
 from pydantic_ai.profiles.typesafe import typesafe_model_profile
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.system_one import SystemOneProvider
@@ -57,11 +57,16 @@ Handler = Callable[[httpx2.Request], httpx2.Response]
 BASE_URL = 'http://localhost:8700'
 
 
-def mock_model(handler: Handler, *, api_key: str | None = None) -> SystemOneModel:
+def mock_model(
+    handler: Handler,
+    *,
+    api_key: str | None = None,
+    model_name: str = 'clm-latest',
+    profile: DecisionModelProfile | None = None,
+) -> SystemOneModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    return SystemOneModel(
-        'clm-latest', provider=SystemOneProvider(base_url=BASE_URL, api_key=api_key, http_client=http_client)
-    )
+    provider = SystemOneProvider(base_url=BASE_URL, api_key=api_key, http_client=http_client)
+    return SystemOneModel(model_name, provider=provider, profile=profile)
 
 
 def answers(**answers: Mapping[str, object]) -> httpx2.Response:
@@ -156,8 +161,20 @@ def test_profile():
     assert model.profile.get('supports_text_output') is False
     assert model.profile.get('supports_json_schema_output') is False
     assert model.profile.get('default_structured_output_mode') == 'tool'
-    # TypeSafe's profile is the shared decision model profile, unchanged.
-    assert typesafe_model_profile('jev-latest') == decision_model_profile('jev-latest')
+    # Limits belong to the model behind the URL; this one sets none.
+    assert 'decision_max_choice_options' not in model.profile
+    assert 'decision_max_score_levels' not in model.profile
+
+
+def test_jev_profile():
+    """Jev's profile is the shared decision model profile with Jev's caps, whichever client reaches it."""
+    assert typesafe_model_profile('jev-latest') == {
+        **decision_model_profile('jev-latest'),
+        'decision_max_choice_options': 255,
+        'decision_max_score_levels': 10,
+    }
+    assert SystemOneProvider.model_profile('jev-1.13.0') == typesafe_model_profile('jev-1.13.0')
+    assert SystemOneProvider.model_profile('clm-latest') == decision_model_profile('clm-latest')
 
 
 async def test_output_type(allow_model_requests: None):
@@ -364,3 +381,44 @@ async def test_provider_recreates_its_client():
     async with provider:
         assert provider.client is not first
         assert not provider.client.is_closed
+
+
+Level = Annotated[
+    Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    WithJsonSchema(
+        {'type': 'integer', 'anyOf': [{'const': level, 'description': f'Level {level}'} for level in range(11)]}
+    ),
+]
+
+
+class Review(BaseModel):
+    """Score a review."""
+
+    score: Level = Field(description='How good is it?')
+
+
+def eleven_levels(request: httpx2.Request) -> httpx2.Response:
+    probabilities = {str(level): 1 / 11 for level in range(11)}
+    if json.loads(request.content)['questions']['score']['type'] == 'score':
+        return answers(score={'type': 'score', 'score': 3.0, 'confidence': 0.5, 'probabilities': probabilities})
+    return answers(score={'type': 'choice', 'choice': '3', 'confidence': 0.5, 'probabilities': probabilities})
+
+
+@pytest.mark.parametrize(('model_name', 'question_type'), [('clm-latest', 'score'), ('jev-latest', 'choice')])
+async def test_limits_come_from_the_model_name(model_name: str, question_type: str, allow_model_requests: None):
+    """Eleven levels are a rubric where the model sets no limit, and a pick-one on Jev, which scores at most ten."""
+    captured = Captured(eleven_levels)
+    result = await Agent(mock_model(captured, model_name=model_name), output_type=Review).run('Great product.')
+    assert result.output == Review(score=3)
+    questions = captured.body['questions']
+    assert isinstance(questions, dict)
+    assert questions['score']['type'] == question_type
+
+
+async def test_profile_sets_limits(allow_model_requests: None):
+    """A limit the API has for a model is set with `profile=`, and a question over it is refused before sending."""
+    captured = Captured(ticket_answers)
+    model = mock_model(captured, profile=DecisionModelProfile(decision_max_choice_options=1))
+    with pytest.raises(UserError, match='area'):
+        await Agent(model, output_type=Ticket).run('Charged twice.')
+    assert captured.requests == []
