@@ -183,16 +183,10 @@ def test_cache_point_extends_explicit_retention():
 
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-@pytest.mark.parametrize(
-    ('settings', 'expected'),
-    [
-        (None, 'cold'),
-        (AnthropicModelSettings(anthropic_cache=True), 'cold'),
-        (AnthropicModelSettings(anthropic_cache='1h'), 'warm'),
-    ],
-)
-def test_outlook_with_resolved_retention(settings: AnthropicModelSettings | None, expected: str):
+@pytest.mark.parametrize(('anthropic_cache', 'expected'), [(None, 'cold'), (True, 'cold'), ('1h', 'warm')])
+def test_outlook_with_resolved_retention(anthropic_cache: bool | Literal['1h'] | None, expected: str):
     """The resolver and the profile default compose: settings that request nothing leave the default in place."""
+    settings = AnthropicModelSettings(anthropic_cache=anthropic_cache) if anthropic_cache is not None else None
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
     outlook = prompt_cache_outlook(
         _history(timedelta(minutes=30)),
@@ -201,6 +195,19 @@ def test_outlook_with_resolved_retention(settings: AnthropicModelSettings | None
         now=NOW,
     )
     assert outlook == expected
+
+
+def test_unsent_cache_point_does_not_extend_retention():
+    # A cache point on the just-appended request (as a `before_model_request` hook sees it) hasn't
+    # written anything yet, so it can't keep the served prefix warm.
+    at = NOW - timedelta(minutes=30)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=at),
+        ModelResponse(parts=[TextPart(content='Hello!')], timestamp=at),
+        ModelRequest(parts=[UserPromptPart(content=['Again', CachePoint(ttl='1h')])], timestamp=NOW),
+    ]
+    profile = ModelProfile(default_cache_retention=timedelta(minutes=5))
+    assert prompt_cache_outlook(history, profile=profile, now=NOW) == 'cold'
 
 
 # ---- Outlook: unknown cases --------------------------------------------------------------
