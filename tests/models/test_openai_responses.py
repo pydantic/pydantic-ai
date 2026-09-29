@@ -56,7 +56,13 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRetry,
+    SuspendedResponseExpired,
+)
 from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
@@ -14621,6 +14627,139 @@ async def test_openai_responses_compact_with_instructions(allow_model_requests: 
     assert isinstance(compacted.parts[0], CompactionPart)
 
 
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('content', 'cause'),
+    [
+        pytest.param(b'   ', json.JSONDecodeError, id='non-json'),
+        pytest.param(b'{"a":"\xe2\x82', UnicodeDecodeError, id='non-utf8'),
+    ],
+)
+async def test_openai_responses_compact_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, content: bytes, cause: type[ValueError]
+):
+    """A 200 compaction response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        request_context = ModelRequestContext(
+            model=model,
+            messages=[ModelRequest(parts=[UserPromptPart('Hello')])],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.compact_messages(request_context)
+
+    assert isinstance(exc_info.value.__cause__, cause)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_openai_responses_stream_non_json_chunk_raises_model_api_error(allow_model_requests: None):
+    """A streamed event the SDK can't decode as JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a stream on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+    content = (
+        b'event: response.output_text.delta\n'
+        b'data: {"type":"response.output_text.delta","item_id":"msg_001","output_index":0,"content_index":0,'
+        b'"delta":"Hello","sequence_number":0,"logprobs":[]}\n\n'
+        b'event: response.output_text.delta\n'
+        b'data: {not json\n\n'
+    )
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_openai_responses_stream_mcp_call_invalid_arguments_is_not_mapped(allow_model_requests: None):
+    """Only the SDK's own body decoding maps to `ModelAPIError`: a malformed MCP `arguments` string in a well-formed
+    stream is parsed by our event processing, so its `json.JSONDecodeError` still surfaces as is.
+
+    A mock client stands in for a cassette because no real provider returns such arguments on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+    from openai.types import responses as resp
+    from openai.types.responses.response_output_item import McpCall
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    mcp_call = McpCall(
+        id='mcp_001',
+        type='mcp_call',
+        server_label='srv',
+        name='tool',
+        arguments='{not json',
+        output='ok',
+        status='completed',
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Hello',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=mcp_call, output_index=1, type='response.output_item.done', sequence_number=3
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client)))
+
+    with pytest.raises(json.JSONDecodeError):
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
+
+
 async def test_openai_responses_compact_with_auto_previous_response_id_chain(
     allow_model_requests: None, openai_api_key: str
 ):
@@ -17534,3 +17673,114 @@ async def test_codex_incomplete_response(allow_model_requests: None, stream: boo
     assert kwargs['prompt_cache_key'] == 'conv-test'
     assert 'temperature' not in kwargs
     assert 'top_p' not in kwargs
+
+
+async def test_responses_provider_details_hook_none_leaves_builtins(allow_model_requests: None):
+    """A default `_process_provider_details` hook leaves built-in provider details untouched."""
+
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    model_response = result.all_messages()[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details == {'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)}
+
+
+async def test_responses_provider_details_hook_merges(allow_model_requests: None):
+    """Provider details returned by the hook are merged with the built-in provider details."""
+
+    class MergingModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return response.model_extra
+
+    c = resp.Response.model_validate(
+        {
+            'id': '123',
+            'object': 'response',
+            'created_at': 1704067200,
+            'status': 'completed',
+            'model': 'gpt-4o-123',
+            'output': [
+                {
+                    'id': 'output-1',
+                    'role': 'assistant',
+                    'status': 'completed',
+                    'type': 'message',
+                    'content': [{'type': 'output_text', 'text': 'world', 'annotations': []}],
+                }
+            ],
+            'parallel_tool_calls': True,
+            'tool_choice': 'auto',
+            'tools': [],
+            'content_filters': {'hate': {'filtered': False}},
+        }
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = MergingModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    model_response = result.all_messages()[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details == {
+        'content_filters': {'hate': {'filtered': False}},
+        'finish_reason': 'completed',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+    }
+
+
+async def test_responses_provider_details_hook_builtin_wins_collisions(allow_model_requests: None):
+    """Built-in provider details win over colliding keys returned by the hook."""
+
+    class CollidingModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return {'finish_reason': 'custom'}
+
+    c = resp.Response.model_validate(
+        {
+            'id': '123',
+            'object': 'response',
+            'created_at': 1704067200,
+            'status': 'completed',
+            'model': 'gpt-4o-123',
+            'output': [
+                {
+                    'id': 'output-1',
+                    'role': 'assistant',
+                    'status': 'completed',
+                    'type': 'message',
+                    'content': [{'type': 'output_text', 'text': 'world', 'annotations': []}],
+                }
+            ],
+            'parallel_tool_calls': True,
+            'tool_choice': 'auto',
+            'tools': [],
+        }
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = CollidingModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    model_response = result.all_messages()[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details == {
+        'finish_reason': 'completed',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+    }

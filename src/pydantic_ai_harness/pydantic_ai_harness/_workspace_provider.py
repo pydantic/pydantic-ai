@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import posixpath
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -136,3 +137,9 @@ def check_integer(name: str, value: int | None, *, minimum: int = 1, optional: b
     if (type(value) is int and value >= minimum) or (value is None and optional):
         return
     raise UserError(f'{name} must be an integer of at least {minimum}{" or None" if optional else ""}, got {value!r}.')
+
+
+def check_timeout(timeout: float | None) -> None:
+    """Raise `ValueError` unless a command `timeout` is a positive finite number or `None`, as core's backends do."""
+    if timeout is not None and (not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')

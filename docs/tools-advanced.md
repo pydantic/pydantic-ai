@@ -539,9 +539,9 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 With adaptive thinking, Claude answers a forced tool choice with only the tool call and no thinking, so Pydantic AI
 only sends one you asked for explicitly: forcing it inferred itself falls back to `'auto'` while the request thinks.
 
-The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, except that Ollama documents `tool_choice` as unsupported and ignores it.
+The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — follow the OpenAI row unless the model profile restricts forcing. Ollama ignores `tool_choice`, and OpenRouter has [separate rules for Anthropic models](models/openrouter.md#forced-tool-choice).
 
-Whether a model can be forced to call a tool is a property of the model, set on its [profile](models/overview.md) by [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] and [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking], so it applies on every provider that serves the model: Claude Opus 5.5 rejects forcing on OpenRouter just as it does on the Anthropic API. Where forcing isn't available, an explicit `'required'` or list of tools raises a [`UserError`][pydantic_ai.exceptions.UserError], while forcing that Pydantic AI inferred itself, for example from an [output tool](output.md#tool-output), falls back to `'auto'`. OpenRouter treats forcing as unavailable while an Anthropic model thinks, since it would otherwise silently drop the reasoning.
+Whether a model can be forced to call a tool is a property of the model, set on its [profile](models/overview.md) by [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] and [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking], so it applies on every provider that serves the model: Claude Opus 5.5 rejects forcing on OpenRouter just as it does on the Anthropic API. Where forcing isn't available, an explicit `'required'` or list of tools raises a [`UserError`][pydantic_ai.exceptions.UserError], while forcing that Pydantic AI inferred itself, for example from an [output tool](output.md#tool-output), falls back to `'auto'`. On OpenRouter, explicitly requested thinking on an Anthropic model makes forcing unavailable, since OpenRouter would otherwise silently drop the reasoning. Thinking enabled by default alone does not add that restriction; the model's own forcing limits still apply.
 
 ### Prompt caching implications {#tool-choice-caching}
 
@@ -627,7 +627,7 @@ def read_file(path: str) -> str:
     file_path = Path(path)
     if not file_path.is_file():
         raise ToolFailed(f'File not found: {path}')
-    return file_path.read_text()
+    return file_path.read_text(encoding='utf-8')
 ```
 
 The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'`. Where the model API has a native error or failed-status field for tool results, Pydantic AI uses it. For APIs without a native error channel, the model-visible content is JSON-framed as `{"error": ...}` so the failure is still explicit. The failed outcome is preserved in Pydantic AI message history; protocol adapters may need their own carrier when that history is round-tripped, as described for [AG-UI](ui/ag-ui.md#preserving-failed-tool-outcomes). The call is traced as an error in telemetry.
