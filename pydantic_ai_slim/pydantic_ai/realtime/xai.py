@@ -64,6 +64,7 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._lifecycle import LifecycleEvent
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
@@ -536,14 +537,14 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
                 self._speech_detected = False
         return map_event(data)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        async for event in super().__aiter__():
-            yield event
+    async def _all_events(self) -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
+        async for event, stale in super()._all_events():
+            yield event, stale
             if isinstance(event, RealtimeSessionReconnectEvent):
                 replayed_items = self._replayed_items[:]
                 self._replayed_items.clear()
                 for replayed_item in replayed_items:
-                    yield replayed_item
+                    yield replayed_item, False
 
 
 @dataclass(init=False)

@@ -38,6 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
+from ._lifecycle import LifecycleEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -482,6 +483,20 @@ class RealtimeConnection(ABC):
     def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         """Iterate over events received from the model."""
         raise NotImplementedError
+
+    _lifecycle_version: ClassVar[int] = 1
+    """Which version of the lifecycle contract this connection's events follow (see `_lifecycle.py`).
+
+    Version 1 is the codec vocabulary alone. A connection on version 2 also yields identified lifecycle
+    events from `_lifecycle_events()`.
+    """
+
+    def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
+        """Iterate over the codec events together with the lifecycle events, on a version 2 connection.
+
+        A version 1 connection has no lifecycle events to add, so this is its ordinary iterator.
+        """
+        return aiter(self)
 
     @property
     def model_name(self) -> str | None:
