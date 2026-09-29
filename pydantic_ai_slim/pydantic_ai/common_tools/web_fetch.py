@@ -42,6 +42,7 @@ _upstream_process_text: Callable[[MarkdownConverter, NavigableString, set[str] |
 )
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
+_HTML_HEADING_RE = re.compile(r'h\d+')
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 # This rejects 15 nested `<dd>` tags with 300k short lines before 600 KB of HTML expands
 # to ~19 MB of Markdown (0.7 s in a local conversion benchmark).
@@ -49,9 +50,6 @@ _MAX_HTML_CONVERSION_COST = 20_000_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
-_HTML_OUTPUT_ATTRIBUTES = frozenset(
-    {('a', 'href'), ('a', 'title'), ('video', 'src'), ('video', 'poster'), ('source', 'src')}
-)
 
 
 class WebFetchResult(TypedDict):
@@ -201,16 +199,16 @@ def _convert_html(html: str) -> tuple[str, str]:
     # deeply nested page cannot produce a huge intermediate string or hold the GIL for seconds.
     cost = 0
     text_scan_cost = 0
-    pending: list[tuple[PageElement, int, int, int]] = [(soup, 0, 0, 0)]
+    pending: list[tuple[PageElement, int, int, int, bool, bool]] = [(soup, 0, 0, 0, False, False)]
     while pending:
-        node, depth, indent_depth, indent_width = pending.pop()
+        node, depth, indent_depth, indent_width, inline, noformat = pending.pop()
         if node.next_sibling is not None:
-            pending.append((node.next_sibling, depth, indent_depth, indent_width))
+            pending.append((node.next_sibling, depth, indent_depth, indent_width, inline, noformat))
         if isinstance(node, (Comment, Doctype)):
             continue
         if isinstance(node, Tag):
             depth += 1
-            if node.name in ('blockquote', 'dd', 'li'):
+            if node.name == 'li' or (node.name in ('blockquote', 'dd') and not inline):
                 indent_depth += 1
                 if node.name == 'li' and isinstance(node.parent, Tag) and node.parent.name == 'ol':
                     start_attr = node.parent.get('start')
@@ -224,12 +222,27 @@ def _convert_html(html: str) -> tuple[str, str]:
             # A tag can emit line breaks even without any text children (for example, `<br>`).
             cost += indent_width + indent_depth
             work = 8 * (indent_depth + 1)
-            # Only attributes included in Markdown add work to deep ancestor scans.
-            text_scan_cost += max(depth - 16, 0) * sum(
-                len(str(value)) for name, value in node.attrs.items() if (node.name, name) in _HTML_OUTPUT_ATTRIBUTES
-            )
+            if node.name in ('td', 'th'):
+                colspan_attr = node.get('colspan')
+                digits = colspan_attr.lstrip('0') if isinstance(colspan_attr, str) and colspan_attr.isdecimal() else ''
+                colspan = min(1000, int(digits[:4] or '1'))
+                # A first-row cell can also generate two full-width header lines.
+                work += 8 * colspan
+                cost += 8 * colspan
+            if depth > 16:
+                if node.name == 'a' and not noformat and node.contents:
+                    # An empty link does not use its URL or title.
+                    text_scan_cost += (depth - 16) * sum(len(str(node.get(name) or '')) for name in ('href', 'title'))
+                elif node.name == 'video' and not inline:
+                    src = node.get('src')
+                    if not src:
+                        source = node.find('source', attrs={'src': True})
+                        src = source.get('src') if source is not None else None
+                    text_scan_cost += (depth - 16) * (len(str(src or '')) + len(str(node.get('poster') or '')))
             if node.contents:
-                pending.append((node.contents[0], depth, indent_depth, indent_width))
+                child_inline = inline or node.name in ('td', 'th') or _HTML_HEADING_RE.match(node.name) is not None
+                child_noformat = noformat or node.name in ('pre', 'code', 'kbd', 'samp')
+                pending.append((node.contents[0], depth, indent_depth, indent_width, child_inline, child_noformat))
             cost += max(depth - 16, 0) * work
         else:
             assert isinstance(node, NavigableString)
