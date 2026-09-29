@@ -38,6 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
+from ._lifecycle import LifecycleEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -105,11 +106,17 @@ class TruncateOutput:
 
     After a barge-in the user only heard part of the model's audio. Truncating tells the provider how
     much was actually played, so its stored transcript matches and the conversation context stays
-    consistent. The provider resolves which output item to truncate from its own state.
+    consistent. The provider resolves which output item to truncate from its own state unless
+    `item_id` names one.
     """
 
     audio_end_ms: int
-    """Milliseconds of the current output audio that were actually played before the interruption."""
+    """Milliseconds of the output audio that were actually played before the interruption."""
+
+    _: KW_ONLY
+    item_id: str | None = None
+    """The output item to truncate, when it isn't the provider's current one — a reply the listener was
+    still hearing after a newer one was generated. `None` truncates the current output item."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -387,7 +394,10 @@ class InputRejected:
     Yielded just ahead of the [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]
     that explains the refusal, and only when the provider's error identifies the frame it refused (the
     OpenAI protocol echoes the client `event_id`). A connection that can't tell which input an error was
-    about yields the error alone. The session uses it to take back what it assumed the input did: a
+    about yields the error alone. A reconnect whose new session no longer has an input (Gemini resumes
+    from a handle that can predate a typed turn) yields it too, ahead of the
+    [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent]. The session
+    uses it to take back what it assumed the input did: a
     refused request for a response releases the reply
     [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would otherwise wait for
     forever, and refused content is removed from history.
@@ -474,6 +484,20 @@ class RealtimeConnection(ABC):
         """Iterate over events received from the model."""
         raise NotImplementedError
 
+    _lifecycle_version: ClassVar[int] = 1
+    """Which version of the lifecycle contract this connection's events follow (see `_lifecycle.py`).
+
+    Version 1 is the codec vocabulary alone. A connection on version 2 also yields identified lifecycle
+    events from `_lifecycle_events()`.
+    """
+
+    def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
+        """Iterate over the codec events together with the lifecycle events, on a version 2 connection.
+
+        A version 1 connection has no lifecycle events to add, so this is its ordinary iterator.
+        """
+        return aiter(self)
+
     @property
     def model_name(self) -> str | None:
         """The model id the server reported serving this session, when the provider reports one.
@@ -521,6 +545,17 @@ class RealtimeConnection(ABC):
         race the server's own cancellation and be applied to the *next* response instead, silencing
         the reply to the barge-in — so the session's automatic barge-in handling sends only the
         truncation when this is `True`. Defaults to `False`, which keeps the client-side cancel.
+        """
+        return False
+
+    @property
+    def _can_reconnect(self) -> bool:
+        """Whether this connection will still re-dial if its link drops.
+
+        Private while send retries across a reconnect are being redesigned. `False` without a reconnect
+        policy, once its `max_reconnects` budget is spent, and once a reconnect has failed for good.
+        While it is `True`, a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] drops an audio
+        chunk that hits the dropped link instead of raising, so a microphone task survives the reconnect.
         """
         return False
 

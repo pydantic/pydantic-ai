@@ -56,7 +56,7 @@ _OUTPUT_DRAIN_GRACE = 2.0
 # once `anyio>=4.15` is the minimum.
 _ANYIO_WAITS_FOR_PIPES = tuple(int(part) for part in version('anyio').split('.')[:2]) < (4, 15)
 _EXIT_POLL_INTERVAL = 0.005
-_SPAWN_GRACE = 2.0
+_SPAWN_GRACE = 5.0
 _REAP_GRACE = 2.0
 
 
