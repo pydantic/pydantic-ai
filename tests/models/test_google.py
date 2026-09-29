@@ -5791,6 +5791,30 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
     assert len(requests) == 1
 
 
+async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: None):
+    """An API error from `count_tokens` is mapped like one from the request, not raised as the SDK's own error."""
+    error_response = {'error': {'code': 429, 'message': 'Resource exhausted', 'status': 'RESOURCE_EXHAUSTED'}}
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(429, json=error_response, headers={'retry-after': '7'})
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(model).run(
+                'test', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+            )
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == error_response
+    assert exc_info.value.retry_after == 7
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
+
+
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),
