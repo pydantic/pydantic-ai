@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Callable
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
+from functools import cached_property
 from typing import Literal
 
 from pydantic_ai.agent.abstract import AgentInstructions
@@ -119,6 +120,8 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Memory[AgentDepsT]:
         """Return a clone with scope resolution isolated to this run."""
+        # Keep the toolset registered at construction when the run replaces this capability.
+        self.get_toolset()
         clone = copy(self)
         clone._resolved_scope = None
         store, scope = clone._resolve_scope(ctx)
@@ -152,6 +155,10 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the stable `memory` toolset."""
+        return self._toolset
+
+    @cached_property
+    def _toolset(self) -> MemoryToolset[AgentDepsT]:
         return MemoryToolset(self)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
