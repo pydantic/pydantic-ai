@@ -14628,15 +14628,24 @@ async def test_openai_responses_compact_with_instructions(allow_model_requests: 
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
-async def test_openai_responses_compact_non_json_response_body_raises_model_api_error(allow_model_requests: None):
-    """A 200 compaction response whose body is not valid JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
+@pytest.mark.parametrize(
+    ('content', 'cause'),
+    [
+        pytest.param(b'   ', json.JSONDecodeError, id='non-json'),
+        pytest.param(b'{"a":"\xe2\x82', UnicodeDecodeError, id='non-utf8'),
+    ],
+)
+async def test_openai_responses_compact_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, content: bytes, cause: type[ValueError]
+):
+    """A 200 compaction response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
 
     A mock transport stands in for a cassette because no real provider returns such a body on demand.
     https://github.com/pydantic/pydantic-ai/issues/8843
     """
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+        return httpx2.Response(200, content=content, headers={'content-type': 'application/json'})
 
     async with AsyncOpenAI(
         api_key='test',
@@ -14654,7 +14663,7 @@ async def test_openai_responses_compact_non_json_response_body_raises_model_api_
         with pytest.raises(ModelAPIError) as exc_info:
             await model.compact_messages(request_context)
 
-    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
 
 
