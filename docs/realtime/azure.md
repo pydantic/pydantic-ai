@@ -193,14 +193,16 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Voice Live applies the shared settings plus `openai_voice`, `openai_turn_detection`, and
-`openai_input_noise_reduction`:
+Voice Live applies the shared settings except `parallel_tool_calls`, plus `openai_voice`,
+`openai_turn_detection`, and `openai_input_noise_reduction`:
 
-- [`thinking`](overview.md#shared-settings) becomes Voice Live's `reasoning_effort` on reasoning
-  models: `gpt-realtime-2*` and the reasoning cascade models like `gpt-5`, whose
-  [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] comes from the
-  chat model's profile. Non-reasoning models like `gpt-4.1` leave it out, since Voice Live would accept
-  it and then fail every response.
+- [`thinking`](overview.md#shared-settings) becomes Voice Live's `reasoning_effort` on models whose
+  profile reports [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking],
+  such as the reasoning cascade models like `gpt-5`, which take it from the chat model's profile.
+  Non-reasoning models like `gpt-4.1` leave it out, since Voice Live would accept it and then fail
+  every response. The profile is inferred from the deployment name, so a reasoning model deployed
+  under another name needs `supports_thinking=True` in its [`profile=`](#which-models-use-which-api)
+  override.
 - Semantic VAD (`openai_turn_detection` or `azure_voice_live_turn_detection`) works only with the
   native-audio `gpt-realtime*` models. The cascade models reject it with
   `OpenAI Semantic VAD is not supported in cascaded pipeline`, which fails the session as it starts.
