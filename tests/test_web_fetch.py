@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -24,6 +25,8 @@ from pydantic_ai.common_tools.web_fetch import (
 from pydantic_ai.exceptions import ModelRetry
 
 pytestmark = [pytest.mark.anyio]
+
+_default_int_digit_limit = hasattr(sys, 'get_int_max_str_digits') and sys.get_int_max_str_digits() == 4300
 
 
 def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8') -> httpx.Response:
@@ -802,12 +805,14 @@ class TestMarkdownConverter:
         html = '<ol start="' + '٠' * 4300 + '">' + '<li>x</li>' * 5000 + '</ol>'
         assert _convert_html(html)[1] == '\n'.join(f'{index}. x' for index in range(5000))
 
+    @pytest.mark.skipif(not _default_int_digit_limit, reason='requires the default integer string digit limit')
     @pytest.mark.parametrize(('item', 'expected'), [('<li></li>', ''), ('<li>x</li>', '1. x')])
     def test_oversized_decimal_list_start_is_ignored(self, item: str, expected: str):
         """A start past Python's integer digit limit cannot abort conversion."""
         html = '<ol start="' + '9' * 4301 + '">' + item + '</ol>'
         assert _convert_html(html)[1] == expected
 
+    @pytest.mark.skipif(not _default_int_digit_limit, reason='requires the default integer string digit limit')
     def test_ordered_list_start_growth_past_digit_limit(self):
         """Numbering can cross the integer digit limit after the initial value parses."""
         start = '9' * 4300
@@ -949,6 +954,24 @@ class TestMarkdownConverter:
                 _convert_html(html)
             convert_soup.assert_not_called()
 
+    def test_shallow_link_does_not_hide_deep_text_scans(self):
+        """A shallow anchor does not defer scans made by its deeply nested descendants."""
+        value = 'x' * 2000
+        html = '<a href="/x">' + '<div>' * 300 + value + '</div>' * 300 + '</a>'
+        with (
+            patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 350_000),
+            patch('pydantic_ai.common_tools.web_fetch._MarkdownConverter.convert_soup') as convert_soup,
+        ):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+            convert_soup.assert_not_called()
+
+    @pytest.mark.parametrize('child', ['<video src="/clip"></video>', '<ul><li>one<ul><li>two</li></ul></li></ul>'])
+    def test_deep_link_with_special_descendant_matches_upstream(self, child: str):
+        """Video output uses the fallback estimate; a nested list keeps its list-item context."""
+        html = '<div>' * 17 + f'<a href="/x">{child}</a>' + '</div>' * 17
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
     def test_wrapped_deep_autolink_is_not_overcharged(self):
         """Transparent descendants preserve the converter's autolink shortcut."""
         value = 'x' * 9_000_000
@@ -1040,6 +1063,17 @@ class TestMarkdownConverter:
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', budget):
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
+
+    def test_rendered_link_probe_text_budget(self):
+        """Final Markdown link syntax counts towards the bounded probe before conversion."""
+        html = '<div>' * 17 + '<a href="/x">x</a>' + '</div>' * 17
+        with (
+            patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 7),
+            patch('pydantic_ai.common_tools.web_fetch._MarkdownConverter.convert_soup') as convert_soup,
+        ):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+            convert_soup.assert_not_called()
 
     def test_whitespace_wrapper_probe_text_budget(self):
         """A wrapper's converted text counts toward the bounded autolink probe."""
