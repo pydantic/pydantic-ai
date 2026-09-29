@@ -14667,6 +14667,66 @@ async def test_openai_responses_compact_non_json_response_body_raises_model_api_
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
 
 
+async def test_openai_responses_stream_mcp_call_invalid_arguments_is_not_mapped(allow_model_requests: None):
+    """Only the SDK's own body decoding maps to `ModelAPIError`: a malformed MCP `arguments` string in a well-formed
+    stream is parsed by our event processing, so its `json.JSONDecodeError` still surfaces as is.
+
+    A mock client stands in for a cassette because no real provider returns such arguments on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+    from openai.types import responses as resp
+    from openai.types.responses.response_output_item import McpCall
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    mcp_call = McpCall(
+        id='mcp_001',
+        type='mcp_call',
+        server_label='srv',
+        name='tool',
+        arguments='{not json',
+        output='ok',
+        status='completed',
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Hello',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=mcp_call, output_index=1, type='response.output_item.done', sequence_number=3
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client)))
+
+    with pytest.raises(json.JSONDecodeError):
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
+
+
 async def test_openai_responses_compact_with_auto_previous_response_id_chain(
     allow_model_requests: None, openai_api_key: str
 ):
