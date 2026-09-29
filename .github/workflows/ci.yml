@@ -28,6 +28,7 @@ env:
   # (.github/scripts/pydantic-ai-runner) and `make install`.
   PYDANTIC_AI_HARNESS_VERSION: "0.34.0"
   # Pin the testmon coverage cache while its upstream integration is evaluated.
+  # Full-suite jobs install this into the synced environment; uv --with rebuilds workspace packages in a temporary overlay.
   TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@f3f58ba545cc159741c4b3fa4a1a4621e6520748"
 
 permissions:
@@ -461,7 +462,9 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START=./pyproject.toml
-            uv_extra=(--with "$TESTMON_PACKAGE")
+            uv run ${{ matrix.install.command }} python -c 'pass'
+            uv pip install --no-deps "$TESTMON_PACKAGE"
+            uv_extra=(--no-sync)
             runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
               --output "$COVERAGE_FILE.testmon" --)
           else
@@ -607,7 +610,9 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START=./pyproject.toml
-            uv_extra=(--with "$TESTMON_PACKAGE")
+            uv run --all-extras --no-extra mcp-tasks python -c 'pass'
+            uv pip install --no-deps "$TESTMON_PACKAGE"
+            uv_extra=(--no-sync)
             runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
               --output "$COVERAGE_FILE.testmon" --)
           else
@@ -725,7 +730,10 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START=./pyproject.toml
-            uv_extra=(--with "$TESTMON_PACKAGE")
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }} \
+              python -c 'pass'
+            uv pip install --no-deps "$TESTMON_PACKAGE"
+            uv_extra=(--no-sync)
             runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
               --output "$COVERAGE_FILE.testmon" --)
           else
@@ -847,7 +855,8 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START=./pyproject.toml
-            uv_extra=(--with "$TESTMON_PACKAGE")
+            uv pip install --no-deps "$TESTMON_PACKAGE"
+            uv_extra=(--no-sync)
             runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
               --output "$COVERAGE_FILE.testmon" --)
           else
