@@ -752,7 +752,8 @@ class RealtimeSession:
         self._model = model
         self._provider_session = provider_session
         self._hang_up_requested = False
-        self._hang_up_attempts = 0
+        # The teardown's own failed hangup, which the caller that collects it from `close()` has been told.
+        self._teardown_hang_up_error: Exception | None = None
         self._hung_up = False
         self._model_name = model.model_name if model is not None else None
         self._provider_name = model.system if model is not None else None
@@ -1145,7 +1146,6 @@ class RealtimeSession:
         # The call is ended from the teardown, once the pump has stopped: the provider closes the sideband
         # when the call ends, which the pump would otherwise report as a lost connection.
         self._hang_up_requested = True
-        attempts = self._hang_up_attempts
         close_error: BaseException | None = None
         try:
             await self.close()
@@ -1154,9 +1154,11 @@ class RealtimeSession:
             raise
         finally:
             teardown_done = self._teardown is None or self._teardown.done()
-            if not self._hung_up and self._hang_up_attempts == attempts and teardown_done:
-                # No teardown hung up for this call: the session was closed (or never started) before it,
-                # or a failed hangup is being retried. Even if closing raised, the call must still end.
+            told_of_failure = close_error is not None and close_error is self._teardown_hang_up_error
+            if not self._hung_up and teardown_done and not told_of_failure:
+                # The call is still up, and this caller hasn't been told why: the session was closed (or
+                # never started) before this call, another caller collected the teardown's failed hangup,
+                # or one is being retried. Even if closing raised something else, the call must still end.
                 try:
                     await self._hang_up_call()
                 except Exception as hang_up_error:
@@ -1167,7 +1169,6 @@ class RealtimeSession:
     async def _hang_up_call(self) -> None:
         provider_session, model = self._provider_session, self._model
         assert provider_session is not None and model is not None
-        self._hang_up_attempts += 1
         await model.hang_up(provider_session)
         # Only once it worked: a hangup that failed leaves the call up, so asking again tries again.
         self._hung_up = True
@@ -1182,7 +1183,7 @@ class RealtimeSession:
             try:
                 await self._hang_up_call()
             except Exception as e:
-                hang_up_error = e
+                hang_up_error = self._teardown_hang_up_error = e
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.

@@ -1873,6 +1873,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
         yield
 
+    def _check_realtime_signaling(self) -> None:
+        """Raise if this agent can't issue a provider request for a browser call here and now.
+
+        `_resolve_realtime_session` applies the same check, for the signaling that resolves the agent;
+        [`AgentRealtime.hang_up`][pydantic_ai.agent.AgentRealtime.hang_up], which needs no resolution, calls
+        this directly. Durable agents override it to refuse inside a workflow.
+        """
+
     @asynccontextmanager
     async def _open_realtime_session(
         self,
@@ -2257,6 +2265,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         """
         from pydantic_ai.realtime import RealtimeModel, infer_realtime_model
 
+        self._agent._check_realtime_signaling()  # pyright: ignore[reportPrivateUsage]
         model = self._model if isinstance(self._model, RealtimeModel) else infer_realtime_model(self._model)
         await model.hang_up(session)
 

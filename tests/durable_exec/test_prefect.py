@@ -109,6 +109,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.tool_manager import ToolManager
@@ -1326,6 +1327,8 @@ async def test_realtime_signaling_in_flow() -> None:
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
 class _FakeRealtimeConnection(RealtimeConnection):

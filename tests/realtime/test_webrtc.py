@@ -934,6 +934,15 @@ async def test_hang_up_ends_the_call_even_when_closing_raises(hang_up_fails: boo
     assert model.hung_up == ['rtc_call']
 
 
+async def test_every_concurrent_hang_up_learns_the_call_is_still_up() -> None:
+    """Only one caller collects the teardown's failed hangup; the other retries it rather than succeed."""
+    model = _CallModel(hang_up_error=ModelHTTPError(status_code=500, model_name='call-model', body='boom'))
+    async with Agent().realtime(model).session(provider_session=_CALL) as session:
+        results = await asyncio.gather(session.hang_up(), session.hang_up(), return_exceptions=True)
+    assert [type(result) for result in results] == [ModelHTTPError, ModelHTTPError]
+    assert model.hung_up == ['rtc_call', 'rtc_call']
+
+
 async def test_hang_up_is_refused_before_anything_closes() -> None:
     """A model that can't end the call says so, and the session carries on."""
     model = _CallModel(can_hang_up=False)
