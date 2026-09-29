@@ -157,10 +157,12 @@ async def _streamed_and_complete(interaction: dict[str, Any], replay: _Replay) -
     model = BedrockConverseModel(model_name, provider=BedrockProvider(bedrock_client=replay.client))
     replay.interaction = interaction
 
-    def recorded_events() -> list[dict[str, Any]]:
-        return [dict(event) for event in replay.client.converse_stream(modelId=model_name, messages=[])['stream']]
+    def recorded_response() -> dict[str, Any]:
+        output = replay.client.converse_stream(modelId=model_name, messages=[])
+        # The request ID comes from the HTTP headers, which a stream and a complete response share.
+        return _fold([dict(event) for event in output['stream']]) | {'ResponseMetadata': output['ResponseMetadata']}
 
-    response = cast('ConverseResponseTypeDef', _fold(await anyio.to_thread.run_sync(recorded_events)))
+    response = cast('ConverseResponseTypeDef', await anyio.to_thread.run_sync(recorded_response))
     complete = await model._process_response(response)  # pyright: ignore[reportPrivateUsage]
 
     async with model.request_stream([ModelRequest.user_text_prompt('')], None, ModelRequestParameters()) as streamed:
