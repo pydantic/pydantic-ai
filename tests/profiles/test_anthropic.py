@@ -475,6 +475,7 @@ def test_model_profile_fable_5_1():
             'anthropic_supports_task_budgets': True,
             'supports_forced_tool_choice': False,
             'anthropic_binds_thinking_blocks': True,
+            'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
@@ -553,6 +554,7 @@ def test_model_profile_opus_5():
             'anthropic_supports_task_budgets': True,
             'supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
