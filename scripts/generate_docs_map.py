@@ -26,7 +26,6 @@ PAGE_SLURP_TOKENS = 8000
 REGION_SUBAGENT_TOKENS = 40_000
 HIGHWAY_LIMIT = 15
 API_REGION = 'API Reference'
-LOCAL_SOURCE = 'pydantic-ai'
 NAV_RELATIVE_PATH = Path('docs/navigation.yml')
 ATLAS_RELATIVE_PATH = Path('agent_docs/docs-atlas.md')
 HTML_RELATIVE_PATH = Path('docs/map.html')
@@ -256,8 +255,6 @@ def _collect_pages(path: Path) -> list[_RawPage]:
 def _walk_nav(item: object, top: str, section_path: str) -> list[_RawPage]:
     data = _as_dict(item, 'navigation entry')
     if 'page' in data:
-        if data.get('source') is not None:
-            return []
         title = _as_str(data.get('page'), 'page')
         path = _as_str(data.get('path'), 'path')
         slug_value = data.get('slug')
@@ -442,7 +439,6 @@ def _graph_payload(docs_map: _DocsMap) -> dict[str, object]:
             'title': node.title,
             'path': node.path,
             'slug': node.slug,
-            'source': LOCAL_SOURCE,
             'section': node.section,
             'top': node.top,
             'tokens': node.tokens,

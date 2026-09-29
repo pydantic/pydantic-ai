@@ -50,10 +50,10 @@ def test_api_reference_omitted_from_region_listing():
     assert 'open the one symbol page, never the section' in text
 
 
-def test_harness_sourced_pages_are_absent():
+def test_harness_pages_are_listed():
     text = ATLAS.read_text(encoding='utf-8')
-    for path in ('coder.md', 'researcher.md', 'filesystem.md', 'pydantic-ai-docs.md'):
-        assert f'`{path}`' not in text
+    for path in ('harness/coder.md', 'harness/researcher.md', 'harness/filesystem.md', 'harness/pydantic-ai-docs.md'):
+        assert f'`{path}`' in text
 
 
 def test_hubs_follow_sidebar_entry_points():
