@@ -160,7 +160,7 @@ calls. Do not attach both integrations to the same agent.
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
 - [Restate](https://restate.dev)
 - [Restate Python SDK](https://github.com/restatedev/sdk-python)
 
