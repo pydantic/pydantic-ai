@@ -2,8 +2,8 @@
 
 The simulator checks the contract on the traces its fake servers produce; this checks it on the real
 ones. Each cassette's provider frames are replayed through a fresh connection of the right class (with no
-session, and the recorded client frames ignored), and the codec events it yields are fed to the same
-`LifecycleChecker` the simulator uses. See `_conformance.py` for the rules.
+session; the recorded client frames are read only to count the inputs they sent), and the codec events it
+yields are fed to the same `LifecycleChecker` the simulator uses. See `_conformance.py` for the rules.
 """
 
 from __future__ import annotations as _annotations
@@ -91,8 +91,9 @@ async def test_replay_counts_the_inputs_the_client_sent(tmp_path: Path) -> None:
     """A response's echoed metadata names the inputs it answers, checked against what the client sent.
 
     The server echoes `response.create`'s metadata, so the lifecycle stream says which inputs each
-    response answers. The replay counts the inputs the recorded client frames name, so an answer to one
-    of them isn't flagged as never sent, while an answer naming an input the client never sent still is.
+    response answers. The replay counts the inputs the recorded `response.create` frames name, so an
+    answer to one of them isn't flagged as never sent, while an answer naming an input the client never
+    sent still is.
     """
     session = {'event_id': 'event_session', 'type': 'session.created', 'session': {'model': 'gpt-realtime'}}
     item = {'id': 'pydantic_ai_item_0', 'type': 'message', 'role': 'user'}

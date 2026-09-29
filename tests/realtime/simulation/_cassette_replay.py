@@ -10,7 +10,6 @@ which a lifecycle stream's responses may answer.
 from __future__ import annotations as _annotations
 
 import json
-import re
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, Literal
@@ -19,8 +18,9 @@ import yaml
 from google.genai import _live_converters as live_converters, types as genai_types
 from websockets.exceptions import ConnectionClosedOK
 
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.realtime._lifecycle import LifecycleEvent
-from pydantic_ai.realtime._openai_protocol import client_item_input, response_metadata_answers
+from pydantic_ai.realtime._openai_protocol import response_metadata_answers
 from pydantic_ai.realtime.azure import (
     AzureRealtimeConnection,
     _VoiceLiveRealtimeConnection,  # pyright: ignore[reportPrivateUsage]
@@ -107,24 +107,16 @@ def _segments(cassette: RealtimeCassette) -> Iterator[tuple[list[dict[str, Any]]
         yield frames, inputs_sent
 
 
-_CLIENT_EVENT_ID_RE = re.compile(r'pydantic_ai\.(?:content|response)\.(\d+(?:-\d+)*)')
+def _named_inputs(frame: dict[str, Any]) -> tuple[int, ...]:
+    """The inputs a client `response.create` frame's metadata says the response answers.
 
-
-def _named_inputs(frame: dict[str, Any]) -> list[int]:
-    """The input indexes a client frame names: in its `event_id`, its item's id, or its response metadata.
-
-    Input indexes count up across a session, and a reconnect replays none of them, so the highest one a
-    socket's client frames name tells how many inputs had been sent by then. A frame naming none (a
-    session update, or a provider that doesn't tag its frames) names no inputs.
+    That metadata is what the server echoes, and so the only source of a replayed response's answers:
+    input indexes count up across a session, so the highest one named by a socket's end covers every
+    answer the replay can see there, though not every input sent (audio and tool outputs name none).
     """
-    named: list[int] = []
-    if isinstance(event_id := frame.get('event_id'), str) and (match := _CLIENT_EVENT_ID_RE.fullmatch(event_id)):
-        named.extend(int(index) for index in match[1].split('-'))
-    if isinstance(item := frame.get('item'), dict) and (index := client_item_input(item.get('id'))) is not None:
-        named.append(index)
-    if isinstance(response := frame.get('response'), dict):
-        named.extend(response_metadata_answers(response.get('metadata')) or ())
-    return named
+    if not is_str_dict(response := frame.get('response')):
+        return ()
+    return response_metadata_answers(response.get('metadata')) or ()
 
 
 class _InboundOnlySocket:
