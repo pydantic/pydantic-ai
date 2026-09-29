@@ -78,7 +78,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
 )
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .test_session import FakeRealtimeModel, make_tool_manager
 
@@ -468,6 +468,29 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert sess.context is not None
     assert chat.parent is not None and chat.parent.span_id == sess.context.span_id
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
+
+
+async def test_session_span_reports_its_own_usage_not_a_carried_total() -> None:
+    """A session handed a running total reports only what it added, like a classic agent-run span.
+
+    `usage=` accumulates into the object it is given, so `session.usage` is the conversation's total by
+    design. The span reporting that would count every earlier run again for anyone summing agent-run
+    spans; the per-turn `chat` spans already carry each response's own usage.
+    """
+    settings, exporter = _settings()
+    agent = _weather_agent(name='assistant')
+    agent.instrument = settings
+    conn = _Connection([SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)), ResponseDone()])
+    async with agent.realtime(
+        _Model(conn), usage=RunUsage(requests=1, input_tokens=100, output_tokens=40)
+    ).session() as session:
+        _ = [e async for e in session]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent assistant')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
+    assert sess.attributes['gen_ai.aggregated_usage.output_tokens'] == 4
+    assert session.usage.input_tokens == 110
 
 
 async def test_session_and_chat_spans_carry_request_config() -> None:

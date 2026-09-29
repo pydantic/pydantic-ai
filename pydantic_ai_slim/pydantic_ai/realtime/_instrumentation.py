@@ -176,7 +176,7 @@ class SessionInstrumentation:
     ) -> str | None:
         """Finalize and end the session span, returning its traceparent (for `AgentRunResult`).
 
-        Attaches cumulative usage, run context, and the conversation to the span, mirroring the
+        Attaches the session's own usage, run context, and the conversation to the span, mirroring the
         classic agent-run span's end-of-run contract. No-op (returning `None`) when instrumentation
         is disabled or no span was started.
         """
@@ -186,7 +186,7 @@ class SessionInstrumentation:
             return None
         if error is not None:
             self.record_error(span, error)
-        # Report cumulative usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
+        # Report the session's own usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
         # span) so backends that sum span attributes don't double-count it against the per-turn `chat`
         # spans, which carry each response's usage under `gen_ai.usage.*`. Shared with the classic span.
         attributes: dict[str, Any] = {
