@@ -9502,7 +9502,7 @@ async def test_agent_realtime_session_resolves_conversation_id_like_a_run() -> N
 async def test_agent_realtime_continues_a_text_runs_conversation() -> None:
     """A text run's `conversation` is spoken in directly: its history, running total and id all carry."""
     agent: Agent[None, str] = Agent(TestModel(custom_output_text='A joke.'))
-    text = agent.run_sync('Tell me a joke.')
+    text = await agent.run('Tell me a joke.')
 
     async with agent.realtime(
         FakeRealtimeModel(FakeRealtimeConnection([])), conversation=text.conversation

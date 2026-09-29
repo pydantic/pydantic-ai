@@ -505,7 +505,7 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 first = agent.run_sync('Tell me a joke.')
-second = agent.run_sync('Tell me another.', conversation=first.conversation)
+second = agent.run_sync('Explain?', conversation=first.conversation)
 print(second.usage.requests)
 #> 2
 print(second.conversation_id == first.conversation_id)
