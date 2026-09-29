@@ -23,10 +23,6 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 
 from pydantic_ai import Agent, CancellationToken, ModelMessage, RunCancelled
 
-# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
-logfire.configure(send_to_logfire='if-token-present')
-logfire.instrument_pydantic_ai()
-
 
 async def stream_turn(
     agent: Agent[None],
@@ -111,4 +107,8 @@ async def main() -> None:
 
 
 if __name__ == '__main__':
+    # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured.
+    # Configured here rather than at module level so importing `stream_turn` (e.g. from the docs) doesn't instrument.
+    logfire.configure(send_to_logfire='if-token-present')
+    logfire.instrument_pydantic_ai()
     asyncio.run(main())
