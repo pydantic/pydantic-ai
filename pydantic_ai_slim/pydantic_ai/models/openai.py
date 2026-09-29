@@ -682,6 +682,14 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     for more details.
     """
 
+    openai_text_verbosity: Literal['low', 'medium', 'high']
+    """Verbosity for output text.
+
+    Supported by both the Chat Completions API and the Responses API: sent as the
+    top-level `verbosity` parameter on Chat Completions and as `text.verbosity` on
+    Responses. Parameter support can differ depending on the model.
+    """
+
     openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
     """The service tier to use for the model request.
 
@@ -818,14 +826,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     - `auto`: If the context of this response and previous ones exceeds the model's context window size,
         the model will truncate the response to fit the context window by dropping input items in the
         middle of the conversation.
-    """
-
-    openai_text_verbosity: Literal['low', 'medium', 'high']
-    """Constrains the verbosity of the model's text response.
-
-    Lower values will result in more concise responses, while higher values will
-    result in more verbose responses. Currently supported values are `low`,
-    `medium`, and `high`.
     """
 
     openai_previous_response_id: Literal['auto'] | str
@@ -1188,6 +1188,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                     store=model_settings.get('openai_store', OMIT),
                     moderation=model_settings.get('openai_moderation', OMIT),
+                    verbosity=model_settings.get('openai_text_verbosity', OMIT),
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),

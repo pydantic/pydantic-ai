@@ -5163,6 +5163,48 @@ async def test_openai_gateway_prefix_preserves_sampling(allow_model_requests: No
         await agent.run('hello')
 
 
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_openai_text_verbosity_chat_completions(allow_model_requests: None):
+    """The typed setting is sent as the top-level `verbosity` parameter on Chat Completions."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        assert body['verbosity'] == 'low'
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'gpt-5',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+        )
+        agent = Agent(model, model_settings=OpenAIChatModelSettings(openai_text_verbosity='low'))
+        await agent.run('hello')
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_openai_text_verbosity_omitted_not_sent(allow_model_requests: None):
+    """Without the setting, no `verbosity` key reaches the request body."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        assert 'verbosity' not in body
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'gpt-5',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+        )
+        agent = Agent(model)
+        await agent.run('hello')
+
+
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
     """GPT-5.2 allows temperature by default (reasoning_effort defaults to 'none')."""
     c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
