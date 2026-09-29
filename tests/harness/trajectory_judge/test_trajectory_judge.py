@@ -36,6 +36,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.trajectory_judge import AllGood, Steer, TrajectoryJudge, TrajectoryVerdict
+from tests.harness._recording_durability import RecordingDurability
 
 _WAIT = 5
 
@@ -791,24 +792,85 @@ class TestUsageCoordination:
 
 
 class TestDurableExecution:
-    async def test_rejected_inside_a_durable_container(self) -> None:
-        """A judged run inside a durable workflow or flow fails fast, before any model request."""
+    """Inside durable execution the judge call is a durable operation, awaited on the tick."""
 
-        class DBOSDurability(AbstractCapability[None]):
-            in_durable_context = True
+    def _durable_agent(
+        self, judge: TrajectoryJudge[None], *, name: str, durability: RecordingDurability | None = None
+    ) -> tuple[Agent[None, str], list[str]]:
+        """A two-request agent whose second request records the user text it was sent."""
+        seen: list[str] = []
 
-        DBOSDurability.__module__ = 'pydantic_ai.durable_exec.dbos'
+        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(_all_user_text(messages))
+            if len(seen) == 1:
+                return ModelResponse(parts=[ToolCallPart('work', {})])
+            return _text_response('done')
 
-        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
-            return _text_response('never reached')
+        agent: Agent[None, str] = Agent(
+            FunctionModel(main_fn),
+            name=name,
+            deps_type=type(None),
+            capabilities=[judge, durability or RecordingDurability()],
+        )
 
-        capabilities: list[AbstractCapability[None]] = [
-            DBOSDurability(),
-            TrajectoryJudge(model=_steer_model(), every=1),
+        @agent.tool_plain
+        def work() -> str:
+            return 'worked'
+
+        return agent, seen
+
+    async def test_the_evaluation_dispatches_as_a_durable_operation(self) -> None:
+        """Without this the judge's model call runs uncheckpointed and repeats on every replay."""
+        verdicts: list[TrajectoryVerdict] = []
+        judge_requests = 0
+
+        def steer_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal judge_requests
+            judge_requests += 1
+            return _steer_response('refocus') if judge_requests == 1 else _all_good_response()
+
+        judge = TrajectoryJudge[None](model=FunctionModel(steer_once), id='drift', every=1, on_verdict=verdicts.append)
+        agent, seen = self._durable_agent(judge, name='judged')
+
+        result = await agent.run('do the thing')
+
+        assert result.output == 'done'
+        bound = RecordingDurability.from_agent(agent)
+        assert bound is not None
+        assert [name for name, _ in bound.calls] == [
+            'judged__model.request',
+            'judged__capability__drift.evaluate',
+            'judged__model.request',
+            'judged__capability__drift.evaluate',
         ]
-        agent = Agent(FunctionModel(main_fn), deps_type=type(None), capabilities=capabilities)
-        with pytest.raises(UserError, match='durable workflow or flow'):
+        # Awaited on the tick, the steering is pinned to the very next request, as on replay.
+        assert "Steering from trajectory judge 'trajectory-judge': refocus" in seen[1]
+        assert verdicts == [Steer('refocus'), AllGood()]
+        assert result.usage.requests == 4  # two agent requests, two judge requests; claims released
+
+    async def test_an_all_good_verdict_crosses_the_boundary(self) -> None:
+        verdicts: list[TrajectoryVerdict] = []
+        judge = TrajectoryJudge[None](model=_all_good_model(), id='drift', every=2, on_verdict=verdicts.append)
+        agent, seen = self._durable_agent(judge, name='judged')
+
+        assert (await agent.run('do the thing')).output == 'done'
+        assert verdicts == [AllGood()]
+        assert 'Steering' not in seen[1]
+
+    async def test_a_durable_failure_is_raised_on_the_tick(self) -> None:
+        """Awaited inline, a failed evaluation surfaces at once and leaves no claim behind."""
+        durability = RecordingDurability(fail_operations=frozenset({'judged__capability__drift.evaluate'}))
+        judge = TrajectoryJudge[None](model=_all_good_model(), id='drift', every=1)
+        agent, seen = self._durable_agent(judge, name='judged', durability=durability)
+
+        with pytest.raises(RuntimeError, match=r'drift\.evaluate failed'):
             await agent.run('do the thing')
+        assert len(seen) == 1
+
+    def test_a_judge_without_an_id_cannot_bind_to_a_durable_agent(self) -> None:
+        """A durable operation is addressed by the `id`, and this capability has no default one."""
+        with pytest.raises(UserError, match='needs an explicit `id`'):
+            self._durable_agent(TrajectoryJudge[None](model=_all_good_model()), name='unnamed')
 
     async def test_durable_capable_agent_outside_its_container_is_judged(self) -> None:
         """Only the durable container is rejected; the same agent run plainly keeps its judge."""

@@ -12,8 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Protocol, TypeAlias, runtime_c
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -114,10 +113,13 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     Several judges can watch one run: add one `TrajectoryJudge` per concern to
     `capabilities`. Each schedules and evaluates independently.
 
-    A judged run inside a durable workflow or flow (Temporal, DBOS, Prefect) is rejected
-    with `UserError` before the first model request: the evaluation is launched from a
-    capability hook in orchestration context, so its model calls would not be checkpointed
-    and could repeat on replay. Run judged work outside durable execution.
+    Inside a durable workflow or flow (Temporal, DBOS, Prefect) the judge call is a durable
+    operation, checkpointed under `<agent>__capability__<id>.evaluate`, so a replay reuses
+    the recorded verdict instead of asking the model again. There the evaluation is awaited
+    on the cadence tick instead of running concurrently: a background evaluation's steering
+    would land at a different point in the run on replay. A durable operation is addressed
+    by the capability's `id`, and several judges per agent is the normal shape, so a judge
+    on a durable-capable agent needs an explicit one: `TrajectoryJudge(..., id='drift')`.
     """
 
     model: Model | KnownModelName | str | None = None
@@ -189,22 +191,6 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         """
         return replace(self)
 
-    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Reject a judged run inside a durable workflow or flow, before any budget is spent.
-
-        The evaluation is launched from a capability hook, so it would run in orchestration
-        context: its model calls would not be checkpointed (and could repeat on replay,
-        billing included) and enqueued steering would not persist across replay. A
-        durable-capable agent run outside its workflow or flow is unaffected, matching how
-        core's durability capabilities scope their own `before_run` rejections.
-        """
-        if _in_durable_context(ctx):
-            raise UserError(
-                '`TrajectoryJudge` cannot be used inside a durable workflow or flow: the judge '
-                'evaluation runs in orchestration context, so its model calls are not checkpointed '
-                'and can repeat on replay. Run judged work outside durable execution.'
-            )
-
     async def after_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -219,12 +205,22 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         rendered synchronously (no race with later mutation), the judge call and any
         steering enqueue happen concurrently with the run, and the steering is delivered
         when the run next drains its pending messages.
+
+        Inside a durable workflow or flow the evaluation is awaited here instead. Replay
+        returns a recorded verdict immediately, so a concurrent evaluation would enqueue its
+        steering at a different point than the original run did, and the replayed history
+        would diverge. Awaiting on the tick pins the steering to the same request both times.
         """
         self._collect_finished()
         self._steps += 1
         if self._steps % self.every == 0 and self._task is None and self._claim_request(ctx):
             prompt = _judge_prompt([*request_context.messages, response], self.window)
-            self._task = asyncio.create_task(self._evaluate(ctx, prompt), name=f'trajectory-judge:{self._judge_name()}')
+            if _in_durable_context(ctx):
+                await self._evaluate(ctx, prompt)
+            else:
+                self._task = asyncio.create_task(
+                    self._evaluate(ctx, prompt), name=f'trajectory-judge:{self._judge_name()}'
+                )
         return response
 
     def _claim_request(self, ctx: RunContext[AgentDepsT]) -> bool:
@@ -278,35 +274,57 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     async def _evaluate(self, ctx: RunContext[AgentDepsT], prompt: str) -> None:
         """Run the judge once and enqueue attributed steering when it says to steer.
 
+        Everything a durable worker does not receive stays here, on the caller's side: the
+        claim on the shared usage, the steering enqueue, and the `on_verdict` callback. Only
+        the rendered prompt crosses into `_judge_call`.
+
+        The claim is released once the run has recorded the judge's real spend (or
+        recorded nothing, on failure or cancellation); a task cancelled before this
+        coroutine starts never reaches the `finally`, so `_discard_in_flight` releases the
+        claim instead.
+
+        Provider failures propagate out of this coroutine as-is (`ModelAPIError` subclasses
+        from the model layer): straight onto the run when awaited on a durable tick, and
+        through `_collect_finished` when it ran as a background task.
+        """
+        try:
+            steer = await self._judge_call(ctx, prompt)
+        finally:
+            self._release_claim(ctx)
+        verdict: TrajectoryVerdict = AllGood() if steer is None else steer
+        if isinstance(verdict, Steer):
+            ctx.enqueue(f'Steering from trajectory judge {self._judge_name()!r}: {verdict.message}')
+        if self.on_verdict is not None:
+            self.on_verdict(verdict)
+
+    @durable_operation('evaluate')
+    async def _judge_call(self, ctx: RunContext[AgentDepsT], prompt: str) -> Steer | None:
+        """Ask the judge model, as a durable operation when the run is inside a workflow or flow.
+
+        Checkpointing the call is what makes a judged run deterministic under replay: the
+        recorded verdict is reused instead of the model being asked, and paid for, again. The
+        operation is addressed by `(id, 'evaluate')`, so core refuses to bind a judge without
+        an explicit `id` to a durable-capable agent; outside durable execution this is an
+        ordinary call and `id` stays optional. `AllGood` carries no data, so it crosses the
+        boundary as `None`, leaving the serialized result unambiguous.
+
         `output_type=[AllGood, Steer]` is set here, at the run boundary, so the verdict
         contract holds at runtime whatever output type the judge agent was configured with.
 
         The judge runs against the shared `usage` under a request limit raised by exactly
         one: the launch's claim occupies a slot in `usage.requests` for the whole
         evaluation, so the unadjusted limit would count this evaluation against itself
-        twice. The claim is released once the run has recorded the judge's real spend (or
-        recorded nothing, on failure or cancellation); a task cancelled before this
-        coroutine starts never reaches the `finally`, so `_discard_in_flight` releases the
-        claim instead.
-
-        Provider failures propagate out of this task as-is (`ModelAPIError` subclasses from
-        the model layer) and are re-raised on the run by `_collect_finished`.
+        twice.
         """
-        try:
-            result = await self._judge.run(
-                prompt,
-                output_type=[AllGood, Steer],
-                conversation_id=ctx.conversation_id,
-                usage=ctx.usage,
-                usage_limits=_claim_offset_limits(ctx.usage_limits),
-            )
-        finally:
-            self._release_claim(ctx)
+        result = await self._judge.run(
+            prompt,
+            output_type=[AllGood, Steer],
+            conversation_id=ctx.conversation_id,
+            usage=ctx.usage,
+            usage_limits=_claim_offset_limits(ctx.usage_limits),
+        )
         verdict = result.output
-        if isinstance(verdict, Steer):
-            ctx.enqueue(f'Steering from trajectory judge {self._judge_name()!r}: {verdict.message}')
-        if self.on_verdict is not None:
-            self.on_verdict(verdict)
+        return verdict if isinstance(verdict, Steer) else None
 
     def _collect_finished(self) -> None:
         """Reap a finished evaluation, re-raising its failure on the run."""
@@ -411,7 +429,8 @@ class _Durability(Protocol):
 
 
 # `_monty_exec.in_temporal_workflow` asks Temporal directly, because only Temporal replays
-# `run_code`. This one covers every engine because the judge launch is unsafe under all of them.
+# `run_code`. This one covers every engine because a background evaluation replays
+# nondeterministically under all of them.
 def _in_durable_context(ctx: RunContext[AgentDepsT]) -> bool:
     """Whether this run executes inside a durable workflow or flow, without importing the optional extras."""
     return any(
