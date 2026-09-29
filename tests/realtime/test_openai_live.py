@@ -645,6 +645,30 @@ async def test_a_result_for_an_abandoned_call_is_not_sent() -> None:
     assert sent == []
 
 
+async def test_a_call_abandoned_while_its_media_downloads_is_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mapping media can wait on a download, and a backend that gives up meanwhile must still be honored."""
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)  # pragma: no cover
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    map_items = live_module._tool_result_items  # pyright: ignore[reportPrivateUsage]
+
+    async def downloading(result: ToolResult, *, provider_name: str) -> Any:
+        # The backend gives up while the download is in flight.
+        connection._map_response_event(_backend_terminal('response.failed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+        return await map_items(result, provider_name=provider_name)
+
+    monkeypatch.setattr(live_module, '_tool_result_items', downloading)
+    image = BinaryContent(data=b'png', media_type='image/png')
+    await connection.send(ToolResult('c1', output='too late', content=[image]))
+
+    assert sent == []
+
+
 @pytest.mark.parametrize('nested_type', ['response.completed', 'response.failed'])
 def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
     """Delegated calls wait for their response's usage, so its terminal must always report some.

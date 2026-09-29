@@ -546,14 +546,15 @@ class OpenAILiveConnection(RealtimeConnection):
 
     async def _send_tool_result(self, result: ToolResult) -> None:
         """Return a tool result to the delegated Responses backend and let it continue."""
+        # Mapped first: downloading media can wait, and the backend can give up on the call meanwhile,
+        # which only the checks below, made after it, can see.
+        output, follow_up = await _tool_result_items(result, provider_name=self._provider_name)
+        delegation_id = self._call_delegations.pop(result.tool_call_id, None)
         if result.tool_call_id in self._abandoned_calls:
             # The backend that asked for this call gave up before it was answered. Sending the output
             # would attach it to nothing, and `response.create` would start a turn nobody asked for.
             self._abandoned_calls.discard(result.tool_call_id)
-            self._call_delegations.pop(result.tool_call_id, None)
             return
-        output, follow_up = await _tool_result_items(result, provider_name=self._provider_name)
-        delegation_id = self._call_delegations.pop(result.tool_call_id, None)
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if delegation is not None:
             delegation.pending_tool_calls.discard(result.tool_call_id)
