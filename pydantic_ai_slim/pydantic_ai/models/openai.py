@@ -135,6 +135,7 @@ try:
     from openai import (
         NOT_GIVEN,
         APIConnectionError,
+        APIError,
         APIStatusError,
         AsyncAzureOpenAI,
         AsyncOpenAI,
@@ -242,6 +243,15 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except APIError as e:
+        # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
+        # been received, so there is no status code to report.
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
+
+
+def _response_error(model_name: str, code: str | None, message: str) -> ModelAPIError:
+    """Build the error for a Responses API failure reported in a 200 body or stream, which has no HTTP status."""
+    return ModelAPIError(model_name=model_name, message=f'{code}: {message}' if code else message)
 
 
 __all__ = (
@@ -933,7 +943,7 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
-def _resolve_prompt_cache_retention(
+def _resolve_cache_retention(
     default_settings: ModelSettings | None, model_settings: ModelSettings | None
 ) -> timedelta | None:
     settings = merge_model_settings(default_settings, model_settings) or {}
@@ -1003,9 +1013,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -2034,9 +2044,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -2370,6 +2380,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        if error := response.error:
+            raise _response_error(self.model_name, error.code, error.message)
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
         tool_search_output_call_ids = _tool_search_output_call_ids(response)
@@ -2578,6 +2590,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+        if isinstance(first_chunk, responses.ResponseErrorEvent):
+            # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
+            raise _response_error(self.model_name, first_chunk.code, first_chunk.message)
 
         if isinstance(first_chunk, responses.ResponseCreatedEvent):
             model_name = first_chunk.response.model
@@ -4391,11 +4406,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):
                     self._usage += self._map_usage(chunk.response)
+                    # Record the terminal state first, so a failed background job isn't cancelled after the raise.
+                    self._set_state(chunk.response.status)
+                    if error := chunk.response.error:
+                        raise _response_error(self._model_name, error.code, error.message)
                     # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
                     if not self._has_refusal:
                         self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
                         self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get('failed')
-                    self._set_state(chunk.response.status)
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -4859,6 +4877,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseFileSearchCallInProgressEvent):
                     pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseErrorEvent):
+                    raise _response_error(self._model_name, chunk.code, chunk.message)
 
                 else:  # pragma: no cover
                     warnings.warn(

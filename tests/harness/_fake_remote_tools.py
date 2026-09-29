@@ -33,7 +33,8 @@ esac
 cd "$HOME" && exec sh -c "$*"
 """
 
-# Records its arguments and runs the command unsandboxed; `--fake-fail` fails like a denied user namespace.
+# Records its arguments, and the seccomp filter it's given, and runs the command unsandboxed; `--fake-fail`
+# fails like a denied user namespace.
 _FAKE_BWRAP = """#!/bin/sh
 bin=$(dirname "$0")
 printf '%s\\n' "$*" >> "$bin/bwrap-calls"
@@ -42,6 +43,7 @@ for arg in "$@"; do
 done
 while [ "$1" != -- ]; do
     if [ "$1" = --setenv ]; then export "$2=$3"; shift 2; fi
+    if [ "$1" = --seccomp ]; then cat <&"$2" > "$bin/seccomp-filter"; shift; fi
     shift
 done
 shift
@@ -57,6 +59,11 @@ class FakeRemoteTools:
     @property
     def ssh_options(self) -> list[str]:
         return (self.bin_dir / 'ssh-options').read_text().splitlines()
+
+    @property
+    def seccomp_filter(self) -> bytes:
+        """The filter the last sandbox read from its `--seccomp` descriptor."""
+        return (self.bin_dir / 'seccomp-filter').read_bytes()
 
     @property
     def bwrap_calls(self) -> list[str]:
