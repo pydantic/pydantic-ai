@@ -75,7 +75,7 @@ permissions:
   contents: read
   issues: read
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: openai/gpt-5
@@ -233,7 +233,7 @@ permissions:
   contents: read
   issues: read
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: openai/gpt-5
@@ -294,15 +294,16 @@ Key by key:
 
 The compile error you get from a missing `imports:` line carries a tip naming
 `github/gh-aw/.github/workflows/shared/pydantic.md@<version>`. That is gh-aw's own older
-copy of the definition. Ignore it and write the `pydantic/pydantic-ai-harness` line above;
+copy of the definition. Ignore it and write the `pydantic/pydantic-ai` line above;
 the definition in this repository is the one that is maintained.
 
 **Freezing the definition.** `@main` is re-resolved on every compile, so a change to the
 definition reaches you the next time you run `gh aw compile`. To hold a fixed version,
-import a commit SHA that contains `gh-aw/pydantic.md`, or a release tag cut after the
-definition landed on `main`; tags older than the file return a 404 at compile time. That
-ref pins the definition. The harness package version is pinned separately, by
-`engine: version:` in the definition, and a workflow's own `engine: version:` overrides it.
+import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, or a release
+tag cut after the harness moved into this repository; older tags do not carry the file and
+return a 404 at compile time. That ref pins the definition. The harness package version
+is pinned separately, by `engine: version:` in the definition, and a workflow's own
+`engine: version:` overrides it.
 
 ## Compile and commit
 
@@ -314,7 +315,7 @@ The compiler writes:
 
 - `.github/workflows/triage.lock.yml`, the GitHub Actions workflow that actually runs.
 - `.github/aw/actions-lock.json`, the SHA pins for every action the lock uses.
-- `.github/aw/imports/pydantic/pydantic-ai-harness/<sha>/gh-aw_pydantic.md`, a
+- `.github/aw/imports/pydantic/pydantic-ai/<sha>/src_pydantic_ai_harness_gh-aw_pydantic.md`, a
   byte-identical cache of the imported definition at the resolved SHA.
 - `.github/aw/imports/.gitattributes` and a top-level `.gitattributes` marking generated
   files.
@@ -713,7 +714,7 @@ Things to know before you do:
 
 **`error: invalid engine: pydantic-ai. Valid engines are: claude, codex, copilot, gemini,
 pi.`** The `imports:` line is missing. Add
-`pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
+`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
 suggests.
 
 **`error: invalid engine.model for engine 'pydantic-ai': for universal consumer engines,
