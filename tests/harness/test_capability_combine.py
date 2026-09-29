@@ -60,6 +60,8 @@ from pydantic_ai_harness import (
     BackgroundTools,
     Coder,
     Memory,
+    ModelChoice,
+    ModelRouter,
     Planning,
     Researcher,
     SpendLimits,
@@ -163,6 +165,10 @@ def _check_memory(merged: Any) -> None:
     assert merged.heading == 'Second'
 
 
+def _check_model_router(merged: Any) -> None:
+    assert (list(merged.choices), merged.default) == (['fast', 'capable'], 'capable')
+
+
 def _check_planning(merged: Any) -> None:
     assert merged.inject is False
 
@@ -212,6 +218,21 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one memory configuration per agent; its toolset registers fixed tool names',
         lambda: (Memory[Any](heading='First'), Memory[Any](heading='Second')),
         _check_memory,
+    ),
+    'ModelRouter': Combines(
+        'only the last model contribution selects, so two routers become one whose menu has both sets of choices',
+        lambda: (
+            ModelRouter[Any](
+                choices={'fast': ModelChoice('test', 'Use for lookups.')},
+                router_model='test',
+                default='fast',
+                mode='per_step',
+            ),
+            ModelRouter[Any](
+                choices={'capable': ModelChoice('test', 'Use for hard work.')}, router_model='test', default='capable'
+            ),
+        ),
+        _check_model_router,
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',

@@ -483,6 +483,9 @@ navigation:
       - section: "Loop Customization"
         slug: ""
         contents:
+          - page: "Model Router"
+            path: "harness/model-router.md"
+            slug: "harness/model-router"
           - page: "Select Model"
             path: "capabilities/select-model.md"
             slug: "capabilities/select-model"

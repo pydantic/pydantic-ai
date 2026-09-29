@@ -1,7 +1,7 @@
 # Runtime and Extension
 
-How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
-resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), harness
+How a harness agent is routed, persisted, made durable, configured, extended, and served. This covers
+model-based selection (`ModelRouter`), saving and resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), harness
 capabilities under core durable execution, Logfire-managed instructions (`ManagedPrompt`), agent-written
 capabilities (`CapabilityCreation`), loading harness capabilities from YAML/JSON specs, serving an agent
 to editors over ACP, and running one as a GitHub Agentic Workflow.
@@ -10,6 +10,7 @@ to editors over ACP, and running one as a GitHub Agentic Workflow.
 
 | I want to ... | Use |
 |---|---|
+| Let another model choose the main agent's model from a named menu | `ModelRouter` |
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
@@ -18,6 +19,39 @@ to editors over ACP, and running one as a GitHub Agentic Workflow.
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
+
+## ModelRouter
+
+`ModelRouter` asks a Pydantic AI model to choose from named `ModelChoice` entries, then uses the
+selected model for the main agent request. The default `'once'` mode pays for one routing request per
+run; `mode='per_step'` routes again before each logical model request.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ModelChoice, ModelRouter
+
+agent = Agent(
+    capabilities=[
+        ModelRouter(
+            choices={
+                'fast': ModelChoice('openai:gpt-5.6-luna', 'Routine lookups and extraction.'),
+                'capable': ModelChoice('openai:gpt-5.6-sol', 'Complex or high-stakes work.'),
+            },
+            router_model='openai:gpt-5.6-luna',
+            default='capable',
+        )
+    ]
+)
+```
+
+The router receives the parent run's message history, including files, and its request counts toward
+the same usage limits. Keep it in the same trust boundary as the selectable models: model selection
+runs before input guardrails and request wrappers. Router failures and picks below
+`probability_threshold=` use `default`; configuration errors and request-time `UserError`s propagate.
+Under core durable execution the routing call is durable, and every selectable model must also be
+registered in the durability capability's `models=` mapping. `ModelRouter` is Python-only and cannot
+be loaded from an agent spec.
 
 ## StepPersistence
 
