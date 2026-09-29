@@ -46,8 +46,9 @@ Before implementing or reviewing a capability change:
    docs, tests, and public exports until another capability becomes a better
    example. Capabilities live in their own top-level submodule
    `pydantic_ai_harness/<name>/` (module name = capability name; one module per
-   capability or strategy) and are not re-exported from the root `__init__.py`,
-   so each keeps its own optional dependencies. The `experimental` tier is
+   capability or strategy) and are re-exported lazily from the root
+   `__init__.py`, which keeps each one's optional dependencies out of the root
+   import. The `experimental` tier is
    retired; ACP is the sole remaining experimental capability (see
    `agent_docs/capability-authoring.md`, "Capability Submodules And Exports").
 

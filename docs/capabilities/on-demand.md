@@ -443,7 +443,7 @@ from pydantic_ai.capabilities import Capability
 
 
 def load_skill(path: Path) -> Capability:
-    _, frontmatter, body = path.read_text().split('---', 2)
+    _, frontmatter, body = path.read_text(encoding='utf-8').split('---', 2)
     meta = yaml.safe_load(frontmatter)
     return Capability(
         id=meta['id'],

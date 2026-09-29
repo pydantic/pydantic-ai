@@ -214,22 +214,17 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_unsupported_model_settings: Sequence[str]
     """A list of model settings that are not supported by this model. Default: `()`."""
 
-    # Some OpenAI-compatible providers (e.g. MoonshotAI) currently do **not** accept
-    # `tool_choice="required"`.  This flag lets the calling model know whether it's
-    # safe to pass that value along.  Default is `True` to preserve existing
-    # behaviour for OpenAI itself and most providers.
     openai_supports_tool_choice_required: bool
-    """Whether the provider accepts the value `tool_choice='required'` in the request payload. Default: `True`."""
+    """Deprecated: use [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] instead.
+
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
 
     openai_supports_forced_tool_choice_with_thinking: bool
-    """Whether the provider accepts a forced `tool_choice` while thinking is enabled for this request. Default: `True`.
+    """Deprecated: use [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking] instead.
 
-    Unlike `openai_supports_tool_choice_required`, which is a fixed property of the model, this is evaluated
-    per request against the effective thinking state. DeepSeek's V4 models accept `tool_choice='required'` and
-    named-function forcing only while thinking is off, rejecting them otherwise with
-    `Thinking mode does not support this tool_choice`. When this is `False` and thinking is active, a resolved
-    `required` tool choice falls back to `auto`, and an explicit `tool_choice='required'` (or an explicit list
-    of tools) raises a `UserError`."""
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
 
     openai_system_prompt_role: OpenAISystemPromptRole | None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
@@ -275,12 +270,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When True, sampling parameters may need to be dropped depending on reasoning_effort setting."""
 
     openai_reasoning_enabled_by_default: bool
-    """Whether the model reasons by default when `reasoning_effort` is omitted. Default: `False`.
+    """Deprecated: use [`thinking_enabled_by_default`][pydantic_ai.profiles.ModelProfile.thinking_enabled_by_default] instead.
 
-    True for models whose default effort is active (e.g. 'medium'), such as the o-series, the original GPT-5,
-    and GPT-5.5+, and False for the GPT-5.1..5.4 mainline models which default to `reasoning_effort='none'`.
-    This decides whether sampling parameters must be dropped when no effort is set, and is independent of
-    whether reasoning can be turned off (`openai_supports_reasoning_effort_none`)."""
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
 
     openai_supports_reasoning_effort_none: bool
     """Whether the model accepts `reasoning_effort='none'` and allows sampling parameters (temperature, top_p, etc.)
@@ -288,7 +281,7 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     The GPT-5.1+ mainline models support turning reasoning off via `effort='none'`, and sampling params are
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
-    Whether the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
+    Whether the model reasons by default is tracked separately by `thinking_enabled_by_default`."""
 
     openai_supports_minimal_reasoning_effort: bool
     """Whether the model accepts `reasoning_effort='minimal'`. Default: `True`.
@@ -471,7 +464,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=reasoning.supported,
         openai_supports_reasoning=reasoning.supported,
-        openai_reasoning_enabled_by_default=reasoning.enabled_by_default,
+        thinking_enabled_by_default=reasoning.enabled_by_default,
         openai_supports_reasoning_effort_none=reasoning.can_be_disabled,
         openai_responses_supports_reasoning_mode=reasoning.supports_mode,
         openai_responses_supports_reasoning_context=reasoning.supports_context,
@@ -511,8 +504,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_seeding_audio': False,
         'supports_webrtc': False,
         # Speech and delegated work run independently: the Live model can keep the conversation going
-        # while the backend works, so a tool call doesn't hold up speech.
-        'supports_async_tool_calls': True,
+        # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
+        'async_tool_call_mode': 'always',
         'supports_thinking': False,
         'emits_input_speech_events': False,
         'synthesizes_turn_boundary': True,
@@ -541,10 +534,11 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_seeding_images': True,
         'supports_seeding_audio': True,
         # The realtime models keep talking while a tool call is outstanding — they're tuned to
-        # emit filler ("let me check that") rather than going silent — so there's no per-tool
+        # emit filler ("let me check that") rather than going silent — and answer the user before the
+        # result is back (verified live 2026-09-25 with a 15-second tool), so there's no per-tool
         # wire flag to set, unlike Gemini. The session already runs tools in the background and
         # defers `response.create` while a response is active, so this is true end to end.
-        'supports_async_tool_calls': True,
+        'async_tool_call_mode': 'always',
         'emits_input_speech_events': True,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
