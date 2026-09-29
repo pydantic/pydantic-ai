@@ -228,16 +228,15 @@ async def fold_untagged_counters(redis: Redis, prefix: str = 'pydantic-ai-harnes
     """Move each counter under the pre-hash-tag name into the tagged one. Needs `decode_responses=True`."""
     async for old in redis.scan_iter(match=f'{prefix}:*'):
         new = f'{{{prefix}}}{old[len(prefix):]}'
-        horizon = await redis.pttl(old)
-        created = not await redis.exists(new)
+        deadline = await redis.pexpiretime(old)
         for field, value in (await redis.hgetall(old)).items():
             await redis.hincrby(new, field, int(value))
-        if created and horizon > 0:
-            await redis.pexpire(new, horizon)
+        if deadline > 0:
+            await redis.pexpireat(new, deadline, nx=True)
         await redis.delete(old)
 ```
 
-Each counter is added before the old name is deleted, so a fold that stops partway and is run again counts that key twice rather than not at all, the direction the brake survives, and a read landing between the two sees the same over-count briefly. A tagged key the fold creates keeps the old key's expiry; one that already exists keeps its own. Every command takes a single key, so it runs unchanged against a cluster, where the two names sit in different slots and no one script could take both. A `prefix` of your own containing `*`, `?`, or `[` needs those escaped in the `match` pattern.
+Each counter is added before the old name is deleted, so a fold that stops partway and is run again counts that key twice rather than not at all, the direction the brake survives. The old key's deadline carries over only to a tagged key without one, so a tagged key a worker has already given a horizon keeps it. A check whose read overlaps the fold of its own key can see that counter twice or miss it once, since `get_many` reads the two names one after the other, so run the fold while budgeted traffic is quiet if a single missed check matters. Every command takes a single key, so it runs unchanged against a cluster, where the two names sit in different slots and no one script could take both. `PEXPIRETIME` needs Redis 7.0 or later, and a `prefix` of your own containing `*`, `?`, or `[` needs those escaped in the `match` pattern.
 
 `add_many` carries a token identifying the response, and `RedisSpendStore` reads a marker for it before the increments and writes it after them, inside the same script. `InMemorySpendStore` remembers the same tokens under its lock, so the default store behaves the same way while its process survives. The token combines the run id and step with a digest of replay-stable response content, usage, and provider identity; it excludes clock-derived and arbitrary provider bookkeeping. The token layer protects recovery that presents an entry without consulting the journal only when the caller supplies the same `run_id` to `Agent.run` on the original run and its recovery. When `run_id` is omitted, Pydantic AI creates a fresh one and the store cannot recognise the entry. Ordinary durable replay remains protected by the journaled `_accrue` operation regardless. Markers are held for `dedup_retain`, a field on both stores, an hour by default, or for the window's own horizon where that is shorter, and cost one small key per response per window. That horizon is the window in which recovery outside the durable journal is recognised, not the counter's lifetime: a response presented again later is counted again, which is the direction to err in, since a brake that trips early survives and one that releases late does not. Set `dedup_retain=None` to hold no markers and apply every entry, which also gives up that store-side protection. Recognition starts at the upgrade either way: a response an earlier release counted left no marker behind, so presenting that response again counts it again.
 
