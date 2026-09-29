@@ -42,7 +42,7 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
     For Temporal, wire `cancel()` to a [`@workflow.signal`](https://docs.temporal.io/develop/python/message-passing#signals)
     handler:
 
-    ```python {test="skip"}
+    ```python {test="skip" typecheck="skip"}
     from temporalio import workflow
 
     from pydantic_ai import RunCancelled

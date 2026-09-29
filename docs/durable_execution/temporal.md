@@ -542,14 +542,14 @@ Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) fo
 
 To let an **external** actor (a user hitting "stop") cancel a durable run first-party without tearing down the whole workflow, pass a [`DurableRunCancellation`][pydantic_ai.durable_exec.DurableRunCancellation] capability to the run and trigger it from a [`@workflow.signal`](https://docs.temporal.io/develop/python/message-passing#signals) handler. A signal runs on the workflow event loop and is recorded in history, so the resulting cancellation is deterministic on replay:
 
-```python {title="temporal_signal_cancellation.py" test="skip"}
+```python {title="temporal_signal_cancellation.py" test="skip" requires="temporal_durability.py"}
 from temporalio import workflow
 
 from pydantic_ai import RunCancelled
 from pydantic_ai.durable_exec import DurableRunCancellation
 
 with workflow.unsafe.imports_passed_through():
-    from temporal_durability import temporal_agent
+    from temporal_durability import agent
 
 
 @workflow.defn
@@ -561,7 +561,7 @@ class MyAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         try:
-            result = await temporal_agent.run(prompt, capabilities=[self.cancellation])
+            result = await agent.run(prompt, capabilities=[self.cancellation])
             return result.output
         except RunCancelled:
             return 'The run was cancelled.'
