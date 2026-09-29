@@ -22,7 +22,7 @@ from pydantic_ai.tools import Tool
 
 try:
     from bs4 import BeautifulSoup, Tag
-    from bs4.element import NavigableString, PageElement
+    from bs4.element import Comment, Doctype, NavigableString, PageElement
     from markdownify import MarkdownConverter
 except ImportError as _import_error:
     raise ImportError(
@@ -49,6 +49,9 @@ _MAX_HTML_CONVERSION_COST = 20_000_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
+_HTML_OUTPUT_ATTRIBUTES = frozenset(
+    {('a', 'href'), ('a', 'title'), ('video', 'src'), ('video', 'poster'), ('source', 'src')}
+)
 
 
 class WebFetchResult(TypedDict):
@@ -206,6 +209,8 @@ def _convert_html(html: str) -> tuple[str, str]:
         node, depth, indent_depth, indent_width = pending.pop()
         if node.next_sibling is not None:
             pending.append((node.next_sibling, depth, indent_depth, indent_width))
+        if isinstance(node, (Comment, Doctype)):
+            continue
         if isinstance(node, Tag):
             depth += 1
             if node.name in ('blockquote', 'dd', 'li'):
@@ -221,7 +226,11 @@ def _convert_html(html: str) -> tuple[str, str]:
                     indent_width += 4
             # A tag can emit line breaks even without any text children (for example, `<br>`).
             cost += indent_width + indent_depth
-            work = 8 * (indent_depth + 1) + sum(len(str(value)) for value in node.attrs.values())
+            work = 8 * (indent_depth + 1)
+            # Only attributes included in Markdown add work to deep ancestor scans.
+            text_scan_cost += max(depth - 16, 0) * sum(
+                len(str(value)) for name, value in node.attrs.items() if (node.name, name) in _HTML_OUTPUT_ATTRIBUTES
+            )
             if node.contents:
                 pending.append((node.contents[0], depth, indent_depth, indent_width))
             cost += max(depth - 16, 0) * work

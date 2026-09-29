@@ -848,9 +848,24 @@ class TestMarkdownConverter:
         _, content = _convert_html(html)
         assert content == prefix + text
 
-    def test_deep_text_scan_is_bounded(self):
-        """Large text copied through hundreds of ancestors still has a separate work bound."""
-        html = '<div>' * 300 + 'x' * 18_000_000 + '</div>' * 300
+    def test_ignored_comment_is_not_overcharged(self):
+        """Comments and doctypes never reach the Markdown converter."""
+        html = '<!doctype html>' + '<dd>' * 15 + '<!--' + 'x\n' * 300_000 + '-->' + '</dd>' * 15
+        assert _convert_html(html)[1] == ''
+
+    @pytest.mark.parametrize(('tag', 'attribute'), [('img', 'alt'), ('div', 'data-big')])
+    def test_ignored_attribute_is_not_overcharged(self, tag: str, attribute: str):
+        """Attributes absent from Markdown do not add to the deep text scan budget."""
+        value = 'x' * 1_500_000
+        html = '<div>' * 30 + f'<{tag} {attribute}="{value}"></{tag}>' + '</div>' * 30
+        assert _convert_html(html)[1] == ''
+
+    @pytest.mark.parametrize('source', ['text', 'link'])
+    def test_deep_text_scan_is_bounded(self, source: str):
+        """Large output text copied through hundreds of ancestors has a separate work bound."""
+        value = 'x' * 18_000_000
+        content = value if source == 'text' else f'<a href="{value}">link</a>'
+        html = '<div>' * 300 + content + '</div>' * 300
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
 
