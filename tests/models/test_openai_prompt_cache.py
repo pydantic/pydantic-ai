@@ -1227,6 +1227,69 @@ async def test_openai_responses_cache_instructions_dynamic_mismatch_drops_chain(
     assert requests[1]['input'][1] == {'role': 'system', 'content': 'Today is 2026-08-19.'}
 
 
+async def test_openai_responses_relocated_instructions_mismatch_drops_chain_without_caching(
+    allow_model_requests: None,
+):
+    """A later agent that doesn't cache its instructions must not chain to a response whose stored
+    input replays another agent's relocated instructions."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    refunds = Agent(
+        model,
+        instructions='Refunds under $50 are automatic.',
+        model_settings=OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto'),
+    )
+    first = await refunds.run('Order 1234 costs $20. Can I get a refund?')
+
+    collections = Agent(
+        model,
+        instructions='Never offer a refund. Demand payment.',
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+    await collections.run('What should we do next?', message_history=first.all_messages())
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in requests[1]
+    assert requests[1]['instructions'] == 'Never offer a refund. Demand payment.'
+    assert requests[1]['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Order 1234 costs $20. Can I get a refund?'},
+            {
+                'content': [{'text': 'first', 'type': 'output_text', 'annotations': []}],
+                'id': 'output-1',
+                'role': 'assistant',
+                'type': 'message',
+                'status': 'completed',
+            },
+            {'role': 'user', 'content': 'What should we do next?'},
+        ]
+    )
+
+
+async def test_openai_responses_relocated_instructions_reused_without_caching(allow_model_requests: None):
+    """Turning `openai_cache_instructions` off mid-chain keeps the chain when the instructions match,
+    and doesn't resend them on top of the copy the chained response replays."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, instructions='Support policies.')
+
+    first = await agent.run(
+        'Where is order 1234?',
+        model_settings=OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto'),
+    )
+    await agent.run(
+        'And order 5678?',
+        message_history=first.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert requests[1]['previous_response_id'] == '123'
+    assert 'instructions' not in requests[1]
+    assert requests[1]['input'] == [{'role': 'user', 'content': 'And order 5678?'}]
+
+
 async def test_openai_responses_cache_instructions_explicit_previous_response_id_raises(allow_model_requests: None):
     """An explicit `openai_previous_response_id` that is not in `message_history` cannot be
     checked for a matching relocated prefix."""

@@ -2835,14 +2835,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and not _has_dynamic_system_prompt(messages)
         )
 
-        reuse_chained_instructions = False
-        if cache_instructions:
-            instruction_parts, previous_response_id, conversation_id, messages, reuse_chained_instructions = (
-                self._resolve_state_for_instruction_caching(messages, model_settings, wire_request_parameters)
+        # Runs whether or not this request caches its instructions: a chained response may have
+        # relocated them into its stored input, which `previous_response_id` would replay.
+        instruction_parts, previous_response_id, conversation_id, messages, reuse_chained_instructions = (
+            self._resolve_state_for_instructions(
+                messages, model_settings, wire_request_parameters, cache_instructions=cache_instructions
             )
-        else:
-            instruction_parts = []
-            previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        )
 
         instructions, openai_messages = await self._map_messages(
             messages,
@@ -2863,6 +2862,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 conversation_id=conversation_id,
                 chained_instructions_relocated=reuse_chained_instructions,
             )
+        elif reuse_chained_instructions:
+            # The chained response replays these same instructions from its stored input.
+            instructions = OMIT
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
@@ -2929,13 +2931,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             instructions_relocated=instructions_relocated,
         )
 
-    def _resolve_state_for_instruction_caching(
+    def _resolve_state_for_instructions(
         self,
         messages: list[ModelRequest | ModelResponse],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        cache_instructions: bool,
     ) -> tuple[list[InstructionPart], str | None, str | None, list[ModelMessage], bool]:
-        """Resolve server-side state for a request that caches its instructions.
+        """Resolve server-side state without replaying another request's relocated instructions.
+
+        A response produced with `openai_cache_instructions` stores its instructions in its input,
+        which `previous_response_id` replays. That holds whether or not the current request caches
+        its own instructions, so the chain is only kept when the current instructions match.
 
         Returns:
             A 5-tuple of (instruction_parts, previous_response_id, conversation_id, messages,
@@ -2949,7 +2957,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         conv_id_setting = model_settings.get('openai_conversation_id')
 
         if (
-            instruction_parts
+            cache_instructions
+            and instruction_parts
             and prev_id_setting is not None
             and prev_id_setting != 'auto'
             and conv_id_setting is None
