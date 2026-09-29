@@ -63,17 +63,27 @@ exec)
     if [ -f "$state/$name.hang-stop" ] && [ $# -eq 5 ]; then sleep 30; fi
     [ -n "$workdir" ] || workdir=$(cat "$state/$name")
     cd "$workdir" 2> /dev/null || { echo "OCI runtime exec failed: chdir to cwd (\\"$workdir\\")" >&2; exit 126; }
-    echo $$ >> "$state/$name.pids"
-    exec "$@"
+    # One file per exec, removed when it finishes, so `rm` only ever sees live commands.
+    mkdir -p "$state/$name.pids"
+    echo $$ > "$state/$name.pids/$$"
+    "$@"
+    status=$?
+    rm -f "$state/$name.pids/$$"
+    exit "$status"
     ;;
 rm)
     name=$4
     [ -f "$state/$name" ] || { echo "Error response from daemon: No such container: $name" >&2; exit 1; }
     [ "$name" != stuck ] || { echo 'Error response from daemon: removal already in progress' >&2; exit 1; }
-    if [ -f "$state/$name.pids" ]; then
-        for pid in $(cat "$state/$name.pids"); do kill -s KILL -- "-$pid" "$pid" 2> /dev/null; done
-    fi
-    rm -f "$state/$name" "$state/$name.pids" "$state/$name.hang-stop"
+    for file in "$state/$name.pids"/*; do
+        [ -f "$file" ] || continue
+        pid=$(cat "$file")
+        # Guard against a reused PID: only kill a process that is still this fake `docker`.
+        case $(ps -o args= -p "$pid" 2> /dev/null) in
+        *"$bin/docker"*) kill -s KILL -- "-$pid" "$pid" 2> /dev/null ;;
+        esac
+    done
+    rm -rf "$state/$name" "$state/$name.pids" "$state/$name.hang-stop"
     ;;
 esac
 """
