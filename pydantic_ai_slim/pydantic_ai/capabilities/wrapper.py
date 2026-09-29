@@ -235,7 +235,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return self.wrapped.get_model()
 
     def _model_is_default(self) -> bool:
-        return self.wrapped._model_is_default()
+        # A subclass that supplies its own model makes a selection of its own, not a stand-in.
+        return type(self).get_model is WrapperCapability.get_model and self.wrapped._model_is_default()
 
     @property
     def has_resolve_model_id(self) -> bool:

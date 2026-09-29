@@ -21,6 +21,7 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._run_context import RunContext
 
 from .._fallback import (
+    FALLBACK_MODEL_PIN_KEY,
     ExceptionHandler,
     FallbackOn,
     FallbackPredicates,
@@ -402,7 +403,7 @@ class FallbackModel(Model):
 
     def _pinned_continuation_model(self, response: ModelResponse) -> Model | None:
         """Resolve the underlying model pinned to this continuation from its routing metadata."""
-        if model_id := continuation_pin(response):
+        if model_id := continuation_pin(response, key=FALLBACK_MODEL_PIN_KEY):
             return next((m for m in self.models if m.model_id == model_id), None)
         return None
 
@@ -434,7 +435,7 @@ class FallbackModel(Model):
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
     """Stamp the model's identifier into metadata for stateless continuation routing."""
-    stamp_continuation_pin(response, model.model_id)
+    stamp_continuation_pin(response, model.model_id, key=FALLBACK_MODEL_PIN_KEY)
 
 
 def _stamp_replace_previous(response: ModelResponse | StreamedResponse) -> None:

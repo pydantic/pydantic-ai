@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic_ai._fallback import (
+    FALLBACK_CAPABILITY_PIN_KEY,
     FallbackOn,
     FallbackPredicates,
     continuation_pin,
@@ -210,7 +211,11 @@ class Fallback(AbstractCapability[AgentDepsT]):
             if response.state == 'suspended':
                 # Its continuation, in this run or a later one that resumes it, has to go back to the
                 # model that started the provider-side job, not to the top of the chain.
-                stamp_continuation_pin(response, _pin_id(request_context.model_id or request_context.model))
+                stamp_continuation_pin(
+                    response,
+                    _pin_id(request_context.model_id or request_context.model),
+                    key=FALLBACK_CAPABILITY_PIN_KEY,
+                )
             return response
         # The core records a rejected response's tokens and cost before the next attempt, so a
         # rejected generation is still paid for in `RunUsage` even though it never enters history.
@@ -238,10 +243,17 @@ class Fallback(AbstractCapability[AgentDepsT]):
         messages = request_context.messages
         if not (messages and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended'):
             return None
-        pin = continuation_pin(last)
+        pin = continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)
         if pin is None or pin == _pin_id(request_context.model_id or request_context.model):
             return None
-        return next((candidate for candidate in self.models if _pin_id(candidate) == pin), None)
+        candidate = next((candidate for candidate in self.models if _pin_id(candidate) == pin), None)
+        if candidate is None:
+            raise UserError(
+                f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
+                "model selected for this step nor one of `Fallback`'s models. Pass that model explicitly to "
+                '`run(model=...)` when resuming.'
+            )
+        return candidate
 
     def _advance(self) -> RetryModelRequest:
         """Return the exception that moves to the next untried candidate, or the aggregated failure."""

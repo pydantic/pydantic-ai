@@ -11,9 +11,9 @@ from dataclasses import replace
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart, UserPromptPart
-from pydantic_ai._fallback import continuation_pin
+from pydantic_ai._fallback import FALLBACK_CAPABILITY_PIN_KEY, continuation_pin
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Fallback, Hooks, SelectModel
-from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, RetryModelRequest
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, RetryModelRequest, UserError
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -157,7 +157,7 @@ def _suspended_history(pinned_model_id: str) -> list[ModelMessage]:
             parts=[TextPart('partial')],
             state='suspended',
             provider_response_id='job-1',
-            metadata={'__pydantic_ai__': {'fallback_model_id': pinned_model_id}},
+            metadata={'__pydantic_ai__': {'fallback_candidate': pinned_model_id}},
         ),
     ]
 
@@ -248,11 +248,11 @@ async def test_suspended_response_is_pinned_to_the_model_that_served_it():
     suspended = await fallback.after_model_request(
         ctx, request_context=request_context, response=ModelResponse(parts=[], state='suspended')
     )
-    assert continuation_pin(suspended) == served.model_id
+    assert continuation_pin(suspended, key=FALLBACK_CAPABILITY_PIN_KEY) == served.model_id
     complete = await fallback.after_model_request(
         ctx, request_context=request_context, response=ModelResponse(parts=[])
     )
-    assert continuation_pin(complete) is None
+    assert continuation_pin(complete, key=FALLBACK_CAPABILITY_PIN_KEY) is None
 
 
 @pytest.mark.anyio
@@ -337,3 +337,28 @@ async def test_fallback_candidates_are_entered_once_and_exited_with_the_run():
     assert events.count('enter') == 1
     assert events[-1] == 'exit'
     assert events.count('request') == len([m for m in result.all_messages() if isinstance(m, ModelResponse)])
+
+
+@pytest.mark.anyio
+async def test_a_pin_to_an_unknown_model_is_refused():
+    agent = Agent(FunctionModel(success, model_name='step'), capabilities=[Fallback(FunctionModel(success))])
+    with pytest.raises(UserError, match="started by 'function:gone'"):
+        await agent.run(message_history=_suspended_history('function:gone'))
+
+
+@pytest.mark.anyio
+async def test_a_fallback_model_candidate_keeps_its_own_pin():
+    """`Fallback`'s pin sits beside `FallbackModel`'s, so a `FallbackModel` candidate still resumes on its inner model."""
+    fallback = Fallback[None](TestModel())
+    inner = FunctionModel(success, model_name='inner')
+    ctx = RunContext[None](deps=None, model=inner, usage=RunUsage())
+    request_context = ModelRequestContext(
+        model=inner, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    response = ModelResponse(
+        parts=[], state='suspended', metadata={'__pydantic_ai__': {'fallback_model_id': 'function:inner-of-inner'}}
+    )
+    stamped = await fallback.after_model_request(ctx, request_context=request_context, response=response)
+    assert stamped.metadata == {
+        '__pydantic_ai__': {'fallback_model_id': 'function:inner-of-inner', 'fallback_candidate': inner.model_id}
+    }

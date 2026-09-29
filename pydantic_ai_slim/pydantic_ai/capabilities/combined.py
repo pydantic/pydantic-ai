@@ -380,6 +380,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return model if model is not None else default
 
     def _model_is_default(self) -> bool:
+        if type(self).get_model is not CombinedCapability.get_model:
+            return False
         return any(
             capability.defer_loading is not True and capability.get_model() is not None
             for capability in self.capabilities

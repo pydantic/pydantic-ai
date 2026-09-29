@@ -28,27 +28,35 @@ __all__ = (
     'raise_fallback_exception_group',
     'stamp_continuation_pin',
     'continuation_pin',
+    'FALLBACK_MODEL_PIN_KEY',
+    'FALLBACK_CAPABILITY_PIN_KEY',
 )
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
-_FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
+FALLBACK_MODEL_PIN_KEY = 'fallback_model_id'
+"""Where `FallbackModel` pins a suspended response to the inner model that started it."""
+FALLBACK_CAPABILITY_PIN_KEY = 'fallback_candidate'
+"""Where the `Fallback` capability pins a suspended response to the candidate that served it.
+
+Separate from `FALLBACK_MODEL_PIN_KEY` so a `FallbackModel` candidate keeps its own inner pin.
+"""
 
 
-def stamp_continuation_pin(response: Any, model_id: str) -> None:
-    """Record which fallback candidate produced a suspended response, so its continuation goes back to it.
+def stamp_continuation_pin(response: Any, model_id: str, *, key: str) -> None:
+    """Record which model produced a suspended response, so its continuation goes back to it.
 
     Stored in `metadata['__pydantic_ai__']` to keep framework routing state apart from provider data.
     `response` is a `ModelResponse` or a `StreamedResponse`, whose metadata ends up on the response.
     """
     if response.metadata is None:
         response.metadata = {}
-    response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})[_FALLBACK_MODEL_ID_KEY] = model_id
+    response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})[key] = model_id
 
 
-def continuation_pin(response: ModelResponse) -> str | None:
-    """The candidate a suspended response was pinned to by `stamp_continuation_pin`, if any."""
+def continuation_pin(response: ModelResponse, *, key: str) -> str | None:
+    """The model a suspended response was pinned to by `stamp_continuation_pin` under `key`, if any."""
     pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
-    model_id = pydantic_ai_meta.get(_FALLBACK_MODEL_ID_KEY) if isinstance(pydantic_ai_meta, dict) else None
+    model_id = pydantic_ai_meta.get(key) if isinstance(pydantic_ai_meta, dict) else None
     return model_id if isinstance(model_id, str) else None
 
 
