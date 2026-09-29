@@ -15,12 +15,13 @@ import contextvars
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import datetime, timezone
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
-from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
+from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, ProcessHistory, WebSearch, WrapperCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
@@ -38,10 +39,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
+    RealtimeClientSecret,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
@@ -61,6 +63,8 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
+
+from ..conftest import IsDatetime
 
 
 class _Connection(RealtimeConnection):
@@ -95,6 +99,7 @@ class _RecordingModel(RealtimeModel):
         self.tools: list[ToolDefinition] | None = None
         self.native_tools: list[AbstractNativeTool] | None = None
         self.model_settings: RealtimeModelSettings | None = None
+        self.messages: list[ModelMessage] | None = None
 
     @property
     def model_name(self) -> str:
@@ -124,6 +129,7 @@ class _RecordingModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
         self.instructions = get_instructions(messages)
+        self.messages = list(messages)
         self.tools = model_request_parameters.function_tools
         self.native_tools = model_request_parameters.native_tools
         self.model_settings = model_settings
@@ -1051,3 +1057,228 @@ async def test_session_tool_reveal_is_a_no_op_like_a_standard_run() -> None:
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.content == 'done'
     assert result.part.outcome == 'success'
+
+
+def _redact(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [
+        replace(message, parts=[UserPromptPart('[redacted]')])
+        if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+        else message
+        for message in messages
+    ]
+
+
+async def test_process_history_runs_once_over_the_seeded_history() -> None:
+    """History processors run once over a session's seed, and the processed history replaces it everywhere.
+
+    A unit test because what matters is what reaches `connect()` and every later reader of the seed
+    (a reconnect replays `all_messages()`), which a fake model observes directly. Pins parity with a
+    run, where `ProcessHistory` rewrites the history before the request and the processed history
+    replaces the run's: capabilities apply in order (through a wrapper too), the processor gets the
+    session's `RunContext`, and `before_model_request` itself still doesn't fire.
+    """
+    seed: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('my card is 4111 1111 1111 1111')]),
+        ModelResponse(parts=[SpeechPart(transcript='Noted.', speaker='assistant')]),
+    ]
+    processor_calls: list[tuple[bool, list[ModelMessage]]] = []
+
+    async def mark_seen(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+        processor_calls.append((ctx.realtime, messages))
+        return messages
+
+    before_model_request_calls: list[ModelRequestContext] = []
+
+    async def before_model_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        before_model_request_calls.append(request_context)  # pragma: no cover
+        return request_context  # pragma: no cover
+
+    capabilities: list[AbstractCapability[None]] = [
+        ProcessHistory(_redact),
+        WrapperCapability(ProcessHistory(mark_seen)),
+        Hooks(before_model_request=before_model_request),
+    ]
+    agent = Agent(capabilities=capabilities, deps_type=type(None))
+    tool_messages: list[list[ModelMessage]] = []
+
+    @agent.tool
+    def look(ctx: RunContext[None]) -> str:
+        tool_messages.append(list(ctx.messages))
+        return 'ok'
+
+    model = _RecordingModel(
+        connection_events=[ToolCall(tool_call_id='tc', tool_name='look', args='{}'), ResponseDone()]
+    )
+    async with agent.realtime(model, message_history=seed).session() as session:
+        async for _ in session:
+            pass
+
+    processed = [
+        ModelRequest(parts=[UserPromptPart('[redacted]', timestamp=IsDatetime())]),
+        ModelResponse(parts=[SpeechPart(transcript='Noted.', speaker='assistant')], timestamp=IsDatetime()),
+    ]
+    assert model.messages is not None
+    assert model.messages[:-1] == processed
+    assert processor_calls == [(True, processed)]
+    assert before_model_request_calls == []
+    ((first_tool_message, *_),) = tool_messages
+    assert first_tool_message == processed[0]
+    assert session.all_messages()[:2] == processed
+    assert session.result is not None
+    assert session.result.all_messages()[:2] == processed
+    assert session.result.new_messages() == session.new_messages()
+    assert 'card' not in str(session.all_messages())
+
+
+async def test_process_history_skips_a_session_without_history() -> None:
+    """With nothing seeded, no history processor runs, as nothing reaches the provider for it to process.
+
+    A unit test because it pins that a processor written for runs (which always have a request) is
+    never handed an empty history by a session.
+    """
+    calls: list[list[ModelMessage]] = []
+
+    def record(messages: list[ModelMessage]) -> list[ModelMessage]:
+        calls.append(messages)  # pragma: no cover
+        return messages  # pragma: no cover
+
+    await _drain(Agent(capabilities=[ProcessHistory(record)]), _RecordingModel())
+
+    assert calls == []
+
+
+async def test_deferred_process_history_is_skipped_until_loaded() -> None:
+    """A deferred `ProcessHistory` that the seed never loaded doesn't process it, as in a run.
+
+    A unit test because it pins that the seed pass honors capability activation like every other hook.
+    """
+    seed: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('keep me')])]
+    model = _RecordingModel()
+    await _drain(
+        Agent(),
+        model,
+        message_history=seed,
+        capabilities=[ProcessHistory(_redact, id='redact', description='Redact the history.', defer_loading=True)],
+    )
+
+    assert model.messages is not None
+    assert model.messages[:-1] == seed
+
+
+async def test_process_history_does_not_run_for_signaling() -> None:
+    """Minting a WebRTC client secret resolves the session configuration but seeds nothing.
+
+    A unit test because it pins that history processors (which may be costly, e.g. summarizing) only
+    run for the session that actually sends the history to the provider.
+    """
+    calls: list[list[ModelMessage]] = []
+
+    def record(messages: list[ModelMessage]) -> list[ModelMessage]:
+        calls.append(messages)  # pragma: no cover
+        return messages  # pragma: no cover
+
+    class _SignalingModel(_RecordingModel):
+        async def create_client_secret(
+            self,
+            *,
+            instructions: str | None = None,
+            tools: Sequence[ToolDefinition] | None = None,
+            model_settings: RealtimeModelSettings | None = None,
+            expires_after_seconds: int | None = None,
+        ) -> RealtimeClientSecret:
+            return RealtimeClientSecret(value='secret', expires_at=datetime.now(timezone.utc))
+
+    agent = Agent(capabilities=[ProcessHistory(record)])
+    seed: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')])]
+    await agent.realtime(_SignalingModel(), message_history=seed).create_client_secret()
+
+    assert calls == []
+
+
+async def test_cancelled_session_reports_the_processed_seed() -> None:
+    """A session cancelled after processing its seed reports the processed history, split where it ends.
+
+    A unit test because cancellation is in-process lifecycle control flow, not provider behavior.
+    """
+    seed: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('old')]),
+        ModelResponse(parts=[SpeechPart(transcript='Old answer.', speaker='assistant')]),
+        ModelRequest(parts=[UserPromptPart('recent')]),
+    ]
+    agent = Agent[None, str](capabilities=[ProcessHistory(lambda messages: messages[-1:])], deps_type=type(None))
+
+    @agent.tool
+    async def cancel(ctx: RunContext[None]) -> None:
+        ctx.cancel()
+        await asyncio.Event().wait()
+
+    model = _RecordingModel(
+        connection_events=[ToolCall(tool_call_id='tc', tool_name='cancel', args='{}'), ResponseDone()]
+    )
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.realtime(model, message_history=seed).session() as session:
+            async for _ in session:
+                pass
+
+    assert exc_info.value.all_messages()[:1] == seed[-1:]
+    assert exc_info.value.new_messages() == exc_info.value.all_messages()[1:]
+
+
+async def test_recovered_connect_failure_keeps_the_processed_seed() -> None:
+    """A session recovered from a failed connect reports the processed seed, never the original.
+
+    A unit test because it pins the recovery path, which no recorded provider exchange reaches: the
+    processors have already run when connecting fails, so the closed session standing in for the one
+    that never opened must not bring the unredacted history back.
+    """
+
+    class _FailingConnectModel(_RecordingModel):
+        @asynccontextmanager
+        async def connect(
+            self,
+            *,
+            messages: Sequence[ModelMessage],
+            model_settings: RealtimeModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> AsyncGenerator[RealtimeConnection]:
+            raise RuntimeError('connect failed')
+            yield  # pragma: no cover
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            return AgentRunResult(output='recovered')
+
+    seed: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('my card is 4111 1111 1111 1111')])]
+    agent = Agent(capabilities=[ProcessHistory(_redact), RecoveryCapability()], deps_type=type(None))
+
+    async with agent.realtime(_FailingConnectModel(), message_history=seed).session() as session:
+        pass
+
+    assert session.all_messages() == [ModelRequest(parts=[UserPromptPart('[redacted]', timestamp=IsDatetime())])]
+
+
+async def test_non_seeding_model_rejects_history_before_processing_it() -> None:
+    """A model that can't be seeded rejects `message_history` before any history processor runs.
+
+    A unit test because it pins the ordering: a processor can be costly (e.g. summarizing), and its
+    work would be thrown away by the rejection that follows.
+    """
+    calls: list[list[ModelMessage]] = []
+
+    def record(messages: list[ModelMessage]) -> list[ModelMessage]:
+        calls.append(messages)  # pragma: no cover
+        return messages  # pragma: no cover
+
+    class _NonSeedingModel(_RecordingModel):
+        @property
+        def profile(self) -> RealtimeModelProfile:
+            return RealtimeModelProfile(supports_session_seeding=False)
+
+    seed: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')])]
+    with pytest.raises(UserError, match='does not support seeding'):
+        async with (
+            Agent(capabilities=[ProcessHistory(record)]).realtime(_NonSeedingModel(), message_history=seed).session()
+        ):
+            pass  # pragma: no cover
+
+    assert calls == []

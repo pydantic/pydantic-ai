@@ -16,7 +16,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -656,6 +656,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 request_context = await capability.before_model_request(cap_ctx, request_context)
         return request_context
+
+    async def _process_seeded_history(
+        self,
+        ctx: RunContext[AgentDepsT],
+        messages: list[ModelMessage],
+    ) -> list[ModelMessage]:
+        for capability in self.capabilities:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                messages = await capability._process_seeded_history(cap_ctx, messages)
+        return messages
 
     async def after_model_request(
         self,

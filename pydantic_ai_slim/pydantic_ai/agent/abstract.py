@@ -2148,6 +2148,8 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     instrumentation_settings: InstrumentationSettings | None
     conversation_id: str
     run_id: str
+    message_history: Sequence[_messages.ModelMessage]
+    """The history the session is seeded with, after history processors have run over it (if they got to)."""
     wrap_event_stream: (
         Callable[[AsyncIterable[_messages.AgentStreamEvent]], AsyncIterable[_messages.AgentStreamEvent]] | None
     ) = None

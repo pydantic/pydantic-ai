@@ -26,8 +26,8 @@ The session exposes copy-on-read snapshots:
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,
 tool rounds, and supported images are projected into provider conversation items.
-[History processors](../message-history.md#processing-message-history) do not run at seeding; see
-[Capabilities and hooks](capabilities.md#seeded-history-is-not-processed).
+[History processors](../message-history.md#processing-message-history) run once over the history
+before it is seeded; see [Capabilities and hooks](capabilities.md#seeded-history-is-processed-once).
 
 ```python
 from pydantic_ai import Agent

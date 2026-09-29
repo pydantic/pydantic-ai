@@ -24,7 +24,11 @@ if TYPE_CHECKING:
 
 @dataclass
 class ProcessHistory(AbstractCapability[AgentDepsT]):
-    """A capability that processes message history before model requests."""
+    """A capability that processes message history before model requests.
+
+    A realtime session makes no model requests of its own, so there the processor runs once, over the
+    `message_history` the session is seeded with, before it connects.
+    """
 
     processor: HistoryProcessorFunc[AgentDepsT]
 
@@ -36,6 +40,13 @@ class ProcessHistory(AbstractCapability[AgentDepsT]):
         request_context.messages = await _run_history_processor(self.processor, ctx, request_context.messages)
 
         return request_context
+
+    async def _process_seeded_history(
+        self,
+        ctx: RunContext[AgentDepsT],
+        messages: list[_messages.ModelMessage],
+    ) -> list[_messages.ModelMessage]:
+        return await _run_history_processor(self.processor, ctx, messages)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

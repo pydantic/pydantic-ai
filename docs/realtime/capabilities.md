@@ -18,6 +18,7 @@ load exactly the same way as in a regular run; nothing realtime-specific is requ
 | `get_native_tools` | Contributes native tools before connecting; a dynamic native-tool function is resolved once against the connect-time context, like dynamic instructions. |
 | Tool validation/execution hooks | Runs around each local function-tool call. |
 | `handle_deferred_tool_calls` | Resolves deferred requests inline; see [deferred and approval-required tools](tools.md#deferred-and-approval-required-tools). |
+| [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] | Runs once over the seeded `message_history` before connecting; see [seeded history](#seeded-history-is-processed-once). |
 | Graph node, model-request, and output-processing hooks | Do not run; no agent graph or output-processing stage exists. |
 
 All regular [tool validation](../hooks.md#tool-validation-hooks) and
@@ -64,11 +65,24 @@ a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeMo
     `before_run` and instruction functions. Use tool hooks or `on_event` when a capability needs the
     live session.
 
-## Seeded history is not processed
+## Seeded history is processed once
 
-History-processing capabilities do not transform `message_history` before it is
-[seeded into a session](history.md#seeding-a-session); preprocess the history before opening the
-session when filtering or redaction is required.
+A session makes no model requests of its own, so there is no `before_model_request` to process the
+history before each one. Instead, [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]
+capabilities run once, in order, over the `message_history` a session is
+[seeded with](history.md#seeding-a-session), before it connects. A processor that trims or redacts
+the history in a standard run therefore does the same to what a session sends the provider. As in a
+standard run, the processed history replaces the original: it is what the provider receives, what a
+reconnect replays, what [`ctx.messages`][pydantic_ai.tools.RunContext.messages] starts from, and what
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns.
+
+The processor receives the seeded history alone, which unlike a run's needn't end in a
+`ModelRequest`, and the session's [`RunContext`][pydantic_ai.tools.RunContext], with
+[`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] set to `True`. It does not run when there is
+no history to seed, or when [WebRTC signaling](deployment.md#browser-webrtc-server-sideband)
+resolves the session configuration without seeding it. Only `ProcessHistory` runs at seeding: a
+`before_model_request` hook does not, so move any redaction you implemented as a hook into a
+`ProcessHistory` capability.
 
 ## Deferred capability loading
 

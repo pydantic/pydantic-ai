@@ -296,7 +296,9 @@ Key facts for building realtime agents:
   while audio is flowing, and text over 500 tokens raises `UserError`. Gemini speech models reject text output before connect; the Vertex
   `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
-  return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
+  return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`.
+  `ProcessHistory` capabilities run once over that seed before connecting (a session has no
+  `before_model_request`, which does not fire), and the processed history replaces it. Transcripts
   stay attached to the user turn they describe even when they arrive after its response, and a turn
   started while the model is still answering (barge-in) is recorded after that answer. A reported
   speech segment whose transcript never arrives remains represented by retained audio or a content-less

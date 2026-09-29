@@ -3692,6 +3692,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.
         lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
+        # The history the session is seeded with; replaced in place by the processed history once
+        # history processors have run over it (below), so everything reading it agrees on one seed.
+        seed_history = list(message_history or ())
 
         def _build_session_result() -> AgentRunResult[Any]:
             assert lifecycle_state is not None and lifecycle_state.session is not None
@@ -3715,8 +3718,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 session = lifecycle_state.session
                 return exceptions.RunCancelled(
                     message,
-                    messages=session.all_messages() if session is not None else message_history or (),
-                    new_message_index=len(message_history or ()),
+                    messages=session.all_messages() if session is not None else seed_history,
+                    new_message_index=len(seed_history),
                     usage=run_context.usage,
                     metadata=run_context.metadata,
                     run_id=run_id,
@@ -3779,6 +3782,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             instrumentation_settings=session_instrumentation_settings,
                             conversation_id=conversation_id,
                             run_id=run_id,
+                            message_history=seed_history,
                             lifecycle=lifecycle_state,
                             short_circuited=True,
                         )
@@ -3804,8 +3808,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
             instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
             resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
+            if run_lifecycle and seed_history:
+                if not model_profile.get('supports_session_seeding', False):
+                    raise exceptions.UserError(
+                        f'The {model.model_name!r} realtime model does not support seeding a session with '
+                        '`message_history`.'
+                    )
+                # A session makes no model requests, so `before_model_request` — and the history
+                # processors a run applies there — never fires. History processors get one pass over the
+                # seed instead, before it reaches the provider, so a redacting `ProcessHistory` applies to
+                # a session as it does to a run. As in a run, the processed history replaces the original
+                # everywhere: the connect-time seed, a reconnect's replay, `ctx.messages`, and the result.
+                # Only a session seeds, so signaling (no `run_lifecycle`) doesn't run them.
+                seed_history[:] = await run_capability._process_seeded_history(  # pyright: ignore[reportPrivateUsage]
+                    run_context, list(seed_history)
+                )
+                run_context.messages[:] = seed_history
             request_messages = [
-                *(message_history or ()),
+                *seed_history,
                 _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
             ]
             model_request_parameters = models.ModelRequestParameters(
@@ -3880,6 +3900,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 instrumentation_settings=session_instrumentation_settings,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                message_history=seed_history,
                 wrap_event_stream=wrap_event_stream,
                 lifecycle=lifecycle_state,
             )
@@ -3911,6 +3932,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=session_instrumentation_settings,
             conversation_id=conversation_id,
             run_id=run_id,
+            message_history=seed_history,
             lifecycle=lifecycle_state,
             short_circuited=True,
         )
@@ -3997,7 +4019,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     tool_manager=resolved.tool_manager,
                     usage=resolved.run_context.usage,
                     usage_limits=usage_limits,
-                    message_history=message_history,
+                    message_history=resolved.message_history,
                     conversation_id=resolved.conversation_id,
                     run_id=resolved.run_id,
                     metadata=resolved.run_context.metadata,
@@ -4017,12 +4039,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 finally:
                     yielded = True
                 return
-
-            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
-                raise exceptions.UserError(
-                    f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
-                    '`message_history`.'
-                )
 
             output_modality = (resolved.model_settings or {}).get('output_modality', 'audio')
             # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
@@ -4066,7 +4082,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     handle_barge_in=handle_barge_in,
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
-                    message_history=message_history,
+                    message_history=resolved.message_history,
                     conversation_id=resolved.conversation_id,
                     run_id=resolved.run_id,
                     instructions=resolved.instructions,

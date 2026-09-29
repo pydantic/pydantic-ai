@@ -23,6 +23,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityInstructionSource,
+    ModelMessage,
     ModelResponse,
     ToolCallPart,
 )
@@ -908,6 +909,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `request_context.messages` is not propagated the other way, so it does not reach the model.
         """
         return request_context
+
+    async def _process_seeded_history(
+        self,
+        ctx: RunContext[AgentDepsT],
+        messages: list[ModelMessage],
+    ) -> list[ModelMessage]:
+        """Process the `message_history` a realtime session is seeded with, once, before it connects.
+
+        A session has no per-request boundary, so `before_model_request` never fires in one; this is the
+        single pass a seed gets instead. Private and implemented only by `ProcessHistory` (combining and
+        wrapping capabilities forward it), so no other `before_model_request` behavior leaks into sessions.
+        """
+        return messages
 
     async def after_model_request(
         self,
