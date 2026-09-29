@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Protocol, TypeAlias, runtime_c
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -291,10 +291,11 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         Provider failures propagate out of this task as-is (`ModelAPIError` subclasses from
         the model layer) and are re-raised on the run by `_collect_finished`.
         """
-        # Hand the launch's claimed slot over to the judge's first real request. `before_model_request`
-        # runs before core's preflight and before core counts the request, so exactly one slot stays
-        # occupied throughout.
-        release_claim = Hooks[Any]()
+        # Hand the launch's claimed slot over to the judge's first real request. Innermost, so this is
+        # the last `before_model_request` to run: core's preflight and its count of the request follow
+        # without another hook in between. Should the parent take the slot in that window anyway, the
+        # judge's own preflight refuses the request, so the shared limit still holds.
+        release_claim = Hooks[Any](ordering=CapabilityOrdering(position='innermost'))
 
         @release_claim.on.before_model_request
         async def _(judge_ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
