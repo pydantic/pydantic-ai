@@ -542,6 +542,12 @@ Closing returns to the prompt without printing the plugin list. Use `/plugins li
 to print it.
 Adding a plugin needs a name and a module, so that stays a typed command.
 
+At startup, an enabled declaration whose own module cannot be imported (for
+example a built-in saved by a newer CLAI) is skipped quietly and listed as
+failed. A plugin that is installed but fails to import one of its dependencies
+is still reported, and `/plugins enable`, `add`, and `reload` always report
+failures.
+
 With arguments `/plugins` is a plain command, and `clai2 plugins ...` outside
 CLAI does the same thing:
 

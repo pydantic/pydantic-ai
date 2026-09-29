@@ -53,6 +53,10 @@ log in, or run a prompt. Once the prompt is ready, a background thread imports
 them, so the first prompt usually finds them loaded; if it arrives sooner, it waits
 for the rest of those imports. Enabled plugins still load before the first prompt;
 their initialization contributes to startup time.
+An enabled plugin whose module is not installed, such as a built-in saved by another
+CLAI version, is skipped without a message; `/plugins list` shows why. Library
+`UserWarning`s are hidden so they do not break up the display; pass `-W default` to
+Python or set `PYTHONWARNINGS=default` to see them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
