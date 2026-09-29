@@ -12,8 +12,6 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
-  # Keep workspace package versions stable so testmon can reuse coverage between commits.
-  UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
   # Ubuntu's system interpreters are older and slower than uv's optimized managed builds.
   UV_PYTHON_PREFERENCE: only-managed
   # Authenticate the Git fetches uv makes for Git-sourced dependencies. Anonymous HTTPS clones are
@@ -27,7 +25,7 @@ env:
   GIT_CONFIG_VALUE_0: https://github.com/
   # Pin the testmon coverage cache while its upstream integration is evaluated.
   # Install it into the synced environment; uv --with rebuilds workspace packages in a temporary overlay.
-  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@a1e88189711f0a86f0ffb3bc1561d002f19c0580"
+  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@73e565fbe6a296a19bc531fecac1bef47dead811"
 
 permissions:
   contents: read
@@ -460,6 +458,8 @@ jobs:
             install: { name: standard }
     env:
       CI: true
+      # Keep workspace versions stable across commits so testmon can reuse coverage.
+      UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
       # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
@@ -563,6 +563,7 @@ jobs:
         shard: [1, 2]
     env:
       CI: true
+      UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
       # Collect every shard on 3.14, where coverage uses the faster sys.monitoring core, plus
       # every shard on 3.10 for version-specific branches -- both are combined across shards
       # and install shapes in the `coverage` job. The other versions run without duplicate
@@ -716,6 +717,7 @@ jobs:
         resolution: [locked, lowest]
     env:
       CI: true
+      UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
       # Python 3.10 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
       COLLECT_COVERAGE: >-
         ${{
@@ -836,6 +838,7 @@ jobs:
         shard: [1, 2]
     env:
       CI: true
+      UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
       # Python 3.14's sys.monitoring coverage core is substantially cheaper than the legacy tracer.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
