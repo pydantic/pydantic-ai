@@ -119,17 +119,6 @@ def _enqueued_text(ctx: RunContext[object]) -> str:
     )
 
 
-def _system_prompt_text(messages: list[ModelMessage]) -> str:
-    """Join the system-prompt parts of `messages`."""
-    return '\n'.join(
-        part.content
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, SystemPromptPart)
-    )
-
-
 async def _run_script(ts: DynamicWorkflowToolset[object], code: str, ctx: RunContext[object] | None = None) -> Any:
     ctx = ctx or _ctx()
     tools = await ts.get_tools(ctx)
@@ -1631,7 +1620,7 @@ async def test_reveal_on_deferred_capability_end_to_end_via_agent_run() -> None:
         step = sum(1 for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart))
         if step == 0:
             return ModelResponse(parts=[ToolCallPart(tool_name='reveal_extra', args={})])
-        announcement_seen.append('async def extra' in _system_prompt_text(messages))
+        announcement_seen.append('async def extra' in _user_prompt_text(messages))
         if step == 1:
             return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'wf'})])
         return ModelResponse(parts=[TextPart('done')])
@@ -1665,7 +1654,7 @@ async def test_reveal_end_to_end_via_agent_run() -> None:
             return ModelResponse(parts=[ToolCallPart(tool_name='run_workflow', args={'code': "await base(task='go')"})])
         if len(returns) == 1:
             # Second step: the announcement for `extra` has arrived and it is now callable.
-            saw_announcement.append('async def extra(*, task: str) -> str:' in _system_prompt_text(messages))
+            saw_announcement.append('async def extra(*, task: str) -> str:' in _user_prompt_text(messages))
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='run_workflow', args={'code': "await extra(task='go')"})]
             )

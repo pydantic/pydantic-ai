@@ -529,7 +529,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     _baseline_names: frozenset[str] = field(init=False, repr=False)
 
     # Reveal announcements queued during the current step but not yet present in message history.
-    _in_flight_announcements: set[str] = field(default_factory=set, init=False, repr=False)
+    _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
     _announcement_step: int | None = field(default=None, init=False, repr=False)
 
     # Tool description, frozen at run start. Rendered from the agents present when the run began
@@ -553,7 +553,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         by_name = index_workflow_agents(self.agents)
         self._by_name = by_name
         self._baseline_names = frozenset(by_name)
-        self._in_flight_announcements = set()
+        self._in_flight_announcements = set[str]()
         self._announcement_step = None
         self._description = _render_catalog(by_name, max_agent_calls=self.max_agent_calls)
 
@@ -599,6 +599,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             name = entry.resolved_name
             existing = self._by_name.get(name) if name else None
             if existing is entry:
+                assert name is not None
                 if (
                     name in self._baseline_names
                     or name in visible_announcements
