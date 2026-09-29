@@ -26,8 +26,8 @@ never discarded.
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A finalized part; retained speech audio appears here, not at part start. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | A local function tool began executing. |
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool completed or returned a retry prompt. |
-| [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | An inline capability handler resolved deferred requests. |
-| [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | Inline deferred results are ready for normal tool processing. |
+| [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | A tool call was deferred (e.g. needs approval); emitted before any inline capability handler runs. |
+| [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | An inline capability handler resolved the deferred requests; the results go through normal tool processing. |
 | [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] | Enqueued content was delivered into session history. |
 | [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] | The provider detected that the user started speaking, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
