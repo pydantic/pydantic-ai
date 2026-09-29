@@ -39,6 +39,7 @@ from pydantic_ai.capabilities import Capability, Instrumentation, ToolSearch
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    CompactionPart,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -3357,7 +3358,6 @@ class TestDynamicCatalog:
         assert instructions.dynamic is True
 
     async def test_get_instructions_appends_to_upstream_string(self) -> None:
-
         class _UpstreamToolset(FunctionToolset[object]):
             async def get_instructions(self, ctx: RunContext[object]) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
                 return 'wrapped instructions'
@@ -3375,7 +3375,6 @@ class TestDynamicCatalog:
         assert 'async def add' in instructions[1].content
 
     async def test_get_instructions_appends_to_upstream_sequence(self) -> None:
-
         class _UpstreamToolset(FunctionToolset[object]):
             async def get_instructions(  # pyright: ignore[reportIncompatibleMethodOverride]
                 self, ctx: RunContext[object]
@@ -3456,10 +3455,10 @@ class TestDynamicCatalog:
 
     async def test_for_run_returns_fresh_state_when_enabled(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
-        cap._announced_tools.add('foo')  # pyright: ignore[reportPrivateUsage]
+        cap._in_flight_announcements.add('foo')  # pyright: ignore[reportPrivateUsage]
         fresh = await cap.for_run(build_run_context(None))
         assert fresh is not cap
-        assert fresh._announced_tools == set()  # pyright: ignore[reportPrivateUsage]
+        assert fresh._in_flight_announcements == set()  # pyright: ignore[reportPrivateUsage]
 
     async def test_for_run_returns_self_when_disabled(self) -> None:
         cap = CodeMode[object]()
@@ -3468,7 +3467,6 @@ class TestDynamicCatalog:
     # -- discovery announcement: local search path ------------------------
 
     async def test_announce_on_local_search_return(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         await cap.after_tool_execute(
@@ -3502,7 +3500,6 @@ class TestDynamicCatalog:
         assert ctx.pending_messages == []
 
     async def test_announce_skipped_when_no_discoveries(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         await cap.after_tool_execute(
@@ -3531,7 +3528,6 @@ class TestDynamicCatalog:
         assert ctx.pending_messages == []
 
     async def test_no_duplicate_announcement_for_same_tool(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         result = {'discovered_tools': [{'name': 'weather'}]}
@@ -3547,10 +3543,90 @@ class TestDynamicCatalog:
         assert ctx.pending_messages is not None
         assert len(ctx.pending_messages) == 1
 
+    async def test_announcement_in_visible_history_deduplicates_across_steps(self) -> None:
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result = {'discovered_tools': [{'name': 'weather'}]}
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+        assert ctx.pending_messages is not None
+        [announcement] = ctx.pending_messages[0].messages
+        assert isinstance(announcement, ModelRequest)
+        ctx.messages.append(announcement)
+        ctx.pending_messages.clear()
+
+        await cap.before_model_request(ctx, request_context=None)  # pyright: ignore[reportArgumentType]
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+
+        assert ctx.pending_messages == []
+
+    async def test_compaction_boundary_allows_announcement_again(self) -> None:
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result = {'discovered_tools': [{'name': 'weather'}]}
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+        assert ctx.pending_messages is not None
+        [announcement] = ctx.pending_messages[0].messages
+        assert isinstance(announcement, ModelRequest)
+        ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()])])
+        ctx.pending_messages.clear()
+
+        await cap.before_model_request(ctx, request_context=None)  # pyright: ignore[reportArgumentType]
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+
+        assert len(ctx.pending_messages) == 1
+
+    async def test_dropped_announcement_is_enqueued_again(self) -> None:
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result = {'discovered_tools': [{'name': 'weather'}]}
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+        assert ctx.pending_messages is not None
+        ctx.pending_messages.clear()  # A history processor omitted the authored announcement.
+
+        await cap.before_model_request(ctx, request_context=None)  # pyright: ignore[reportArgumentType]
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+
+        assert len(ctx.pending_messages) == 1
+
     # -- discovery announcement: native search path -----------------------
 
     async def test_announce_on_native_search_return_part(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         response = ModelResponse(
@@ -3573,7 +3649,6 @@ class TestDynamicCatalog:
         assert isinstance(part, SystemPromptPart) and '`weather`' in part.content
 
     async def test_no_announce_for_unrelated_response_parts(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         response = ModelResponse(
@@ -3598,7 +3673,6 @@ class TestDynamicCatalog:
         ],
     )
     def test_extract_discovered_names_handles_malformed(self, content: Any, expected: list[str]) -> None:
-
         assert _extract_discovered_names(content) == expected
 
     # -- end-to-end via `Agent.run` ---------------------------------------

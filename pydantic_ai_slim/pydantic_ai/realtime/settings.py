@@ -74,7 +74,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI and Azure OpenAI. xAI accepts it but ignores it.
+    Supported by: OpenAI, Azure OpenAI, and OpenAI GPT-Live, where it applies to the delegated backend
+    unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it but ignores it.
     """
 
     async_tool_calls: bool | None
@@ -148,15 +149,18 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting on the request-response models.
 
     `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`
-    selects an effort level. `False` disables thinking (sent as `reasoning.effort: 'none'` on OpenAI,
-    Azure OpenAI, and xAI).
+    selects an effort level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI,
+    Azure AI Voice Live, and xAI).
     OpenAI and Gemini apply it only to models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]. Other models
     silently ignore it. Providers with a richer native config expose it separately
     (e.g. Gemini's `google_thinking_config`), which takes precedence.
 
-    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and xAI's reasoning
-    Grok Voice models (`grok-voice-latest` and the `grok-voice-think-*` family).
+    Supported by: OpenAI `gpt-realtime-2*` models (also on Azure), reasoning chat models like `gpt-5`
+    on Azure AI Voice Live, Gemini native-audio models, xAI's reasoning Grok Voice models
+    (`grok-voice-latest` and the `grok-voice-think-*` family), and OpenAI GPT-Live, where it sets the
+    reasoning effort of the delegated backend model if that model reasons, unless
+    `openai_live_delegation` sets its own `reasoning_effort`.
     """
 
     turn_detection: bool | TurnDetection

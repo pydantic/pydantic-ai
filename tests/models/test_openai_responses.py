@@ -65,6 +65,8 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -13663,6 +13665,155 @@ async def test_stream_response_failed_finish_reason_error(allow_model_requests: 
 
     assert response.finish_reason == 'error'
     assert (response.provider_details or {}).get('finish_reason') == 'failed'
+
+
+def _failed_response_json(error: dict[str, str] | None) -> dict[str, Any]:
+    return {
+        'id': 'resp_001',
+        'object': 'response',
+        'created_at': 1704067200,
+        'status': 'failed',
+        'model': 'gpt-5',
+        'output': [],
+        'parallel_tool_calls': True,
+        'tool_choice': 'auto',
+        'tools': [],
+        'error': error,
+    }
+
+
+def _sse(*events: dict[str, Any]) -> bytes:
+    return b''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n'.encode() for event in events)
+
+
+_CREATED_EVENT: dict[str, Any] = {
+    'type': 'response.created',
+    'response': {**_failed_response_json(None), 'status': 'in_progress'},
+    'sequence_number': 0,
+}
+_ERROR_EVENT: dict[str, Any] = {
+    'type': 'error',
+    'code': 'insufficient_quota',
+    'message': 'You exceeded your current quota',
+    'sequence_number': 0,
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('stream', 'content', 'message'),
+    [
+        pytest.param(
+            True,
+            _sse(
+                _CREATED_EVENT,
+                {'type': 'error', 'code': 'server_error', 'message': 'The server had an error', 'sequence_number': 1},
+            ),
+            'server_error: The server had an error',
+            id='stream-error-event',
+        ),
+        pytest.param(
+            True,
+            _sse(_ERROR_EVENT),
+            'insufficient_quota: You exceeded your current quota',
+            id='stream-error-event-first',
+        ),
+        pytest.param(
+            True,
+            # The nested shape, which the SDK itself raises as `openai.APIError`.
+            _sse(
+                {
+                    'type': 'error',
+                    'sequence_number': 0,
+                    'error': {
+                        'type': 'insufficient_quota',
+                        'code': 'insufficient_quota',
+                        'message': 'You exceeded your current quota',
+                    },
+                }
+            ),
+            'You exceeded your current quota',
+            id='stream-error-event-nested',
+        ),
+        pytest.param(
+            True,
+            _sse(
+                {**_CREATED_EVENT, 'response': {**_CREATED_EVENT['response'], 'background': True}},
+                {
+                    'type': 'response.failed',
+                    'response': {
+                        **_failed_response_json({'code': 'rate_limit_exceeded', 'message': 'Rate limit reached'}),
+                        'background': True,
+                    },
+                    'sequence_number': 1,
+                },
+            ),
+            'rate_limit_exceeded: Rate limit reached',
+            id='stream-response-failed-background',
+        ),
+        pytest.param(
+            False,
+            json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
+            'server_error: The model failed',
+            id='response-failed',
+        ),
+    ],
+)
+async def test_response_error_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, message: str
+):
+    """A failure the Responses API reports in a 200 body or stream raises `ModelAPIError` with no status code,
+    instead of ending the response with `finish_reason='error'` and sending the model an output retry.
+
+    A mock transport stands in for a cassette because no real provider returns such a response on demand.
+    """
+    requests_made = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal requests_made
+        requests_made += 1
+        content_type = 'text/event-stream' if stream else 'application/json'
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()  # pragma: no cover — the error raises while the stream opens
+            else:
+                await agent.run('Hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == message
+    # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
+    assert requests_made == 1
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_response_error_event_first_falls_back(allow_model_requests: None):
+    """An `error` event that opens the stream fires `FallbackModel`'s default `fallback_on`."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=_sse(_ERROR_EVENT), headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(FallbackModel(primary, TestModel(custom_output_text='from fallback')))
+
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+
+    assert output == 'from fallback'
 
 
 async def test_stream_response_incomplete_content_filter_finish_reason(allow_model_requests: None):
