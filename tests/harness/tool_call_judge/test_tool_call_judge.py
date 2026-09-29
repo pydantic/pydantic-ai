@@ -38,8 +38,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
-from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
 from tests.harness._recording_durability import RecordingDurability
+from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
