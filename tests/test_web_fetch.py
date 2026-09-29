@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import anyio
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 from pydantic_ai._utils import using_thread_executor
@@ -796,6 +797,30 @@ class TestMarkdownConverter:
         _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
         assert content == '1. one\n2. two'
 
+    def test_unicode_zero_list_start_is_not_overcharged(self):
+        """The marker width comes from the numeric start, not the length of its Unicode spelling."""
+        html = '<ol start="' + '٠' * 4300 + '">' + '<li>x</li>' * 5000 + '</ol>'
+        assert _convert_html(html)[1] == '\n'.join(f'{index}. x' for index in range(5000))
+
+    def test_ordered_list_start_is_scanned_once(self):
+        """A shared invalid start attribute is parsed once for the whole list."""
+        scans = 0
+
+        class CountedStart(str):
+            def isdecimal(self) -> bool:
+                nonlocal scans
+                scans += 1
+                return super().isdecimal()
+
+        html = '<ol>' + '<li>x</li>' * 100 + '</ol>'
+        soup = BeautifulSoup(html, 'html.parser')
+        ordered_list = soup.ol
+        assert ordered_list is not None
+        ordered_list['start'] = CountedStart('x' * 1000)
+        with patch('pydantic_ai.common_tools.web_fetch.BeautifulSoup', return_value=soup):
+            assert _convert_html(html)[1].endswith('100. x')
+        assert scans == 1
+
     @pytest.mark.parametrize('tag', ['blockquote', 'dd', 'li'])
     def test_deeply_nested_indentation_is_bounded(self, tag: str):
         """The converter rejects repeated indentation before intermediate Markdown expands."""
@@ -892,11 +917,18 @@ class TestMarkdownConverter:
         html = '<div>' * 300 + f'<a href="{value}"><span>{value}</span></a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
-    @pytest.mark.parametrize('wrapper', ['p', 'div'])
-    def test_whitespace_wrapped_autolink_is_not_overcharged(self, wrapper: str):
-        """Whitespace wrappers preserve the autolink shortcut without an extra URL copy."""
+    @pytest.mark.parametrize('wrapper', ['p', 'div', 'sub', 'sup', 'dt', 'ul', 'ol', 'video', 'a'])
+    def test_converted_wrapper_autolink_is_not_overcharged(self, wrapper: str):
+        """A wrapper whose conversion leaves the URL text intact preserves the autolink shortcut."""
         value = 'x' * 1000
         html = '<div>' * 300 + f'<a href="{value}"><{wrapper}>{value}</{wrapper}></a>' + '</div>' * 300
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 350_000):
+            assert _convert_html(html)[1] == f'<{value}>'
+
+    def test_br_wrapped_autolink_is_not_overcharged(self):
+        """The line break before link text is removed by the enclosing link."""
+        value = 'x' * 1000
+        html = '<div>' * 300 + f'<a href="{value}"><br>{value}</a>' + '</div>' * 300
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 350_000):
             assert _convert_html(html)[1] == f'<{value}>'
 
@@ -976,6 +1008,13 @@ class TestMarkdownConverter:
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 6_500_000):
             assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
+    def test_plain_backticks_skip_code_run_scan(self):
+        """Backtick runs are measured only when a deep code tag needs their delimiter width."""
+        text = '`x' * 1000
+        with patch('pydantic_ai.common_tools.web_fetch._BACKTICK_RUN_RE') as pattern:
+            assert _convert_html(text)[1] == text
+            pattern.finditer.assert_not_called()
+
     def test_pre_padding_is_not_overcharged(self):
         """Preformatted whitespace is stripped before enclosing blocks scan it."""
         html = '<div>' * 300 + '<pre>' + ' ' * 18_000_000 + '</pre>' + '</div>' * 300
@@ -1043,6 +1082,13 @@ class TestMarkdownConverter:
     def test_small_table_colspan_converts(self, html: str):
         """Small decimal colspans retain the converter's output."""
         assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
+    def test_nested_row_colspan_scans_are_bounded(self):
+        """Each enclosing row rereads the cell's colspan during conversion."""
+        html = '<table>' + '<tr>' * 6 + '<td colspan="' + 'x' * 4000 + '">x</td>' + '</tr>' * 6 + '</table>'
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 10_000):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
 
     def test_nested_video_source_search_is_bounded(self):
         """Repeated source searches through ignored descendants must be counted before conversion."""
