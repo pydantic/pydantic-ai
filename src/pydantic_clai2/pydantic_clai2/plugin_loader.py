@@ -44,6 +44,7 @@ _RETIRED_BUILTINS: dict[str, PluginSettings] = {
     'google_workspace': PluginSettings(
         id='google_workspace', factory='pydantic_ai_harness.google_workspace:GoogleWorkspace', enabled=False
     ),
+    'ordinal': PluginSettings(id='ordinal', factory='pydantic_ai_harness.ordinal:Ordinal', enabled=False),
 }
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
 
@@ -180,6 +181,10 @@ class PluginLoader(Generic[DepsT]):
             return saved
         return current.model_copy(update={'enabled': saved.enabled})
 
+    def _saved(self, entry: PluginEntry[DepsT]) -> PluginSettings:
+        """The stored declaration as it is now, without refreshing `entries()` mid-load."""
+        return next((saved for saved in self._store.plugins() if saved.id == entry.name), entry.declaration)
+
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
 
@@ -262,8 +267,9 @@ class PluginLoader(Generic[DepsT]):
             full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
+            # The declaration saved now, not at load: another CLAI process may have replaced it since.
             save_settings=lambda settings: self._store.save_plugin(
-                entry.declaration.model_copy(update={'settings': settings, 'enabled': True})
+                self._saved(entry).model_copy(update={'settings': settings, 'enabled': True})
             ),
         )
         try:

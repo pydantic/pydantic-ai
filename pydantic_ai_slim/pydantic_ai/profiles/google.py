@@ -234,6 +234,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
     )
+    # `default_cache_retention` is intentionally left unset (None): Gemini's implicit caching (the default,
+    # applied automatically) documents no retention window — only explicit `CachedContent` has a
+    # user-set TTL, which isn't a model-family fact. https://ai.google.dev/gemini-api/docs/caching
     profile = GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
