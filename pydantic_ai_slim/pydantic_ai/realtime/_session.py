@@ -232,6 +232,10 @@ class _HeldCommit:
     sent: bool = False
     has_audio: bool = False
     requests: list[ModelRequest] = field(default_factory=list[ModelRequest])
+    # The untranscribed turn recorded for it, which a further commit before it goes out extends: the provider
+    # takes both as one turn. With the input audio it retains.
+    untranscribed: ModelRequest | None = None
+    untranscribed_audio: bytearray = field(default_factory=bytearray)
 
 
 _UserTurnAnchor = ModelMessage | _InFlightResponse | _HeldCommit | None
@@ -3046,18 +3050,27 @@ class RealtimeSession:
             return []
         if None in self._user_turns or not self._user_turn_active:
             return []
+        held = self._held_commit if self._connection.defers_audio_commit else None
+        if held is not None:
+            held.untranscribed_audio.extend(self._input_audio)
+        input_audio = held.untranscribed_audio if held is not None else self._input_audio
         audio = None
-        if self._input_audio:
+        if input_audio:
             audio = BinaryContent(
-                data=_pcm_to_wav(bytes(self._input_audio), self.audio_input_sample_rate),
+                data=_pcm_to_wav(bytes(input_audio), self.audio_input_sample_rate),
                 media_type=_WAV_MEDIA_TYPE,
             )
         part = SpeechPart(speaker='user', transcript=None, audio=audio)
         self._input_audio.clear()
         self._user_turn_active = False
+        if held is not None and held.untranscribed is not None:
+            # A further commit before the held one goes out: the provider takes both as one turn.
+            held.untranscribed.parts = [part]
+            return []
         request = self._new_request([part])
-        if self._connection.defers_audio_commit:
-            self._insert_user_request(self._held_commit, request)
+        if held is not None:
+            held.untranscribed = request
+            self._insert_user_request(held, request)
         else:
             self._history.append(request)
         # No deltas to stream (there's no transcript), so bracket the turn with just start/end so a

@@ -9,7 +9,9 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import io
 import json
+import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal, cast
@@ -27,6 +29,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeSessionErrorEvent,
     SpeechPart,
@@ -1862,12 +1865,13 @@ async def test_commit_held_behind_a_reply_goes_after_what_was_sent_meanwhile(
         'input_audio_buffer.commit',
         'response.create',
     ]
+    # A second commit before the first went out extends the same turn, as it does on xAI.
     spoken = 'user speech: Spoken.' if transcription else 'user speech: None'
     assert _turns(session.all_messages()) == [
         'user: What is two plus two?',
         'assistant speech: Four.',
         *(['user: Then this.', 'user: Some context.'] if text else []),
-        *[spoken] * commits,
+        spoken,
         'assistant speech: Answer.',
     ]
 
@@ -2023,3 +2027,77 @@ async def test_speech_for_audio_already_committed_is_not_held_for_the_next_commi
         turns = _turns(session.all_messages())
 
     assert turns == ['user speech: First.', 'assistant speech: One.', 'user speech: Second.', 'assistant speech: Two.']
+
+
+async def test_second_commit_before_the_first_goes_out_extends_the_untranscribed_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """xAI takes the audio of both commits as one turn, so history records one turn with both, retained."""
+    ws = _PhasedWebSocket(
+        [_created(), _updated()],
+        [],
+        [json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}), *_reply('r1', 'Answer.')],
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+    settings = rt_xai.XaiRealtimeModelSettings(turn_detection=False, input_transcription_model=None)
+
+    async with Agent().realtime(_model(settings)).session(audio_retention='input_audio') as session:
+        for audio in (_AUDIO, _OTHER_AUDIO):
+            await session.send_audio(audio.data)
+            await session.commit_audio()
+        await session.create_response()
+        ws.advance()
+        await session.wait_for_reply()
+
+    assert _turns(session.all_messages()) == ['user speech: None', 'assistant speech: Answer.']
+    part = session.all_messages()[0].parts[0]
+    assert isinstance(part, SpeechPart) and part.audio is not None
+    with wave.open(io.BytesIO(part.audio.data)) as wav:
+        assert wav.readframes(wav.getnframes()) == _AUDIO.data + _OTHER_AUDIO.data
+
+
+async def test_turns_of_a_commit_held_behind_a_reply_keep_their_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two utterances xAI transcribed before their held commit went out are recorded in the order spoken."""
+
+    def utterance(item_id: str, transcript: str) -> list[str]:
+        return [
+            json.dumps({'type': 'input_audio_buffer.speech_started', 'item_id': item_id, 'audio_start_ms': 0}),
+            _user_transcript(item_id, transcript),
+        ]
+
+    ws = _PhasedWebSocket(
+        [_created(), _updated()],
+        [_response_frame('response.created', 'r0'), _transcript_delta('r0')],
+        [*utterance('item-u1', 'One.'), *utterance('item-u2', 'Two.')],
+        [
+            _response_frame('response.done', 'r0'),
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u2'}),
+            *_reply('r1', 'Answer.'),
+        ],
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+
+    async with Agent().realtime(_model(rt_xai.XaiRealtimeModelSettings(turn_detection=False))).session() as session:
+        await session.send('What is two plus two?')
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartDeltaEvent):
+                break
+        await session.send_audio(_AUDIO.data)
+        await session.commit_audio()
+        await session.send('Then this.')
+        ws.advance()
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                if event.part.transcript == 'Two.':
+                    break
+        ws.advance()
+        await session.wait_for_reply()
+
+    assert _turns(session.all_messages()) == [
+        'user: What is two plus two?',
+        'assistant speech: Four.',
+        'user: Then this.',
+        'user speech: One.',
+        'user speech: Two.',
+        'assistant speech: Answer.',
+    ]
