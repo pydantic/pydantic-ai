@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from typing_extensions import TypeVar
@@ -97,7 +98,23 @@ def build_agent_graph(
     UserPromptNode[DepsT, OutputT],
     result.FinalResult[OutputT],
 ]:
-    """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
+    """Build the execution [Graph][pydantic_graph.Graph] for a given agent.
+
+    `deps_type` and `output_type` only bind the type parameters: the graph depends on `name` alone,
+    so it is built once per name and shared by every run.
+    """
+    return _build_agent_graph(name)
+
+
+@lru_cache(maxsize=128)
+def _build_agent_graph(
+    name: str | None,
+) -> Graph[
+    GraphAgentState,
+    GraphAgentDeps[Any, Any],
+    UserPromptNode[Any, Any],
+    result.FinalResult[Any],
+]:
     from .model_request import ModelRequestNode
     from .model_response import CallToolsNode
     from .user_prompt import UserPromptNode
@@ -105,19 +122,17 @@ def build_agent_graph(
     g = GraphBuilder(
         name=name or 'Agent',
         state_type=GraphAgentState,
-        deps_type=GraphAgentDeps[DepsT, OutputT],
-        input_type=UserPromptNode[DepsT, OutputT],
-        output_type=result.FinalResult[OutputT],
+        deps_type=GraphAgentDeps[Any, Any],
+        input_type=UserPromptNode[Any, Any],
+        output_type=result.FinalResult[Any],
         auto_instrument=False,
     )
 
     g.add(
-        g.edge_from(g.start_node).to(UserPromptNode[DepsT, OutputT]),
-        g.node(UserPromptNode[DepsT, OutputT]),
-        g.node(ModelRequestNode[DepsT, OutputT]),
-        g.node(CallToolsNode[DepsT, OutputT]),
-        g.node(
-            SetFinalResult[DepsT, OutputT],
-        ),
+        g.edge_from(g.start_node).to(UserPromptNode[Any, Any]),
+        g.node(UserPromptNode[Any, Any]),
+        g.node(ModelRequestNode[Any, Any]),
+        g.node(CallToolsNode[Any, Any]),
+        g.node(SetFinalResult[Any, Any]),
     )
     return g.build(validate_graph_structure=False)

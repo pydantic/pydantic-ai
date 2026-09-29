@@ -2,14 +2,15 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, TypeAlias, cast, overload
+from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 
 import pydantic_core
+from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
@@ -68,8 +69,9 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec, merge_profile
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
+    ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
@@ -160,7 +162,7 @@ try:
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
-        BetaCitationsConfigParam,
+        BetaCitationsConfigParamParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
@@ -181,6 +183,7 @@ try:
         BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
+        BetaInputTransformation,
         BetaJSONOutputFormatParam,
         BetaMCPToolResultBlock,
         BetaMCPToolUseBlock,
@@ -217,6 +220,7 @@ try:
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
         BetaThinkingBlock,
+        BetaThinkingBlockBindingParam,
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
@@ -286,6 +290,16 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
+# `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
+# the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
+# Bedrock `anthropic_beta` body field and Vertex beta routes. The AWS-operated Bedrock Messages API
+# explicitly does not accept Anthropic beta headers, while Foundry has no published support for this
+# beta, so those two stay excluded until the provider contract changes or a live request verifies them.
+_THINKING_BINDING_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+)
 # The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) doesn't support the `bm25` tool-search
 # variant — it 400s with `BM25 tool search is not supported on Bedrock. Use tool_search_tool_regex instead.`
 # — so we default to `regex` there. The other transports (Vertex, Foundry, and the Messages-API-based
@@ -314,8 +328,12 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 
-_ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
+_ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
+_ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
+_STALE_THINKING_BLOCK_MARKER = 'The block is bound to a different conversation'
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY = 'anthropic_count_tokens_drop_stale_thinking_blocks'
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
@@ -388,6 +406,26 @@ _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
+
+
+class AnthropicStaleThinkingBlockWarning(Warning):
+    """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
+
+    Claude Fable 5.1 and Claude Opus 5.5 bind each thinking block to the conversation prefix that
+    produced it and reject a replay once that prefix changes — which a dynamic
+    [instructions][pydantic_ai.Agent.instructions] function and a
+    [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
+    check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
+    and acts on it only if the request asks it to.
+
+    Pydantic AI therefore asks for nothing by default, so an older account keeps replaying its
+    reasoning untouched. Where the check is enforced, the rejected request is retried once with
+    `thinking.block_binding.prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the
+    run continues, and later requests carrying that response history keep asking for the drop as
+    Anthropic requires. The drop is recorded on
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] and as
+    an `anthropic.input_transformations` span event.
+    """
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
@@ -544,8 +582,10 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
 
-def _build_extra_body(model_settings: AnthropicModelSettings) -> object | None:
-    """Merge the sampling settings into `extra_body`, which is how they reach the API now.
+def _build_extra_body(
+    model_settings: AnthropicModelSettings, thinking_override: dict[str, object] | None = None
+) -> object | None:
+    """Merge the sampling settings, and a `thinking` object the SDK cannot type, into `extra_body`.
 
     `anthropic>=1` dropped `temperature`/`top_p`/`top_k` from the `messages.create()` signature, and
     passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
@@ -555,15 +595,200 @@ def _build_extra_body(model_settings: AnthropicModelSettings) -> object | None:
     An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
     the SDK gave it while the parameters were still named arguments.
     """
-    sampling = {
-        setting: value for setting in _ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
+    fields: dict[str, Any] = {
+        setting: value for setting in ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
     }
+    if thinking_override is not None:
+        fields['thinking'] = thinking_override
     extra_body = model_settings.get('extra_body')
-    if not sampling:
+    if not fields:
         return extra_body
-    if is_str_dict(extra_body):
-        return {**sampling, **extra_body}
-    return sampling
+    if not _is_str_mapping(extra_body):
+        return fields
+    merged = {**fields, **extra_body}
+    if thinking_override is not None:
+        # The override was built from the effective wire object, including any caller-provided
+        # `extra_body['thinking']`, so it must replace that original object to add `block_binding`.
+        merged['thinking'] = thinking_override
+    return merged
+
+
+def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, object] | None:
+    """The `thinking` object a caller hand-rolled in `extra_body`, if any.
+
+    `extra_body` is how a caller reaches a field the installed SDK cannot type yet, so it can carry
+    `thinking` — including a `block_binding` of their own, which must be honored rather than
+    retried over.
+    """
+    extra_body = model_settings.get('extra_body')
+    if not _is_str_mapping(extra_body):
+        return None
+    thinking = extra_body.get('thinking')
+    if not _is_str_mapping(thinking):
+        return None
+    return dict(thinking)
+
+
+def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """Whether a value is a mapping whose keys are all strings."""
+    if not isinstance(value, Mapping):
+        return False
+    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
+
+
+def _effective_thinking(
+    model_settings: AnthropicModelSettings, thinking: BetaThinkingConfigParam | Omit
+) -> dict[str, object] | Omit:
+    """Resolve the thinking object that reaches the wire after `extra_body` precedence."""
+    if (caller_thinking := _extra_body_thinking(model_settings)) is not None:
+        return caller_thinking
+    return OMIT if isinstance(thinking, Omit) else dict(thinking)
+
+
+def _is_stale_thinking_block_error(
+    profile: ModelProfile,
+    thinking: dict[str, object] | Omit,
+    error: APIStatusError,
+) -> bool:
+    """Whether Anthropic rejected a replayed thinking block that the request can be retried without.
+
+    Scoped to models that bind and to requests that set no `block_binding` of their own, through the
+    typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
+    fail, and an explicit `'drop_block'` cannot produce this error.
+    """
+    if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
+        return False
+    if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+        return False
+    body: object | None = error.body
+    return (
+        _utils.is_str_dict(body)
+        and _utils.is_str_dict(reported := body.get('error'))
+        and isinstance(message := reported.get('message'), str)
+        and _STALE_THINKING_BLOCK_MARKER in message
+    )
+
+
+def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str, object]:
+    """The `thinking` object for the retried request, carrying the caller's own config plus the drop.
+
+    A binding model emits thinking blocks whether or not the request configured thinking, so the
+    retry usually has no `thinking` object for the binding to ride in — and the API accepts one
+    holding `block_binding` alone, which the SDK's discriminated union cannot express. Rather than
+    split the two cases, the retry always sends the whole object through `extra_body`, which reaches
+    the same JSON key without needing a `type` the caller never asked for.
+    """
+    configured: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
+    return {**configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
+
+
+def _history_dropped_stale_thinking_blocks(
+    messages: list[ModelMessage],
+    *,
+    compaction_boundary: ModelResponse | None = None,
+    include_count_tokens_recovery: bool = False,
+) -> bool:
+    """Whether Anthropic already told us this conversation needs the drop on later requests."""
+    for message in reversed(messages):
+        if include_count_tokens_recovery and isinstance(message, ModelRequest) and message.metadata:
+            namespace: object = message.metadata.get(_PYDANTIC_AI_METADATA_KEY)
+            if (
+                _utils.is_str_dict(namespace)
+                and namespace.get(_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY) is True
+            ):
+                return True
+        if message is compaction_boundary or not isinstance(message, ModelResponse) or not message.provider_details:
+            continue
+        transformations: object = message.provider_details.get('input_transformations')
+        if isinstance(transformations, list) and any(
+            _utils.is_str_dict(transformation)
+            and transformation.get('type') == 'thinking_dropped'
+            and transformation.get('reason') == 'prefix_binding_mismatch'
+            for transformation in cast(list[object], transformations)
+        ):
+            return True
+    return False
+
+
+def _mark_history_to_drop_stale_thinking_blocks_for_count_tokens(messages: list[ModelMessage]) -> None:
+    """Keep a successful count-token recovery active for later counts of this conversation."""
+    request = next((message for message in reversed(messages) if isinstance(message, ModelRequest)), None)
+    if request is None:  # pragma: no cover
+        return
+    request.metadata = request.metadata or {}
+    namespace: object = request.metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    if not _utils.is_str_dict(namespace):
+        namespace = {}
+        request.metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    namespace[_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY] = True
+
+
+def _thinking_with_stale_block_history(
+    profile: AnthropicModelProfile,
+    messages: list[ModelMessage],
+    thinking: BetaThinkingConfigParam | Omit,
+    effective_thinking: dict[str, object] | Omit,
+    betas: set[str],
+    *,
+    compaction_boundary: ModelResponse | None = None,
+    include_count_tokens_recovery: bool = False,
+) -> tuple[BetaThinkingConfigParam | Omit, set[str], dict[str, object] | None, dict[str, object] | Omit]:
+    """Resolve request parameters that keep a prior request-local drop active for this history."""
+    keep_dropping = (
+        profile.get('anthropic_binds_thinking_blocks', False)
+        and (isinstance(effective_thinking, Omit) or 'block_binding' not in effective_thinking)
+        and _history_dropped_stale_thinking_blocks(
+            messages,
+            compaction_boundary=compaction_boundary,
+            include_count_tokens_recovery=include_count_tokens_recovery,
+        )
+    )
+    if not keep_dropping:
+        return thinking, betas, None, effective_thinking
+    thinking_override = _drop_stale_thinking_blocks(effective_thinking)
+    return OMIT, betas | {_ANTHROPIC_THINKING_BINDING_BETA}, thinking_override, thinking_override
+
+
+def _warn_stale_thinking_block_recovery(model_name: str) -> None:
+    warnings.warn(
+        f'{model_name!r} rejected a replayed thinking block: the conversation prefix changed '
+        'between requests, which Anthropic enforces for accounts created on or after 2026-08-31. '
+        "Pydantic AI retried with `prefix_mismatch_behavior='drop_block'`, so the run continued "
+        "without that turn's reasoning. The cause is something earlier in the request that is not "
+        'byte-stable between turns — commonly instructions carrying a per-request value such as a '
+        'timestamp, or a tool added, removed or reordered mid-conversation. That same instability '
+        'invalidates the prompt cache on every model and provider, where it raises nothing and '
+        'silently re-charges the whole conversation at uncached rates, so this rejection is the '
+        'loud version of a normally-silent cost. Making the prefix stable is the real fix; to skip '
+        'the rejected request instead, ask for the drop yourself: `model_settings='
+        "{'anthropic_thinking': {'type': 'adaptive', 'block_binding': "
+        "{'prefix_mismatch_behavior': 'drop_block'}}}`. To keep the retry and silence this warning: "
+        "`warnings.simplefilter('ignore', AnthropicStaleThinkingBlockWarning)`. See "
+        'https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding and '
+        'https://platform.claude.com/docs/en/build-with-claude/preserved-thinking',
+        AnthropicStaleThinkingBlockWarning,
+        stacklevel=2,
+    )
+
+
+def _report_input_transformations(
+    transformations: list[BetaInputTransformation],
+) -> list[dict[str, Any]]:
+    """Report Anthropic's input transformations on the current span, and return them for `provider_details`.
+
+    A dropped thinking block is otherwise silent: the model answered without the reasoning we
+    replayed, and nothing in the response says so. `provider_details` keeps it inspectable after the
+    run; the span event surfaces it in the trace, on the model request that lost the reasoning.
+    """
+    reported = [transformation.model_dump() for transformation in transformations]
+    span = get_current_span()
+    attributes = getattr(span, 'attributes', {})
+    if span.is_recording() and attributes.get('gen_ai.operation.name') == 'chat':
+        span.add_event(
+            'anthropic.input_transformations',
+            attributes={'anthropic.input_transformations': pydantic_core.to_json(reported).decode()},
+        )
+    return reported
 
 
 def _resolve_anthropic_service_tier(
@@ -675,7 +900,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile's `supported_native_tools` and `anthropic_supports_dynamic_filtering` are narrowed here
         for clients that don't support them (e.g. Bedrock, Vertex). `supports_inline_system_prompts` is
         narrowed the same way, and for the same reason: serving a `{'role': 'system'}` entry is a fact
-        about the transport as much as about the model.
+        about the transport as much as about the model. Thinking-block binding is likewise narrowed, but
+        by client class rather than by base URL: its beta and drop-block retry are verified against
+        Anthropic's Messages API, which a proxied or gateway `AsyncAnthropic` still reaches.
         """
         _profile = super().profile
         client = self._provider.client
@@ -699,6 +926,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 # mid-conversation parts are rewritten before the adapter ever sees them.
                 supports_inline_system_prompts=_profile.get('supports_inline_system_prompts', False)
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
+                anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
+                and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
             ),
         )
         return cast(AnthropicModelProfile, _profile)
@@ -864,19 +1093,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
-        dropped = {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
+        dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
         extra_body = model_settings.get('extra_body')
         if is_str_dict(extra_body):
-            dropped |= {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
+            dropped |= {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
             model_settings['extra_body'] = {
-                key: value for key, value in extra_body.items() if key not in _ANTHROPIC_SAMPLING_PARAMS
+                key: value for key, value in extra_body.items() if key not in ANTHROPIC_SAMPLING_PARAMS
             }
 
-        for setting in _ANTHROPIC_SAMPLING_PARAMS:
+        for setting in ANTHROPIC_SAMPLING_PARAMS:
             model_settings.pop(setting, None)
 
         if dropped:
-            ordered = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
+            ordered = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
             warnings.warn(
                 f'Sampling parameters {ordered} are not supported by {self.model_name!r}. These settings will be ignored.',
                 UserWarning,
@@ -894,8 +1123,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
-        profile = self.profile
-        if profile.get('anthropic_supports_adaptive_thinking', False):
+        if self.profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
@@ -952,16 +1180,32 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
+        thinking = self._translate_thinking(model_settings, model_request_parameters)
+        effective_thinking = _effective_thinking(model_settings, thinking)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters
+            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container, container_from_history = self._get_container(messages, model_settings)
+        recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
+        initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
+            _thinking_with_stale_block_history(
+                anthropic_profile,
+                recovery_messages,
+                thinking,
+                effective_thinking,
+                betas,
+                compaction_boundary=compaction_boundary,
+            )
+        )
 
         async def create(
             container_param: BetaContainerParams | str | None,
+            thinking: BetaThinkingConfigParam | Omit,
+            betas: set[str],
+            thinking_override: dict[str, object] | None,
         ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -975,7 +1219,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 cache_control=auto_cache_control or OMIT,
-                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                thinking=thinking,
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
@@ -984,24 +1228,56 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
-                extra_body=_build_extra_body(model_settings),
+                extra_body=_build_extra_body(model_settings, thinking_override),
             )
 
+        retry_container = container
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
-                return await create(container)
-            except APIStatusError as e:
+                return await create(container, initial_thinking, initial_betas, initial_thinking_override)
+            except APIStatusError as error:
                 if (
-                    e.status_code != 500
-                    or not container_from_history
-                    or not any(
+                    error.status_code == 500
+                    and container_from_history
+                    and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
                         for message in anthropic_messages
                         for block in message['content']
                     )
                 ):
-                    raise
-                return await create(None)
+                    try:
+                        return await create(None, initial_thinking, initial_betas, initial_thinking_override)
+                    except APIStatusError as fallback_error:
+                        # Classify what the fallback hit, not the 500 that caused it, so a stale
+                        # thinking block rejected only on this attempt still reaches the retry
+                        # below. The history-resolved container is gone, so it stays dropped there.
+                        error = fallback_error
+                        retry_container = None
+                if not _is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
+                    raise error
+
+            result = await create(
+                retry_container,
+                OMIT,
+                betas | {_ANTHROPIC_THINKING_BINDING_BETA},
+                _drop_stale_thinking_blocks(effective_thinking),
+            )
+            _warn_stale_thinking_block_recovery(self.model_name)
+            return result
+
+    def _stale_thinking_block_recovery_history(
+        self, messages: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], ModelResponse | None]:
+        """The wire-visible history and response whose metadata describes the compacted-away request."""
+        trimmed_messages = self._trim_before_compaction(messages)
+        if trimmed_messages is messages:
+            return messages, None
+
+        # The shared trim may re-insert a standing-prompt request before the boundary response, but it
+        # removes every earlier response. `input_transformations` on the boundary response describes
+        # the request that produced the compaction block, not the next post-compaction request.
+        boundary = next(message for message in trimmed_messages if isinstance(message, ModelResponse))
+        return trimmed_messages, boundary
 
     @staticmethod
     def _add_compaction_params(
@@ -1031,6 +1307,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         anthropic_profile: AnthropicModelProfile,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
+        thinking: dict[str, object] | Omit,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
@@ -1047,6 +1324,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             betas.add('compact-2026-01-12')
         if self._get_task_budget(model_settings) is not None:
             betas.add(_ANTHROPIC_TASK_BUDGETS_BETA)
+
+        # `thinking.block_binding` is a 400 (`Extra inputs are not permitted`) without its beta,
+        # so the beta follows the field rather than the profile flag — a user who sets
+        # `block_binding` through `anthropic_thinking` gets it too.
+        # Membership, not truthiness: `block_binding: {}` is a valid request meaning "every binding
+        # default", and it needs the beta exactly as much as a populated one does.
+        if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+            betas.add(_ANTHROPIC_THINKING_BINDING_BETA)
 
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
@@ -1220,16 +1505,40 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
+        thinking = self._translate_thinking(model_settings, model_request_parameters)
+        effective_thinking = _effective_thinking(model_settings, thinking)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters
+            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        if isinstance(self.client, AsyncAnthropicBedrock):
-            from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
+        recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
+        initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
+            _thinking_with_stale_block_history(
+                anthropic_profile,
+                recovery_messages,
+                thinking,
+                effective_thinking,
+                betas,
+                compaction_boundary=compaction_boundary,
+                include_count_tokens_recovery=True,
+            )
+        )
 
-            with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        async def count(
+            thinking: BetaThinkingConfigParam | Omit,
+            betas: set[str],
+            thinking_override: dict[str, object] | None,
+        ) -> BetaMessageTokensCount:
+            extra_body = (
+                _build_extra_body(model_settings, thinking_override)
+                if thinking_override is not None
+                else model_settings.get('extra_body')
+            )
+            if isinstance(self.client, AsyncAnthropicBedrock):
+                from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
+
                 return await count_tokens_via_bedrock(
                     self.client,
                     self._model_name,
@@ -1242,15 +1551,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     betas=sorted(betas) or OMIT,
                     output_config=output_config or OMIT,
                     cache_control=auto_cache_control or OMIT,
-                    thinking=self._translate_thinking(model_settings, model_request_parameters),
+                    thinking=thinking,
                     context_management=context_management or OMIT,
                     timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     speed=self._effective_speed(model_settings, anthropic_profile),
                     extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
+                    extra_body=extra_body,
                 )
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
@@ -1261,13 +1569,29 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
                 cache_control=auto_cache_control or OMIT,
-                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                thinking=thinking,
                 context_management=context_management or OMIT,
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=extra_body,
             )
+
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            try:
+                return await count(initial_thinking, initial_betas, initial_thinking_override)
+            except APIStatusError as error:
+                if not _is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
+                    raise
+
+            result = await count(
+                OMIT,
+                betas | {_ANTHROPIC_THINKING_BINDING_BETA},
+                _drop_stale_thinking_blocks(effective_thinking),
+            )
+            _mark_history_to_drop_stale_thinking_blocks_for_count_tokens(messages)
+            _warn_stale_thinking_block_recovery(self.model_name)
+            return result
 
     def _process_response(  # noqa: C901
         self,
@@ -1361,6 +1685,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.container:
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
+        if response.input_transformations:
+            provider_details = provider_details or {}
+            provider_details['input_transformations'] = _report_input_transformations(response.input_transformations)
 
         return ModelResponse(
             parts=items,
@@ -1492,7 +1819,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _map_web_fetch_tool(
         tool: WebFetchTool, supports_dynamic_filtering: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        citations = BetaCitationsConfigParamParam(enabled=tool.enable_citations) if tool.enable_citations else None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
@@ -2613,15 +2940,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        profile = self.profile
         if (
             effort is None
-            and profile.get('anthropic_supports_effort', False)
+            and self.profile.get('anthropic_supports_effort', False)
             and isinstance(model_request_parameters.thinking, str)
         ):
             effort = resolve_anthropic_effort(
                 model_request_parameters.thinking,
-                supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
             )
 
         if effort is not None:
@@ -2667,8 +2993,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if task_budget is None:
             return None
 
-        profile = self.profile
-        if not profile.get('anthropic_supports_task_budgets', False):
+        if not self.profile.get('anthropic_supports_task_budgets', False):
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
                 'See https://platform.claude.com/docs/en/build-with-claude/task-budgets for the supported models.'
@@ -2772,7 +3097,7 @@ _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input
 
 
 def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
-    """Extract Anthropic usage into a flat dict, preserving compaction and advisor iteration totals.
+    """Extract Anthropic usage into a flat dict, preserving the web search count and iteration totals.
 
     Anthropic's top-level `input_tokens`/`output_tokens` exclude both compaction and advisor iteration
     usage (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
@@ -2788,12 +3113,30 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         if isinstance((value := getattr(response_usage, key, None)), int):
             details[key] = value
 
+    # One-hour cache writes are billed at a higher rate than five-minute ones (see
+    # <https://platform.claude.com/docs/en/about-claude/pricing>). The rest of
+    # `cache_creation_input_tokens` is priced at the five-minute rate, so the one-hour count is all pricing needs.
+    # In streaming, only the start event carries the split, so it's kept in `details` to survive the merge.
+    if (
+        isinstance(response_usage, BetaUsage)
+        and response_usage.cache_creation is not None
+        and (ephemeral_1h_input_tokens := response_usage.cache_creation.ephemeral_1h_input_tokens)
+    ):
+        details['ephemeral_1h_input_tokens'] = ephemeral_1h_input_tokens
+
     # Anthropic bills thinking tokens inside `output_tokens`, so this is a readable subset of the
     # output total rather than an additive one, matching `reasoning_tokens` on OpenAI and
     # `thoughts_tokens` on Google.
     output_tokens_details = response_usage.output_tokens_details
     if output_tokens_details is not None and (thinking_tokens := output_tokens_details.thinking_tokens):
         details['thinking_tokens'] = thinking_tokens
+
+    # Native web searches are billed per search (see
+    # <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool#usage-and-pricing>)
+    # and the count is only reported here, not as response parts, as searches can also run inside code execution.
+    server_tool_use = response_usage.server_tool_use
+    if server_tool_use is not None and (web_search_requests := server_tool_use.web_search_requests):
+        details['web_search_requests'] = web_search_requests
 
     iterations = response_usage.iterations
     if not iterations:
@@ -2813,6 +3156,10 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         for key in _COMPACTION_TOKEN_KEYS:
             if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
                 details[f'compaction_{key}'] = compaction_total
+        if compaction_ephemeral_1h_input_tokens := sum(
+            it.cache_creation.ephemeral_1h_input_tokens for it in compaction_iterations if it.cache_creation is not None
+        ):
+            details['compaction_ephemeral_1h_input_tokens'] = compaction_ephemeral_1h_input_tokens
 
     if advisor_iterations:
         details['advisor_iterations'] = len(advisor_iterations)
@@ -2854,10 +3201,20 @@ def _map_usage(
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
-    usage_for_extraction = dict(details)
+    usage_for_extraction: dict[str, Any] = dict(details)
     for key in _COMPACTION_TOKEN_KEYS:
         if compaction_value := details.get(f'compaction_{key}'):
             usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
+
+    # genai-prices reads the web search count from Anthropic's nested wire shape and maps it to `web_searches`.
+    if web_search_requests := details.get('web_search_requests'):
+        usage_for_extraction['server_tool_use'] = {'web_search_requests': web_search_requests}
+    # Likewise the one-hour cache write count, which it maps to `cache_write_1h_tokens`. Compaction iterations write
+    # to the cache with the request's TTL, so their one-hour writes are summed back in like the totals above.
+    if ephemeral_1h_input_tokens := details.get('ephemeral_1h_input_tokens', 0) + details.get(
+        'compaction_ephemeral_1h_input_tokens', 0
+    ):
+        usage_for_extraction['cache_creation'] = {'ephemeral_1h_input_tokens': ephemeral_1h_input_tokens}
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
@@ -2906,6 +3263,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.message.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.message.container.id
+                    # A live stream reports dropped thinking blocks here, on the opening message.
+                    # The final `message_delta` carries them only when a server-side model fallback
+                    # happened mid-stream, and then it replaces this array rather than extending it.
+                    if event.message.input_transformations:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['input_transformations'] = _report_input_transformations(
+                            event.message.input_transformations
+                        )
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
@@ -3095,6 +3460,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id
+                    if event.input_transformations:
+                        # Replaces, never extends: a `message_delta` reports this only after a
+                        # mid-stream model fallback, and then it holds the serving model's whole
+                        # array, which repeats the entries `message_start` already reported.
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['input_transformations'] = _report_input_transformations(
+                            event.input_transformations
+                        )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if event.index in ignored_server_tool_use_indices:
@@ -3795,7 +4168,7 @@ def _support_tool_forcing(
     """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
     Extended thinking rejects forcing (adaptive thinking does not), and some models
-    (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
+    (Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5) reject it unconditionally.
     We only raise an error if the user explicitly set a forcing value; a forcing value that came
     from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use

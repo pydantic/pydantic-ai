@@ -112,8 +112,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # The root capability's wrapper is always a generator, so the guard never falls through
             # today; it's here because `wrap_run_event_stream` may return any `AsyncIterable`.
             aclose: Callable[[], Awaitable[None]] | None = getattr(stream, 'aclose', None)
-            if aclose is not None:  # pragma: no branch
-                await aclose()
+            try:
+                if aclose is not None:  # pragma: no branch
+                    await aclose()
+            finally:
+                self.model_response.workspace_ref = ctx.deps.workspace_ref
 
     def _wrapped_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -311,6 +314,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         try:
             async for event in _run_stream():
+                self.model_response.workspace_ref = ctx.deps.workspace_ref
                 yield event
         except GeneratorExit:
             # Being closed is teardown, not a stream failure. `run()` re-raises `_stream_error` when
@@ -359,8 +363,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
         # The manager was already prepared for this same run step before the model request, so
-        # `for_run_step` deliberately returns it unchanged, keeping the retries it accumulated —
-        # which is why the evidence lands field by field rather than by swapping in `run_context`.
+        # `for_run_step` normally returns it unchanged, keeping the retries it accumulated — which is
+        # why the evidence lands field by field rather than by swapping in `run_context`. (It does
+        # re-resolve when capability availability moved since preparation, e.g. a history processor
+        # injected a `load_capability` exchange; that path carries the same retries through and ends
+        # up holding `run_context`, whose evidence this assignment then re-applies harmlessly.)
         # Only the retrospective evidence is carried: replacing the prospective shared sets would
         # affect the next request's reveal pruning and search ranking.
         assert ctx.deps.tool_manager.ctx is not None

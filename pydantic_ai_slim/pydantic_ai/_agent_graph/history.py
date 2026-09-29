@@ -5,12 +5,14 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
-from typing import TypeGuard
+from typing import Any, TypeGuard
 
 from .. import messages as _messages
+from .._utils import is_str_dict
 
 __all__ = (
     'SYNTHESIZED_TOOL_RETURN_METADATA_KEY',
+    '_PYDANTIC_AI_METADATA_KEY',
     '_clean_message_history',
     '_dangling_tool_calls_by_response',
     '_first_new_message_index',
@@ -19,6 +21,8 @@ __all__ = (
     'capture_run_messages',
     'get_captured_run_messages',
 )
+
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 
 
 @dataclasses.dataclass
@@ -366,19 +370,29 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
-                # We intentionally don't block merging when `conversation_id` or `metadata` differ,
-                # nor try to preserve them across the merge. These fields are only bookkeeping for
-                # callers; they're never part of what gets sent to the model. Refusing to merge on a
-                # mismatch would leave two consecutive requests where the model expects one, breaking
-                # providers (and provider-side conversation state) that require a single request per
-                # turn -- a real regression -- just to preserve fields the model request node never reads.
+                # We intentionally don't block merging when `conversation_id` or application metadata
+                # differ. These fields are only bookkeeping for callers; they're never part of what gets
+                # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
+                # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
+                # model implementations read it, so combine only that reserved namespace below.
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
+                metadata: dict[str, Any] | None = None
+                last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                if is_str_dict(last_namespace) or is_str_dict(namespace):
+                    metadata = {
+                        _PYDANTIC_AI_METADATA_KEY: {
+                            **(last_namespace if is_str_dict(last_namespace) else {}),
+                            **(namespace if is_str_dict(namespace) else {}),
+                        }
+                    }
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
+                    metadata=metadata,
                 )
                 clean_messages[-1] = merged_message
             else:

@@ -37,7 +37,6 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 

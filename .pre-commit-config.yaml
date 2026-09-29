@@ -83,7 +83,12 @@ repos:
       - id: typecheck
         name: Typecheck
         entry: make
-        args: [typecheck]
+        # Narrows the run to the files a change can reach; when it cannot, it checks every
+        # tracked file Pyright reports on, minus the unchanged `tests/` files. Only `CI`, an
+        # interpreter older than 3.11 and a Pyright configuration it cannot reproduce hand the
+        # whole project to `make typecheck-pyright`. CI skips this hook by id when nothing
+        # Pyright reads has changed, and runs the full check otherwise.
+        args: [typecheck-changed]
         language: system
         types: [python]
         pass_filenames: false

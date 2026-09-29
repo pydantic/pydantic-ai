@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 

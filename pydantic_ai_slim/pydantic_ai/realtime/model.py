@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
@@ -358,6 +358,7 @@ class RealtimeModel(AbstractModel):
 KnownRealtimeModelName = TypeAliasType(
     'KnownRealtimeModelName',
     Literal[
+        'openai:gpt-live-1',
         'openai:gpt-realtime',
         'openai:gpt-realtime-2.1',
         'openai:gpt-realtime-2.1-mini',
@@ -366,12 +367,16 @@ KnownRealtimeModelName = TypeAliasType(
         'xai:grok-voice-think-fast-2.0',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
+        'google:gemini-3.8-live',
+        'google:gemini-3.8-live-extended-thinking',
     ],
 )
 """Known realtime model identifiers, surfaced for autocomplete and pinned to provider aliases by a sync test."""
 
 
-def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
+def infer_realtime_model(
+    model: KnownRealtimeModelName | str, provider_factory: Callable[[str], Provider[Any]] | None = None
+) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
     The provider is one of `openai`, `azure`, `xai`, `google` (the Gemini Developer API), or
@@ -380,12 +385,27 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     `gateway/google:gemini-live-2.5-flash`), which connects through the gateway's built-in provider —
     the provider string is passed to the realtime model as its `provider`, so authentication and the
     base URL come from [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider].
+
+    Args:
+        model: The realtime model identifier, in the format `provider:model`.
+        provider_factory: Function that instantiates the provider, called with the `provider` prefix
+            exactly as written (`'azure'`, `'gateway/google'`, ...) — the counterpart of the same
+            parameter on [`infer_model`][pydantic_ai.models.infer_model], for credentials that don't
+            come from the environment. The provider it returns is used as-is. When omitted, each
+            realtime model resolves the prefix itself (e.g. `azure` through
+            [`AzureProvider.for_realtime()`][pydantic_ai.providers.azure.AzureProvider.for_realtime]).
     """
     provider, separator, model_name = model.partition(':')
     if not separator or not model_name:
         raise UserError(
             f'Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got {model!r}.'
         )
+
+    # As in `infer_model`, a factory sees the prefix as written and its provider is used as-is; without
+    # one, the string reaches the model, whose own resolution applies (`AzureRealtimeModel` builds an
+    # `AzureProvider.for_realtime()` rather than the plain `infer_provider('azure')` provider).
+    resolved_provider: Provider[Any] | str = provider if provider_factory is None else provider_factory(provider)
+
     model_kind = provider
     if model_kind.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
@@ -403,22 +423,35 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
             )
 
     if model_kind == 'openai':
+        # OpenAI serves two different voice protocols behind one provider: `gpt-live-*` speaks
+        # GPT-Live (`/live/sessions`), everything else the Realtime API (`/realtime`). The prefix
+        # can't tell them apart, so the model name picks — the only place in this function where
+        # routing looks past the provider.
+        from ..profiles.openai import is_openai_live_model
+
+        if is_openai_live_model(model_name):
+            from .openai_live import OpenAILiveModel
+
+            return OpenAILiveModel(model_name, provider=resolved_provider)
+
         from .openai import OpenAIRealtimeModel
 
-        return OpenAIRealtimeModel(model_name, provider=provider)
+        return OpenAIRealtimeModel(model_name, provider=resolved_provider)
     if model_kind == 'azure':
         from .azure import AzureRealtimeModel
 
-        return AzureRealtimeModel(model_name)
+        return AzureRealtimeModel(model_name, provider=resolved_provider)
     if model_kind == 'xai':
         from .xai import XaiRealtimeModel
 
-        return XaiRealtimeModel(model_name)
+        return XaiRealtimeModel(model_name, provider=resolved_provider)
     # `google` is the Gemini Developer API and `google-cloud` is Vertex AI, exactly as in `infer_model`.
     if model_kind in ('google', 'google-cloud'):
         from .google import GoogleRealtimeModel
 
-        return GoogleRealtimeModel(model_name, provider='gateway' if provider.startswith('gateway/') else model_kind)
+        if isinstance(resolved_provider, str):
+            resolved_provider = 'gateway' if resolved_provider.startswith('gateway/') else model_kind
+        return GoogleRealtimeModel(model_name, provider=resolved_provider)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
         '`xai`, `google`, and `google-cloud`, or `gateway/openai` / `gateway/google` to route OpenAI '

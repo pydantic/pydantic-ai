@@ -55,7 +55,7 @@ from .state import (
     run_cancelled_snapshot,
     set_agent_graph_sleep,
 )
-from .user_prompt import UserPromptNode
+from .user_prompt import UserPromptNode, first_step_selection_messages
 
 # The modules avoid importing one another at initialization time, but their postponed annotations
 # still need the cross-node names when users resolve them at runtime.

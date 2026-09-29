@@ -49,8 +49,6 @@ from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 

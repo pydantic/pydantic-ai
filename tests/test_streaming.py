@@ -42,6 +42,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     OutputToolCallEvent,
     OutputToolResultEvent,
@@ -95,8 +96,6 @@ from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
-
-pytestmark = pytest.mark.anyio
 
 
 class Foo(BaseModel):
@@ -918,8 +917,47 @@ def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
     assert exited
 
 
+# These synthetic paths have no external I/O, so 100 loop turns detects a real hang without inheriting
+# CI-worker wall-clock variation.
+class _LoopTurnWatchdog:
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.forced_stop = False
+        self._loop = loop
+        self._turns = 0
+        self._handle = loop.call_soon(self._tick)
+
+    def _tick(self) -> None:
+        self._turns += 1
+        if self._turns >= 100:
+            self.forced_stop = True  # pragma: no cover
+            self._loop.stop()  # pragma: no cover
+        else:
+            self._handle = self._loop.call_soon(self._tick)
+
+    def cancel(self) -> None:
+        self._handle.cancel()
+
+
+@pytest.fixture
+def loop_turn_watchdog() -> Generator[Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog], None, None]:
+    watchdogs: list[_LoopTurnWatchdog] = []
+
+    def arm(loop: asyncio.AbstractEventLoop) -> _LoopTurnWatchdog:
+        watchdog = _LoopTurnWatchdog(loop)
+        watchdogs.append(watchdog)
+        return watchdog
+
+    try:
+        yield arm
+    finally:
+        for watchdog in watchdogs:
+            watchdog.cancel()
+
+
 @pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
-def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[BaseException]):
+def test_sync_stream_bridge_init_propagates_base_exception(
+    error_type: type[BaseException], loop_turn_watchdog: Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog]
+):
     """A base exception from `__aenter__` escapes immediately instead of hanging the event loop.
 
     VCR cannot inject an in-process base exception into the context-manager entry protocol.
@@ -928,7 +966,6 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     error = error_type('entry failed')
-    forced_stop = False
 
     class FailingContextManager:
         async def __aenter__(self) -> object:
@@ -942,23 +979,15 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
         ) -> None:
             pytest.fail('`__aexit__` must not be called when `__aenter__` fails')  # pragma: no cover
 
-    def force_stop() -> None:  # pragma: no cover
-        nonlocal forced_stop
-        forced_stop = True
-        loop.stop()
-
-    stop_handle = loop.call_later(1, force_stop)
+    watchdog = loop_turn_watchdog(loop)
     try:
         with pytest.raises(error_type) as exc_info:
             SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
-        # The watchdog only guards against a hung constructor; cancel it before the liveness
-        # check so a slow worker can't have it fire mid-`run_until_complete`.
-        stop_handle.cancel()
+        watchdog.cancel()
         assert exc_info.value is error
-        assert not forced_stop
+        assert not watchdog.forced_stop
         assert loop.run_until_complete(asyncio.sleep(0)) is None
     finally:
-        stop_handle.cancel()
         loop.close()
         asyncio.set_event_loop(original_loop)
 
@@ -1308,13 +1337,14 @@ def test_sync_stream_bridge_early_close_cancels_waiting_pump():
 
 
 @pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
-def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error_type: type[BaseException]):
+def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(
+    error_type: type[BaseException], loop_turn_watchdog: Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog]
+):
     """A base exception from a completed pump escapes without stranding the caller's event loop.
 
     VCR cannot inject an in-process base exception into the iterator pump task.
     """
     error = error_type('pump failed')
-    forced_stop = False
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
@@ -1327,24 +1357,16 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
     loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
     stream = bridge.stream_sync(source)
+    watchdog = loop_turn_watchdog(loop)
 
-    def force_stop() -> None:  # pragma: no cover
-        nonlocal forced_stop
-        forced_stop = True
-        loop.stop()
-
-    stop_handle = loop.call_later(1, force_stop)
-    try:
-        with pytest.raises(error_type) as exc_info:
-            while True:
-                next(stream)
-        stop_handle.cancel()
-        assert exc_info.value is error
-        assert not forced_stop
-        assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
-        assert loop.run_until_complete(asyncio.sleep(0)) is None
-    finally:
-        stop_handle.cancel()
+    with pytest.raises(error_type) as exc_info:
+        while True:
+            next(stream)
+    watchdog.cancel()
+    assert exc_info.value is error
+    assert not watchdog.forced_stop
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+    assert loop.run_until_complete(asyncio.sleep(0)) is None
 
 
 def test_run_stream_sync_preserves_capability_contextvars():
@@ -6821,6 +6843,113 @@ async def test_completed_streamed_response_replay_events(
         replay_events=replayed_events,
     )
     assert [event async for event in buffered_stream] == replayed_events
+
+
+@pytest.mark.parametrize('read_each', [False, True])
+@pytest.mark.parametrize('details', [None, {}, {'initial': 1}], ids=['no-details', 'empty-details', 'details'])
+async def test_replay_text_preserves_snapshots(read_each: bool, details: dict[str, Any] | None) -> None:
+    """Replay preserves live reads and independent snapshots without a model request."""
+    start = TextPart('a', id='part', provider_name='first', provider_details=details)
+    response = ModelResponse(
+        parts=[TextPart('abc', id='part', provider_name='second', provider_details={**(details or {}), 'added': 2})]
+    )
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=7, part=start),
+        PartDeltaEvent(index=7, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=7, delta=TextPartDelta('c')),
+        PartDeltaEvent(index=7, delta=TextPartDelta('', provider_name='second', provider_details={'added': 2})),
+    ]
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=events
+    )
+    observed: list[ModelResponseStreamEvent] = []
+    snapshots: list[ModelResponse] = []
+    async for event in stream:
+        observed.append(event)
+        if event is events[1]:
+            start.provider_details = {'changed_after_delta': True}
+        if read_each:
+            snapshots.append(stream.get())
+    assert all(actual is expected for actual, expected in zip(observed, events, strict=True))
+    assert stream.get() == response
+    assert start.content == 'a'
+    if read_each:
+        assert [snapshot.text for snapshot in snapshots] == ['a', 'ab', 'abc', 'abc']
+        part = snapshots[1].parts[0]
+        assert isinstance(part, TextPart)
+        part.provider_details = {'changed_after_replay': True}
+        assert stream.get() == response
+
+
+@pytest.mark.parametrize('custom_part', [False, True])
+async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
+    """Replay preserves user-defined part initialization and delta application."""
+    seen_lengths: list[int] = []
+
+    @dataclass
+    class CheckedPart(TextPart):
+        def __post_init__(self) -> None:
+            seen_lengths.append(len(self.content))
+
+    class CheckedDelta(TextPartDelta):
+        def apply(self, part: ModelResponsePart) -> TextPart:
+            assert isinstance(part, TextPart)
+            assert part.content == 'ab'
+            return replace(part, content=part.content.upper() + self.content_delta)
+
+    start = CheckedPart('a') if custom_part else TextPart('a')
+    expected = CheckedPart('abc') if custom_part else TextPart('ABc')
+    seen_lengths.clear()
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=0, part=start),
+        PartDeltaEvent(index=0, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('c') if custom_part else CheckedDelta('c')),
+    ]
+    response = ModelResponse(parts=[expected])
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=events
+    )
+    async for _ in stream:
+        pass
+    assert stream.get() == response
+    assert start.content == 'a'
+    assert seen_lengths == ([2, 3] if custom_part else [])
+
+
+async def test_replay_text_requires_start() -> None:
+    """Replaying a malformed event list raises instead of inventing a missing part."""
+    stream = CompletedStreamedResponse(
+        ModelResponse(parts=[]),
+        model_request_parameters=models.ModelRequestParameters(),
+        replay_events=[PartDeltaEvent(index=7, delta=TextPartDelta('text'))],
+    )
+    with pytest.raises(AssertionError):
+        async for _ in stream:
+            pass
+
+
+async def test_replay_text_cancel_preserves_buffered_content() -> None:
+    """Canceling replay preserves partial text without a live transport."""
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=0, part=TextPart('a')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('c')),
+    ]
+    stream = CompletedStreamedResponse(
+        ModelResponse(parts=[TextPart('abc')]),
+        model_request_parameters=models.ModelRequestParameters(),
+        replay_events=events,
+    )
+    iterator = aiter(stream)
+    await anext(iterator)
+    await anext(iterator)
+    await stream.cancel()
+    await stream.cancel()
+    assert stream.get().text == 'ab'
+    assert stream.get().state == 'interrupted'
+    assert [event async for event in iterator] == events[2:]
+    assert stream.get().text == 'abc'
+    assert stream.get().state == 'complete'
 
 
 @pytest.mark.parametrize('events', [True, [PartStartEvent(index=0, part=TextPart(content='hi'))]])

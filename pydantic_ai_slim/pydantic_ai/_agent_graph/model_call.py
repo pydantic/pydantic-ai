@@ -100,7 +100,7 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
-        provisional.incr(continuation_usage)
+        provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
         run_context.usage_limits.check_tokens(provisional)
         if continuation_usage.cost is not None:
             # Continuation usage is provisional, so only warn after the run successfully finishes.

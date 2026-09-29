@@ -61,7 +61,6 @@ def test_non_azure_provider_instance_is_rejected() -> None:
         AzureRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='x'))
 
 
-@pytest.mark.anyio
 async def test_url_and_auth_headers() -> None:
     provider = AzureProvider(
         azure_endpoint='https://resource.openai.azure.com/openai/v1/',
@@ -75,7 +74,6 @@ async def test_url_and_auth_headers() -> None:
     assert await model._auth_headers() == {'api-key': 'azure-key'}  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_voice_live_url_and_auth_headers() -> None:
     provider = AzureProvider(
         azure_endpoint='https://resource.services.ai.azure.com',
@@ -167,6 +165,9 @@ def test_azure_realtime_apis_default_absent_for_unknown_model() -> None:
         ('gpt-4o-mini', frozenset({'voice_live'})),
         # A GA-only `-realtime` variant is matched before the bare cascade name it also starts with.
         ('gpt-4o-realtime-preview', frozenset({'azure_openai'})),
+        # The data-zone `gpt-realtime` deployments exist only on Voice Live.
+        ('gpt-realtime-datazone', frozenset({'voice_live'})),
+        ('gpt-realtime-1.5-datazone', frozenset({'voice_live'})),
     ],
 )
 def test_azure_realtime_apis_name_boundary_matching(model_name: str, expected: frozenset[str] | None) -> None:
@@ -186,7 +187,7 @@ def test_voice_live_session_config_options() -> None:
         input_transcription_model=None,
         openai_voice='alloy',
         max_tokens=123,
-        tool_choice='required',
+        tool_choice='auto',
     )
 
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
@@ -199,7 +200,7 @@ def test_voice_live_session_config_options() -> None:
     assert 'input_audio_transcription' not in config
     assert config['voice'] == {'type': 'openai', 'name': 'alloy'}
     assert config['max_response_output_tokens'] == 123
-    assert config['tool_choice'] == 'required'
+    assert config['tool_choice'] == 'auto'
     assert config['tools'][0]['name'] == 'lookup'
 
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
@@ -227,7 +228,6 @@ def test_voice_live_rejects_openai_custom_voice_id() -> None:
         model._session_config('Be concise.', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_voice_live_uses_coherent_credential_set(monkeypatch: pytest.MonkeyPatch) -> None:
     """Voice Live targets its own endpoint/key/version as one set, never mixed with the GA resource.
 
@@ -412,7 +412,6 @@ def test_sideband_url_uses_the_ga_realtime_path() -> None:
     )
 
 
-@pytest.mark.anyio
 async def test_connection_names_azure_not_openai() -> None:
     # The GA protocol is shared with OpenAI, but the vendor in a connection's messages must not be:
     # someone debugging a dropped or rejected Azure call would be sent to the wrong service.

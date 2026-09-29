@@ -13,11 +13,11 @@ from typing_extensions import TypeVar
 
 from pydantic_graph import GraphRunContext
 
-from .. import _enqueue, _output, exceptions, messages as _messages, models, usage as _usage
+from .. import _display, _enqueue, _output, exceptions, messages as _messages, models, usage as _usage
 from .._cancel import RunCancellation
 from .._deferred_capabilities import parse_loaded_capabilities, registered_loaded_capability_ids
 from .._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from .._run_context import EventStreamBuffer
+from .._run_context import EventStreamBuffer, recorded_workspace_ref
 from .._uuid import uuid7
 from ..capabilities.abstract import AbstractCapability, ModelSelector
 from ..output import OutputDataT
@@ -29,6 +29,7 @@ from ..toolsets._tool_search import parse_discovered_tools
 if TYPE_CHECKING:
     from ..agent import Agent
     from ..models.instrumented import InstrumentationSettings
+    from ..workspaces import Workspace, WorkspaceRef
 
 
 DepsT = TypeVar('DepsT')
@@ -248,6 +249,11 @@ class GraphAgentState:
     identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
     `get_tools` scheduling replay-deterministic."""
 
+    def __post_init__(self) -> None:
+        # Keep the persisted shape a plain list while ensuring every live graph state uses the
+        # thread-safe list subclass. Pydantic deserialization also runs this hook.
+        self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
+
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
         if (
@@ -320,17 +326,34 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
     # place — never reassigned. The per-step refresh relies on that shared identity for both, and
     # `discovered_tool_names` additionally on the in-step reveals written by tool execution.
-    # `loaded_capability_ids` is refreshed from history only: a capability loaded during a step
-    # lands from the next one, so nothing writes it mid-step. Reassigning either (here, or by
+    # `loaded_capability_ids` is refreshed from history only: a capability the *model* loads during
+    # a step lands from the next one, since its load return only reaches history at the step's end.
+    # It is still refreshed a second time within the step, after history processing has rewritten
+    # that history — the only way its contents move mid-step. Reassigning either (here, or by
     # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
+
+    # Resolved once before the graph starts; never changes during the run.
+    workspace: Workspace
+    carried_workspace_ref: WorkspaceRef | None = None
+    """The ref from history this run's responses record when it has no attached workspace; `None` after `'new'`."""
+    adopted_response: _messages.ModelResponse | None = None
+    """The trailing history response a no-prompt run continues from, which records this run's ref like its own."""
+
+    @property
+    def workspace_ref(self) -> WorkspaceRef | None:
+        """The `workspace_ref` this run records on its responses."""
+        return recorded_workspace_ref(self.workspace, self.carried_workspace_ref)
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
+
+    display_banner: _display.BannerDisplay
+    """Shows the first-run banner, once this run has resolved the model and tools it will use."""
 
     agent: Agent[DepsT, Any] | None = None
 
@@ -354,6 +377,25 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     Runtime-only and id-keyed like `pending_immediate_dispatches`, and excluded from persistence for
     the same reason."""
 
+    durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] = dataclasses.field(
+        default_factory=dict[tuple[str, str], Callable[..., Awaitable[Any]]], repr=False
+    )
+    """Per-run durable capability operation dispatchers, keyed by `(capability id, operation name)`.
+
+    Shared by reference into every `RunContext` this run and only ever mutated in place, like
+    `loaded_capability_ids` above: the durability capability fills it once at run setup, and every
+    later `build_run_context` has to see the same populated mapping or a durable operation called
+    from a per-request hook would silently run inline.
+    """
+
+    run_capabilities_by_id: dict[str, AbstractCapability[DepsT]] = dataclasses.field(
+        default_factory=dict[str, AbstractCapability[Any]], repr=False
+    )
+    """The run's capability instances by `id`, used for worker-side durable recovery.
+
+    Shared by reference and mutated in place, for the same reason as `durable_operations`.
+    """
+
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
 
@@ -374,10 +416,10 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         run_step=ctx.state.run_step,
-        # The current request has already been appended, but selection describes the model
-        # that will handle it. Expose the history available before this request step, matching
-        # bootstrap selection, and do not let selectors mutate graph state through the context.
-        messages=list(ctx.state.message_history[:-1]),
+        prompt=ctx.deps.prompt,
+        # The current request has already been appended, so this is what the step's `RunContext.messages`
+        # holds. Copy it so selectors can't mutate graph state through the context.
+        messages=list(ctx.state.message_history),
         usage=ctx.state.usage,
     )
     model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
@@ -416,19 +458,22 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
+        _durable_operations=ctx.deps.durable_operations,
+        _run_capabilities_by_id=ctx.deps.run_capabilities_by_id,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        workspace=ctx.deps.workspace,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
     # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
-    # `_mcp_tool_defs_cache` (see the invariant on `GraphAgentDeps.loaded_capability_ids`). Never
-    # add any of them as a `replace` kwarg — forking the object would silently break in-step
-    # capability loads / tool reveals / message enqueues / cancellation / event delivery /
-    # tool-defs caching.
+    # `_mcp_tool_defs_cache`, `_durable_operations`, `_run_capabilities_by_id` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
+    # the object would silently break in-step capability loads / tool reveals / message enqueues /
+    # cancellation / event delivery / tool-defs caching / durable operation dispatch.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 

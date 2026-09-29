@@ -15,14 +15,14 @@ from typing_extensions import TypeVar
 from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
-from .. import _output, exceptions, messages as _messages, models, result
+from .. import _display, _output, _usage_attribution, exceptions, messages as _messages, models, result
 from .._genai_prices import best_effort_price, fill_response_cost
 from .._instrumentation import (
     get_instructions as _get_history_instructions,
     get_instructions_source as _get_history_instructions_source,
     time_to_first_chunk_ctx,
 )
-from .._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
+from .._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
 from ..models import CompletedStreamedResponse, ModelRequestContext
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -30,7 +30,7 @@ from ..settings import ModelSettings
 from ..tools import AgentNativeTool, RunContext, ToolDefinition
 from ..toolsets._instruction_collection import collect_toolset_instructions
 from .graph import AgentNode
-from .history import _clean_message_history, _first_new_message_index
+from .history import _PYDANTIC_AI_METADATA_KEY, _clean_message_history, _first_new_message_index
 from .model_call import _cancel_task, _resolve_interrupted_stream_state, model_request, model_request_stream
 from .state import (
     GraphAgentDeps,
@@ -180,6 +180,31 @@ async def _prepare_request_parameters(
     )
 
 
+def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+    """Show the first-run banner, from whichever path prepared the run's first request.
+
+    Called once the step's tool manager is built, the earliest point that knows which tools the
+    model will be offered: dynamic toolsets and MCP servers have been resolved by now. Output tools
+    are left out, as the banner reports the output type separately and counting them would make the
+    number move with the output mode rather than with what the agent was given.
+
+    Every reason there won't be a banner is checked before any of that is gathered, so a run that
+    isn't getting one counts nothing: this is on a path every run takes, and past the first one it
+    comes down to reading a flag.
+
+    An instrumented run has what the banner would point it to, so it stays out of the way — without
+    spending the claim, since another agent in this process may not be instrumented. `clai` differs:
+    its banner is also its session header, so it shows one either way.
+    """
+    if ctx.state.run_step != 1 or ctx.deps.instrumentation_settings is not None or not _display.banner_pending():
+        return
+
+    ctx.deps.display_banner(
+        model=ctx.deps.model_id or ctx.deps.model.model_id,
+        tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
+    )
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -236,7 +261,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
@@ -277,7 +302,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # separate request steps.
             async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                 agent_stream_holder.append(agent_stream)
                 stream_ready.set()
@@ -362,7 +387,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await agent_stream.aclose_events()
                 return
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
@@ -406,7 +431,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             conversation_id=ctx.state.conversation_id,
                         )
                         fill_response_cost(partial_response)
-                        ctx.state.usage.incr(partial_response.usage)
+                        partial_response.workspace_ref = ctx.deps.workspace_ref
+                        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
                         ctx.state.message_history.append(partial_response)
                 else:
                     try:
@@ -449,6 +475,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _model_request_parameters=model_request_parameters,
             _output_validators=ctx.deps.output_validators,
             _run_ctx=build_run_context(ctx),
+            _carried_workspace_ref=ctx.deps.carried_workspace_ref,
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
@@ -474,7 +501,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             return await self._finish_handling(ctx, e.response)
 
         _handler_response: _messages.ModelResponse | None = None
@@ -529,11 +556,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, e)
         self.last_request_context = request_context
-        ctx.state.usage.requests += 1
+        _usage_attribution.record_request(ctx.state.usage)
 
         return await self._finish_handling(ctx, model_response)
 
@@ -576,6 +603,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Note: for_run_step may already have been called by UserPromptNode for the
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        _display_first_run_banner(ctx)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         instruction_parts = await _get_instructions(ctx, run_context)
@@ -645,6 +674,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
+
+        # Processing may have added or removed `load_capability` exchanges, and the durable history it
+        # just rewrote is what the rest of the step reads availability from. Refresh so the execution
+        # gate agrees with the reveal state `_with_outgoing_reveal_state` derives below from the same
+        # messages; `ToolManager.for_run_step` re-resolves off this set at dispatch, so a capability
+        # that became active here still governs its own tools through `prepare_tools`.
+        _refresh_loaded_capability_ids(ctx)
+
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages,
@@ -699,7 +736,42 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Copy to avoid modifying the original usage object with the counted usage
             usage = deepcopy(usage)
 
+            outgoing_request = next(
+                message for message in reversed(messages) if isinstance(message, _messages.ModelRequest)
+            )
+            raw_outgoing_namespace_before = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+            outgoing_namespace_before: dict[str, Any] = (
+                dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
+            )
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
+
+            # Counting models may persist framework-only state on the request they counted. When
+            # normalization merged consecutive requests, that request is temporary, so copy only keys
+            # added or changed by `count_tokens()` back to the durable trailing request. Application
+            # metadata keeps the existing normalization contract and is never propagated this way.
+            outgoing_namespace = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+            updates = (
+                {
+                    key: value
+                    for key, value in outgoing_namespace.items()
+                    if key not in outgoing_namespace_before or outgoing_namespace_before[key] != value
+                }
+                if is_str_dict(outgoing_namespace)
+                else {}
+            )
+            if updates:
+                durable_request = next(
+                    message
+                    for message in reversed(ctx.state.message_history)
+                    if isinstance(message, _messages.ModelRequest)
+                )
+                if durable_request is not outgoing_request:
+                    durable_request.metadata = durable_request.metadata or {}
+                    durable_namespace = durable_request.metadata.get(_PYDANTIC_AI_METADATA_KEY)
+                    if not is_str_dict(durable_namespace):
+                        durable_namespace = {}
+                        durable_request.metadata[_PYDANTIC_AI_METADATA_KEY] = durable_namespace
+                    durable_namespace.update(updates)
             # Price this request's input tokens so the accumulated cost reflects them. Output tokens don't
             # exist yet, so this is a lower bound: it only catches a request whose input alone exceeds the limit.
             counted_price = best_effort_price(
@@ -709,7 +781,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 provider_name=model.system,
             )
             counted_usage.cost = counted_price.total_price if counted_price is not None else None
-            usage.incr(counted_usage)
+            usage.incr(counted_usage)  # usage-attribution: a deepcopy, to check a limit before the request
 
             ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
 
@@ -753,6 +825,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
         instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
@@ -816,6 +890,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # replace its contents (dropping the suspended response) rather than the reference;
         # `_finish_handling` then appends the final merged response after the base history.
         ctx.state.message_history[:] = base_messages
+
+        # Same reason as in `_prepare_request`: processing may have changed which capabilities the
+        # durable history shows as loaded, and the tool calls this continuation comes back with are
+        # dispatched against that history.
+        _refresh_loaded_capability_ids(ctx)
+
         ctx.deps.new_message_index = _first_new_message_index(
             base_messages,
             ctx.state.run_id,
@@ -891,7 +971,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         fill_response_cost(response)
-        ctx.state.usage.incr(response.usage)
+        response.workspace_ref = ctx.deps.workspace_ref
+        _usage_attribution.record_usage(ctx.state.usage, response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.

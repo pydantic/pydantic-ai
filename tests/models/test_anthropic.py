@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -51,6 +52,7 @@ from pydantic_ai import (
     ToolFailed,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
@@ -61,6 +63,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
     ToolAvailabilityDeltaPart,
+    ToolReturn,
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
@@ -176,13 +179,15 @@ with try_import() as imports_successful:
 
     MockAnthropicMessage = BetaMessage | Exception
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
+    # One call's worth of a multi-call stream mock: the events it yields, or the error
+    # `create()` raises instead of returning a stream at all.
+    MockRawMessageStream = Sequence[MockRawMessageStreamEvent] | Exception
 
 if not imports_successful():  # pragma: lax no cover
     AsyncAnthropicBedrock = AsyncAnthropicBedrockMantle = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
@@ -266,7 +271,7 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
 @dataclass
 class MockAnthropic:
     messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage] | None = None
-    stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]] | None = None
+    stream: Sequence[MockRawMessageStreamEvent] | Sequence[MockRawMessageStream] | None = None
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.anthropic.com'
@@ -285,7 +290,7 @@ class MockAnthropic:
 
     @classmethod
     def create_stream_mock(
-        cls, stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]]
+        cls, stream: Sequence[MockRawMessageStreamEvent] | Sequence[MockRawMessageStream]
     ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(stream=stream))
 
@@ -296,20 +301,24 @@ class MockAnthropic:
 
         if stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
-            if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream[self.index])))
-            else:
-                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
-        else:
-            assert self.messages_ is not None, '`messages` must be provided'
-            if isinstance(self.messages_, Sequence):
-                raise_if_exception(self.messages_[self.index])
-                response = cast(BetaMessage, self.messages_[self.index])
-            else:
-                raise_if_exception(self.messages_)
-                response = cast(BetaMessage, self.messages_)
+            if isinstance(self.stream[0], Sequence | Exception):
+                queued = self.stream[self.index]
+                self.index += 1
+                # The real SDK raises a request error out of `create()` itself, before any event is
+                # iterated, so a queued exception has to surface here rather than from the stream.
+                raise_if_exception(queued)
+                return MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], queued)))
+            response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
+            self.index += 1
+            return response
+
+        assert self.messages_ is not None, '`messages` must be provided'
+        queued = self.messages_[self.index] if isinstance(self.messages_, Sequence) else self.messages_
+        # Advance before raising, so a queued exception is consumed like any other queued response
+        # and a retried request gets the next entry rather than the same failure again.
         self.index += 1
-        return response
+        raise_if_exception(queued)
+        return cast(BetaMessage, queued)
 
     async def messages_count_tokens(self, *_args: Any, **kwargs: Any) -> BetaMessageTokensCount:
         # check if we are configured to raise an exception
@@ -666,7 +675,7 @@ def test_build_cache_control_includes_ttl():
     assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
 
 
-def _mock_anthropic_client(client_cls: Any, base_url: str) -> Any:
+def mock_anthropic_client(client_cls: Any, base_url: str) -> Any:
     from unittest.mock import MagicMock
 
     client = MagicMock(spec=client_cls)
@@ -692,7 +701,7 @@ def _mock_anthropic_client(client_cls: Any, base_url: str) -> Any:
 def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str, client_cls: Any, base_url: str):
     """A Bedrock-shaped model id resolves to the right capability profile, while the full id still goes on the wire."""
     m = AnthropicModel(
-        model_name, provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+        model_name, provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
     )
     assert m.model_name == model_name
     assert m.profile.get('supports_json_schema_output', False) is True
@@ -701,7 +710,7 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
 
 def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
     m = AnthropicModel(
-        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
     )
     tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], ModelRequestParameters(native_tools=[tool]), AnthropicModelSettings()
@@ -724,7 +733,7 @@ def test_anthropic_tool_search_bm25_rejected_on_legacy_bedrock():
     m = AnthropicModel(
         'claude-haiku-4-5',
         provider=AnthropicProvider(
-            anthropic_client=_mock_anthropic_client(
+            anthropic_client=mock_anthropic_client(
                 AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
             )
         ),
@@ -3882,6 +3891,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 37, 27, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
@@ -4392,6 +4402,43 @@ async def test_anthropic_opus_5_features(allow_model_requests: None, anthropic_a
         }
     )
     assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_5_5_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.model_name == 'claude-opus-5-5'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-5-5',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """Claude Opus 5.5 rejects `thinking: {'type': 'disabled'}`, and unified `thinking=False` never sends it.
+
+    With no `thinking` field the model thinks adaptively at its default effort, so the request succeeds.
+    """
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    assert result.output == snapshot('2 + 2 = 4')
+    assert 'thinking' not in single_request_body(vcr)
 
 
 _REFUSAL_CASE_PARAMS = [
@@ -5400,13 +5447,15 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 usage=RequestUsage(
                     input_tokens=8984,
                     output_tokens=520,
+                    web_searches=1,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 8984,
                         'output_tokens': 520,
+                        'web_search_requests': 1,
                     },
-                    cost=Decimal('0.034752'),
+                    cost=Decimal('0.044752'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -5604,13 +5653,15 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 usage=RequestUsage(
                     input_tokens=19859,
                     output_tokens=544,
+                    web_searches=1,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 19859,
                         'output_tokens': 544,
+                        'web_search_requests': 1,
                     },
-                    cost=Decimal('0.067737'),
+                    cost=Decimal('0.077737'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -5909,13 +5960,15 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 usage=RequestUsage(
                     input_tokens=22397,
                     output_tokens=637,
+                    web_searches=2,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 22397,
                         'output_tokens': 637,
+                        'web_search_requests': 2,
                     },
-                    cost=Decimal('0.076746'),
+                    cost=Decimal('0.096746'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -9005,6 +9058,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 11, 19, 23, 41, 8, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
@@ -12152,6 +12206,115 @@ async def test_anthropic_lazy_advertisement_uses_reveal_order(allow_model_reques
     assert [tool.get('name') for tool in request['tools']][-2:] == ['beta', 'alpha']
 
 
+def _deferred_tool_parameters() -> ModelRequestParameters:
+    return ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='delete_map', parameters_json_schema={'type': 'object'}, defer_loading=True),
+            ToolDefinition(name='archive_map', parameters_json_schema={'type': 'object'}, defer_loading=True),
+        ],
+    )
+
+
+async def test_anthropic_tool_return_reveal_parallel_batch_live(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+) -> None:
+    agent = Agent(
+        anthropic_model('claude-haiku-4-5', capture=True),
+        instructions=(
+            'On your first response, call reveal_cleanup and list_maps together in one parallel tool-use response. '
+            'Do not write any text before those calls. After both results, reply exactly DONE. Do not call delete_map.'
+        ),
+        model_settings=AnthropicModelSettings(parallel_tool_calls=True, temperature=0),
+    )
+
+    @agent.tool_plain
+    def reveal_cleanup() -> ToolReturn[str]:
+        return ToolReturn('cleanup enabled', tools=['delete_map'])
+
+    @agent.tool_plain
+    def list_maps() -> list[str]:
+        return ['world']
+
+    @agent.tool_plain(defer_loading=True)
+    def delete_map() -> None:
+        pass
+
+    result = await agent.run('Prepare to clean up the maps.')
+
+    assert result.output == 'DONE'
+    request_bodies = request_capture.bodies('/v1/messages')
+    assert message_shape(request_bodies[1]) == snapshot(
+        [
+            ('user', ['text']),
+            ('assistant', ['tool_use', 'tool_use']),
+            ('user', ['tool_result', 'tool_result']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+        ]
+    )
+
+
+def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
+    """A cassette cannot detect changes to the projected message order."""
+    model = AnthropicModel(
+        'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
+    )
+    messages = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
+                    ToolAvailabilityDeltaPart(tools_added=['delete_map']),
+                    RetryPromptPart(content='Retry the final output.'),
+                    ToolAvailabilityDeltaPart(tools_added=['archive_map']),
+                    UserPromptPart(content='Continue.'),
+                ]
+            ),
+        ],
+        _deferred_tool_parameters(),
+    )
+
+    assert [[type(part) for part in message.parts] for message in messages] == [
+        [ToolReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, RetryPromptPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, UserPromptPart],
+    ]
+
+
+def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
+    """A cassette cannot detect changes to the projected message order."""
+    model = AnthropicModel(
+        'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
+    )
+    messages = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='reveal', content='x', tool_call_id='reveal'),
+                    ToolAvailabilityDeltaPart(tools_added=['delete_map']),
+                    RetryPromptPart(tool_name='list_maps', content='retry', tool_call_id='list_maps'),
+                    ToolAvailabilityDeltaPart(tools_added=['archive_map']),
+                    ToolReturnPart(tool_name='status', content='ready', tool_call_id='status'),
+                    UserPromptPart(content='continue'),
+                ]
+            )
+        ],
+        _deferred_tool_parameters(),
+    )
+
+    assert [[type(part) for part in message.parts] for message in messages] == [
+        [ToolReturnPart, RetryPromptPart, ToolReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, UserPromptPart],
+    ]
+
+
 @pytest.mark.parametrize(
     ('model_name', 'expected_defer_loading'),
     [('claude-sonnet-5', True), ('claude-opus-4-1-20250805', None)],
@@ -12624,6 +12787,88 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
             cost=Decimal('0.0024048'),
         )
     )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'stream,expected_usage',
+    [
+        pytest.param(
+            False,
+            snapshot(
+                RequestUsage(
+                    details={
+                        'input_tokens': 3,
+                        'output_tokens': 210,
+                        'cache_creation_input_tokens': 2966,
+                        'cache_read_input_tokens': 0,
+                        'ephemeral_1h_input_tokens': 2412,
+                    },
+                    input_tokens=2969,
+                    cache_write_tokens=2966,
+                    cache_write_1h_tokens=2412,
+                    output_tokens=210,
+                    cost=Decimal('0.0197085'),
+                )
+            ),
+            id='request',
+        ),
+        pytest.param(
+            True,
+            snapshot(
+                RequestUsage(
+                    details={
+                        'input_tokens': 3,
+                        'output_tokens': 160,
+                        'cache_creation_input_tokens': 2965,
+                        'cache_read_input_tokens': 0,
+                        'ephemeral_1h_input_tokens': 2411,
+                    },
+                    input_tokens=2968,
+                    cache_write_tokens=2965,
+                    cache_write_1h_tokens=2411,
+                    output_tokens=160,
+                    cost=Decimal('0.0189525'),
+                )
+            ),
+            id='stream',
+        ),
+    ],
+)
+async def test_anthropic_cache_write_ttl_pricing(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    stream: bool,
+    expected_usage: RequestUsage,
+):
+    """One-hour cache writes are priced at their own rate, not the five-minute one.
+
+    The instructions are cached for an hour and the rest of the prompt for five minutes, so the response reports
+    both kinds of write. In streaming, only `message_start` carries the split, so it has to survive the merge with
+    the later `message_delta` usage.
+
+    For the non-streamed case, the cost is 3 uncached input tokens at $3/MTok, 554 five-minute cache writes at
+    $3.75/MTok, 2412 one-hour cache writes at $6/MTok, and 210 output tokens at $15/MTok. Pricing all 2966 writes at
+    the five-minute rate would report $0.0143 instead.
+    """
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a helpful assistant ({"streamed" if stream else "not streamed"}). '
+        + 'Answer questions about Python concisely. ' * 300,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions='1h', anthropic_cache_messages=True),
+    )
+    prompt = 'Please explain what Python is and its main use cases. ' * 50
+
+    if stream:
+        async with agent.run_stream(prompt) as result:
+            await result.get_output()
+    else:
+        result = await agent.run(prompt)
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.usage == expected_usage
 
 
 @pytest.mark.vcr()
@@ -13783,8 +14028,67 @@ async def test_anthropic_compaction_end_to_end(
     assert result2.output
 
 
+@pytest.mark.parametrize(
+    'ttl,expected_usage',
+    [
+        pytest.param(
+            '5m',
+            snapshot(
+                RunUsage(
+                    input_tokens=55425,
+                    cache_write_tokens=55096,
+                    output_tokens=136,
+                    details={
+                        'input_tokens': 229,
+                        'output_tokens': 5,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'compaction_iterations': 1,
+                        'message_iterations': 1,
+                        'compaction_input_tokens': 100,
+                        'compaction_output_tokens': 131,
+                        'compaction_cache_creation_input_tokens': 55096,
+                    },
+                    requests=1,
+                    cost=Decimal('0.209637'),
+                )
+            ),
+            id='5m',
+        ),
+        pytest.param(
+            '1h',
+            snapshot(
+                RunUsage(
+                    details={
+                        'input_tokens': 205,
+                        'output_tokens': 15,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'message_iterations': 1,
+                        'compaction_iterations': 1,
+                        'compaction_input_tokens': 100,
+                        'compaction_output_tokens': 107,
+                        'compaction_cache_creation_input_tokens': 55096,
+                        'compaction_ephemeral_1h_input_tokens': 55096,
+                    },
+                    requests=1,
+                    cache_write_tokens=55096,
+                    output_tokens=122,
+                    cache_write_1h_tokens=55096,
+                    input_tokens=55401,
+                    cost=Decimal('0.333321'),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
 async def test_anthropic_compaction_usage_with_cache(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    ttl: Literal['5m', '1h'],
+    expected_usage: RunUsage,
 ):
     """Verify usage aggregation when compaction + prompt caching interact in a real response.
 
@@ -13792,7 +14096,8 @@ async def test_anthropic_compaction_usage_with_cache(
     compaction iteration usage — they're silent on cache tokens. This cassette pins the real
     shape: top-level `cache_creation_input_tokens` is `0` even though the compaction iteration
     wrote ~55k tokens to cache, so `_map_usage` must sum the compaction cache back in to avoid
-    understating the real cost.
+    understating the real cost. The compaction iteration writes with the request's TTL, so with a
+    one-hour TTL its writes are also one-hour writes, priced at the one-hour rate.
 
     Where the cache breakpoints sit is asserted off the wire rather than the cassette, because a
     breakpoint that moves still replays against a recording that pins the old position.
@@ -13803,31 +14108,12 @@ async def test_anthropic_compaction_usage_with_cache(
         model=model,
         instructions='You are a helpful assistant. Be very brief.',
         capabilities=[AnthropicCompaction(token_threshold=50_000)],
-        model_settings=AnthropicModelSettings(anthropic_cache=True),
+        model_settings=AnthropicModelSettings(anthropic_cache=ttl),
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
-    assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
-    assert result.usage == snapshot(
-        RunUsage(
-            input_tokens=55425,
-            cache_write_tokens=55096,
-            output_tokens=136,
-            details={
-                'input_tokens': 229,
-                'output_tokens': 5,
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 0,
-                'compaction_iterations': 1,
-                'message_iterations': 1,
-                'compaction_input_tokens': 100,
-                'compaction_output_tokens': 131,
-                'compaction_cache_creation_input_tokens': 55096,
-            },
-            requests=1,
-            cost=Decimal('0.209637'),
-        )
-    )
+    assert cache_breakpoints(request_capture.body()) == ({'type': 'ephemeral', 'ttl': ttl}, [])
+    assert result.usage == expected_usage
 
 
 async def test_anthropic_compaction_usage_with_cache_streaming(
@@ -14301,4 +14587,57 @@ How can I help you today?\
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_anthropic_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A documented enum goes to Anthropic as `anyOf` of `const`s with descriptions, and the model calls with one."""
+
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True), instructions='Set the priority of the ticket.')
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body('/v1/messages')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['input_schema'] == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+            'required': ['priority'],
+            'type': 'object',
+            '$defs': {
+                'TicketPriority': {
+                    'anyOf': [
+                        {'const': 'low', 'description': 'Can wait a week.'},
+                        {'const': 'high', 'description': 'Needs attention today.'},
+                    ],
+                    'description': 'How urgent the ticket is.',
+                    'type': 'string',
+                }
+            },
+        }
     )

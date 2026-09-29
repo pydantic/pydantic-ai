@@ -1,3 +1,7 @@
+---
+description: "Use xAI Grok models with Pydantic AI: configure the provider and use image generation, X search, file attachments, reasoning effort and multi-agent models."
+---
+
 # xAI
 
 ## Install
@@ -109,6 +113,36 @@ model = XaiModel('grok-4.3', provider=provider)
 agent = Agent(model)
 ...
 ```
+
+## Image generation
+
+Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with an `xai:` image model for direct generation and
+reference-image editing through the official xAI SDK:
+
+```python {title="xai_image_generation.py"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.images.xai import XaiImageGenerationSettings
+
+generator = ImageGenerator(
+    'xai:grok-imagine-image',
+    settings=XaiImageGenerationSettings(aspect_ratio='16:9', xai_resolution='1k'),
+)
+```
+
+xAI accepts inline or remote reference images and xAI Files API IDs represented as
+[`UploadedFile`][pydantic_ai.messages.UploadedFile]. Mixed reference inputs must not require the SDK to reorder the
+sequence. See the [image-generation guide](../image-generation.md) for the common API and geometry behavior.
+
+### Moderated images
+
+xAI moderates silently: when it flags an image, the request still succeeds and the flagged slot comes back empty rather
+than as an error. Pydantic AI returns the images that were not flagged, so one flagged image doesn't discard the rest of
+a batch you were charged for, and reports the flagged positions in `provider_details['moderated_image_indices']`.
+
+That key holds the zero-based positions in the batch that xAI flagged, and is only present when at least one image was
+flagged, so `len(result.images)` plus the number of flagged positions equals the `xai_n` you requested. A
+[`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised only when every image was flagged, since
+then there is no result to return.
 
 ## X Search
 
