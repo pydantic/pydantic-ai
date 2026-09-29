@@ -80,6 +80,10 @@ class OpenAILifecycle:
         ours in its metadata answers nothing of ours, whatever the connection had outstanding."""
         self._requests: dict[str, tuple[InputId, ...]] = {}
         """Our `response.create`s neither started nor refused yet, by `event_id`: the inputs each answers."""
+        self._settled: set[InputId] = set()
+        """Inputs already answered, refused, or lost. An inferred answer can be wrong (before the server has
+        echoed any metadata, a response it started on its own looks like ours), and the response that really
+        answers the input then settles nothing a second time."""
         self._speaking: dict[str, None] = {}
         """Spoken turns started and not yet committed or discarded."""
         self._unclaimed_turn: str | None = None
@@ -125,13 +129,12 @@ class OpenAILifecycle:
         self,
         response: ProtocolResponse,
         *,
-        outstanding: tuple[InputId, ...] | None,
-        outstanding_event_id: str | None,
+        outstanding: tuple[str, tuple[InputId, ...]] | None,
     ) -> list[LifecycleEvent]:
         """A `response.created`: which inputs the response answers, from its metadata or what was outstanding.
 
-        `outstanding` is what the connection's own unstarted `response.create` (sent under
-        `outstanding_event_id`) asked for, which it takes this response to be.
+        `outstanding` is the `event_id` of the connection's own unstarted `response.create` and the inputs it
+        asked for, which the connection takes this response to be.
         """
         response_id = response.id or self._synthetic_id()
         if response_id in self._open or response_id in self._ended:
@@ -144,9 +147,9 @@ class OpenAILifecycle:
                 event_id: inputs for event_id, inputs in self._requests.items() if not set(inputs) & set(answers)
             }
         elif outstanding is not None and not self._metadata_echoed:
-            answers, basis = outstanding, 'inferred'
-            if outstanding_event_id is not None:
-                self._requests.pop(outstanding_event_id, None)
+            event_id, answers = outstanding
+            basis = 'inferred'
+            self._requests.pop(event_id, None)
         else:
             answers = ()
         user_turn_id = None
@@ -154,7 +157,7 @@ class OpenAILifecycle:
             # Started by the provider on its own: with server VAD, that is the reply to the spoken turn it
             # just committed.
             user_turn_id, self._unclaimed_turn = self._unclaimed_turn, None
-        return [self._start(response_id, answers=answers, basis=basis, user_turn_id=user_turn_id)]
+        return [self._start(response_id, answers=self._settle(answers), basis=basis, user_turn_id=user_turn_id)]
 
     def response_done(
         self,
@@ -240,14 +243,14 @@ class OpenAILifecycle:
                 self._messages.remove(rejected.input_index)
         if error.event_id is None or (answers := self._requests.pop(error.event_id, None)) is None:
             return []
-        return [ResponseRequestRefused(input_ids=answers)]
+        return [ResponseRequestRefused(input_ids=answers)] if (answers := self._settle(answers)) else []
 
     # --- the connection's own transitions ----------------------------------------------------------
 
     def requests_dropped(self, answers: Sequence[InputId]) -> None:
         """The connection dropped requests it was holding, so nothing will answer `answers`."""
-        if answers:
-            self.pending.append(InputLost(input_ids=tuple(answers)))
+        if unsettled := self._settle(answers):
+            self.pending.append(InputLost(input_ids=unsettled))
 
     def socket_replaced(self) -> None:
         """A new socket is being dialed: what the old one hadn't acknowledged, it never will.
@@ -278,6 +281,12 @@ class OpenAILifecycle:
         self._current_synthetic = None
 
     # --- helpers ------------------------------------------------------------------------------------
+
+    def _settle(self, input_ids: Sequence[InputId]) -> tuple[InputId, ...]:
+        """Settle the inputs not settled yet, returning them."""
+        unsettled = tuple(input_id for input_id in input_ids if input_id not in self._settled)
+        self._settled.update(unsettled)
+        return unsettled
 
     def _synthetic_id(self) -> str:
         self._synthetic_responses += 1

@@ -402,7 +402,8 @@ class OpenAIServer:
         if not answers:
             answers.append(self.truth.add_input(f'create{len(self.truth.inputs)}', 'create', solicits=True).key)
         # The request's `metadata` comes back on the response it starts, as it does live on every dialect.
-        metadata: dict[str, str] | None = (frame.get('response') or {}).get('metadata')
+        request: dict[str, Any] = frame.get('response') or {}
+        metadata: dict[str, str] | None = request.get('metadata')
         self._start_response(session, trigger='create', answers=answers, metadata=metadata)
 
     def _on_response_cancel(self, session: ServerSession, frame: dict[str, Any]) -> None:

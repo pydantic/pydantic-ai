@@ -16,11 +16,11 @@ from typing import Any, Literal
 from google.genai import _live_converters as live_converters, types as genai_types
 from websockets.exceptions import ConnectionClosedOK
 
+from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.azure import (
     AzureRealtimeConnection,
     _VoiceLiveRealtimeConnection,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection
 from pydantic_ai.realtime.google import GoogleRealtimeConnection
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection

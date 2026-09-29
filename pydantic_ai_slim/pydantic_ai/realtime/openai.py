@@ -66,6 +66,8 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._lifecycle import LIFECYCLE_EVENT_TYPES, InputId, LifecycleEvent, ResponseStatus
+from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
     CONVERSATION_ITEM_CREATE_EVENT,
@@ -88,10 +90,10 @@ from ._openai_protocol import (
     config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
+    is_user_message_item,
     loads_obj,
     map_connect_errors,
     map_event,
-    is_user_message_item,
     openai_websocket_auth_headers,
     realtime_websocket_url,
     rejected_inputs,
@@ -108,8 +110,6 @@ from ._openai_protocol import (
     user_message_item,
     with_realtime_query,
 )
-from ._lifecycle import LIFECYCLE_EVENT_TYPES, InputId, LifecycleEvent, ResponseStatus
-from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
@@ -731,7 +731,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._response_active = False
             raise
 
-    async def _request_response(self, input_indexes: Sequence[int], *, answers: Sequence[InputId] | None = None) -> None:
+    async def _request_response(
+        self, input_indexes: Sequence[int], *, answers: Sequence[InputId] | None = None
+    ) -> None:
         """Ask the model to respond now, or defer until the active response completes.
 
         `answers` are the inputs the response answers, when not just `input_indexes`.
@@ -942,16 +944,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._tool_call_responses[event.tool_call_id] = response_id
         if event_type == 'response.created':
             created = RESPONSE_CREATED_EVENT_ADAPTER.validate_python(data)
-            outstanding = self._response_active and not self._response_started and bool(self._response_request_inputs)
-            after.extend(
-                self._lifecycle.response_created(
-                    created.response,
-                    outstanding=self._response_request_answers if outstanding else None,
-                    outstanding_event_id=client_event_id('response', self._response_request_inputs)
-                    if outstanding
-                    else None,
-                )
+            # The request this connection takes the response to be answering: its own, sent and not yet started.
+            outstanding = (
+                (client_event_id('response', self._response_request_inputs), self._response_request_answers)
+                if self._response_active and not self._response_started and self._response_request_inputs
+                else None
             )
+            after.extend(self._lifecycle.response_created(created.response, outstanding=outstanding))
             if not self._response_started:
                 # The response our `response.create` asked for has started, so the request it carried
                 # for several inputs (deferred behind the previous response together) was not refused:
@@ -1194,19 +1193,16 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 if self._pending_response
                 else (self._response_request_inputs, self._response_request_answers)
             )
-            # The requests the new socket will never answer: an unstarted request not re-asked for (only the
-            # deferred ones are, when there are any, and none the caller cancelled), and the tool calls whose
-            # batches go below, which will never be asked to be answered.
+            # The requests the new socket will never answer, where it doesn't carry on the old one's: an
+            # unstarted request not asked for again (only the deferred ones are, when there are any, and none
+            # the caller cancelled), and the tool calls whose batches go below.
             lost_inputs: list[InputId] = []
-            if (
-                not self.reconnect_restores_in_flight_state
-                and self._response_active
-                and not self._response_started
-                and (self._pending_response or self._cancel_sent)
-            ):
-                lost_inputs += self._response_request_answers
             if not self.reconnect_restores_in_flight_state:
+                if self._response_active and not self._response_started:
+                    lost_inputs += self._response_request_answers
                 lost_inputs += [input_ for batch in self._tool_call_batches.values() for input_ in batch.inputs]
+            replayed = set(replay_answers) if replay_response else set[InputId]()
+            lost_inputs = [input_ for input_ in dict.fromkeys(lost_inputs) if input_ not in replayed]
             self._clear_active_response()
             # A fresh socket also drops anything the old one was still holding for us, including the
             # output items a barge-in could have named. Where the provider doesn't restore the calls in

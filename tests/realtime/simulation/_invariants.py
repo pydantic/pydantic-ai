@@ -182,7 +182,9 @@ class Checker:
 
         session._handle_pump_event = observed  # pyright: ignore[reportPrivateUsage]
 
-    def observe_lifecycle_stream(self, inputs_sent: Callable[[], int]) -> Callable[[RealtimeCodecEvent | LifecycleEvent | None], None]:
+    def observe_lifecycle_stream(
+        self, inputs_sent: Callable[[], int]
+    ) -> Callable[[RealtimeCodecEvent | LifecycleEvent | None], None]:
         """Check a version 2 connection's lifecycle stream: feed the returned callback each event, and `None` at its end."""
         checker = self.lifecycle_stream = LifecycleChecker(lifecycle=True, inputs_sent=inputs_sent)
 

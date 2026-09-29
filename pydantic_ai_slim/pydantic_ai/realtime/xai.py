@@ -63,6 +63,7 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._lifecycle import LifecycleEvent
 from ._openai_protocol import (
     RealtimeHandshakeError,
     config_interrupts_response_on_speech,
@@ -76,7 +77,6 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
 )
-from ._lifecycle import LifecycleEvent
 from ._utils import inject_trace_context, resolve_advertised_tools
 from .codec import (
     ConversationCreated,
