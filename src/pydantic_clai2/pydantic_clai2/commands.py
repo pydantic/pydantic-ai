@@ -1,6 +1,7 @@
 """One command registry for execution, help, and Termflow completion."""
 
 import json
+import re
 import shlex
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -33,6 +34,19 @@ def is_command_input(text: str) -> bool:
         return False
     name = text.split(maxsplit=1)[0][1:]
     return not any(marker in name for marker in ('/', '.', '\\'))
+
+
+_NO_OP = re.compile(r'[^\n]* unchanged\.')
+
+
+def is_silent(result: str) -> bool:
+    """Whether a command result is not worth printing: blank, or a one-line no-op such as `API key unchanged.`.
+
+    A menu that closed without changes has nothing to report, and neither blank lines
+    nor 'settings unchanged' chatter should land in the transcript.
+    """
+    text = result.strip()
+    return not text or _NO_OP.fullmatch(text) is not None
 
 
 def expand_bare_command(text: str) -> str:
