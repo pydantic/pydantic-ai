@@ -111,6 +111,7 @@ def _azure_provider() -> AzureProvider:
         ('gpt-realtime-2', True, 'voice_live'),
         ('gpt-realtime-2.1-mini', True, 'voice_live'),
         # GA-only: defaults to GA, `azure_voice_live=True` is rejected before connecting.
+        ('gpt-realtime-translate', None, 'ga'),
         ('gpt-4o-realtime-preview', True, 'error'),
         ('gpt-realtime-translate', True, 'error'),
         # Voice-Live-only: auto-routed to Voice Live whether or not the setting is passed.
@@ -159,7 +160,6 @@ def test_azure_realtime_apis_default_absent_for_unknown_model() -> None:
         # Served by both APIs, so unconstrained — including point releases and dated snapshots.
         ('gpt-realtime-2', None),
         ('gpt-realtime-2.1-mini', None),
-        ('gpt-realtime-2025-08-28', None),
         # A GA-only base is matched at a boundary: its dated snapshot is covered too.
         ('gpt-realtime-translate-2026-05-07', frozenset({'azure_openai'})),
         # ...but not a longer name that merely starts with it.

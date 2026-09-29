@@ -411,7 +411,7 @@ async def test_gpt_realtime_2_is_served_by_voice_live(
     """`gpt-realtime-2` is served by both Azure APIs, so `azure_voice_live=True` reaches Voice Live.
 
     Recorded against the live Voice Live resource, which serves the model under its
-    `-global-standard` deployment; it used to be classed as GA-only, which raised before connecting.
+    `-global-standard` deployment.
     """
     provider, _ = azure_voice_live_ws_cassette
     model = AzureRealtimeModel(

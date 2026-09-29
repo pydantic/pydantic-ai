@@ -87,13 +87,12 @@ class AzureRealtimeModelProfile(RealtimeModelProfile, total=False):
 
 # Azure realtime models whose serving API is *constrained*, keyed by that API. Deliberately lists only
 # the single-API models — a model served by both (`gpt-realtime`, `gpt-realtime-mini`, `gpt-realtime-1.5`,
-# `gpt-realtime-2`, `gpt-realtime-2.1-mini`) and any unrecognized name are left out, defaulting to GA and
-# reaching Voice Live only via an explicit `azure_voice_live=True`. So a future model found to be
-# Voice-Live-only is auto-routed simply by listing it here, while forward compatibility is preserved for
-# names nobody has classified yet. Bases are matched at a `-`/`.` boundary (see `_name_matches`) so a
-# version number doesn't swallow a dated snapshot (a `gpt-realtime-2` entry wouldn't match
-# `gpt-realtime-2025-…`); order matters, with the GA-only `-realtime` variants checked before the bare
-# cascade names that also start with `gpt-4o`.
+# and the `gpt-realtime-2` family) and any unrecognized name are left out, defaulting to GA and reaching
+# Voice Live only via an explicit `azure_voice_live=True`. So a future model found to be Voice-Live-only
+# is auto-routed simply by listing it here, while forward compatibility is preserved for names nobody has
+# classified yet. Bases are matched at a `-`/`.` boundary (see `_name_matches`) so a base doesn't swallow
+# a longer name (`gpt-5` matches `gpt-5.2` but not `gpt-50`); order matters, with the GA-only `-realtime`
+# variants checked before the bare cascade names that also start with `gpt-4o`.
 _AZURE_OPENAI: frozenset[AzureRealtimeApi] = frozenset({'azure_openai'})
 _VOICE_LIVE: frozenset[AzureRealtimeApi] = frozenset({'voice_live'})
 _AZURE_REALTIME_API_BASES: tuple[tuple[tuple[str, ...], frozenset[AzureRealtimeApi]], ...] = (
