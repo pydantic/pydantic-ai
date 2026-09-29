@@ -67,8 +67,10 @@ realtime counterpart of [model run settings](../agent.md#model-run-settings) —
 - `openai_turn_detection` for server or semantic VAD (see [turn detection](turns.md#automatic-turn-detection));
 - `openai_truncation` for session context management.
 
-See [OpenAI settings](openai.md#gpt-realtime-settings) for the shared settings. Azure realtime does not
-expose `temperature` through Pydantic AI.
+See [OpenAI settings](openai.md#gpt-realtime-settings) for the shared settings. The GA realtime API has
+no `temperature`; on Voice Live, use
+[`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+(see [Azure AI Voice Live](#azure-ai-voice-live)).
 
 ### Input transcription deployment
 
@@ -191,8 +193,12 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Voice Live silently ignores the other inherited `openai_*` settings (all but `openai_voice`) plus
-`thinking` and `parallel_tool_calls`. Use Voice-Live-specific settings where available.
+Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_reduction` as on GA,
+adapting them to the model: for example, semantic VAD on a
+[cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade] uses
+Voice Live's own semantic VAD. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+sets the sampling temperature. Voice Live ignores `openai_output_speed`, `openai_truncation`, and
+`parallel_tool_calls`.
 
 ### Voices
 
