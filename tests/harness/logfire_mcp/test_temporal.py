@@ -1,12 +1,7 @@
-"""Temporal composition test for `LogfireMCP`'s current-time instruction.
-
-The instruction reads the clock, which Temporal's workflow sandbox restricts, so it runs as a
-durable operation. This test starts a local Temporal dev server via `WorkflowEnvironment.start_local()`.
-"""
+"""Temporal composition test for `LogfireMCP`'s per-run authentication."""
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import AsyncIterator
 from datetime import timedelta
 
@@ -25,11 +20,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
-from mcp.server.fastmcp import FastMCP
-
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
@@ -59,32 +50,6 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
     return await Client.connect(f'localhost:{TEMPORAL_PORT}', plugins=[PydanticAIPlugin()])
 
 
-def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content=info.instructions or '')])
-
-
-# MCP's test server leaves its lifespan annotation unresolved with some pydantic-settings versions. The
-# server is built at import, where the suite's `pytestmark` filters do not apply yet.
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', "Field 'lifespan' has an incomplete definition")
-    server = FastMCP('provider')
-
-# Module level, as Temporal requires.
-agent = Agent(
-    FunctionModel(_echo_instructions),
-    name='logfire_mcp_agent',
-    deps_type=type(None),
-    capabilities=[
-        LogfireMCP[None](client=server),
-        TemporalDurability[None](
-            activity_config=ActivityConfig(
-                start_to_close_timeout=timedelta(seconds=60), retry_policy=RetryPolicy(maximum_attempts=1)
-            )
-        ),
-    ],
-)
-
-
 def _user_token(ctx: RunContext[str]) -> str:
     return ctx.deps
 
@@ -111,32 +76,6 @@ class PerUserWorkflow:
     @workflow.run
     async def run(self, token: str) -> str:
         return (await per_user_agent.run('Who am I?', deps=token)).output
-
-
-@workflow.defn
-class LogfireWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        return (await agent.run(prompt)).output
-
-
-async def test_current_time_is_read_in_an_activity(client: Client) -> None:
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[LogfireWorkflow],
-        plugins=[AgentPlugin(agent)],
-        workflow_runner=SandboxedWorkflowRunner(restrictions=_SANDBOXED),
-    ):
-        output = await client.execute_workflow(
-            LogfireWorkflow.run,
-            'Recent errors',
-            id='test_logfire_mcp_temporal',
-            task_queue=TASK_QUEUE,
-            execution_timeout=timedelta(seconds=25),
-        )
-
-    assert 'Current UTC time is `' in output
 
 
 async def test_auth_function_runs_under_temporal(client: Client, whoami_url: str) -> None:

@@ -99,7 +99,7 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 The default endpoint is Logfire's US region. Set `url=LOGFIRE_EU_MCP_URL` for EU data, or pass the MCP URL of a self-hosted Logfire. The API key's scopes decide which projects and actions are allowed.
 
-The capability adds short guidance to the agent's instructions: the current UTC time, a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, and that Logfire links should be created only when asked for. `include_instructions=False` turns this off, along with the server's own instructions.
+The capability adds short guidance to the agent's instructions: timestamps in examples are not the current time, queries cover a short time window unless widened, and Logfire links should be created only when asked for. The query tools accept relative lookback windows, so `LogfireMCP` does not add the current time to the instructions. For general current-time awareness, see the cache-aware [`KnowsCurrentTime` proposal](https://github.com/pydantic/pydantic-ai/issues/9006). `include_instructions=False` turns the guidance off, along with the server's own instructions.
 
 ## Tool selection and approval
 

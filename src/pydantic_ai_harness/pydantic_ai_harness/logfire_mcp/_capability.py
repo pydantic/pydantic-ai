@@ -17,7 +17,6 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError('Install LogfireMCP support with: uv add "pydantic-ai-harness[logfire-mcp]"') from exc
 
 from pydantic_ai.agent.abstract import AgentInstructions
-from pydantic_ai.messages import ModelRequest
 from pydantic_ai.tools import RunContext
 
 LOGFIRE_US_MCP_URL = 'https://logfire-us.pydantic.dev/mcp'
@@ -52,7 +51,7 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
     read_only: bool = False
     """Expose only tools the server marks read-only; unmarked tools are omitted."""
     include_instructions: bool = True
-    """Include server instructions, query guidance, and the current UTC time."""
+    """Include server instructions and query guidance."""
     client: MCPToolsetClient | None = field(default=None, repr=False)
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth` or `url`."""
     url: str = LOGFIRE_US_MCP_URL
@@ -100,15 +99,7 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
         )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        """Return query guidance and the current UTC time."""
+        """Return query guidance."""
         if not self.include_instructions:
             return None
-        return [_INSTRUCTIONS, self._current_utc]
-
-    def _current_utc(self, ctx: RunContext[AgentDepsT]) -> str | None:
-        # The run stamps the request it is about to send, which is the last one, so this needs no clock read
-        # of its own (Temporal's workflow sandbox rejects those). Older requests may come from saved history.
-        for message in reversed(ctx.messages):
-            if isinstance(message, ModelRequest) and message.timestamp:
-                return f'Current UTC time is `{message.timestamp.isoformat(timespec="seconds")}`.'
-        return None
+        return _INSTRUCTIONS

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -16,7 +15,7 @@ from mcp.types import ToolAnnotations
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
@@ -104,6 +103,8 @@ class TestLogfireMCP:
         request = result.all_messages()[0]
         assert isinstance(request, ModelRequest)
         assert ('Provider instructions.' in (request.instructions or '')) is include
+        assert ('Query transport bounds apply' in (request.instructions or '')) is include
+        assert 'Current UTC time is `' not in (request.instructions or '')
 
     @pytest.mark.parametrize(
         ('auth', 'url'),
@@ -176,27 +177,6 @@ class TestLogfireMCP:
         monkeypatch.delenv('LOGFIRE_API_KEY', raising=False)
         with pytest.raises(UserError, match='Set `LOGFIRE_API_KEY`'):
             LogfireMCP().get_toolset()
-
-    @pytest.mark.parametrize('year', [2020, 2100])
-    async def test_current_time_ignores_message_history(self, server: FastMCP, year: int) -> None:
-        stamp = datetime(year, 1, 1, tzinfo=timezone.utc)
-        history = [
-            ModelRequest(parts=[UserPromptPart('Recent errors', timestamp=stamp)], timestamp=stamp),
-            ModelResponse(parts=[TextPart('None.')], timestamp=stamp),
-        ]
-        before = datetime.now(timezone.utc).replace(microsecond=0)
-        result = await Agent(TestModel(call_tools=[]), capabilities=[LogfireMCP(client=server)]).run(
-            message_history=history
-        )
-        request = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
-        instructions = request.instructions or ''
-        timestamp = instructions.split('Current UTC time is `')[1].split('`')[0]
-        assert before <= datetime.fromisoformat(timestamp) <= datetime.now(timezone.utc)
-
-    @pytest.mark.parametrize('messages', [[], [ModelResponse(parts=[TextPart('Hello')])]])
-    def test_no_current_time_without_a_request(self, messages: list[ModelMessage]) -> None:
-        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=messages)
-        assert LogfireMCP[None]()._current_utc(ctx) is None  # pyright: ignore[reportPrivateUsage]
 
 
 class TestPerRunAuth:
