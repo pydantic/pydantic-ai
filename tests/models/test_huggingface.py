@@ -47,7 +47,6 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, message, raise_if_e
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    import huggingface_hub.utils._http
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -663,47 +662,24 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert exc.headers == {'x-request-id': 'abc'}
 
 
-_STREAM_ERROR_SSE_CHUNK = (
-    b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"m","system_fingerprint":"x",'
-    b'"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
-)
-_STREAM_ERROR_SSE_ERROR = b'data: {"error":"Model is overloaded","error_type":"overloaded"}\n\n'
+@pytest.mark.parametrize('first_chunk', [True, False], ids=['first-chunk', 'mid-stream'])
+async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, first_chunk: bool) -> None:
+    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces as
+    `ModelAPIError`, with no status code invented for it.
 
-
-@pytest.mark.vcr(ignore_hosts=['hf.example'])
-@pytest.mark.parametrize(
-    'content',
-    [
-        pytest.param(_STREAM_ERROR_SSE_ERROR, id='first-chunk'),
-        pytest.param(_STREAM_ERROR_SSE_CHUNK + _STREAM_ERROR_SSE_ERROR, id='mid-stream'),
-    ],
-)
-async def test_stream_error_object_raises_model_api_error(
-    allow_model_requests: None, content: bytes, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An error object inside a 200 SSE stream surfaces as `ModelAPIError`, with no status code invented for it.
-
-    A mock transport stands in for a cassette because no real provider returns such a stream on demand.
     https://github.com/pydantic/pydantic-ai/issues/8722
     """
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=content, headers={'content-type': 'text/event-stream'})
-
-    monkeypatch.setattr(
-        huggingface_hub.utils._http,
-        '_GLOBAL_ASYNC_CLIENT_FACTORY',
-        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
-    hf_client = AsyncInferenceClient(base_url='https://hf.example/v1', api_key='test')
-    model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test'))
+    error = OverloadedError('Model is overloaded')
+    stream: list[MockStreamEvent] = [error] if first_chunk else [text_chunk('Hello'), error]
+    mock_client = MockHuggingFace.create_stream_mock(stream)
+    model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     with pytest.raises(ModelAPIError) as exc_info:
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == 'Model is overloaded'
-    assert isinstance(exc_info.value.__cause__, OverloadedError)
+    assert exc_info.value.__cause__ is error
 
 
 @pytest.mark.vcr()
