@@ -1,5 +1,7 @@
 """Isolate settings and provider access for every CLAI test."""
 
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import keyring
@@ -18,6 +20,44 @@ def blockbuster_enabled() -> bool:
 def anyio_backend() -> str:
     """CLAI's terminal and cancellation primitives require asyncio."""
     return 'asyncio'
+
+
+@dataclass
+class FakeGh:
+    """The fake `gh`'s state: tokens per host, the next `auth login` outcome, and opened URLs."""
+
+    state: Path
+    opened: list[str] = field(default_factory=list[str])
+
+    def sign_in(self, host: str = 'github.com', token: str = 'gho_saved') -> None:
+        (self.state / host).write_text(token)
+
+    def next_login(self, mode: str) -> None:
+        """`ok`, `fail`, `hang` (after the code), `silent` (before it), `early`, `no-token`, or `stall-token` (then `auth token` hangs)."""
+        (self.state / 'login').write_text(mode)
+
+    def hang_on_token(self) -> None:
+        (self.state / 'token-hang').write_text('')
+
+    def calls(self) -> list[str]:
+        path = self.state / 'calls'
+        return path.read_text().splitlines() if path.exists() else []
+
+
+@pytest.fixture(autouse=True)
+def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> FakeGh:
+    """Never run the real GitHub CLI or open a browser: either would touch the developer's own login."""
+    fake = FakeGh(state=tmp_path_factory.mktemp('fake-gh'))
+    monkeypatch.setenv('FAKE_GH_STATE', str(fake.state))
+    script = Path(__file__).with_name('fake_gh_cli.py')
+    monkeypatch.setattr('pydantic_clai2.gh_cli.gh_command', lambda: [sys.executable, str(script)])
+
+    def open_browser(url: str) -> bool:
+        fake.opened.append(url)
+        return True
+
+    monkeypatch.setattr('pydantic_clai2.github.OPEN_BROWSER', open_browser)
+    return fake
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +85,10 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     def set_password(service: str, account: str, value: str) -> None:
         credentials[service, account] = value
 
+    def delete_password(service: str, account: str) -> None:
+        del credentials[service, account]
+
     monkeypatch.setattr(keyring, 'get_password', get_password)
     monkeypatch.setattr(keyring, 'set_password', set_password)
+    monkeypatch.setattr(keyring, 'delete_password', delete_password)
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')

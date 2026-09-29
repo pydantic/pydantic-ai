@@ -3,7 +3,7 @@
 
 `make typecheck` runs Pyright over every file in `[tool.pyright] include`, and takes about
 as long whether one file changed or a thousand. That is the right trade in CI and the wrong
-one on every commit, so the pre-commit hook runs this instead: it narrows the run to the
+one on every local run, so `make typecheck-changed` runs this instead: it narrows the run to the
 files whose content changed since Pyright last passed, plus everything that transitively
 imports them.
 
