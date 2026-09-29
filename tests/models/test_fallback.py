@@ -3398,8 +3398,11 @@ def test_context_window_is_smallest_known_candidate_window() -> None:
 
 @requires_openai
 async def test_fallback_tries_next_model_on_non_json_response_body(allow_model_requests: None) -> None:
-    # A 200 response whose body is not valid JSON raises ModelAPIError from the primary model, so the default
-    # fallback trigger fires and the healthy second model answers: https://github.com/pydantic/pydantic-ai/issues/8843
+    """A 200 response whose body is not valid JSON fires the default fallback trigger, so the second model answers.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
     completion = {
         'id': 'chatcmpl-123',
         'object': 'chat.completion',

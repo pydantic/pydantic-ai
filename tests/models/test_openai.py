@@ -6676,11 +6676,31 @@ async def test_openai_enum_member_docstrings_reach_the_wire(
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
-async def test_blank_response_body_raises_model_api_error(allow_model_requests: None) -> None:
-    # A 200 response whose body is not valid JSON surfaces as ModelAPIError, not a raw
-    # json.JSONDecodeError: https://github.com/pydantic/pydantic-ai/issues/8843
+@pytest.mark.parametrize(
+    ('stream', 'content', 'content_type'),
+    [
+        pytest.param(False, b'   ', 'application/json', id='response'),
+        pytest.param(
+            True,
+            b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"gpt-4o",'
+            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}\n\n'
+            b'data: {not json\n\n',
+            'text/event-stream',
+            id='stream',
+        ),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, content_type: str
+) -> None:
+    """A 200 response whose body is not valid JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+
     async def handler(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, text='   ', headers={'content-type': 'application/json'})
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
 
     async with AsyncOpenAI(
         api_key='test',
@@ -6690,8 +6710,12 @@ async def test_blank_response_body_raises_model_api_error(allow_model_requests: 
         model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=openai_client))
         agent = Agent(model)
 
-        with pytest.raises(ModelAPIError) as catch_exceptions:
-            await agent.run('Hello')
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('Hello')
 
-    assert isinstance(catch_exceptions.value.__cause__, json.JSONDecodeError)
-    assert catch_exceptions.value.message.startswith('Failed to decode response as JSON')
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
