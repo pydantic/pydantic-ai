@@ -27,7 +27,7 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 Use provider-specific settings only when the shared controls are insufficient:
 `openai_turn_detection`, `xai_turn_detection`, and `google_vad` fully override `turn_detection`.
 Their accepted values, defaults, and limitations are documented on the
-[OpenAI](openai.md#settings), [Azure OpenAI](azure.md#settings),
+[OpenAI](openai.md#gpt-realtime-settings), [Azure OpenAI](azure.md#settings),
 [Google Gemini](gemini.md#settings), and [xAI](xai.md#settings) pages.
 
 ## Text turns

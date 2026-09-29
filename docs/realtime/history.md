@@ -106,14 +106,14 @@ token usage over the model's
 
 | Provider | Source |
 | --- | --- |
-| OpenAI GPT-Live | Reported by Live |
-| OpenAI and Azure OpenAI Realtime, Gemini Live | Latest response's `total_tokens` over the context window, when the window is known |
+| OpenAI | GPT-Live: reported by Live. gpt-realtime: latest response's `total_tokens` over the context window, when the window is known |
+| Azure OpenAI, Gemini Live | Latest response's `total_tokens` over the context window, when the window is known |
 | xAI Grok Voice | `None`: a response's usage counts only the input it added, not the whole conversation |
 
 The value is `None` until it can be calculated, and it can go down during a session: providers
 compact or truncate the conversation server-side as it grows, and none of them report when that
 happens. To control how the provider manages a long conversation, use
-[`openai_truncation`](openai.md#settings) on OpenAI Realtime and Azure OpenAI or
+[`openai_truncation`](openai.md#gpt-realtime-settings) on OpenAI gpt-realtime and Azure OpenAI or
 [`google_context_compression`](gemini.md#settings) on Gemini. To carry a long conversation on
 elsewhere, [hand it off to a text agent](#handing-off-to-a-text-agent) or seed a new session with a
 summary.

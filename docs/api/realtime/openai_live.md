@@ -21,6 +21,6 @@ silence, and the profile reports `synthesizes_turn_boundary=True`. Text is deliv
 rather than as a user turn, seeding is text-only, and usage is reported as billable audio seconds
 instead of tokens. Authentication comes from an
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]; Azure OpenAI does not serve Live. See
-the [GPT-Live documentation](../../realtime/openai-live.md) for the full story.
+the [GPT-Live documentation](../../realtime/openai.md#gpt-live-models) for the full story.
 
 ::: pydantic_ai.realtime.openai_live
