@@ -185,19 +185,22 @@ async def _load_folder(workspace: Workspace, folder: str) -> list[DiskDefinition
 async def load_definitions(workspace: Workspace, agent_folders: str | Sequence[str]) -> list[DiskDefinition]:
     """Load definitions through `workspace`, in precedence order.
 
-    - a `str`: the convention folder `.agents/<str>/` under the working directory, falling back to
-      `.claude/<str>/` when `.agents/` is absent.
-    - a sequence of workspace paths: those folders in order, each read once (by resolved path).
+    - a `str`: the convention folders `.agents/<str>/` then `.claude/<str>/` under the working directory.
+      Both are scanned, so a workspace that uses `.agents/` for something else (such as skills) still loads
+      agents from `.claude/`; on a name collision `.agents/` wins.
+    - a sequence of workspace paths: those folders in order, each read once (by real path).
     """
     if isinstance(agent_folders, str):
-        root = '.agents' if await _is_dir(workspace, '.agents') else '.claude'
-        return await _load_folder(workspace, posixpath.join(root, agent_folders))
+        folders = [posixpath.join(root, agent_folders) for root in ('.agents', '.claude')]
+    else:
+        folders = agent_folders
     result: list[DiskDefinition] = []
     seen: set[str] = set()
-    for folder in agent_folders:
+    for folder in folders:
         resolved = await workspace.resolve(folder)
-        if resolved in seen:
+        real_path = await workspace.realpath(resolved)
+        if real_path in seen:
             continue
-        seen.add(resolved)
+        seen.add(real_path)
         result.extend(await _load_folder(workspace, resolved))
     return result
