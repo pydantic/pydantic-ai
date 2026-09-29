@@ -105,18 +105,16 @@ def main(argv: list[str] | None = None) -> int:
     markdown = render_atlas(docs_map)
     atlas_path = root / ATLAS_RELATIVE_PATH
 
-    html = render_html(docs_map)
-
     if args.check:
         status = _check_file(atlas_path, markdown, 'Docs atlas')
     else:
         atlas_path.write_text(markdown, encoding='utf-8')
-        (root / HTML_RELATIVE_PATH).write_text(html, encoding='utf-8')
+        (root / HTML_RELATIVE_PATH).write_text(render_html(docs_map), encoding='utf-8')
         status = 0
 
     if args.html is not None:
         args.html.parent.mkdir(parents=True, exist_ok=True)
-        args.html.write_text(html, encoding='utf-8')
+        args.html.write_text(render_html(docs_map), encoding='utf-8')
 
     return status
 
