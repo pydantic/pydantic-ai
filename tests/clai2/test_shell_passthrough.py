@@ -1,5 +1,6 @@
 """`!command` input runs in the system shell and never starts an agent turn."""
 
+import asyncio
 import contextlib
 import io
 import os
@@ -100,7 +101,19 @@ class TestShellPassthrough:
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_is_forwarded_before_kill(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A command in its own session still gets Ctrl-C, so it can clean up before the grace kill."""
-        command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; kill -INT $PPID; while :; do :; done"
+        spawn = asyncio.create_subprocess_shell
+
+        async def spawn_then_ctrl_c(command: str, *, start_new_session: bool) -> asyncio.subprocess.Process:
+            # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
+            process = await spawn(command, start_new_session=start_new_session)
+            with anyio.fail_after(5):
+                while not (tmp_path / 'ready').exists():
+                    await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
+            os.kill(os.getpid(), signal.SIGINT)
+            return process
+
+        monkeypatch.setattr('pydantic_clai2.shell_passthrough.asyncio.create_subprocess_shell', spawn_then_ctrl_c)
+        command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; : > ready; while :; do :; done"
         text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
         assert 'Interrupted (' in text
         assert (tmp_path / 'cleanup.txt').read_text() == 'cleaned'
