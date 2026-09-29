@@ -35,8 +35,9 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
 
         `code` must define exactly one `pydantic_ai.capabilities.AbstractCapability`
         subclass that constructs with no arguments. The capability is written to
-        disk, imported, and validated immediately. It becomes usable on the next
-        agent run (the next orchestrator loop iteration), not the current run.
+        disk, imported, and validated immediately. To activate it on a later run,
+        the host must load it from the store and pass it to `agent.run(...,
+        capabilities=...)`; authoring alone does not activate it.
 
         Args:
             name: Identifier for the capability. Lowercase letters, digits, and
@@ -55,8 +56,9 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
                 f'Fix the code and call author_capability again with the same name.'
             )
         return (
-            f'Capability {name!r} ({record.class_name}) authored and validated. It becomes active on '
-            f'the next agent run (the next orchestrator loop iteration), not the current run.'
+            f'Capability {name!r} ({record.class_name}) authored and validated. To activate it on a later '
+            'agent run, the host must load active capabilities from the store and pass them to '
+            '`agent.run(..., capabilities=...)`; it is not active automatically or in the current run.'
         )
 
     async def list_authored_capabilities(self) -> str:
