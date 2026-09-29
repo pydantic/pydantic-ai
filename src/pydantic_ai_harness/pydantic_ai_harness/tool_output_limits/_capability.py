@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
@@ -14,6 +15,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnContent,
+    ToolReturnPart,
     UserContent,
 )
 from pydantic_ai.models import AbstractModel, Model
@@ -21,7 +23,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness._workspace import raise_tool_failure
+from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
+from pydantic_ai_harness.filesystem._providers import file_tools_provider
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -101,8 +104,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     Three reduction modes, freely combined through an ordered list of size `bands`:
 
     - `Truncate`: clamp to a character budget. Lossy, zero-cost.
-    - `Spill`: persist the full payload, hand the model a `read_tool_result` handle plus a
-      preview. Lossless.
+    - `Spill`: persist the full payload, hand the model a path or `read_tool_result` handle plus
+      a preview. Lossless.
     - `Summarize`: size-gated LLM summary. Inherits the run's model by default.
 
     The first band whose `over` threshold the measured size meets wins; smaller returns pass
@@ -231,7 +234,6 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return self._toolset
 
     def _make_toolset(self) -> AgentToolset[AgentDepsT]:
-
         async def read_tool_result(
             ctx: RunContext[AgentDepsT],
             handle: str,
@@ -253,6 +255,21 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern)
 
         return FunctionToolset([read_tool_result], id=self.id or 'tool_output_limits')
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        """Drop `read_tool_result` when active general file tools can read every workspace spill."""
+        if await self._uses_file_tools(ctx):
+            return [tool_def for tool_def in tool_defs if tool_def.name != READ_TOOL_NAME]
+        return tool_defs
+
+    async def _uses_file_tools(self, ctx: RunContext[AgentDepsT], handle: str | None = None) -> bool:
+        store = self._store
+        if not isinstance(store, WorkspaceStore) or store.workspace is not None:
+            return False
+        paths = [handle] if handle is not None else _workspace_spill_paths(ctx)
+        if not paths:
+            paths = [posixpath.join(METADATA_DIR, 'tool-output')]
+        return await file_tools_provider(ctx, paths) is not None
 
     # --- reduction ---
 
@@ -465,7 +482,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         except Exception:
             return await self._fallback(ctx, call, action.then, unit)
 
-        preview = _build_spill_preview(handle, unit, action.preview_chars, over_tokens=self.over_tokens)
+        preview = _build_spill_preview(
+            handle,
+            unit,
+            action.preview_chars,
+            over_tokens=self.over_tokens,
+            use_file_tools=await self._uses_file_tools(ctx, handle),
+        )
         return preview, handle
 
     async def _summarize_action(
@@ -628,7 +651,23 @@ def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
     return {str(key): source[key] for key in source}
 
 
-def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool) -> str:
+def _workspace_spill_paths(ctx: RunContext[AgentDepsT]) -> list[str]:
+    """Collect workspace spill paths already present in model history."""
+    paths: list[str] = []
+    for message in ctx.messages:
+        for part in message.parts:
+            if not isinstance(part, ToolReturnPart) or not _is_mapping(part.metadata):
+                continue
+            for key in ('overflow_handle', 'overflow_content_handle'):
+                handle = part.metadata.get(key)
+                if isinstance(handle, str):
+                    paths.append(handle)
+    return paths
+
+
+def _build_spill_preview(
+    handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, use_file_tools: bool = False
+) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
         size_desc = f'{len(unit.data):,} bytes (binary)'
@@ -642,10 +681,16 @@ def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_t
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    header = (
-        f'[Tool output too large ({size_desc}); stored to handle {handle!r}. '
-        f'{_READ_TOOL_HINT}handle={handle!r}, offset=0, limit=200, from_end=False, pattern=None).]'
-    )
+    if use_file_tools:
+        header = (
+            f'[Tool output too large ({size_desc}); stored at {handle!r}. '
+            f'Read it with read_file(path={handle!r}, offset=0, limit=200).]'
+        )
+    else:
+        header = (
+            f'[Tool output too large ({size_desc}); stored to handle {handle!r}. '
+            f'{_READ_TOOL_HINT}handle={handle!r}, offset=0, limit=200, from_end=False, pattern=None).]'
+        )
     parts = [header]
     if sketch:
         parts.append(f'shape: {sketch}')

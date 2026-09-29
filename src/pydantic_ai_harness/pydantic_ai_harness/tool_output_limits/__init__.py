@@ -6,8 +6,8 @@ not persist in history and get re-sent on every later model request. Combine the
 modes through an ordered list of size `bands`.
 
 Spilled payloads are written to the run's workspace by default (`WorkspaceStore`) and read
-back on demand through the registered `read_tool_result` tool; the `OverflowStore` protocol
-is the seam for any other backend.
+back on demand through active general file tools when they can reach the path, or through
+`read_tool_result` otherwise. The `OverflowStore` protocol is the seam for any other backend.
 """
 
 from pydantic_ai_harness.tool_output_limits._bands import (

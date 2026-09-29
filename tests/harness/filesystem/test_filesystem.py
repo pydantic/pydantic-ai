@@ -44,6 +44,7 @@ from pydantic_ai_harness.filesystem import (
     RIPGREP_TOOL_NAMES,
     FilesSearchedEvent,
     FileSystem,
+    ProvidesFileTools,
 )
 from pydantic_ai_harness.filesystem._toolset import (
     _NOT_A_PATH,  # pyright: ignore[reportPrivateUsage]
@@ -57,6 +58,16 @@ from pydantic_ai_harness.filesystem._toolset import (
 from pydantic_ai_harness.shell._toolset import ShellToolset
 
 from .._tool_calls import call_tool, call_tools
+
+
+async def test_file_system_provides_file_tools_with_its_own_read_rules(tmp_path: Path) -> None:
+    workspace = LocalWorkspaceBackend(tmp_path)
+    capability = FileSystem[None](denied_patterns=['private/**'])
+
+    assert isinstance(capability, ProvidesFileTools)
+    assert await capability.can_read('public/file.txt', workspace=workspace)
+    assert not await capability.can_read('private/file.txt', workspace=workspace)
+    assert not await FileSystem[None](tools=['list_directory']).can_read('public/file.txt', workspace=workspace)
 
 
 class ReadOnlyMount(LocalWorkspaceBackend):

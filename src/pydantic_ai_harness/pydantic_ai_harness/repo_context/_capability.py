@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic_ai._utils import replace_no_init
+from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -17,6 +18,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace, workspace_path
 from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
+from pydantic_ai_harness.filesystem._providers import file_tools_provider
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
@@ -58,7 +60,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     2. Asset inventory (`expose_inventory_tool`, on by default): a tool that
        reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
        `.grok` and their `skills/`, `agents/`, `settings.json`). It locates
-       assets; it does not parse them.
+       assets; it does not parse them. The tool is omitted when active general
+       file tools can inspect every asset root.
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
        lists or reads a directory through a filesystem capability event,
@@ -173,22 +176,22 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
         self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
 
-    def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
+    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
-        if not self.autoload_instructions:
-            return _INVENTORY_HINT.format(tool_name=self.inventory_tool_name) if self.expose_inventory_tool else None
+        if not self.autoload_instructions and not self.expose_inventory_tool:
+            return None
 
-        def instructions(_ctx: RunContext[AgentDepsT]) -> str | None:
-            return self._render_instructions()
+        async def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
+            return self._render_instructions(include_inventory_hint=not await self._uses_file_tools(ctx))
 
         return instructions
 
-    def _render_instructions(self) -> str | None:
+    def _render_instructions(self, *, include_inventory_hint: bool = True) -> str | None:
         parts: list[str] = []
         if self._context_files:
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
-        if self.expose_inventory_tool:
+        if self.expose_inventory_tool and include_inventory_hint:
             parts.append(_INVENTORY_HINT.format(tool_name=self.inventory_tool_name))
         return '\n\n'.join(parts) or None
 
@@ -201,6 +204,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
                 self.asset_roots, self.inventory_tool_name, id=self.id or 'repo_context'
             )
         return self._toolset
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        """Drop the inventory tool when active general file tools can inspect every asset root."""
+        if self.expose_inventory_tool and await self._uses_file_tools(ctx):
+            return [tool_def for tool_def in tool_defs if tool_def.name != self.inventory_tool_name]
+        return tool_defs
+
+    async def _uses_file_tools(self, ctx: RunContext[AgentDepsT]) -> bool:
+        paths = self.asset_roots or ('.',)
+        return await file_tools_provider(ctx, paths) is not None
 
     async def after_tool_execute(
         self,

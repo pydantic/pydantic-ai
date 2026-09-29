@@ -485,6 +485,15 @@ def root_spelling(root_dir: Path | None) -> str | None:
     return spelling
 
 
+async def file_toolset_can_read(toolset: FileSystemToolset, path: str, *, workspace: WorkspaceBackend) -> bool:
+    """Predicate form of `read_file`'s path checks, shared with the `FileSystem` capability."""
+    try:
+        await toolset._safe_resolve(await toolset._scope(workspace), path)
+    except (OSError, UserError, WorkspaceError):
+        return False
+    return True
+
+
 class FileSystemToolset(FunctionToolset[AgentDepsT]):
     """Toolset providing filesystem operations inside the run's workspace, scoped to a root directory.
 

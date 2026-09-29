@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 from collections.abc import AsyncIterator
@@ -12,8 +13,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -51,10 +53,12 @@ def _write(path: Path, content: str) -> Path:
     return path
 
 
-def _render_capability_instructions(capability: RepoContext[object], ctx: RunContext[object]) -> str | None:
+async def _render_capability_instructions(capability: RepoContext[object], ctx: RunContext[object]) -> str | None:
     instructions = capability.get_instructions()
     assert callable(instructions)
-    rendered = instructions(ctx)
+    pending = instructions(ctx)
+    assert inspect.isawaitable(pending)
+    rendered = await pending
     assert isinstance(rendered, str) or rendered is None
     return rendered
 
@@ -206,7 +210,7 @@ class TestInstructions:
         cap = RepoContext[object]()
         ctx = _run_context(workspace=workspace)
         await cap.before_run(ctx)
-        instructions = _render_capability_instructions(cap, ctx)
+        instructions = await _render_capability_instructions(cap, ctx)
         assert isinstance(instructions, str)
         assert 'be nice' in instructions
         assert 'inventory_agent_context' in instructions
@@ -218,9 +222,10 @@ class TestInstructions:
     async def test_autoload_off_keeps_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'ignored')
         cap = RepoContext[object](autoload_instructions=False)
-        await cap.before_run(_run_context(workspace=workspace))
-        instructions = cap.get_instructions()
-        assert isinstance(instructions, str)
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        instructions = await _render_capability_instructions(cap, ctx)
+        assert instructions is not None
         assert 'ignored' not in instructions
         assert 'inventory_agent_context' in instructions
 
@@ -228,17 +233,17 @@ class TestInstructions:
         cap = RepoContext[object](expose_inventory_tool=False)
         ctx = _run_context(workspace=workspace)
         await cap.before_run(ctx)
-        assert _render_capability_instructions(cap, ctx) is None
+        assert await _render_capability_instructions(cap, ctx) is None
 
     async def test_files_cached_across_calls(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'first')
         cap = RepoContext[object]()
         ctx = _run_context(workspace=workspace)
         await cap.before_run(ctx)
-        first = _render_capability_instructions(cap, ctx)
+        first = await _render_capability_instructions(cap, ctx)
         assert first is not None and 'first' in first
         _write(tmp_path / 'CLAUDE.md', 'second')
-        second = _render_capability_instructions(cap, ctx)
+        second = await _render_capability_instructions(cap, ctx)
         # Read-once: `before_run` loaded the file, so subsequent edits are not picked up.
         assert second is not None and 'second' not in second
 
@@ -255,7 +260,7 @@ class TestInstructions:
         cap = RepoContext[object](home_dir=str(tmp_path), expose_inventory_tool=False)
         ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'repo')))
         await cap.before_run(ctx)
-        assert 'home instructions' in (_render_capability_instructions(cap, ctx) or '')
+        assert 'home instructions' in (await _render_capability_instructions(cap, ctx) or '')
 
 
 class TestToolset:
@@ -274,6 +279,43 @@ class TestToolset:
         backend = LocalWorkspaceBackend(working_dir=tmp_path)
         result = await agent.run('go', workspace=backend)
         assert 'inventory_agent_context' in result.output
+
+    @pytest.mark.parametrize('case', ['present', 'absent', 'inactive', 'unreadable'])
+    async def test_inventory_deduplicates_only_for_active_file_tools_that_reach_every_root(
+        self, tmp_path: Path, case: str
+    ) -> None:
+        file_system: FileSystem[object] | None = None
+        if case == 'present':
+            file_system = FileSystem()
+        elif case == 'inactive':
+            file_system = FileSystem(id='files', defer_loading=True)
+        elif case == 'unreadable':
+            file_system = FileSystem(denied_patterns=['.claude'])
+
+        seen_tools: set[str] = set()
+        seen_instructions: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_tools.update(tool.name for tool in info.function_tools)
+            request = next(message for message in reversed(messages) if isinstance(message, ModelRequest))
+            seen_instructions.append(request.instructions or '')
+            return ModelResponse(parts=[TextPart('done')])
+
+        await Agent(
+            FunctionModel(model),
+            capabilities=[
+                RepoContext[object](autoload_instructions=False),
+                LocalWorkspace(tmp_path),
+                *([file_system] if file_system is not None else []),
+            ],
+        ).run('go')
+
+        if case == 'present':
+            assert 'inventory_agent_context' not in seen_tools
+            assert 'inventory_agent_context' not in seen_instructions[0]
+        else:
+            assert 'inventory_agent_context' in seen_tools
+            assert 'inventory_agent_context' in seen_instructions[0]
 
 
 class TestScanAssets:

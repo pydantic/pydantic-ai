@@ -10,12 +10,14 @@ from typing import Any
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
+from pydantic_ai.workspaces import WorkspaceBackend
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.filesystem._toolset import (
     DEFAULT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
     FileSystemToolset,
+    file_toolset_can_read,
     root_spelling,
 )
 
@@ -171,6 +173,16 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""
         require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
+
+    async def can_read(self, path: str, *, workspace: WorkspaceBackend) -> bool:
+        """Whether this capability's `read_file` tool can read `path` in `workspace`.
+
+        This applies the configured `root_dir`, `allowed_patterns`, and `denied_patterns`,
+        including the resolved target of a symlink. It does not require the path to exist.
+        """
+        if 'read_file' not in self.tools:
+            return False
+        return await file_toolset_can_read(self._file_system_toolset(), path, workspace=workspace)
 
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
         """The filesystem toolset, the same one for every run, so durable execution sees the leaf it registered."""
