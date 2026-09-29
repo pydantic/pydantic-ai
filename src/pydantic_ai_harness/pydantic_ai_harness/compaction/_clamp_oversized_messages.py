@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -15,7 +14,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
 )
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._shared import compact_with_span, context_for_request, estimate_text_tokens
 
 if TYPE_CHECKING:
