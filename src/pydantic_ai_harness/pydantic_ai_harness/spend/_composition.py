@@ -1,10 +1,10 @@
-"""Report a capability arrangement that can bill a response the accrual never sees.
+"""Report a capability arrangement that can hide billed responses on older Pydantic AI releases.
 
-`SpendLimits` accrues inside its own `wrap_model_request`, so anything nested further in
-can reject a response the counter has not recorded yet. Pydantic AI sorts the `innermost`
-tier against everything else but not against itself, so the arrangement is reached by
-listing capabilities in a particular order rather than by anything going wrong, and the
-resulting chain is readable from
+Without provider-response accounting from core, `SpendLimits` accrues the response returned
+through its own `wrap_model_request`, so anything nested further in can reject a response the
+counter has not recorded yet. Pydantic AI sorts the `innermost` tier against everything else
+but not against itself, so the arrangement is reached by listing capabilities in a particular
+order rather than by anything going wrong, and the resulting chain is readable from
 [`RunContext.root_capability`][pydantic_ai.tools.RunContext.root_capability].
 
 What is read here is the ordering. Whether a nested wrapper actually rejects a billed
@@ -28,7 +28,7 @@ def warn_about_inner_wrappers(
     capability: AbstractCapability[AgentDepsT],
     reported: set[str],
 ) -> None:
-    """Warn when a capability in `root` wraps inside `capability`'s `wrap_model_request`.
+    """Warn when a capability in `root` wraps inside `capability`'s model wrapper.
 
     `reported` accumulates the arrangements already warned about and is read and written here,
     so the same one reports once however many requests or runs it survives. Deduplicating on
@@ -40,7 +40,7 @@ def warn_about_inner_wrappers(
     application escalating this category to an error with `filterwarnings('error', ...)` keeps
     getting one on every run of the arrangement. Recording it first would let the raise happen
     once and then mark the arrangement as reported, which turns a refusal into a first-run-only
-    one -- the opposite of what escalating a warning asks for.
+    one.
     """
     inner = _inner_wrappers(root, capability)
     if not inner:
@@ -64,13 +64,7 @@ def _inner_wrappers(
     root: AbstractCapability[AgentDepsT] | None,
     capability: AbstractCapability[AgentDepsT],
 ) -> list[str]:
-    """Names of the capabilities in `root` whose own `wrap_model_request` runs inside `capability`'s.
-
-    A run carries its sorted chain as a `CombinedCapability`, which flattens nested ones, so
-    position in that list is the whole answer: everything after `capability` nests inside it.
-    With no chain to read, or no position for `capability` in it, there is nothing to compare
-    against and nothing is reported.
-    """
+    """Names of capabilities in `root` whose model wrappers run inside `capability`'s."""
     if not isinstance(root, CombinedCapability):
         return []
     chain: list[AbstractCapability[AgentDepsT]] = list(root.capabilities)
@@ -81,14 +75,7 @@ def _inner_wrappers(
 
 
 def _stands_in_for(member: AbstractCapability[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> bool:
-    """Whether this chain member is `capability`, or a wrapper chain that reaches it.
-
-    A `WrapperCapability` around `SpendLimits` is what the sorted chain holds, while the
-    accrual it delegates to still runs at that position, so the wrapper occupies the position
-    on its behalf. Comparing chain members to `capability` by identity alone would read that
-    arrangement as "not in the chain" and report nothing, while a capability listed after the
-    wrapper still nests inside the accrual.
-    """
+    """Whether this chain member is `capability`, or a wrapper chain that reaches it."""
     while member is not capability:
         if not isinstance(member, WrapperCapability):
             return False

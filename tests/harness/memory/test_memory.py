@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 import pytest
@@ -20,20 +20,20 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
-    UserContent,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness.compaction import SlidingWindowCompaction
 from pydantic_ai_harness.memory import (
     FileStore,
     InMemoryStore,
@@ -127,6 +127,12 @@ def _memory_contexts(messages: list[ModelMessage]) -> list[str]:
         for content in part.content
         if isinstance(content, TextContent) and content.content.startswith('<memory>\n')
     ]
+
+
+def _assert_history_memory_count(messages: list[ModelMessage], *, released_core: int) -> None:
+    """Account for the request/history split introduced alongside provider usage accounting."""
+    expected = 0 if hasattr(ModelRequestContext, 'usage_responses') else released_core
+    assert len(_memory_contexts(messages)) == expected
 
 
 def _latest_memory_context(messages: list[ModelMessage]) -> str:
@@ -1061,7 +1067,7 @@ class TestInjection:
             assert contexts[0].endswith('\n</memory>')
             assert stored in contexts[0]
 
-    async def test_continued_and_serialized_history_replaces_prior_memory_context(self) -> None:
+    async def test_continued_and_serialized_history_refreshes_request_only_memory_context(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- version one')
 
@@ -1070,7 +1076,7 @@ class TestInjection:
 
         first = await Agent(FunctionModel(finish), capabilities=[Memory(store=store)]).run('first')
         serialized = first.all_messages_json()
-        assert len(_memory_contexts(first.all_messages())) == 1
+        _assert_history_memory_count(first.all_messages(), released_core=1)
         await _seed(store, 'main/MEMORY.md', '- version two')
 
         for history in (
@@ -1091,37 +1097,56 @@ class TestInjection:
             assert len(captured[0]) == 1
             assert '- version one' not in captured[0][0]
             assert '- version two' in captured[0][0]
-            assert len(_memory_contexts(continued.all_messages())) == 1
+            _assert_history_memory_count(continued.all_messages(), released_core=1)
+
+    async def test_compaction_before_memory_preserves_request_only_injection(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- fresh fact')
+        captured: list[list[str]] = []
+
+        def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(_memory_contexts(messages))
+            return ModelResponse(parts=[TextPart('done')])
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('old')]),
+            ModelResponse(parts=[TextPart('old response')]),
+        ]
+        result = await Agent(
+            FunctionModel(capture),
+            capabilities=[
+                SlidingWindowCompaction(max_messages=2, keep_messages=2, preserve_first_user_message=False),
+                Memory(store=store),
+            ],
+        ).run('continue', message_history=history)
+
+        assert len(captured) == 1
+        assert len(captured[0]) == 1
+        assert '- fresh fact' in captured[0][0]
+        persisted = result.all_messages()
+        assert len(persisted) == 3
+        assert isinstance(persisted[0], ModelResponse)
+        _assert_history_memory_count(persisted, released_core=1)
 
     async def test_cleanup_preserves_user_content_merged_with_memory_context(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- fact')
 
-        def finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart('done')])
-
-        first = await Agent(FunctionModel(finish), capabilities=[Memory(store=store)]).run('ORIGINAL USER PROMPT')
-        history = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
-        for index, message in enumerate(history):
-            if not isinstance(message, ModelRequest) or not _memory_contexts([message]):
-                continue
-            content: list[UserContent] = []
-            other_parts: list[ModelRequestPart] = []
-            for part in [SystemPromptPart('unrelated system context'), *message.parts]:
-                if not isinstance(part, UserPromptPart):
-                    other_parts.append(part)
-                elif isinstance(part.content, str):
-                    content.append(part.content)
-                else:
-                    content.extend(part.content)
-            history[index] = replace(
-                message,
+        history: list[ModelMessage] = [
+            ModelRequest(
                 parts=[
-                    *other_parts,
-                    UserPromptPart([TextContent('UNRELATED USER CONTEXT')]),
-                    UserPromptPart(content),
-                ],
-            )
+                    SystemPromptPart('unrelated system context'),
+                    UserPromptPart(
+                        [
+                            TextContent('UNRELATED USER CONTEXT'),
+                            TextContent('<memory>\n- stale fact\n</memory>', metadata='pydantic-ai-harness.memory.v1'),
+                        ]
+                    ),
+                    UserPromptPart('ORIGINAL USER PROMPT'),
+                ]
+            ),
+            ModelResponse(parts=[TextPart('done')]),
+        ]
 
         captured: list[list[ModelMessage]] = []
 
@@ -1138,6 +1163,8 @@ class TestInjection:
         assert 'UNRELATED USER CONTEXT' in _user_text(captured[0])
         assert len(_memory_contexts(captured[0])) == 1
         assert 'ORIGINAL USER PROMPT' in _user_text(continued.all_messages())
+        assert 'UNRELATED USER CONTEXT' in _user_text(continued.all_messages())
+        _assert_history_memory_count(continued.all_messages(), released_core=1)
 
     async def test_disabled_injection_removes_memory_context_from_continued_history(self) -> None:
         store = InMemoryStore()
@@ -1222,7 +1249,7 @@ class TestInjection:
             assert len(contexts) == 2
             assert any('personal fact' in context for context in contexts)
             assert any('org fact' in context for context in contexts)
-        assert len(_memory_contexts(second.all_messages())) == 2
+        _assert_history_memory_count(second.all_messages(), released_core=2)
 
     async def test_legacy_unqualified_marker_is_stripped_from_continued_history(self) -> None:
         store = InMemoryStore()
@@ -1252,7 +1279,7 @@ class TestInjection:
         assert len(captured[0]) == 1
         assert 'durable fact' in captured[0][0]
         assert 'stale fact' not in captured[0][0]
-        assert len(_memory_contexts(result.all_messages())) == 1
+        _assert_history_memory_count(result.all_messages(), released_core=1)
 
 
 class TestConfigurationAndSpecs:

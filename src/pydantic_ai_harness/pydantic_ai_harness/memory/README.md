@@ -56,7 +56,9 @@ memory = Memory(
 )
 ```
 
-Only the current request retains the injected user-role part, so copies do not accumulate in message history. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
+On core versions with separate request and history message lists, only the current request retains the injected user-role part. Older core versions also save the latest injected part in message history; Memory replaces it on the next request so copies do not accumulate. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
+
+When combining it with compaction, list compaction before `Memory`; otherwise a later persistent rewrite replaces the request-only memory block.
 
 Set `inject_memory=False` for cache-stable prompts. The tools remain available, and the model can fetch memory only when it needs it:
 

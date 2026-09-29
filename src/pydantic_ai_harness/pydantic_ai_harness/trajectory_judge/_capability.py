@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Protocol, TypeAlias, runtime_c
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -33,7 +33,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
     from pydantic_ai.models import ModelRequestContext
-    from pydantic_ai.usage import UsageLimits
 
 
 @dataclass
@@ -281,24 +280,35 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         `output_type=[AllGood, Steer]` is set here, at the run boundary, so the verdict
         contract holds at runtime whatever output type the judge agent was configured with.
 
-        The judge runs against the shared `usage` under a request limit raised by exactly
-        one: the launch's claim occupies a slot in `usage.requests` for the whole
-        evaluation, so the unadjusted limit would count this evaluation against itself
-        twice. The claim is released once the run has recorded the judge's real spend (or
-        recorded nothing, on failure or cancellation); a task cancelled before this
-        coroutine starts never reaches the `finally`, so `_discard_in_flight` releases the
-        claim instead.
+        The judge runs against the shared `usage` and the run's own limits. The launch's
+        claim holds a slot in `usage.requests` until the judge's first request is about to
+        be counted: its `before_model_request` releases the claim, and core records the
+        request itself right after its preflight, so the slot is never empty and never
+        counted twice. On failure or cancellation before that point the `finally` releases
+        it; a task cancelled before this coroutine starts never reaches the `finally`, so
+        `_discard_in_flight` releases the claim instead.
 
         Provider failures propagate out of this task as-is (`ModelAPIError` subclasses from
         the model layer) and are re-raised on the run by `_collect_finished`.
         """
+        # Hand the launch's claimed slot over to the judge's first real request. `before_model_request`
+        # runs before core's preflight and before core counts the request, so exactly one slot stays
+        # occupied throughout.
+        release_claim = Hooks[Any]()
+
+        @release_claim.on.before_model_request
+        async def _(judge_ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            self._release_claim(ctx)
+            return request_context
+
         try:
             result = await self._judge.run(
                 prompt,
                 output_type=[AllGood, Steer],
                 conversation_id=ctx.conversation_id,
                 usage=ctx.usage,
-                usage_limits=_claim_offset_limits(ctx.usage_limits),
+                usage_limits=ctx.usage_limits,
+                capabilities=[release_claim],
             )
         finally:
             self._release_claim(ctx)
@@ -347,19 +357,6 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Not spec-serializable: the capability may hold a live `Agent` and a callback."""
         return None
-
-
-def _claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
-    """The run's limits with `request_limit` raised by the one request the launch claimed.
-
-    The claim already occupies a slot in the shared `usage.requests`, so against the
-    unadjusted limit the judge's own preflight would count its in-flight request twice and
-    refuse a call the budget affords. Raising the limit by exactly the claim keeps the
-    judge's effective budget identical to the run's.
-    """
-    if limits is None or limits.request_limit is None:
-        return limits
-    return replace(limits, request_limit=limits.request_limit + 1)
 
 
 def _judge_prompt(messages: Sequence[ModelMessage], window: int) -> str:

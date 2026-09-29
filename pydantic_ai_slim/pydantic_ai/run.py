@@ -512,6 +512,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
         else:
             result = await lifecycle(node)
+        # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
+        # the run was ending still gets its turn instead of being lost.
+        result = drain_pending_messages_at_end(run_context, result)
         if not self._graph_reflects(result):
             self._sync_graph_state(result)
         return result
