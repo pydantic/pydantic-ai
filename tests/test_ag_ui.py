@@ -3605,8 +3605,8 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is one word.',
-                        signature='EooCCkYICxgCKkDYW6Ka+Mo73ZE34HVijmFbdV6QH/iRdv+3WuisH3pR8D5aSFASMBsF1F1bZRQFQXuM0+G4H83czthKvHqdqWriEgwB0eJaWoXZWU18NKoaDMH4nN8ZwJ6W9DnYLyIwrdTWmfc5QTqDr8gye3/yrPpV2YPeZnUBoHBLOGl8MUaC6SuGmxcm8rGqf2s+P+ZtKnJPJJzQiTrvPcEkF3ij22w3bXC9yoyZCyJVPcibR2ZZpLYF/UOoZ+BRBs0FCdm/QFXUUe8W1tcQ/ZQgBaW44LTcdzwOSP5hJb25UrPiGWuTytGMxIr7QyG7INpVbmm8JRBIIEzj3gs2zlxdbl17yZ/yZXcYAQ==',
+                        content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is already one word.',
+                        signature='EugCCpsBCBIYAipAEijLuVAABW9LRAYvFjQbE09TtIrHF5VwsIaboIszy5qf1oQm3bz20z8beoMdftvpGBtCsk4PHXgRL+OA02NkqDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBx8/v1QYSDNGAO3eE/8kUPK1lyBoMs+3kCkMb3jdyPqk9IjCRSLXDvjp4AGUNRQfvMaSRhIOk5SCIQPAl18tGjpAgxZc1vRNGAz73zF5vYJPCqjEqeht/m5DKYaW3Z2mZeMxXxDoATqLyQLoD2CkhISdx4LiYAMN7KRsJY8q+V8BqI/pCszuVGL83xCF5QZ1nLH+Wlz7286+LNOaJYeju2LPEqfUWFjsGx3Bha7BNhQl6qMXyqrM8eCrcpIL6M1ldOIkv3Htj9bijZy/BXzZjGAE=',
                         provider_name='anthropic',
                     ),
                     TextPart(content='Two'),

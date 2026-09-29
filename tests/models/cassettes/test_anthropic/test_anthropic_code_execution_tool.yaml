@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,99 +11,153 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '413'
+      - "353"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: How much is 3 * 12390?
-          type: text
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      system:
-      - text: Always use the code execution tool for math.
-        type: text
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-      tool_choice:
-        type: auto
-      tools:
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: How much is 3 * 12390?
+            type: text
+        model: claude-sonnet-4-6
+        stream: true
+        system:
+        - type: text
+          text: Always use the code execution tool for math.
+        thinking:
+          type: enabled
+          budget_tokens: 3000
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1469'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=5649
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8c424a47f12da0b540b74c3d389d2d78-1aeed2f627346d00-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container:
-        expires_at: '2026-04-24T11:19:38.758845Z'
-        id: container_011CaNRhtVsGiXZx1CgSETLH
-      content:
-      - signature: EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==
-        thinking: The user wants to calculate 3 * 12390.
-        type: thinking
-      - id: srvtoolu_01Y5A969cu9rsnDkHF6brfKF
-        input:
-          command: echo $((3 * 12390))
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 0
-          stderr: ''
-          stdout: |
-            37170
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_01Y5A969cu9rsnDkHF6brfKF
-        type: bash_code_execution_tool_result
-      - text: The result of **3 × 12,390 = 37,170**.
-        type: text
-      id: msg_01FzttSG1H2WSfUwv2J5qbMB
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 4692
-        output_tokens: 106
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3fcyW3mMptgWy58WsW","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2294,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants to calculate 3"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" * 12390."}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EpsCCpIBCBIYAipAgXqcJIqNeAE4ZzTBCgLt60nzFX0WluoHgAreebWs+NnbiCWxV8TiX9LSPBI00QPUQCocKfsV0VEbsdhEBQX18jIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBwc7v1QYSDJw8y+EPbdeyPIKBdhoM/oWgODyBbII/bD2kIjAP+kR4J6P/upMjwj/4Z88mHnoA4gAbBh2f/jQNu9LQh7SXJgUPJ09yGCdPvm7yFakqNsE0/S6xyplsLIL+kGYQE8kpLiOMv/mMxUcFBsqlN9EZrepldK8ZAcDoyhtpBpN1wI5wlXRCxRgB"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Sure"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"!"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Let"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" me calculate that for you."}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01FBP24qnwQdUrAD7Zkmgo1z","name":"bash_code_execution","input":{}}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nd\": \"e"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"cho $(("}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"3 * 123"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"90))\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01FBP24qnwQdUrAD7Zkmgo1z","content":{"type":"bash_code_execution_result","stdout":"37170\n","stderr":"","return_code":0,"content":[]}}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"**"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"3 ×"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" 12,"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"390 = 37,170"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"**"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01BhFKQcYGib9h2Rs3bfRcvH","expires_at":"2026-09-29T17:28:51.956021Z"}},"usage":{"input_tokens":4702,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":113,"output_tokens_details":{"thinking_tokens":18},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}        }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+  recorded_at: 2026-09-29T16:28:53.329596+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -109,94 +166,132 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '411'
+      - "351"
       content-type:
       - application/json
-      cookie:
-      - _cfuvid=j72gcLZrTocYXb_vinek8NA1OCCR6yME.LP4xDAzUm8-1777025974.0505912-1.0.1.1-4G21WdL0FAHoHQLaobcbSsV3hID5SurjleBDz1zHi_E
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: How about 4 * 12390?
-          type: text
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      system:
-      - text: Always use the code execution tool for math.
-        type: text
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-      tool_choice:
-        type: auto
-      tools:
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: How about 4 * 12390?
+            type: text
+        model: claude-sonnet-4-6
+        stream: true
+        system:
+        - type: text
+          text: Always use the code execution tool for math.
+        thinking:
+          type: enabled
+          budget_tokens: 3000
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1454'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-2162c6f5a92e877051cfc5d9ec4635cb-7125ae77f2b62be6-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      container:
-        expires_at: '2026-04-24T11:19:44.819633Z'
-        id: container_011CaNRiLGQoB5CoDJP5jaVY
-      content:
-      - signature: EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==
-        thinking: The user wants to calculate 4 * 12390.
-        type: thinking
-      - id: srvtoolu_01VjgZr13GE2HYtGnPkHeuHh
-        input:
-          command: echo $((4 * 12390))
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 0
-          stderr: ''
-          stdout: |
-            49560
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_01VjgZr13GE2HYtGnPkHeuHh
-        type: bash_code_execution_tool_result
-      - text: '**4 × 12,390 = 49,560**'
-        type: text
-      id: msg_01GpqA67eRBKk6HEb9w5Rs28
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 4690
-        output_tokens: 103
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3g2LRZt5LqCR4pdTcV","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2293,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to calculate 4 * "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"12390."}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EpsCCpIBCBIYAipAi9on3x6werRwTo8Ov7WbDRPZo55D55yH2nBieZO27MryQPp7PyKdlBXj3rI6U43o3OHLjFFMhOSbmwD/r1GHODIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBxs7v1QYSDL4z3NuojOG4GyTPXRoMgoyky9q0tPkhHz4FIjCATXMvTqiUTgqtn9NirccXHDg4NCc+hgOaqBWwoA8NMPVoynYEvFKj1XvTZm8P2HEqNsZkdoXZqYr84p4XZ+hsstv1Ad2dNqiCKxw4FmmTyfe+nH7wbPsrRicRswamC8Y+B6SmT5iyoRgB"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_0145eEZDa6jUXCMf2mXiWvrn","name":"bash_code_execution","input":{}}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nd\": \"e"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"cho $(("}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"4 * 123"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"90))\"}"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_0145eEZDa6jUXCMf2mXiWvrn","content":{"type":"bash_code_execution_result","stdout":"49560\n","stderr":"","return_code":0,"content":[]}}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"**"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"4"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" * 12,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"390 = 49,560"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"**"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01K2nhLiQ43xNyk73ijeEm7K","expires_at":"2026-09-29T17:28:56.416350Z"}},"usage":{"input_tokens":4690,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":103,"output_tokens_details":{"thinking_tokens":18},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}        }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-09-29T16:29:05.081286+00:00
