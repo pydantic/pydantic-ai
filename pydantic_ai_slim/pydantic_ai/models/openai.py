@@ -2351,9 +2351,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             yield sr
 
     def _process_provider_details(self, response: responses.Response) -> dict[str, Any] | None:
-        """Hook that maps a Responses API response to provider details.
+        """Map a complete Responses API response object to provider details.
 
-        This method may be overridden by subclasses of `OpenAIResponsesModel` to apply custom mappings.
+        Subclasses may override this hook. It handles complete response objects, not live response event streams.
+        Built-in provider details take precedence on key collisions.
         """
         return None
 
@@ -2515,7 +2516,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 pass
 
         finish_reason: FinishReason | None = None
-        provider_details: dict[str, Any] = {}
+        provider_details: dict[str, Any] = dict(self._process_provider_details(response) or {})
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason:
             provider_details['finish_reason'] = raw_finish_reason
@@ -2533,11 +2534,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
             provider_details['service_tier'] = response.service_tier
-
-        # allow subclasses to add provider details; built-in keys keep priority
-        extra = self._process_provider_details(response) or {}
-        if extra:
-            provider_details = {**extra, **provider_details}
 
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
