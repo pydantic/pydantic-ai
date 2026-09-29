@@ -4,8 +4,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import gc
+import io
 import random
 import re
+import wave
 import weakref
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -852,6 +854,22 @@ def test_profile() -> None:
     assert profile.get('supports_tool_return_schema') is True
     assert profile.get('audio_input_sample_rate') == 16000
     assert profile.get('audio_output_sample_rate') == 24000
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'seeds_audio'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False),  # closes the session on seeded audio
+        ('gemini-3.1-flash-live-preview', True),
+        ('gemini-3.8-live', True),
+        ('models/gemini-3.8-live', True),
+        ('gemini-3.8-live-extended-thinking', False),  # accepts it, but recalled it 1 time in 4
+        ('gemini-live-2.5-flash', False),  # not probed
+    ],
+)
+def test_profile_supports_seeding_audio(model_name: str, seeds_audio: bool) -> None:
+    # Verified live by seeding a spoken fact as audio and asking about it.
+    assert GoogleRealtimeModel(model_name).profile.get('supports_seeding_audio') is seeds_audio
 
 
 @pytest.mark.parametrize(
@@ -2015,6 +2033,50 @@ async def test_connect_rejects_audio_only_user_turn() -> None:
 
     with pytest.raises(UserError, match='google realtime history seeding does not support retained user audio'):
         async with _connect(_model(session), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+def _wav(pcm: bytes, sample_rate: int) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm)
+    return buffer.getvalue()
+
+
+async def test_connect_seeds_retained_user_audio_where_supported() -> None:
+    # Unit-level because the cassette truncates audio payloads, so only this pins the bytes and the
+    # mime type that reach the wire: the WAV's PCM frames at the live input rate. The flag-off side
+    # (2.5 rejects audio in seeded turns) is `test_connect_rejects_audio_only_user_turn`.
+    session = _RecordingSession()
+    history = [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', audio=BinaryContent(data=_wav(b'pcm-', 16000), media_type='audio/wav'))]
+        )
+    ]
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session)))
+    async with _connect(model, 'x', messages=history) as conn:
+        _ = [e async for e in conn]
+
+    [turn] = session.client_content[0]['turns']
+    assert turn.role == 'user'
+    assert [p.inline_data for p in turn.parts] == [genai_types.Blob(data=b'pcm-', mime_type='audio/pcm;rate=16000')]
+
+
+async def test_connect_rejects_retained_user_audio_at_another_rate() -> None:
+    # Gemini closes the session on seeded audio that isn't at its 16 kHz input rate (verified live with
+    # 24 kHz), so audio retained by a 24 kHz provider's session is refused before connecting.
+    session = _RecordingSession()
+    history = [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', audio=BinaryContent(data=_wav(b'pcm-', 24000), media_type='audio/wav'))]
+        )
+    ]
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session)))
+    with pytest.raises(UserError, match='recorded at 24000 Hz into a google realtime session expecting 16000 Hz'):
+        async with _connect(model, 'x', messages=history):
             pass  # pragma: no cover
 
 

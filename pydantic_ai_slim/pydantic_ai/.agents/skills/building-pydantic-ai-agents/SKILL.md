@@ -300,9 +300,9 @@ Key facts for building realtime agents:
   stay attached to the user turn they describe even when they arrive after its response, and a turn
   started while the model is still answering (barge-in) is recorded after that answer. A reported
   speech segment whose transcript never arrives remains represented by retained audio or a content-less
-  `SpeechPart` when the session closes. Transcripts are what carry over; OpenAI and Azure can also
-  replay retained transcript-less *user* audio, Gemini,
-  xAI, and OpenAI GPT-Live (which seeds from text only) cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
+  `SpeechPart` when the session closes. Transcripts are what carry over; a model whose profile sets
+  `supports_seeding_audio` can also replay retained transcript-less *user* audio recorded at its input
+  rate, and assistant audio is never replayed. Streamed images all reach the provider, but
   history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
   oldest evicted first) record.
 - **Usage and cost**: each recorded `ModelResponse` carries its response usage, while `session.usage`
