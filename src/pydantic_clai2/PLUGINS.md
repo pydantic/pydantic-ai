@@ -374,6 +374,127 @@ runs or remote machines, choose a key and set Sign-in to key only: without a
 key, CLAI warns at startup and runs fail with a message instead of waiting for a
 sign-in. The plugin emits no telemetry of its own; tool calls appear in core's
 spans.
+## Logfire MCP: query your telemetry
+
+The built-in `logfire_mcp` plugin (`pydantic_clai2.logfire_mcp`) gives the agent
+the tools of Logfire's hosted MCP server through harness
+[`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
+Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
+opens its settings menu; reopen the menu any time with
+`/plugins configure logfire_mcp` or `C` in `/plugins`.
+
+Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
+the menu, and the plugin loads again with the new settings. Esc backs out of any
+picker or text field without changing anything; `R` resets the highlighted row to
+its default.
+
+| Row | Setting | Default | Does |
+|---|---|---|---|
+| API key | `key` | none | name of the `/keys` entry to connect with (see below) |
+| Destination | `url` | Logfire US | Logfire US, Logfire EU, or type the `https://` MCP URL of a self-hosted Logfire |
+| Tools | `read_only` | read-only | offer only the tools the server marks read-only; "read and write" also allows tools that change Logfire resources |
+| Server instructions | `include_instructions` | forwarded | whether the server's instructions, query guidance, and current UTC time reach the agent |
+| Browser sign-in | `oauth` | when there is no key | sign in, or sign up, through the browser when no key is chosen, set, or saved; the row shows whether you are signed in |
+
+### Keys live in `/keys`
+
+Plugin settings are stored as plaintext in SQLite, so they hold only the key's
+name, never its value. Enter on **API key** opens the same picker as
+`/add_model`:
+
+- **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
+  connections can name one key, so one Logfire API key saved once serves them all.
+- **Enter a different API key**: a masked field. The value is saved in `/keys`
+  as `LOGFIRE_API_KEY`, the conventional label; CLAI asks before replacing an
+  existing `LOGFIRE_API_KEY`, since other plugins may use it.
+- **No API key**: clears the choice.
+
+The plugin uses the first credential that is available:
+
+1. The key chosen in the menu.
+2. `LOGFIRE_API_KEY` from the environment.
+3. A key saved in `/keys` as `LOGFIRE_API_KEY`, so saving one there is enough.
+4. Browser sign-in, when it is on (the default). See below.
+
+With browser sign-in off, the plugin looks `LOGFIRE_API_KEY` up in `/keys` on
+every run, so saving it there later connects without a reload.
+
+#### Browser sign-in
+
+Browser sign-in uses the OAuth device flow
+([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)), as Code Puppy's
+Logfire plugin does. The first run with no usable token, or `/logfire_mcp login`
+at any time, prints a link and a code and opens the link:
+
+```text
+Sign in to Logfire (new users can sign up there): open https://logfire-us.pydantic.dev/auth/oauth-device?code=ABCD-EFGH
+Enter code: ABCD-EFGH
+Approve only the code shown here. You can open the link on another device.
+```
+
+On that Logfire page you sign in, or create an account if you have none, and
+approve the code. CLAI waits up to 660 seconds (Logfire's codes last 600). No
+local callback server is involved, so this also works over SSH: open the link on
+any device.
+
+- **Discovery:** the Logfire server is found from the Destination URL
+  ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) resource metadata),
+  so self-hosted Logfire works too, including an issuer with a path
+  ([RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414)). CLAI registers
+  itself as a client ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591))
+  and uses PKCE. It registers again if the server has forgotten the earlier
+  registration.
+- **Binding:** every request names the Destination URL as the token's resource
+  ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707)), and the
+  discovered metadata must describe that same URL (and the authorization
+  server's metadata its own issuer). A token is only issued for the MCP server
+  you configured, so another endpoint that names Logfire as its
+  authorization server cannot receive one. Logfire rejects unknown resources
+  with `invalid_target`.
+- **Scopes:** read-only tools ask only for `project:read`. With Tools set to read
+  and write, CLAI asks for every scope the MCP server lists (on Logfire's hosted
+  servers that includes `organization:create_project`). Switching Tools to read
+  and write signs in again for those scopes. If Logfire grants fewer scopes, CLAI
+  says so once and keeps the sign-in, since asking again would get the same
+  grant; `/logfire_mcp login` asks again when you want to.
+- **Tokens:** kept per Destination URL in the OS keyring (or the private
+  credential file) under the `logfire-oauth` account, so restarting CLAI does
+  not mean signing in again. An expired or rejected token is refreshed; if that
+  fails, the next run signs in again. `/logfire_mcp logout` forgets every
+  Logfire sign-in, including one still waiting for approval, and keeps keys in
+  `/keys`.
+  If the keyring or file refuses to save a sign-in, CLAI says so and keeps it in
+  memory for the rest of the session (logout forgets it too); the next session
+  asks you to sign in again.
+
+#### Saved keys
+
+A saved key's value is read at the start of each run, like a model connection's.
+Replacing it in `/keys` applies from the next turn. `/keys` does not stop you
+deleting or renaming a key that plugin settings name; the plugin's runs then fail
+with the old name and `/plugins configure logfire_mcp` as the fix, until you pick
+a key again.
+
+When the key the plugin depends on is missing from `/keys`, the plugin still
+loads, so the menu stays reachable. It prints a warning when the session starts,
+and each run fails with that message instead of reaching Logfire.
+
+The label is `LOGFIRE_API_KEY`, the variable `LogfireMCP` reads, and not
+`LOGFIRE_TOKEN`. `LOGFIRE_TOKEN` is the write token the
+[`logfire` plugin](#logfire-default-agent-tracing) sends traces with, and it
+cannot query the MCP server. The `logfire` plugin keeps reading it from the
+environment or the Logfire SDK's credential file.
+
+The same settings can be given as JSON, which is validated the same way:
+
+```text
+/plugins add logfire_mcp pydantic_clai2.logfire_mcp '{"url": "https://logfire-eu.pydantic.dev/mcp"}'
+```
+
+The key's own scopes still decide which projects and actions are allowed. If you
+enabled `logfire_mcp` from the old harness catalog, that saved declaration still
+takes this plugin's place; `/plugins remove logfire_mcp` switches to this one.
+The plugin emits no telemetry of its own; tool calls appear in core's spans.
 
 ## Where plugins live
 
@@ -455,6 +576,7 @@ credentials, extras, or settings that a checkbox cannot supply, so they belong i
 CLAI plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
+[`logfire_mcp`](#logfire-mcp-query-your-telemetry),
 [`notion`](#notion-workspace-tools),
 [`ordinal`](#ordinal-social-posts-in-ordinal),
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
@@ -1434,6 +1556,8 @@ Build the menu with the shared field editor (`FieldMenu` and `run_flow` from
 leaves the menu. A menu you build yourself ends with `save_and_close_item()` and
 treats a result as closed when `picked(result)` is `None`.
 
+The built-in `logfire_mcp` plugin is a complete example.
+
 ```python
 @host.configure
 async def configure() -> str:
@@ -1615,7 +1739,8 @@ the secret on the command line.
 
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
 and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
-[`notion`](#notion-workspace-tools), [`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
+[`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
+[`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
 [`slack`](#slack-your-slack-workspace-as-you) show a
 searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
@@ -1628,7 +1753,11 @@ Key values never appear in the picker or confirmation. Names are labels, not
 exported environment variables. Selecting a saved key stores a reference, not a copy. Discovery and each new
 turn resolve its current value. Replacing a key updates connections that reference
 it. Deleting it makes those connections fail until you restore the same name or
-reconfigure them. Keys referenced by saved connections, including Pylon's, cannot be renamed. A cross-process lock
+reconfigure them. Keys referenced by saved connections, including Pylon's, cannot be renamed;
+a key named in plugin settings, such as `logfire_mcp`'s, can, and that plugin's runs then fail
+with the missing name until you pick it again. One named key can serve several connections and
+plugins, so built-in plugins look for conventional labels, such as `LOGFIRE_API_KEY`, that other
+tools can share. A cross-process lock
 serializes key changes and connection saves so concurrent CLAI sessions do not
 overwrite each other's key edits. The lock file contains no credentials.
 

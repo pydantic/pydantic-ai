@@ -105,6 +105,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='ordinal', factory='pydantic_clai2.ordinal', enabled=False),
     PluginSettings(id='notion', factory='pydantic_clai2.notion', enabled=False),
     PluginSettings(id='slack', factory='pydantic_clai2.slack', enabled=False),
+    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.logfire_mcp', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 
