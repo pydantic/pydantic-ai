@@ -263,7 +263,7 @@ For a complete list of available models, see the [SambaNova supported models doc
 
 ## SGLang
 
-[SGLang](https://docs.sglang.ai/) is a high-throughput inference server with an OpenAI-compatible API. Connect with [`SGLangProvider`][pydantic_ai.providers.sglang.SGLangProvider], setting `base_url` directly or through `SGLANG_BASE_URL`. For authenticated... [truncated]
+[SGLang](https://docs.sglang.ai/) is a high-throughput inference server with an OpenAI-compatible API. Connect with [`SGLangProvider`][pydantic_ai.providers.sglang.SGLangProvider], setting `base_url` directly or through `SGLANG_BASE_URL`. For authenticated servers, set `api_key` or `SGLANG_API_KEY`.
 
 ```python
 from pydantic_ai import Agent
@@ -294,10 +294,10 @@ print(result.output)
 ```
 
 !!! note "Tool calling requires server configuration"
-    For agents that let the model decide whether to call a tool, start SGLang with the model-specific parser selected via `--tool-call-parser`. See the [SGLang tool calling guide](https://docs.sglang.ai/advanced_features/function_calling.html) for supporte... [truncated]
+    For agents that let the model decide whether to call a tool, start SGLang with the model-specific parser selected via `--tool-call-parser`. See the [SGLang tool calling guide](https://docs.sglang.ai/advanced_features/function_calling.html) for supported models and parser values.
 
 !!! note "Multiple system messages are merged by default"
-    SGLang applies chat templates server-side, and some templates reject multiple leading system messages, so `SGLangProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_c... [truncated]
+    SGLang applies chat templates server-side, and some templates reject multiple leading system messages, so `SGLangProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message).
 
 ## Together AI
 
