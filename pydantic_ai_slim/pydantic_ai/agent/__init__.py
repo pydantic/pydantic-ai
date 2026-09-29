@@ -231,11 +231,15 @@ def _prepare_run_capability_context(
 
 
 async def _run_setup_error_hook(
-    run_capability: AbstractCapability[AgentDepsT], run_ctx: RunContext[AgentDepsT], error: BaseException
+    resolved_layers: Sequence[AbstractCapability[AgentDepsT]], run_ctx: RunContext[AgentDepsT], error: BaseException
 ) -> None:
     """Dispatch error hooks when setup fails before a run result can be built."""
     if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
         raise error
+    assert resolved_layers
+    # Each layer's `for_run()` ran, including ones the run layer later overrides. Their hooks
+    # must all get a chance to clean up setup side effects.
+    run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
     run_ctx.root_capability = run_capability
     _prepare_run_capability_context(run_capability, run_ctx)
     # There is no run result to recover here, so preserve the setup error if the hook returns.
@@ -1906,7 +1910,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         try:
             toolset = await toolset.for_run(initial_ctx)
         except BaseException as error:
-            await _run_setup_error_hook(run_capability, initial_ctx, error)
+            await _run_setup_error_hook(resolved_caps.resolved_layers, initial_ctx, error)
             raise
         tool_manager = ToolManager[AgentDepsT](
             toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
@@ -3401,14 +3405,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             except BaseException as error:
                 if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
                     raise
-                assert len(resolutions.layers) == len(extra_capabilities) + 1
-                resolved_base = replace_resolved_run_capabilities(base_capability, resolutions.layers[0])
-                resolved_extras = [
+                resolved_layers = [
                     replace_resolved_run_capabilities(capability, layer_resolutions)
-                    for capability, layer_resolutions in zip(extra_capabilities, resolutions.layers[1:], strict=True)
+                    for capability, layer_resolutions in zip(
+                        [base_capability, *extra_capabilities], resolutions.layers, strict=True
+                    )
                 ]
-                _, _, setup_capability = _compose_run_capabilities([resolved_base], resolved_extras)
-                await _run_setup_error_hook(setup_capability, ctx, error)
+                await _run_setup_error_hook(resolved_layers, ctx, error)
                 raise
 
     def _get_instructions(
@@ -3803,7 +3806,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset = await toolset.for_run(run_context)
         except BaseException as error:
             if run_lifecycle:
-                await _run_setup_error_hook(run_capability, run_context, error)
+                await _run_setup_error_hook(resolved_caps.resolved_layers, run_context, error)
             raise
 
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never

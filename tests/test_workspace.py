@@ -1020,7 +1020,8 @@ async def test_setup_failure_calls_on_run_error_for_each_repeated_resolved_capab
     assert cleanup_order == [2, 1]
 
 
-async def test_setup_failure_uses_run_layer_instance_for_overridden_capability() -> None:
+@pytest.mark.parametrize('failure', ['capability', 'toolset'])
+async def test_setup_failure_cleans_both_layers_for_overridden_capability(failure: str) -> None:
     cleanup_order: list[int] = []
     agent_cleanup_resolved = asyncio.Event()
     calls = 0
@@ -1046,15 +1047,22 @@ async def test_setup_failure_uses_run_layer_instance_for_overridden_capability()
     class RunLayer(CombinedCapability[Any]):
         async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
             await agent_cleanup_resolved.wait()
-            await super().for_run(ctx)
-            raise RuntimeError('capability setup failed')
+            resolved = await super().for_run(ctx)
+            if failure == 'capability':
+                raise RuntimeError('capability setup failed')
+            return resolved
+
+    class FailingToolset(FunctionToolset[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractToolset[object]:
+            raise RuntimeError('toolset setup failed')
 
     cleanup = FreshCleanup()
     agent = Agent(TestModel(), capabilities=[cleanup])
-    with pytest.raises(RuntimeError, match='capability setup failed'):
-        await agent.run('go', capabilities=[RunLayer([cleanup])])
+    toolsets: list[AbstractToolset[object]] = [FailingToolset()] if failure == 'toolset' else []
+    with pytest.raises(RuntimeError, match=f'{failure} setup failed'):
+        await agent.run('go', capabilities=[RunLayer([cleanup])], toolsets=toolsets)
 
-    assert cleanup_order == [2]
+    assert cleanup_order == [2, 1]
 
 
 async def test_setup_failure_uses_replacement_returned_by_combined_for_run() -> None:
