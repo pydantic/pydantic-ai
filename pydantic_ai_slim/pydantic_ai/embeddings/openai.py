@@ -142,7 +142,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
                     status_code=status_code, model_name=self.model_name, body=e.body, headers=dict(e.response.headers)
                 ) from e
             raise  # pragma: lax no cover
-        except APIConnectionError as e:  # pragma: no cover
+        except APIConnectionError as e:  # pragma: lax no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         embeddings = [item.embedding for item in response.data]
