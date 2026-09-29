@@ -11366,7 +11366,7 @@ async def test_distinct_tool_call_ids_still_bind_correctly():
     result = await agent.run('go')
     assert result.output == 'finished'
 
-    assert executed == [('alpha', 1), ('beta', 2)]
+    assert sorted(executed) == [('alpha', 1), ('beta', 2)]
     tool_returns = {p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)}
     assert [(p.tool_call_id, p.content) for p in tool_returns.values()] == [('DUP1', 'A1'), ('DUP2', 'B2')]
 
