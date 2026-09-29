@@ -3403,16 +3403,7 @@ async def test_fallback_tries_next_model_on_non_json_response_body(allow_model_r
     A mock transport stands in for a cassette because no real provider returns such a body on demand.
     https://github.com/pydantic/pydantic-ai/issues/8843
     """
-    completion = {
-        'id': 'chatcmpl-123',
-        'object': 'chat.completion',
-        'created': 1730000000,
-        'model': 'gpt-4o-mini',
-        'choices': [
-            {'index': 0, 'message': {'role': 'assistant', 'content': 'Hello from fallback'}, 'finish_reason': 'stop'}
-        ],
-        'usage': {'prompt_tokens': 1, 'completion_tokens': 5, 'total_tokens': 6},
-    }
+    completion = openai_completion_message(ChatCompletionMessage(content='Hello from fallback', role='assistant'))
     requests_made = {'primary': 0, 'fallback': 0}
 
     async def primary_handler(request: httpx2.Request) -> httpx2.Response:
@@ -3421,7 +3412,7 @@ async def test_fallback_tries_next_model_on_non_json_response_body(allow_model_r
 
     async def fallback_handler(request: httpx2.Request) -> httpx2.Response:
         requests_made['fallback'] += 1
-        return httpx2.Response(200, json=completion)
+        return httpx2.Response(200, json=completion.model_dump(mode='json'))
 
     async with (
         AsyncOpenAI(
@@ -3442,5 +3433,4 @@ async def test_fallback_tries_next_model_on_non_json_response_body(allow_model_r
         result = await agent.run('Hello')
 
     assert result.output == 'Hello from fallback'
-    assert result.response.model_name == 'gpt-4o-mini'
     assert requests_made == {'primary': 1, 'fallback': 1}

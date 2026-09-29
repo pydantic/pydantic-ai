@@ -2196,6 +2196,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise
         except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+        except json.JSONDecodeError as e:
+            raise ModelAPIError(model_name=self.model_name, message=f'Failed to decode response as JSON: {e}') from e
 
     async def request(
         self,

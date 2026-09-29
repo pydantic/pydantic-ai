@@ -6693,7 +6693,7 @@ async def test_openai_enum_member_docstrings_reach_the_wire(
 async def test_non_json_response_body_raises_model_api_error(
     allow_model_requests: None, stream: bool, content: bytes, content_type: str
 ) -> None:
-    """A 200 response whose body is not valid JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
+    """A 200 response body, or a streamed chunk, that is not valid JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
 
     A mock transport stands in for a cassette because no real provider returns such a body on demand.
     https://github.com/pydantic/pydantic-ai/issues/8843
