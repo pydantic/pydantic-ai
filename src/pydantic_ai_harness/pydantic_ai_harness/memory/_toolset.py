@@ -301,7 +301,10 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
 
         def select(capability: AbstractCapability[AgentDepsT]) -> None:
             nonlocal selected
-            if isinstance(capability, Memory) and capability.get_toolset() is self._capability.get_toolset():
+            if not isinstance(capability, Memory):
+                return
+            # Run copies share the leaf even when `get_toolset` creates a fresh wrapper.
+            if capability._toolset is self._capability._toolset:  # pyright: ignore[reportPrivateUsage]
                 selected = capability
 
         if ctx.root_capability is not None:
