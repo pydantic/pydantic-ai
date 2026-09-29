@@ -86,6 +86,14 @@ class AzureRealtimeModelProfile(RealtimeModelProfile, total=False):
     (e.g. a future `gpt-realtime-3`): either way it defaults to GA and reaches Voice Live only when
     `azure_voice_live=True` is set. Pass a `profile=` override to constrain a deployment named after
     something the table can't place."""
+    azure_voice_live_cascade: bool
+    """Whether Voice Live serves this model as a cascade (Azure speech-to-text, then a chat model, then
+    Azure text-to-speech) rather than as a native-audio model.
+
+    Stamped for the recognized cascade models (e.g. `gpt-5`, `gpt-4.1`, `phi4-mm-realtime`). A cascade
+    rejects OpenAI's semantic VAD, so a `SemanticVAD` turn detection is sent as Voice Live's own
+    `azure_semantic_vad`, which has no `eagerness`. Pass it in a `profile=` override for a cascade
+    deployment named after something the table can't place."""
 
 
 # Azure realtime models whose serving API is *constrained*, keyed by that API. Deliberately lists only
@@ -128,6 +136,16 @@ _AZURE_REALTIME_API_BASES: tuple[tuple[tuple[str, ...], frozenset[AzureRealtimeA
         _VOICE_LIVE,
     ),
 )
+
+
+# The Voice-Live-only models Voice Live runs as a cascade, rather than natively like `azure-realtime`.
+_VOICE_LIVE_CASCADE_BASES = ('phi4-mm-realtime', 'phi4-mini', 'gpt-4o', 'gpt-4.1', 'gpt-5')
+
+
+def _is_voice_live_cascade(model_name: str) -> bool:
+    return _default_azure_realtime_apis(model_name) == _VOICE_LIVE and any(
+        _name_matches(model_name, base) for base in _VOICE_LIVE_CASCADE_BASES
+    )
 
 
 def _name_matches(model_name: str, base: str) -> bool:
@@ -218,9 +236,10 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     azure_voice_live_turn_detection: ServerVAD | SemanticVAD
     """Voice Live server or semantic VAD config; only applies when `azure_voice_live=True`.
 
-    When present, it overrides `openai_turn_detection` and `turn_detection` on Voice Live. OpenAI's
-    semantic VAD runs natively only on the `gpt-realtime*` models; for any other model it's sent as
-    Voice Live's own `azure_semantic_vad`, which has no `eagerness` setting.
+    When present, it overrides `openai_turn_detection` and `turn_detection` on Voice Live. On a cascade
+    model (see [`azure_voice_live_cascade`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade]),
+    which rejects OpenAI's semantic VAD, it's sent as Voice Live's own `azure_semantic_vad`, which has
+    no `eagerness` setting.
     """
     azure_voice_live_temperature: float
     """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
@@ -231,7 +250,7 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     """
 
 
-def _voice_live_turn_detection(settings: AzureRealtimeModelSettings, *, native_audio: bool) -> dict[str, Any] | None:
+def _voice_live_turn_detection(settings: AzureRealtimeModelSettings, *, cascade: bool) -> dict[str, Any] | None:
     """The Voice Live `turn_detection` payload, or `None` to disable VAD."""
     if 'azure_voice_live_turn_detection' in settings:
         turn_detection: ServerVAD | SemanticVAD | None = settings['azure_voice_live_turn_detection']
@@ -241,7 +260,7 @@ def _voice_live_turn_detection(settings: AzureRealtimeModelSettings, *, native_a
         turn_detection = resolve_base_turn_detection(settings['turn_detection'])
     else:
         turn_detection = ServerVAD(type='server_vad')
-    if turn_detection is not None and turn_detection['type'] == 'semantic_vad' and not native_audio:
+    if turn_detection is not None and turn_detection['type'] == 'semantic_vad' and cascade:
         # The cascade models reject OpenAI's semantic VAD, so use Voice Live's own model-based one,
         # which every model accepts; it has no `eagerness`.
         return {
@@ -394,7 +413,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         return profile
 
     def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
-        """Take `supports_thinking` for a Voice-Live-only cascade model from its chat model profile.
+        """Mark a recognized Voice Live cascade model, taking `supports_thinking` from its chat model profile.
 
         The OpenAI realtime profile only knows the `gpt-realtime-2*` reasoning models, but Voice Live
         also serves reasoning chat models like `gpt-5` behind Azure speech-to-text and text-to-speech,
@@ -402,11 +421,12 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         Voice Live accepts the setting at session start and then fails every response for a model like
         `gpt-4.1`.
         """
-        if _default_azure_realtime_apis(self.model) == _VOICE_LIVE and openai_model_profile(self.model).get(
-            'supports_thinking', False
-        ):
-            profile = merge_realtime_profile(profile, RealtimeModelProfile(supports_thinking=True))
-        return profile
+        if not _is_voice_live_cascade(self.model):
+            return profile
+        cascade = AzureRealtimeModelProfile(azure_voice_live_cascade=True)
+        if openai_model_profile(self.model).get('supports_thinking', False):
+            cascade['supports_thinking'] = True
+        return merge_realtime_profile(profile, cascade)
 
     def _resolve_voice_live(self, model_settings: RealtimeModelSettings | None) -> bool:
         """Whether this session uses Azure AI Voice Live rather than the GA realtime API — the sole authority.
@@ -536,8 +556,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         if not self._resolve_voice_live(settings):
             return super()._session_config(instructions, tools, model_settings=settings)
 
-        native_audio = self.model.startswith('gpt-realtime')
-        auto_transcription_model = 'whisper-1' if native_audio else 'azure-speech'
+        auto_transcription_model = 'whisper-1' if self.model.startswith('gpt-realtime') else 'azure-speech'
+        cascade = cast('AzureRealtimeModelProfile', self.profile).get('azure_voice_live_cascade', False)
         transcription_model = resolve_transcription_model(
             settings.get('input_transcription_model', 'auto'), default=auto_transcription_model
         )
@@ -547,7 +567,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             'input_audio_format': 'pcm16',
             'output_audio_format': 'pcm16',
             'input_audio_sampling_rate': self.profile.get('audio_input_sample_rate', 24000),
-            'turn_detection': _voice_live_turn_detection(settings, native_audio=native_audio),
+            'turn_detection': _voice_live_turn_detection(settings, cascade=cascade),
         }
         if transcription_model is not None:
             config['input_audio_transcription'] = {'model': transcription_model}

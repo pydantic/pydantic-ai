@@ -261,25 +261,52 @@ def test_voice_live_maps_session_settings() -> None:
     assert 'reasoning_effort' not in config(thinking='high')
 
 
-def test_voice_live_cascade_semantic_vad_uses_azure_semantic_vad() -> None:
-    """Cascade models reject OpenAI's semantic VAD, so it's sent as Voice Live's own `azure_semantic_vad`."""
+@pytest.mark.parametrize(
+    'model_name,profile,expected_type',
+    [
+        # Cascade models reject OpenAI's semantic VAD, so Voice Live's own is used instead.
+        ('gpt-5', None, 'azure_semantic_vad'),
+        ('phi4-mm-realtime', None, 'azure_semantic_vad'),
+        # Native-audio models keep it, `eagerness` included.
+        ('gpt-realtime', None, 'semantic_vad'),
+        ('azure-realtime', None, 'semantic_vad'),
+        # Decided by the profile, not the deployment name: an unrecognized name is left alone...
+        ('voice-production', None, 'semantic_vad'),
+        # ...and a cascade deployed under another name is marked through `profile=`.
+        ('my-voice-bot', AzureRealtimeModelProfile(azure_voice_live_cascade=True), 'azure_semantic_vad'),
+    ],
+)
+def test_voice_live_cascade_semantic_vad_uses_azure_semantic_vad(
+    model_name: str, profile: AzureRealtimeModelProfile | None, expected_type: str
+) -> None:
     provider = AzureProvider(
         azure_endpoint='https://resource.services.ai.azure.com',
         api_version='2026-04-10',
         api_key='azure-key',
     )
-    model = AzureRealtimeModel('gpt-5', provider=provider)
+    model = AzureRealtimeModel(model_name, provider=provider, profile=profile)
     settings = AzureRealtimeModelSettings(
-        openai_turn_detection=SemanticVAD(type='semantic_vad', eagerness='high', interrupt_response=False)
+        azure_voice_live=True,
+        openai_turn_detection=SemanticVAD(type='semantic_vad', eagerness='high', interrupt_response=False),
     )
     config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
-    assert config['turn_detection'] == {
-        'type': 'azure_semantic_vad',
-        'create_response': True,
-        'interrupt_response': False,
-    }
+    if expected_type == 'azure_semantic_vad':
+        assert config['turn_detection'] == {
+            'type': 'azure_semantic_vad',
+            'create_response': True,
+            'interrupt_response': False,
+        }
+    else:
+        assert config['turn_detection'] == {
+            'type': 'semantic_vad',
+            'eagerness': 'high',
+            'create_response': True,
+            'interrupt_response': False,
+        }
     # Server VAD and disabled detection pass through unchanged.
-    config = model._session_config('', None, model_settings=AzureRealtimeModelSettings(turn_detection=False))  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config(  # pyright: ignore[reportPrivateUsage]
+        '', None, model_settings=AzureRealtimeModelSettings(azure_voice_live=True, turn_detection=False)
+    )
     assert config['turn_detection'] is None
 
 

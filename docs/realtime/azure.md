@@ -194,8 +194,9 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `input_transcription_model` explicitly when that is not the intended deployment.
 
 Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_reduction` as on GA,
-adapting them to the model: for example, semantic VAD on a cascade model uses Voice Live's own
-semantic VAD. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+adapting them to the model: for example, semantic VAD on a
+[cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade] uses
+Voice Live's own semantic VAD. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
 sets the sampling temperature. Voice Live ignores `openai_output_speed`, `openai_truncation`, and
 `parallel_tool_calls`.
 
