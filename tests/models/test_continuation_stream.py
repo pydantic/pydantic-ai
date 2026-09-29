@@ -48,6 +48,7 @@ _TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
 # here (rather than imported as module privates) since the test pins the wire contract itself.
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
+_OPENAI_CURSOR_RESUMED_KEY = 'openai_cursor_resumed'
 
 
 @dataclass
@@ -383,6 +384,21 @@ def test_merge_preserves_metadata_pin() -> None:
     assert updated.metadata == {'__pydantic_ai__': {'fallback_model_id': 'other'}}
 
 
+def test_merge_metadata_preserves_framework_keys_when_stripping_cursor_marker() -> None:
+    existing = ModelResponse(
+        parts=[TextPart('a')],
+        metadata={'__pydantic_ai__': {'fallback_model_id': 'inner'}},
+    )
+    new = ModelResponse(
+        parts=[TextPart('b')],
+        metadata={'__pydantic_ai__': {'openai_cursor_resumed': True}, 'segment': 'resumed'},
+    )
+
+    merged = merge_responses(existing, new)
+
+    assert merged.metadata == {'__pydantic_ai__': {'fallback_model_id': 'inner'}, 'segment': 'resumed'}
+
+
 async def test_snapshot_preserves_metadata_pin_across_inflight_segment() -> None:
     """A mid-flight `get()` snapshot keeps the prior suspended segment's `FallbackModel` pin.
 
@@ -462,6 +478,60 @@ async def test_model_change_replaces_indices() -> None:
     assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['x']
     assert merged.model_name == 'other'
     assert merged.state == 'complete'
+
+
+async def test_openai_cursor_resume_identifierless_model_change_accumulates() -> None:
+    """A cursor-resumed OpenAI segment can change terminal model attribution without losing prior parts."""
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'partial')),
+                response=_response(
+                    parts=['partial'],
+                    provider_response_id='r1',
+                    state='suspended',
+                    input_tokens=1,
+                    output_tokens=1,
+                    model_name='requested-model',
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'continued')),
+                response=ModelResponse(
+                    parts=[TextPart('continued')],
+                    model_name='served-model',
+                    provider_name='fake',
+                    usage=RequestUsage(input_tokens=1, output_tokens=1),
+                    state='complete',
+                    timestamp=_TIMESTAMP,
+                    metadata={
+                        '__pydantic_ai__': {
+                            _OPENAI_CURSOR_RESUMED_KEY: True,
+                            'other_marker': 'preserved',
+                        }
+                    },
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    events = [event async for event in stream]
+
+    assert _part_start_indices(events) == [0, 1]
+    merged = stream.get()
+    assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['partial', 'continued']
+    assert merged.provider_response_id == 'r1'
+    assert merged.model_name == 'served-model'
+    assert merged.state == 'complete'
+    assert merged.metadata == {'__pydantic_ai__': {'other_marker': 'preserved'}}
+
+
+def test_identifierless_model_change_replaces_outside_resume() -> None:
+    existing = ModelResponse(parts=[TextPart('old')], model_name='old-model', state='complete')
+    new = ModelResponse(parts=[TextPart('new')], model_name='new-model', state='complete')
+
+    assert merge_mode(existing, new) == 'replace-new'
+    assert [p.content for p in merge_responses(existing, new).parts if isinstance(p, TextPart)] == ['new']
 
 
 async def test_replace_new_after_accumulation_reindexes_from_zero() -> None:

@@ -2616,6 +2616,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if isinstance(first_chunk, responses.ResponseCreatedEvent)
                 else expected_response_id
             )
+        if not isinstance(first_chunk, responses.ResponseCreatedEvent) and expected_response_id:
+            namespace = (streamed_response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
+            streamed_response.metadata = {
+                **(streamed_response.metadata or {}),
+                _PYDANTIC_AI_METADATA_KEY: {
+                    **(namespace if isinstance(namespace, dict) else {}),
+                    _OPENAI_CURSOR_RESUMED_KEY: True,
+                },
+            }
         streamed_response.state = initial_state
         if background:
             # Stamp the background marker up front so the retry-delay gate (and `cancel_suspended_response`)
@@ -4256,6 +4265,10 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         return self._model_response.timestamp
 
 
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_OPENAI_CURSOR_RESUMED_KEY = 'openai_cursor_resumed'
+
+
 @dataclass
 class OpenAIResponsesStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI Responses API."""
@@ -4337,6 +4350,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         ),
                     ) and (service_tier := chunk.response.service_tier):
                         self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
+                    if chunk.response.model:
+                        self._model_name = chunk.response.model
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.

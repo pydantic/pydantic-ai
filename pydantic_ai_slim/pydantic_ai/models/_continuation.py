@@ -66,6 +66,7 @@ __all__ = [
 # persist into history and wrongly force a later legitimate `pause_turn` continuation to replace.
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
+_OPENAI_CURSOR_RESUMED_KEY = 'openai_cursor_resumed'
 
 MAX_GENERATION_CONTINUATIONS = 10
 """Maximum number of *fresh-generation* continuation segments for a single model turn.
@@ -104,8 +105,9 @@ MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
   wholesale, and — being the *same* job rather than fresh generation — is bounded by the generous
   [`MAX_BACKGROUND_POLLS`][pydantic_ai.models._continuation.MAX_BACKGROUND_POLLS] ceiling.
 - `'replace-new'`: the response supersedes the suspended turn with *fresh* generation — the model
-  changed (accumulating parts from different models is always wrong) or a `FallbackModel` stamped the
-  `replace_previous_response` marker after a rewind-and-restart. Replaces wholesale, but counts against
+  changed (except for an identifier-less OpenAI cursor-resumed segment explicitly marked by the
+  Responses adapter) or a `FallbackModel` stamped the `replace_previous_response` marker after a
+  rewind-and-restart. Replaces wholesale, but counts against
   the strict [`MAX_GENERATION_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_GENERATION_CONTINUATIONS] ceiling, since a
   chain of fresh suspensions is the exact runaway that cap guards against.
 - `'accumulate'`: appends new parts onto the prior response (Anthropic `pause_turn`). Strict ceiling.
@@ -117,27 +119,52 @@ MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
 _FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=timezone.utc)
 
 
-def _has_replace_marker(response: ModelResponse) -> bool:
-    """Whether `response` carries the `FallbackModel` `replace_previous_response` directive."""
+def _metadata_namespace(response: ModelResponse) -> dict[str, Any] | None:
     metadata = response.metadata
     if not _utils.is_str_dict(metadata):
-        return False
+        return None
     namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
-    return bool(_utils.is_str_dict(namespace) and namespace.get(_REPLACE_PREVIOUS_RESPONSE_KEY))
+    return namespace if _utils.is_str_dict(namespace) else None
 
 
-def _strip_replace_marker(metadata: Any) -> dict[str, Any] | None:
-    """Return `metadata` without the transient `replace_previous_response` marker (other keys intact).
+def _has_replace_marker(response: ModelResponse) -> bool:
+    """Whether `response` carries the `FallbackModel` `replace_previous_response` directive."""
+    namespace = _metadata_namespace(response)
+    return bool(namespace and namespace.get(_REPLACE_PREVIOUS_RESPONSE_KEY))
 
-    Copies before mutating so the caller's dicts (including the shared `__pydantic_ai__` namespace,
-    which also holds the `FallbackModel` continuation pin) aren't touched.
-    """
+
+def _has_openai_cursor_resume_marker(response: ModelResponse) -> bool:
+    """Whether `response` is the identifier-less segment of a resumed OpenAI cursor stream."""
+    namespace = _metadata_namespace(response)
+    return bool(namespace and namespace.get(_OPENAI_CURSOR_RESUMED_KEY))
+
+
+def _merge_metadata(existing: dict[str, Any], new: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Merge metadata latest-wins, except merge the reserved framework namespace by key."""
+    if not existing:
+        return new
+    merged = {**existing, **(new or {})}
+    existing_namespace = existing.get(_PYDANTIC_AI_METADATA_KEY)
+    new_namespace = (new or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if _utils.is_str_dict(existing_namespace) and _utils.is_str_dict(new_namespace):
+        merged[_PYDANTIC_AI_METADATA_KEY] = {**existing_namespace, **new_namespace}
+    return merged
+
+
+def _strip_transient_markers(metadata: Any) -> dict[str, Any] | None:
+    """Return metadata without transient continuation markers, preserving all other metadata."""
     if not _utils.is_str_dict(metadata):
         return metadata
     namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
-    if not (_utils.is_str_dict(namespace) and _REPLACE_PREVIOUS_RESPONSE_KEY in namespace):
+    if not _utils.is_str_dict(namespace):
         return metadata
-    namespace = {k: v for k, v in namespace.items() if k != _REPLACE_PREVIOUS_RESPONSE_KEY}
+    namespace = {
+        key: value
+        for key, value in namespace.items()
+        if key not in {_REPLACE_PREVIOUS_RESPONSE_KEY, _OPENAI_CURSOR_RESUMED_KEY}
+    }
+    if len(namespace) == len(metadata[_PYDANTIC_AI_METADATA_KEY]):
+        return metadata
     metadata = {**metadata}
     if namespace:
         metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
@@ -158,7 +185,12 @@ def merge_mode(existing: ModelResponse, new: ModelResponse) -> MergeMode:
         return 'replace-new'
     if existing.provider_response_id and existing.provider_response_id == new.provider_response_id:
         return 'replace-same-id'
-    if existing.model_name and new.model_name and existing.model_name != new.model_name:
+    if (
+        existing.model_name
+        and new.model_name
+        and existing.model_name != new.model_name
+        and (new.provider_response_id or not _has_openai_cursor_resume_marker(new))
+    ):
         return 'replace-new'
     return 'accumulate'
 
@@ -166,7 +198,8 @@ def merge_mode(existing: ModelResponse, new: ModelResponse) -> MergeMode:
 def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelResponse:
     """Merge a continuation response into the one it continues.
 
-    On any `'replace-*'` mode (same `provider_response_id`, a model change, or a `FallbackModel`
+    On any `'replace-*'` mode (same `provider_response_id`, a model change except for the narrow
+    marked OpenAI cursor-resume case, or a `FallbackModel`
     `replace_previous_response` directive), replace the content with the new response. Fresh-generation
     replacements retain the prior response's billed usage; same-job polling replaces its cumulative usage
     snapshot. Otherwise accumulate parts and usage, and use other fields from the new response.
@@ -180,7 +213,8 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     elif mode == 'replace-new':
         merged = replace(new, usage=existing.usage + new.usage)
     else:
-        # Same model, different response → accumulate parts and sum usage.
+        # An accumulating continuation (including the marked OpenAI cursor-resume exception) appends
+        # parts and sums usage.
         # Preserve existing provider response IDs when continuation responses omit them
         # (e.g. resumed OpenAI streams that start after a sequence number).
         merged = replace(
@@ -201,13 +235,11 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     if existing.provider_details:
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
     if existing.metadata:
-        merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
+        merged = replace(merged, metadata=_merge_metadata(existing.metadata, merged.metadata))
 
-    # Pop the transient `replace_previous_response` marker now that it's been honored above, so it
-    # doesn't persist into history where it would wrongly force a later legitimate `pause_turn`
-    # continuation to replace rather than accumulate. Other `__pydantic_ai__` keys (the continuation
-    # pin) survive.
-    stripped = _strip_replace_marker(merged.metadata)
+    # Pop transient continuation markers now that they've been honored above. Other `__pydantic_ai__`
+    # keys (including the FallbackModel continuation pin) survive.
+    stripped = _strip_transient_markers(merged.metadata)
     if stripped is not merged.metadata:
         merged = replace(merged, metadata=stripped)
     return merged

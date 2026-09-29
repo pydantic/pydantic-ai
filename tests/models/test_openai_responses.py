@@ -13593,6 +13593,89 @@ async def test_background_marker_stamped_from_terminal_event_only(allow_model_re
     assert (response.provider_details or {}).get('background') is True
 
 
+@pytest.mark.parametrize('terminal_status', ['completed', 'failed', 'incomplete'])
+@pytest.mark.parametrize('terminal_model', ['gpt-5-mini-2025-08-07', None])
+@pytest.mark.parametrize('response_created', [True, False])
+async def test_stream_response_uses_terminal_model_name(
+    allow_model_requests: None,
+    terminal_status: Literal['completed', 'failed', 'incomplete'],
+    terminal_model: str | None,
+    response_created: bool,
+):
+    requested_model = 'model-router'
+    base_response = resp.Response(
+        id='resp_001',
+        model=requested_model,
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    terminal_response = base_response.model_copy(update={'status': terminal_status, 'model': terminal_model})
+    if terminal_status == 'completed':
+        terminal_event: resp.ResponseStreamEvent = resp.ResponseCompletedEvent(
+            response=terminal_response, type='response.completed', sequence_number=0
+        )
+    elif terminal_status == 'failed':
+        terminal_event = resp.ResponseFailedEvent(response=terminal_response, type='response.failed', sequence_number=0)
+    else:
+        terminal_event = resp.ResponseIncompleteEvent(
+            response=terminal_response, type='response.incomplete', sequence_number=0
+        )
+    events: list[resp.ResponseStreamEvent] = []
+    if response_created:
+        events.append(resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0))
+    events.append(terminal_event.model_copy(update={'sequence_number': len(events)}))
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    model = OpenAIResponsesModel(requested_model, provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    assert streamed.get().model_name == (terminal_model or requested_model)
+
+
+async def test_cursor_resumed_stream_stamps_transient_marker(allow_model_requests: None):
+    base_response = resp.Response(
+        id='resp_resume',
+        model='served-model',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    events: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCompletedEvent(response=base_response, type='response.completed', sequence_number=2)
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream([])
+    cast(MockOpenAIResponses, mock_client).retrieve_stream = events
+    model = OpenAIResponsesModel('model-router', provider=OpenAIProvider(openai_client=mock_client))
+    suspended = ModelResponse(
+        parts=[],
+        model_name='model-router',
+        provider_name=model.system,
+        provider_response_id='resp_resume',
+        state='suspended',
+        provider_details={'last_sequence_number': 1},
+    )
+
+    async with model.request_stream(
+        [suspended], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as streamed:
+        assert streamed.metadata == {'__pydantic_ai__': {'openai_cursor_resumed': True}}
+        async for _ in streamed:
+            pass
+
+
 async def test_stream_response_incomplete_finish_reason_length(allow_model_requests: None):
     """A terminal `response.incomplete` maps `max_output_tokens` to 'length', like the non-streaming path."""
 
