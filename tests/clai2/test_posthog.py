@@ -26,7 +26,7 @@ from pydantic_clai2.commands import Commands
 from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.field_menu import CUSTOM, is_save_and_close, save_and_close_item
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
+from pydantic_clai2.plugin_loader import PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.posthog import EU_URL, EVERY_GROUP, US_URL, PostHogSource, SavedKeyAuth
@@ -488,13 +488,14 @@ async def test_settings_cannot_hold_a_secret_or_invalid_options(tmp_path: Path, 
 
 async def test_add_with_rejected_settings_keeps_no_trace_of_them(tmp_path: Path) -> None:
     shell = Shell(tmp_path, terminal=False)
-    with pytest.raises(PluginError) as raised:
+    with pytest.raises(PluginSettingsError) as raised:
         await shell.loader.command(['add', 'analytics', 'pydantic_clai2.posthog', '{"api_key": "phx_pasted"}'])
     assert 'phx_pasted' not in str(raised.value), 'errors never echo a rejected value'
     assert [plugin.id for plugin in shell.store.plugins()] == []
+    assert b'phx_pasted' not in shell.path.read_bytes(), 'rejected settings are never written, so no page holds them'
     await shell.loader.command(['enable', 'posthog'])
     before = shell.saved()
-    with pytest.raises(PluginError):
+    with pytest.raises(PluginSettingsError):
         await shell.loader.command(['add', 'posthog', 'pydantic_clai2.posthog', '{"token": "phx_pasted"}'])
     assert shell.saved() == before, 'replacing with rejected settings restores the previous declaration'
     assert b'phx_pasted' not in shell.path.read_bytes()
