@@ -43,7 +43,7 @@ from pydantic_ai_harness import SmartGrep
 
 agent = Agent(
     'openai:gpt-6-luna',
-    capabilities=[LocalWorkspace('.'), SmartGrep(model='anthropic:claude-haiku-4-5')],
+    capabilities=[LocalWorkspace('.'), SmartGrep(model='typesafe:jev-latest')],
 )
 ```
 

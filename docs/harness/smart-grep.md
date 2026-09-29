@@ -24,9 +24,10 @@ only finds what you can already name.
 ## Usage
 
 ```bash
-pip/uv-add "pydantic-ai-harness[smart-grep]"
+pip/uv-add "pydantic-ai-harness[smart-grep]" "pydantic-ai-slim[typesafe]"
 ```
 
+Set `TYPESAFE_API_KEY` to judge with [Jev](#choosing-the-judge), or pass any other model as `model`.
 `SmartGrep` searches the run's [workspace](../workspace.md), so attach one next to it:
 
 ```python {test="skip"}
@@ -36,7 +37,7 @@ from pydantic_ai_harness import SmartGrep
 
 agent = Agent(
     'openai:gpt-6-luna',
-    capabilities=[LocalWorkspace('.'), SmartGrep(model='anthropic:claude-haiku-4-5')],
+    capabilities=[LocalWorkspace('.'), SmartGrep(model='typesafe:jev-latest')],
 )
 
 result = agent.run_sync('Where do we retry failed webhook deliveries?')
@@ -134,7 +135,7 @@ fall back to regular search when results are weak or the tool fails. Pass `guida
 model: openai:gpt-6-luna
 capabilities:
   - SmartGrep:
-      model: anthropic:claude-haiku-4-5
+      model: typesafe:jev-latest
       threshold: 0.6
 ```
 
