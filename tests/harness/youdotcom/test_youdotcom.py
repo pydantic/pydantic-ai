@@ -19,9 +19,21 @@ from youdotcom.errors import YouError
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.youdotcom import (
     ExtractionModeName,
     FinanceEffortName,
@@ -652,6 +664,36 @@ class TestYouSearchCapability:
         assert isinstance(default, str) and 'web_search' in default and 'get_page' in default
         assert YouSearch[None](guidance='Use the You.com tools.').get_instructions() == 'Use the You.com tools.'
         assert YouSearch[None](guidance='').get_instructions() is None
+
+    @pytest.mark.parametrize(
+        ('supported_native_tools', 'expected_function_tools', 'expected_native_tools'),
+        [
+            (frozenset({WebSearchTool}), ['get_page'], [WebSearchTool]),
+            (frozenset(), ['web_search', 'get_page'], []),
+        ],
+    )
+    async def test_web_search_is_a_fallback_for_core_native_search(
+        self,
+        supported_native_tools: frozenset[type[WebSearchTool]],
+        expected_function_tools: list[str],
+        expected_native_tools: list[type[WebSearchTool]],
+    ) -> None:
+        seen_function_tools: list[str] = []
+        seen_native_tools: list[type[object]] = []
+
+        def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_function_tools.extend(tool.name for tool in info.function_tools)
+            seen_native_tools.extend(type(tool) for tool in info.model_request_parameters.native_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported_native_tools))
+        agent = Agent(model, capabilities=[WebSearch(), YouSearch(client=_FakeYouClient())])
+
+        result = await agent.run('Search the web.')
+
+        assert result.output == 'done'
+        assert seen_function_tools == expected_function_tools
+        assert seen_native_tools == expected_native_tools
 
 
 class TestYouResearchCapability:

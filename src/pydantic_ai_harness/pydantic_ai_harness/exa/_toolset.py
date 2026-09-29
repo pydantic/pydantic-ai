@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._web_search import prefer_native_web_search
 
 try:
     from exa_py import AsyncExa
@@ -172,7 +173,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         self._include_domains = list(include_domains) if include_domains else None
         self._exclude_domains = list(exclude_domains) if exclude_domains else None
         self._text_summary = text_summary
-        self.add_function(self.web_search, name='web_search')
+        self.add_function(self.web_search, name='web_search', prepare=prefer_native_web_search)
         self.add_function(self.get_page, name='get_page')
         if include_deep_search:
             self.add_function(self.deep_search, name='deep_search')

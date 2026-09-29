@@ -24,9 +24,21 @@ from exa_py.api import (
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
 
 
@@ -435,6 +447,36 @@ class TestExaSearch:
         assert isinstance(base, str) and isinstance(instructions, str)
         assert instructions.startswith(base)
         assert 'escalate to `deep_search`' in instructions
+
+    @pytest.mark.parametrize(
+        ('supported_native_tools', 'expected_function_tools', 'expected_native_tools'),
+        [
+            (frozenset({WebSearchTool}), ['get_page'], [WebSearchTool]),
+            (frozenset(), ['web_search', 'get_page'], []),
+        ],
+    )
+    async def test_web_search_is_a_fallback_for_core_native_search(
+        self,
+        supported_native_tools: frozenset[type[WebSearchTool]],
+        expected_function_tools: list[str],
+        expected_native_tools: list[type[WebSearchTool]],
+    ) -> None:
+        seen_function_tools: list[str] = []
+        seen_native_tools: list[type[object]] = []
+
+        def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_function_tools.extend(tool.name for tool in info.function_tools)
+            seen_native_tools.extend(type(tool) for tool in info.model_request_parameters.native_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported_native_tools))
+        agent = Agent(model, capabilities=[WebSearch(), ExaSearch(client=_FakeExaClient())])
+
+        result = await agent.run('Search the web.')
+
+        assert result.output == 'done'
+        assert seen_function_tools == expected_function_tools
+        assert seen_native_tools == expected_native_tools
 
     def test_custom_guidance_replaces_default(self) -> None:
         capability = ExaSearch[None](include_deep_search=True, guidance='Research with the Exa tools.')

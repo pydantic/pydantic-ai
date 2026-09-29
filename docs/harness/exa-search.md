@@ -322,19 +322,20 @@ ExaSearch(client=AsyncExa(api_key='...'))
 Pydantic AI core ships a provider-adaptive
 [`WebSearch`](../capabilities/overview.md#provider-adaptive-tools)
 capability: on models with a native search tool it uses the provider's own
-search, executed server-side; elsewhere it falls back to a local DuckDuckGo
-tool. Reach for it when you want search that follows the model.
+search, executed server-side. Pass `local=True` to use DuckDuckGo on other
+models. Reach for it when you want search that follows the model.
 
 Reach for `ExaSearch` when you want the same search behavior on every model:
 one vendor, excerpts with every hit, explicit page retrieval, domain filters,
 and opt-in deep search.
 
-One caveat when combining them: on Anthropic models the provider-native search
-tool is also named `web_search` on the wire, so
-`capabilities=[WebSearch(), ExaSearch()]` puts two tools with the same name in
-the request. Use one search capability per agent on native-search models, or
-force the local fallback with `WebSearch(native=False)` (its DuckDuckGo tool is
-named `duckduckgo_search`, which does not collide).
+You can combine them as `capabilities=[WebSearch(), ExaSearch()]` to make Exa
+the fallback for models without native search.
+
+When the model supports native search, Pydantic AI omits Exa's `web_search` to
+avoid sending two tools with the same name. Exa's `get_page` and optional
+`deep_search` remain available. When native search is unavailable, Pydantic AI
+uses Exa's `web_search` instead.
 
 ## ExaSearch vs Exa's MCP server
 

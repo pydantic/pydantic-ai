@@ -252,21 +252,20 @@ YouSearch(client=You(api_key_auth='...'))
 
 Core ships a [`WebSearch`](https://ai.pydantic.dev/capabilities/#provider-adaptive-tools)
 capability that adapts to the model: it uses the provider's own search where
-the model has one, and a local DuckDuckGo tool everywhere else. Use it when you
-want search that follows whichever model you run. Use `YouSearch` when you want
-the same search on every model: one vendor, excerpts with every result, page
-reads you ask for, domain filters, and freshness controls.
+the model has one. Pass `local=True` to use DuckDuckGo elsewhere. Use it when
+you want search that follows whichever model you run. Use `YouSearch` when you
+want the same search on every model: one vendor, excerpts with every result,
+page reads you ask for, domain filters, and freshness controls.
 
-Give an agent one web search capability: core `WebSearch`, harness
-`ExaSearch`, or `YouSearch`. They all name their tools the same way --
-`web_search`, plus `get_page` for the two harness ones -- and an agent cannot
-have two tools with the same name, so it fails when you create it. If you want
-two of them anyway, wrap one in `PrefixTools` to rename its tools, as shown in
-[Multiple instances](#multiple-instances). There is one extra case: on
-Anthropic models the built-in search is also called `web_search`, so
-`WebSearch` clashes there even though the search runs on Anthropic's side. Pass
-`WebSearch(native=False)` to switch it to the DuckDuckGo tool, which is called
-`duckduckgo_search` and does not clash.
+You can combine core `WebSearch()` with `YouSearch()` to make You.com the
+fallback for models without native search. When native search is supported,
+Pydantic AI omits You.com's `web_search` to avoid sending two tools with the
+same name, while `get_page` remains available. When native search is
+unavailable, Pydantic AI uses You.com's `web_search` instead.
+
+`ExaSearch` and `YouSearch` still conflict with each other because both expose
+`web_search` and `get_page`. Wrap one in `PrefixTools` to rename its tools, as
+shown in [Multiple instances](#multiple-instances).
 
 ## Agent spec (YAML/JSON)
 

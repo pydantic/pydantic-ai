@@ -17,6 +17,7 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._output import truncate_head
+from pydantic_ai_harness._web_search import prefer_native_web_search
 
 try:
     from youdotcom import You, models
@@ -303,7 +304,7 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         self._boost_domains = list(boost_domains) if boost_domains else None
         self._freshness = freshness
         self._country = country
-        self.add_function(self.web_search, name='web_search')
+        self.add_function(self.web_search, name='web_search', prepare=prefer_native_web_search)
         self.add_function(self.get_page, name='get_page')
 
     def _extraction(self) -> models.Extraction:
