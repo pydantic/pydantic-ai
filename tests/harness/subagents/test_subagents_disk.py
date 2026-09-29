@@ -16,17 +16,12 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.subagents import (
-    MINIMUM_EFFORT_FLOOR,
-    AgentOverride,
-    SubAgent,
-    SubAgents,
-    clamp_effort,
-)
+from pydantic_ai_harness import HarnessDeprecationWarning, subagents
+from pydantic_ai_harness.subagents import AgentOverride, SubAgent, SubAgents
 from pydantic_ai_harness.subagents._disk import ParsedAgent, parse_agent_markdown
 
 
@@ -60,27 +55,21 @@ def _write_agent(folder: Path, filename: str, content: str) -> None:
 
 
 class TestClampEffort:
-    def test_none_becomes_floor(self) -> None:
-        assert clamp_effort(None) == MINIMUM_EFFORT_FLOOR
-
-    def test_false_becomes_floor(self) -> None:
-        assert clamp_effort(False) == MINIMUM_EFFORT_FLOOR
-
-    def test_true_unchanged(self) -> None:
-        assert clamp_effort(True) is True
-
-    def test_below_floor_raised(self) -> None:
-        assert clamp_effort('minimal') == 'low'
-
-    def test_at_floor_unchanged(self) -> None:
-        assert clamp_effort('low') == 'low'
-
-    def test_above_floor_unchanged(self) -> None:
-        assert clamp_effort('high') == 'high'
-
-    def test_custom_floor(self) -> None:
-        assert clamp_effort('low', floor='high') == 'high'
-        assert clamp_effort('xhigh', floor='high') == 'xhigh'
+    def test_deprecated_exports_still_apply_the_old_floor(self) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match='no longer imposes a minimum thinking effort') as record:
+            floor = subagents.MINIMUM_EFFORT_FLOOR
+            clamp = subagents.clamp_effort
+        assert len(record) == 2
+        assert clamp(None) == floor
+        assert clamp(False) == floor
+        assert clamp(True) is True
+        assert clamp('minimal') == 'low'
+        assert clamp('low') == 'low'
+        assert clamp('high') == 'high'
+        assert clamp('low', floor='high') == 'high'
+        assert clamp('xhigh', floor='high') == 'xhigh'
+        with pytest.raises(AttributeError, match="has no attribute 'missing'"):
+            subagents.__getattr__('missing')
 
 
 class TestParseAgentMarkdown:
@@ -238,12 +227,23 @@ class TestOverrides:
         )
         await _listing(cap, LocalWorkspaceBackend(tmp_path))
         assert _built(cap)['w'].model is model
+        assert _built(cap)['w'].model_settings == {'thinking': 'high'}
 
-    async def test_effort_floored_without_override(self, tmp_path: Path) -> None:
+    async def test_no_effort_override_leaves_thinking_unset(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'w.md', '---\nname: w\n---\nB')
         cap: SubAgents[object] = SubAgents(agent_folders=['.'])
         await _listing(cap, LocalWorkspaceBackend(tmp_path))
-        assert _built(cap)['w'].model_settings == {'thinking': MINIMUM_EFFORT_FLOOR}
+        assert _built(cap)['w'].model_settings is None
+
+    @pytest.mark.parametrize('effort', ['minimal', False])
+    async def test_effort_override_is_not_clamped(self, tmp_path: Path, effort: ThinkingLevel) -> None:
+        _write_agent(tmp_path, 'w.md', '---\nname: w\n---\nB')
+        cap: SubAgents[object] = SubAgents(
+            agent_folders=['.'],
+            agent_overrides={'w': AgentOverride(effort=effort)},
+        )
+        await _listing(cap, LocalWorkspaceBackend(tmp_path))
+        assert _built(cap)['w'].model_settings == {'thinking': effort}
 
 
 class TestToolResolver:
