@@ -200,6 +200,9 @@ async def test_wrapper_agent_realtime_signaling_delegates() -> None:
     realtime = WrapperAgent(Agent(instructions='Wrapped instructions.')).realtime(model)
     await realtime.answer_webrtc_offer(SAMPLE_SDP_OFFER)
     assert model.calls[0][0] == 'Wrapped instructions.'
+    # Hanging up goes through the wrapped agent's signaling guard too, and reaches the model.
+    with pytest.raises(UserError, match='cannot end a call from the server'):
+        await realtime.hang_up(WebRTCSession(provider_name='test', session_id='rtc_test'))
 
 
 def _mock_provider(handler: Any, *, api_key: str = 'sk-test') -> Any:
