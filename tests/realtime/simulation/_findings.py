@@ -277,9 +277,11 @@ def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool
     )
     return any(
         operation.name == 'send_audio'
-        and since < operation.issued < response.seq_end
+        and operation.issued > since
         and (
-            response.content_read is None or operation.issued < response.content_read or response.status == 'cancelled'
+            response.content_read is None
+            or operation.issued < response.content_read
+            or (response.status == 'cancelled' and operation.issued < response.seq_end)
         )
         for operation in sim.operations
     )

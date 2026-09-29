@@ -1,12 +1,13 @@
 import datetime
 import os
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
+import httpx2
 import pytest
 from cassetter import Cassette
 from pydantic import BaseModel, ValidationError
@@ -47,6 +48,7 @@ from ..conftest import IsDatetime, IsStr, RequestCapture, message, try_import
 from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
+    from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI
     from openai.types.chat import ChatCompletion, ChatCompletionChunk
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -2148,6 +2150,79 @@ async def test_openrouter_null_choices_mid_stream_reports_first_chunk_model(allo
 
     assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
     assert exc_info.value.model_name == snapshot('google/gemini-2.5-flash')
+
+
+_MID_STREAM_TEXT_CHUNK = (
+    b'data: {"id":"gen-1","object":"chat.completion.chunk","created":0,"model":"openai/gpt-4.1-mini",'
+    b'"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
+)
+
+
+class _FailingSSEStream(httpx2.AsyncByteStream):
+    """An SSE body that yields `chunks` and then fails the way a dropped connection does."""
+
+    def __init__(self, chunks: list[bytes], exc: Exception):
+        self._chunks = chunks
+        self._exc = exc
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+        raise self._exc
+
+
+async def _run_openrouter_stream(stream: httpx2.AsyncByteStream) -> ModelAPIError:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=stream)
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+    return exc_info.value
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+@pytest.mark.parametrize(
+    ('exc', 'cause'),
+    [
+        pytest.param(httpx2.ReadTimeout('read timed out'), APITimeoutError, id='read-timeout'),
+        pytest.param(httpx2.RemoteProtocolError('peer closed connection'), APIConnectionError, id='connection-reset'),
+    ],
+)
+async def test_openrouter_stream_transport_error_raises_model_api_error(
+    allow_model_requests: None, exc: Exception, cause: type[APIConnectionError]
+) -> None:
+    """A transport failure mid-stream surfaces as `ModelAPIError`, not as a `ValidationError` of its missing error body.
+
+    A mock transport stands in for a cassette because a connection can't be dropped on demand.
+    """
+    error = await _run_openrouter_stream(_FailingSSEStream([_MID_STREAM_TEXT_CHUNK], exc))
+
+    assert type(error) is ModelAPIError
+    assert type(error.__cause__) is cause
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_openrouter_stream_error_without_integer_code_raises_model_api_error(allow_model_requests: None) -> None:
+    """An in-stream error object whose `code` isn't an HTTP status surfaces as `ModelAPIError` with no status.
+
+    OpenRouter documents an integer `code`, so no recording carries this shape; a mock transport serves it to pin that
+    an envelope that doesn't validate is mapped rather than escaping as a `ValidationError`.
+    """
+    error_chunk = b'data: {"error":{"code":"server_error","message":"upstream failed"}}\n\n'
+    error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
+
+    assert type(error) is ModelAPIError
+    assert error.message == 'upstream failed'
+    assert isinstance(error.__cause__, APIError)
+    assert error.__cause__.body == snapshot({'code': 'server_error', 'message': 'upstream failed'})
 
 
 async def test_openrouter_streaming_malformed_chunk_stays_fatal(allow_model_requests: None) -> None:
