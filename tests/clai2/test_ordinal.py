@@ -26,7 +26,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ordinal import Ordinal
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2._app import RETIRED_PLUGINS, create_shell
+from pydantic_clai2._app import create_shell
 from pydantic_clai2.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
@@ -47,7 +47,11 @@ from pydantic_clai2.ordinal import (
     OrdinalSource,
     activate,
 )
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
+from pydantic_clai2.plugin_loader import (
+    _RETIRED_BUILTINS,  # pyright: ignore[reportPrivateUsage]
+    PluginError,
+    PluginLoader,
+)
 from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.project_settings import ProjectSettings
@@ -168,9 +172,7 @@ def test_declared_as_a_disabled_built_in_with_no_settings() -> None:
     assert BUILTIN.factory == 'pydantic_clai2.ordinal'
     assert not BUILTIN.enabled
     assert BUILTIN.settings == {}
-    assert [plugin.factory for plugin in RETIRED_PLUGINS if plugin.id == 'ordinal'] == [
-        'pydantic_ai_harness.ordinal:Ordinal'
-    ]
+    assert _RETIRED_BUILTINS['ordinal'].factory == 'pydantic_ai_harness.ordinal:Ordinal'
 
 
 def test_url_matches_the_harness_endpoint() -> None:

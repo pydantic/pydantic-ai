@@ -389,7 +389,7 @@ class DecisionModel(Model[InterfaceClient]):
     - The field's description is the question, the output type's docstring its goal, and the agent's
       `instructions` framing shared by every question; a nested field's question also carries what it sits in.
       The latest user prompt is the text to judge, the message history before it goes along beside it, and once a
-      tool has returned, what was done since goes along apart from both.
+      tool has returned or a retry was sent, what was done since goes along apart from both.
     - With tools attached, or a union of output types, one more pick-one asks which route the text calls for, and
       the likeliest is taken. The fields of every route the model can fill are asked beside it, each on the premise
       of its route, and only the taken route's answers are read; past a size cutoff, a picked route with fields is
@@ -425,13 +425,19 @@ class DecisionModel(Model[InterfaceClient]):
 
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile, with text output off whatever the provider or `profile=` says.
+        """The model profile: text output off and inline system prompts on, whatever the provider or `profile=` says.
 
         A decision model answers questions and has no way to write text, so this is a fact about the class
         rather than a default to override: with text output left on, an `output_type` like `[Ticket, str]`
         would pass the shared request preparation and have its `str` branch silently never taken.
+
+        It also judges a system prompt rather than asking it, so a system prompt partway through the conversation
+        stays a `system` entry: without inline system prompts, the shared request preparation would fold it into
+        the user text, where it would be judged as the request.
         """
-        return merge_profile(super().profile, ModelProfile(supports_text_output=False))
+        return merge_profile(
+            super().profile, ModelProfile(supports_text_output=False, supports_inline_system_prompts=True)
+        )
 
     @abstractmethod
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
@@ -1926,7 +1932,7 @@ def _described(tool: ToolDefinition) -> str | None:
 
 
 def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tuple[list[ToolDefinition], bool]:
-    """The tools still on offer, and whether any tool has returned this turn.
+    """The tools still on offer, and whether the agent loop has acted this turn: a tool returned or a retry was sent.
 
     A tool whose result is already in the turn is not offered again. A decision model judges the text in front of it
     and has no notion of having made a call: with a call and its result in view, the text still calls for the tool, so
@@ -1937,6 +1943,7 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
     not withhold the tool, but a judged history that ends in another agent's call to a tool of the same name does.
     """
     returned: set[str] = set()
+    retried = False
     for message in messages:
         if not isinstance(message, ModelRequest):
             continue
@@ -1945,9 +1952,12 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
                 # A new prompt starts a turn, and a result that arrived before it in the same request is the
                 # previous turn's.
                 returned.clear()
+                retried = False
             elif isinstance(part, ToolReturnPart):
                 returned.add(part.tool_name)
-    return [tool for tool in tools if tool.name not in returned], bool(returned)
+            elif isinstance(part, RetryPromptPart):
+                retried = True
+    return [tool for tool in tools if tool.name not in returned], bool(returned) or retried
 
 
 _ROUTE_QUESTION = 'Which of these does this call for?'
@@ -2106,11 +2116,11 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     The latest user text on its own is the whole state, sent as the plain text it is. With a conversation behind
     it there are two parts to keep apart, so they get named: the text under judgement and the `history` before it.
 
-    With `turn`, a tool has returned since the latest user prompt, and the state splits at that prompt into three:
-    the `history` before it, the prompt itself as `text`, and what has been done since under `done` — the calls, their
-    results, and anything else in the turn — so the request stays the text being judged while the steps taken for it
-    are told apart from it. Every entry lands in exactly one of the three, however the messages arrived: a run's own,
-    or a `message_history` passed in that ends partway through a turn.
+    With `turn`, a tool has returned or a retry was sent since the latest user prompt, and the state splits at that
+    prompt into three: the `history` before it, the prompt itself as `text`, and what has been done since under `done`
+    — the calls, their results, the retries, and anything else in the turn — so the request stays the text being
+    judged while the steps taken for it are told apart from it. Every entry lands in exactly one of the three,
+    however the messages arrived: a run's own, or a `message_history` passed in that ends partway through a turn.
     """
     if turn and any(isinstance(part, UserPromptPart) for message in messages for part in message.parts):
         return _map_turn(messages)

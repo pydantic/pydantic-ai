@@ -34,7 +34,15 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.ordinal import Ordinal
 
 from ._rendering import markdown_style
-from .api_keys import KeyReference, add_key, load_keys, prompt_api_key, resolve_key, save_key, save_key_connection
+from .api_keys import (
+    KeyExistsError,
+    KeyReference,
+    load_keys,
+    prompt_api_key,
+    resolve_key,
+    save_key,
+    save_key_connection,
+)
 from .commands import Command
 from .credential_store import delete_credentials, load_codex_credentials
 from .field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
@@ -358,7 +366,9 @@ async def choose_key() -> KeyReference | None:
     if not value:
         return None
     # Checked and saved under one lock, so a key another process just saved is never replaced unasked.
-    if not await to_thread.run_sync(partial(add_key, name=KEY_NAME, value=value)):
+    try:
+        await to_thread.run_sync(partial(save_key, name=KEY_NAME, value=value, replace=False))
+    except KeyExistsError:
         if not await run_worker(confirm_replace):
             return None
         await to_thread.run_sync(partial(save_key, name=KEY_NAME, value=value))
