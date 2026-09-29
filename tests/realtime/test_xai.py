@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeSessionErrorEvent,
     SpeechPart,
@@ -1707,3 +1708,241 @@ async def test_held_spoken_turn_is_recorded_after_what_was_sent_first(
     ]
     assert isinstance(messages[1], ModelRequest)
     assert isinstance(messages[2], ModelResponse)
+
+
+def _turns(messages: Sequence[ModelMessage]) -> list[str]:
+    """Each message as who said what, to read history order at a glance."""
+    turns: list[str] = []
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, UserPromptPart):
+                turns.append(f'user: {part.content}')
+            elif isinstance(part, SpeechPart):
+                turns.append(f'{part.speaker} speech: {part.transcript}')
+    return turns
+
+
+def _user_transcript(item_id: str, transcript: str) -> str:
+    return json.dumps(
+        {
+            'type': 'conversation.item.input_audio_transcription.completed',
+            'item_id': item_id,
+            'content_index': 0,
+            'transcript': transcript,
+        }
+    )
+
+
+def _reply(response_id: str, transcript: str) -> list[str]:
+    return [
+        _response_frame('response.created', response_id),
+        json.dumps(
+            {
+                'type': 'response.output_audio_transcript.done',
+                'response_id': response_id,
+                'item_id': f'item-{response_id}',
+                'output_index': 0,
+                'content_index': 0,
+                'transcript': transcript,
+            }
+        ),
+        _response_frame('response.done', response_id),
+    ]
+
+
+async def test_late_transcript_keeps_an_earlier_turn_in_its_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A turn whose commit went out earlier keeps its place when its transcript arrives after the next commit is held."""
+    ws = _PhasedWebSocket(
+        [_created(), _updated()],
+        [],
+        [
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}),
+            json.dumps(
+                {
+                    'type': 'conversation.item.input_audio_transcription.delta',
+                    'item_id': 'item-u1',
+                    'content_index': 0,
+                    'delta': 'First',
+                }
+            ),
+            *_reply('r1', 'Answer one.'),
+        ],
+        [
+            _user_transcript('item-u1', 'First turn.'),
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u2'}),
+            _user_transcript('item-u2', 'Second turn.'),
+            *_reply('r2', 'Answer two.'),
+        ],
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+
+    async with Agent().realtime(_model(rt_xai.XaiRealtimeModelSettings(turn_detection=False))).session() as session:
+        await session.send_audio(_AUDIO.data)
+        await session.commit_audio()
+        await session.create_response()
+        ws.advance()
+        await session.wait_for_reply()
+        await session.send_audio(_AUDIO.data)
+        await session.commit_audio()
+        await session.send('And this.')
+        ws.advance()
+        await session.wait_for_reply()
+
+    assert _turns(session.all_messages()) == [
+        'user speech: First turn.',
+        'assistant speech: Answer one.',
+        'user: And this.',
+        'user speech: Second turn.',
+        'assistant speech: Answer two.',
+    ]
+
+
+@pytest.mark.parametrize(
+    ('transcription', 'commits', 'text'),
+    [
+        pytest.param(True, 1, True, id='transcribed'),
+        pytest.param(False, 1, True, id='untranscribed'),
+        pytest.param(False, 2, True, id='untranscribed-twice'),
+        pytest.param(True, 1, False, id='transcribed-no-text'),
+    ],
+)
+async def test_commit_held_behind_a_reply_goes_after_what_was_sent_meanwhile(
+    monkeypatch: pytest.MonkeyPatch, transcription: bool, commits: int, text: bool
+) -> None:
+    """A commit held until the reply in flight ends reaches xAI after text sent during that reply, and so does history."""
+    ws = _PhasedWebSocket(
+        [_created(), _updated()],
+        [_response_frame('response.created', 'r0'), _transcript_delta('r0')],
+        [
+            json.dumps(
+                {
+                    'type': 'response.output_audio_transcript.done',
+                    'response_id': 'r0',
+                    'item_id': 'item-a1',
+                    'output_index': 0,
+                    'content_index': 0,
+                    'transcript': 'Four.',
+                }
+            ),
+            _response_frame('response.done', 'r0'),
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}),
+            *([_user_transcript('item-u1', 'Spoken.')] if transcription else []),
+            *_reply('r1', 'Answer.'),
+        ],
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+    settings = rt_xai.XaiRealtimeModelSettings(turn_detection=False)
+    if not transcription:
+        settings['input_transcription_model'] = None
+
+    async with Agent().realtime(_model(settings)).session() as session:
+        await session.send('What is two plus two?')
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartDeltaEvent):
+                break
+        for _ in range(commits):
+            await session.send_audio(_AUDIO.data)
+            await session.commit_audio()
+        if text:
+            await session.send('Then this.')
+            await session.send('Some context.', respond=False)
+        else:
+            await session.create_response()
+        ws.advance()
+        await session.wait_for_reply()
+
+    sent = ['conversation.item.create'] * 2 if text else []
+    assert _sent_types(ws)[-(2 + commits + len(sent)) :] == [
+        *sent,
+        *['input_audio_buffer.append'] * commits,
+        'input_audio_buffer.commit',
+        'response.create',
+    ]
+    spoken = 'user speech: Spoken.' if transcription else 'user speech: None'
+    assert _turns(session.all_messages()) == [
+        'user: What is two plus two?',
+        'assistant speech: Four.',
+        *(['user: Then this.', 'user: Some context.'] if text else []),
+        *[spoken] * commits,
+        'assistant speech: Answer.',
+    ]
+
+
+async def test_untranscribed_turn_with_a_held_commit_is_recorded_on_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A spoken turn whose commit never went out still ends up in history when the session closes."""
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([_PhasedWebSocket([_created(), _updated()])]))
+    settings = rt_xai.XaiRealtimeModelSettings(turn_detection=False, input_transcription_model=None)
+
+    async with Agent().realtime(_model(settings)).session() as session:
+        await session.send_audio(_AUDIO.data)
+        await session.commit_audio()
+        assert session.all_messages() == []
+
+    assert _turns(session.all_messages()) == ['user speech: None']
+
+
+async def test_request_replayed_after_a_reconnect_sends_no_clear() -> None:
+    """A request held behind the commit's reply goes out alone after a reconnect.
+
+    The resumed conversation may still owe that reply, which a clear would cancel.
+    """
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = _manual(
+        _DropAfterFrames([_response_frame('response.created')]),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    await conn.send(CreateResponse())
+    events = conn.__aiter__()
+    await events.__anext__()
+    await conn.send(CreateResponse())
+    _ = [event async for event in events]
+
+    assert _sent_types(replacement) == ['response.create']
+
+
+async def test_speech_reported_after_the_commit_went_out_stays_with_that_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """xAI can report speech for audio only once its commit has gone out, which mustn't move the turn to the next commit."""
+
+    def turn(item_id: str, transcript: str, response_id: str, answer: str) -> list[str]:
+        return [
+            json.dumps({'type': 'input_audio_buffer.speech_started', 'item_id': item_id, 'audio_start_ms': 0}),
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': item_id}),
+            _user_transcript(item_id, transcript),
+            *_reply(response_id, answer),
+        ]
+
+    ws = _PhasedWebSocket(
+        [_created(), _updated()],
+        [],
+        turn('item-u1', 'First turn.', 'r1', 'Answer one.'),
+        turn('item-u2', 'Second turn.', 'r2', 'Answer two.'),
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+
+    async with Agent().realtime(_model(rt_xai.XaiRealtimeModelSettings(turn_detection=False))).session() as session:
+        for _ in range(2):
+            await session.send_audio(_AUDIO.data)
+            await session.commit_audio()
+            await session.create_response()
+            ws.advance()
+            await session.wait_for_reply()
+
+    assert _turns(session.all_messages()) == [
+        'user speech: First turn.',
+        'assistant speech: Answer one.',
+        'user speech: Second turn.',
+        'assistant speech: Answer two.',
+    ]

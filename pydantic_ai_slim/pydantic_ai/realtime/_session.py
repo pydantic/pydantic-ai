@@ -217,7 +217,23 @@ class _InFlightResponse:
 
 
 _IN_FLIGHT_RESPONSE = _InFlightResponse()
-_UserTurnAnchor = ModelMessage | _InFlightResponse | None
+
+
+@dataclass(eq=False)
+class _HeldCommit:
+    """Where a user turn belongs on a connection that holds its commit back: wherever the commit goes out.
+
+    Input sent while the commit is held reaches the provider first, so the turn's place is only known
+    once the connection sends it (see `RealtimeConnection.defers_audio_commit`). Turns recorded before
+    then wait here.
+    """
+
+    anchor: ModelMessage | _InFlightResponse | None = None
+    sent: bool = False
+    requests: list[ModelRequest] = field(default_factory=list[ModelRequest])
+
+
+_UserTurnAnchor = ModelMessage | _InFlightResponse | _HeldCommit | None
 
 
 @dataclass
@@ -871,11 +887,6 @@ class RealtimeSession:
         # In-flight user request being assembled from input-transcript events.
         self._user_turn_active = False
         self._anonymous_user_turns_ended = 0
-        # A spoken turn committed on a connection that `defers_audio_commit`, and the untranscribed turns
-        # recorded for it, placed in history once the next request for a response goes out (see
-        # `_place_deferred_audio_commit`).
-        self._audio_commit_deferred = False
-        self._deferred_audio_requests: list[ModelRequest] = []
         # An id-less final can precede its matching speech-end frame, so remember it until audio or a
         # transcription event begins the next turn instead of letting that trailing frame open a blank one.
         self._anonymous_user_turn_finalized = False
@@ -895,6 +906,10 @@ class RealtimeSession:
         self._pending_anonymous_user_turn_anchors: deque[_UserTurnAnchor] = deque()
         self._pending_user_turn_anchors: dict[str, tuple[_UserTurnAnchor]] = {}
         self._user_turn_anchors: dict[str | None, _UserTurnAnchor] = {}
+        # The commit a connection that `defers_audio_commit` holds, which user turns starting now belong to,
+        # and sent ones placed after a response that isn't recorded yet.
+        self._held_commit = _HeldCommit()
+        self._held_commits_in_flight: list[_HeldCommit] = []
         # User turns held in `_pending_sent_requests` until the response they interrupted is recorded, and
         # the watchdog that records them anyway if it never is (see `_BARGE_IN_TURN_HOLD_SECONDS`).
         self._held_user_turns: list[ModelRequest] = []
@@ -1013,6 +1028,7 @@ class RealtimeSession:
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
             # support because that is the mechanism, and a no-op where the provider resumes natively.
             self._connection.set_message_history(self.all_messages)
+        self._connection.set_audio_commit_listener(self._place_held_commit)
 
         self._session_instrumentation.start_session_span()
 
@@ -1863,35 +1879,8 @@ class RealtimeSession:
             # place in history; the committed turn belongs after that answer.
             self._open_user_turn_anchor()
         self._user_turn_active = True
-        events = self._finalize_untranscribed_user()
-        if self._connection.defers_audio_commit:
-            self._audio_commit_deferred = True
-            if events:
-                # The untranscribed turn just recorded waits for its place with the commit.
-                request = self._history.pop()
-                assert isinstance(request, ModelRequest)
-                self._deferred_audio_requests.append(request)
-        for event in events:
+        for event in self._finalize_untranscribed_user():
             self._queue_put(event)
-
-    def _place_deferred_audio_commit(self) -> None:
-        """Place a spoken turn whose commit a connection held until now, after everything sent before it.
-
-        That's where the provider has the audio, so the turn's place in history, reserved when its audio
-        started, moves here, and an untranscribed turn is recorded now.
-        """
-        self._audio_commit_deferred = False
-        anchor = self._user_turn_anchor_here()
-        anonymous = self._pending_anonymous_user_turn_anchors
-        for index in range(len(anonymous)):
-            anonymous[index] = anchor
-        for item_id in self._pending_user_turn_anchors:
-            self._pending_user_turn_anchors[item_id] = (anchor,)
-        for key in self._user_turn_anchors:
-            self._user_turn_anchors[key] = anchor
-        for request in self._deferred_audio_requests:
-            self._record_sent_request(request)
-        self._deferred_audio_requests.clear()
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
@@ -2154,11 +2143,6 @@ class RealtimeSession:
                     if position == 0 and request is not None:
                         self._input_requests[input_index] = request
                     await self._connection.send(content)
-                if self._audio_commit_deferred and any(
-                    isinstance(content, (str, CreateResponse, ToolResult)) for content in contents
-                ):
-                    # This asks for a response, which is when the held commit goes out.
-                    self._place_deferred_audio_commit()
             except self._connection.transport_errors as e:
                 # A send that fails because the link is gone is the same failure the receive side
                 # reports; surface it as the same typed error rather than leaking a `websockets` or
@@ -2488,8 +2472,26 @@ class RealtimeSession:
             self._held_user_turn_watchdog = None
         self._held_user_turns = []
 
+    def _place_held_commit(self) -> None:
+        """Place the user turns of the commit the connection is sending now, after everything sent before it.
+
+        That's where the provider has them. Turns that started after this commit belong to the next one.
+        """
+        held, self._held_commit = self._held_commit, _HeldCommit()
+        # Requests sent while a response is being produced go after it, and ahead of the commit going out now.
+        held.anchor = self._pending_sent_requests[-1] if self._pending_sent_requests else self._position_here()
+        held.sent = True
+        if isinstance(held.anchor, _InFlightResponse):
+            self._held_commits_in_flight.append(held)
+        for request in held.requests:
+            self._insert_user_request(held.anchor, request)
+        held.requests.clear()
+
     def _resolve_in_flight_user_turn_anchors(self, response: ModelResponse) -> None:
         """Anchor the user turns that began while `response` was being produced to it, now that it's recorded."""
+        for held in self._held_commits_in_flight:
+            held.anchor = response
+        self._held_commits_in_flight.clear()
         anchors = self._pending_anonymous_user_turn_anchors
         for index, anchor in enumerate(anchors):
             if isinstance(anchor, _InFlightResponse):
@@ -2857,17 +2859,32 @@ class RealtimeSession:
                 # An anonymous turn is still open — local audio reserved its place already — so a
                 # speech start now is the provider confirming that turn, not a new one: re-anchor it
                 # rather than reserving a second place the next turn would then inherit.
-                anchors[-1] = anchor
+                anchors[-1] = self._fresher_anchor(anchors[-1], anchor)
             else:
                 anchors.append(anchor)
         else:
             if len(anchors) > self._anonymous_user_turns_ended:
                 # The provider named the turn local audio opened: its speech start is the fresher position.
-                anchors.pop()
+                anchor = self._fresher_anchor(anchors.pop(), anchor)
             self._pending_user_turn_anchors[item_id] = (anchor,)
 
+    @staticmethod
+    def _fresher_anchor(reserved: _UserTurnAnchor, here: _UserTurnAnchor) -> _UserTurnAnchor:
+        """The place of a turn the provider confirms: where it is now, unless it belongs to a held commit.
+
+        A held commit's turns go wherever the commit does, which a speech start the provider reports after
+        the commit went out must not move to the next one.
+        """
+        return reserved if isinstance(reserved, _HeldCommit) else here
+
     def _user_turn_anchor_here(self) -> _UserTurnAnchor:
-        """Where a user turn starting now belongs: after the response being produced, or else the last message."""
+        """Where a user turn starting now belongs: with the held commit, after the response being produced, or else the last message."""
+        if self._connection.defers_audio_commit:
+            return self._held_commit
+        return self._position_here()
+
+    def _position_here(self) -> ModelMessage | _InFlightResponse | None:
+        """After the response being produced, or else the last message."""
         if self._response_output_in_flight:
             return _IN_FLIGHT_RESPONSE
         return self._history[-1] if self._history else None
@@ -2887,13 +2904,31 @@ class RealtimeSession:
         else:
             # No anchor when the first thing we ever hear about the turn is its transcript (text-only
             # sessions seeded with audio, a provider that reports nothing before it, or audio sent while the
-            # model was answering, which reserves no place); the turn starts here instead.
-            anchor = self._user_turn_anchor_here()
+            # model was answering, which reserves no place); the turn starts here instead. On a connection
+            # that holds commits, a transcript with no place reserved is for audio already committed.
+            anchor = self._position_here()
         self._user_turn_anchors[item_id] = anchor
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
         """Record a finalized user turn at the position it held when it started."""
-        anchor = self._user_turn_anchors.pop(item_id)
+        self._insert_user_request(self._user_turn_anchors.pop(item_id), request)
+
+    def _insert_user_request(self, anchor: _UserTurnAnchor, request: ModelRequest) -> None:
+        """Record a user turn after `anchor`."""
+        if isinstance(anchor, _HeldCommit):
+            if not anchor.sent:
+                anchor.requests.append(request)
+                return
+            anchor = anchor.anchor
+        pending = self._pending_sent_requests
+        for index, message in enumerate(pending):
+            if message is anchor:
+                # Anchored to a request still waiting behind a response: the turn waits after it.
+                index += 1
+                while index < len(pending) and _is_user_speech_request(pending[index]):
+                    index += 1
+                pending.insert(index, request)
+                return
         if isinstance(anchor, _InFlightResponse):
             # The response this turn began during is still being produced: the turn follows it, in the
             # same place as a request sent meanwhile, for as long as `_BARGE_IN_TURN_HOLD_SECONDS` allows.
@@ -3012,7 +3047,11 @@ class RealtimeSession:
         part = SpeechPart(speaker='user', transcript=None, audio=audio)
         self._input_audio.clear()
         self._user_turn_active = False
-        self._history.append(self._new_request([part]))
+        request = self._new_request([part])
+        if self._connection.defers_audio_commit:
+            self._insert_user_request(self._held_commit, request)
+        else:
+            self._history.append(request)
         # No deltas to stream (there's no transcript), so bracket the turn with just start/end so a
         # streaming consumer still sees the user turn boundary.
         index = self._take_part_index()
@@ -3087,6 +3126,9 @@ class RealtimeSession:
                 events.extend(self._finalize_user(item_id=item_id))
         self._flush_pending_users()
         events.extend(self._finalize_untranscribed_user())
+        if self._held_commit.requests:
+            # Turns whose commit never went out are recorded as they stand.
+            self._place_held_commit()
         self._input_audio.clear()
         # The audio sent so far was just settled as a turn (and a reconnected provider has no buffer holding
         # it), so a `commit_audio()` from here on commits nothing until more audio is sent.

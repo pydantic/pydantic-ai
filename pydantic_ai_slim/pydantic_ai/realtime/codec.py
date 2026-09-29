@@ -580,15 +580,24 @@ class RealtimeConnection(ABC):
 
     @property
     def defers_audio_commit(self) -> bool:
-        """Whether committed audio joins the conversation only once a response is asked for.
+        """Whether committed audio joins the conversation only when the connection sends the commit later.
 
-        xAI Grok Voice answers audio as soon as it is committed, so with turn detection off its
-        connection holds the commit until the next request for a response, and anything sent in
-        between lands first. [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] then records the
-        spoken turn where the provider places it: after what was sent before that request. Defaults to
-        `False`.
+        A connection may hold a [`CommitAudio`][pydantic_ai.realtime.codec.CommitAudio] back, for instance
+        until a response is asked for, when its provider answers a commit by itself. Input sent in the
+        meantime then reaches the provider first. The
+        [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] records the spoken turn where the
+        provider has it, once the connection reports sending the commit to the listener passed to
+        [`set_audio_commit_listener`][pydantic_ai.realtime.codec.RealtimeConnection.set_audio_commit_listener].
+        Defaults to `False`.
         """
         return False
+
+    def set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
+        """Register what to call as a held commit goes out, on a connection that `defers_audio_commit`.
+
+        The listener is called just before the commit is sent, and before anything the provider sends in
+        answer. A no-op by default.
+        """
 
 
 __all__ = (
