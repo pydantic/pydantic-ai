@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "239"
+      - "227"
       content-type:
       - application/json
       host:
@@ -19,18 +19,17 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 4096
+        max_tokens: 20480
         messages:
         - role: user
           content:
           - text: What is 17 * 23? Answer with just the number.
             type: text
-        model: claude-sonnet-4-6
-        output_config:
-          effort: high
+        model: claude-sonnet-4-5
         stream: false
         thinking:
-          type: adaptive
+          type: enabled
+          budget_tokens: 16384
   response:
     status: 200
     headers:
@@ -43,7 +42,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1f22eebabf1035a5117393fbbf53b0ce-eb4db56f993b29f9-01
+      - 00-2158b1c3c37baca2acbd289c543794f0-d7d5fd7cefcb20ed-01
       transfer-encoding:
       - chunked
       vary:
@@ -51,15 +50,21 @@ interactions:
     body:
       type: json
       content:
-        model: claude-sonnet-4-6
-        id: msg_011CfWdhFhLHV7CAeshkyP4s
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CfWffwtUHwhmZdc9D6NaK
         type: message
         role: assistant
         content:
         - type: thinking
-          thinking: 17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391
+          thinking: |-
+            17 * 23 = ?
+
+            Let me calculate this step by step:
+            17 * 23 = 17 * 20 + 17 * 3
+            = 340 + 51
+            = 391
           signature: >-
-            EqECCpIBCBIYAipAwT5MSk7YPcegqcWEpdv3oNhFHUYOuc3oJZz4QeU7Pd9DJiuuDiaxWxL1vyQYwmZlSpwq4IBQO5kjwlyfP6mYzTIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBz9br1QYSDKGj9nijBrDeKsWqLRoMNXwioIQwn9EFT8LlIjAsB+vZ35V2SjerdaasYKw47CeU2wJyhEOYywFMw32F38l4SFIqJlGduvQg4cTeawkqPBd0aUs5Rl93qfvPZ/L3qQixtlSYEp6mHy3N8IttUYhD2aSMlDX5xroZ30OmmaiX8W520ACD75oradradRgB
+            EtoCCpsBCBIYAipAKyOmBAWUzNn85CboHQZRLnL7lFQtlFc2FBHxfTj4gpu53ddTCtRtaYPr7UExkR8hScrfgZAbwPE6oPL8+DFMADIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB4+Lr1QYSDFd4oGfPVbTdkAH4bhoMkvbnPviu1pq2Y3+6IjDd+4bApk3ezoJSVZYkcFO4SQBDh3noq3Q2BHoDV62cc4vu37yr/9x9vba4+b6vrSAqbI89bqcWZMEKzoOpWh1JNlwqeSWFq/afIZWVYh6MHBCc057dSxW+CpLgxEOCsLNVe+7zf85SOht1c19ZpqDJYWzc4VCsUphAKNSjDld1gNl2H+Htht0hC4RTTPAMo5iwBU0c22DoHkdcJ8NfZhgB
         - type: text
           text: "391"
         container: null
@@ -67,16 +72,16 @@ interactions:
         stop_sequence: null
         stop_details: null
         usage:
-          input_tokens: 22
+          input_tokens: 51
           cache_creation_input_tokens: 0
           cache_read_input_tokens: 0
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
-          output_tokens: 52
+          output_tokens: 63
           output_tokens_details:
-            thinking_tokens: 46
+            thinking_tokens: 57
           service_tier: standard
-          inference_geo: global
+          inference_geo: not_available
         diagnostics: null
-  recorded_at: 2026-09-28T22:33:52.040117+00:00
+  recorded_at: 2026-09-28T22:59:47.933451+00:00

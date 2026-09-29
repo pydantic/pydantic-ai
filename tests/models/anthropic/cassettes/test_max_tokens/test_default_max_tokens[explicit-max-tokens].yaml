@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "174"
+      - "226"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 4096
+        max_tokens: 15000
         messages:
         - role: user
           content:
@@ -27,6 +27,9 @@ interactions:
             type: text
         model: claude-sonnet-4-5
         stream: false
+        thinking:
+          type: enabled
+          budget_tokens: 4096
   response:
     status: 200
     headers:
@@ -39,7 +42,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-7f0fd909665ff98bb05c8581d3878fec-bb30ef75e86fe36f-01
+      - 00-a818944dbd6f3ec7dedf188d6d529cf7-7a488acd8fddc899-01
       transfer-encoding:
       - chunked
       vary:
@@ -48,10 +51,20 @@ interactions:
       type: json
       content:
         model: claude-sonnet-4-5-20250929
-        id: msg_011CfWdgvhq8tGxbfYM4MTQq
+        id: msg_011CfWfgBWmre2g6qszSDpvP
         type: message
         role: assistant
         content:
+        - type: thinking
+          thinking: |-
+            17 * 23 = ?
+
+            Let me calculate this step by step:
+            17 * 23 = 17 * 20 + 17 * 3
+            = 340 + 51
+            = 391
+          signature: >-
+            EtoCCpsBCBIYAipAKyOmBAWUzNn85CboHQZRLnL7lFQtlFc2FBHxfTj4gpu53ddTCtRtaYPr7UExkR8hScrfgZAbwPE6oPL8+DFMADIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB5+Lr1QYSDHf7kecc5VoygyqyfBoMRwKTYtRbyp9xmyecIjBp1a9buP6sMSJmKBVO0eZZ045lAZX10kAbq6LVV5xPbL72BZKeG1hvvmvGVGO+62YqbB5DG9dO/bq87FsAM9L3eYIPd88OdcFtyC2qQ6EbdkLoydbDqCQ0xdakL4gmz0h2ZGGwWDFZ/PPv1/Q8vATFECO+yLBA+sTExB9Qihb+IpWI3b+uQmyhr9Mh7KkLi4d8EbyiUJ1z1+qf0mLMghgB
         - type: text
           text: "391"
         container: null
@@ -59,14 +72,16 @@ interactions:
         stop_sequence: null
         stop_details: null
         usage:
-          input_tokens: 22
+          input_tokens: 51
           cache_creation_input_tokens: 0
           cache_read_input_tokens: 0
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
-          output_tokens: 5
+          output_tokens: 63
+          output_tokens_details:
+            thinking_tokens: 57
           service_tier: standard
           inference_geo: not_available
         diagnostics: null
-  recorded_at: 2026-09-28T22:33:47.211530+00:00
+  recorded_at: 2026-09-28T22:59:51.208983+00:00

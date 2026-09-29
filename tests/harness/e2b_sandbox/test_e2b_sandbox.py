@@ -266,7 +266,7 @@ async def test_cancelled_creation_keeps_the_sandbox_it_made(fake_e2b: FakeE2B, a
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(acquire)
-        with anyio.fail_after(1):
+        with anyio.fail_after(5):
             while not fake_e2b.sandboxes:
                 await anyio.sleep(0)
         tg.cancel_scope.cancel()

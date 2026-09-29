@@ -199,6 +199,26 @@ async def test_declared_capability_class_and_activate_function(tmp_path: Path, m
     assert len(harness.loader.capabilities()) == 1
 
 
+async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    package = tmp_path / 'site' / 'clai_broken'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text('')
+    (package / 'plugin.py').write_text('import clai_missing_dependency\n')
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    # Saved by a CLAI version that shipped a `slack` built-in; this one does not.
+    harness.store.save_plugin(PluginSettings(id='slack', factory='pydantic_clai2.slack'))
+    harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
+    harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
+    await harness.loader.load_all()
+    states = {entry.name: entry.state for entry in harness.loader.entries()}
+    assert states['slack'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.slack'"
+    assert states['gone'] == "enabled, failed: ModuleNotFoundError: No module named 'clai_gone'"
+    assert harness.text == ("Plugin 'broken': ModuleNotFoundError: No module named 'clai_missing_dependency'\n")
+    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.slack'"):
+        await harness.loader.command(['enable', 'slack'])
+
+
 async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('clash', command='help')
@@ -223,6 +243,30 @@ async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
     assert harness.loader.capabilities() == []
     with pytest.raises(PluginError, match='duplicate command: help'):
         await harness.loader.load('clash')
+
+
+async def test_saved_settings_persist_and_a_failed_start_after_saving_can_load_again(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'tuned.py').write_text(
+        'from pydantic import BaseModel\n'
+        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'class Tuned(BaseModel):\n'
+        '    level: int = 1\n'
+        'def activate(host: PluginHost) -> None:\n'
+        "    @host.on('session_start')\n"
+        '    async def started(event: SessionStart) -> None:\n'
+        '        level = host.settings(Tuned).level\n'
+        '        host.save_settings(Tuned(level=level + 1))\n'
+        '        if level == 1:\n'
+        "            raise RuntimeError('first start fails')\n"
+    )
+    await harness.loader.load_all()
+    [entry] = harness.loader.entries()
+    assert entry.state == 'enabled, failed: RuntimeError: first start fails'
+    assert harness.store.plugins()[0].settings == {'level': 2}
+    await harness.loader.load('tuned')
+    assert harness.loader.entries()[0].state == 'enabled, loaded'
+    assert harness.store.plugins()[0].settings == {'level': 3}
 
 
 async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) -> None:

@@ -369,6 +369,14 @@ async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.Monke
     real_close = workspace._close  # pyright: ignore[reportPrivateUsage]
     entered = anyio.Event()
 
+    async def timed_out_after_spawn(
+        _process: anyio.abc.Process,
+        _stdout_buffer: bytearray,
+        _stderr_buffer: bytearray,
+        _absolute_deadline: float | None,
+    ) -> int:
+        raise TimeoutError
+
     async def stalled_close(process: anyio.abc.Process) -> None:
         entered.set()
         try:
@@ -379,9 +387,10 @@ async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.Monke
                 await real_close(process)
 
     monkeypatch.setattr(workspace, '_close', stalled_close)
+    monkeypatch.setattr(workspace, '_wait_and_collect_output', timed_out_after_spawn)
     with anyio.fail_after(30):
         with pytest.raises(WorkspaceTimeoutError):
-            await workspace.run(['sh', '-c', 'sleep 3600'], timeout=0.05)
+            await workspace.run(['true'], timeout=30)
     assert entered.is_set()
 
 
