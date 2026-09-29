@@ -78,17 +78,17 @@ Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContex
 is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
 instead. Open the genai-prices PR alongside the model add and link the two.
 
-Before you write the entry, check that no one has added it already. Other sessions add prices on
-release day too. Grep genai-prices `main`, then the diffs of its open PRs that touch the provider
-file:
+Before you write the entry, check that no one has added it already. Someone else may have added
+it on release day. Grep genai-prices `main` for each provider file you plan to edit, then the
+provider-file changes in its open PRs:
 
 ```bash
-git -C ~/pydantic/genai-prices/base fetch -q origin && git -C ~/pydantic/genai-prices/base grep -n '<id>' origin/main -- prices/providers/
-for n in $(gh pr list --repo pydantic/genai-prices --state open --json number,files --jq '.[] | select(any(.files[]; .path | startswith("prices/providers/"))) | .number'); do gh pr diff "$n" --repo pydantic/genai-prices | grep -q '<id>' && echo "#$n"; done
+for f in openai openrouter; do gh api "repos/pydantic/genai-prices/contents/prices/providers/$f.yml" -H 'Accept: application/vnd.github.raw' | grep -n '<id>' | sed "s/^/$f.yml:/"; done
+for n in $(gh pr list --repo pydantic/genai-prices --state open --limit 200 --json number --jq '.[].number'); do gh api "repos/pydantic/genai-prices/pulls/$n/files" --paginate --jq '.[] | select(.filename | startswith("prices/providers/")) | .patch' | grep -q '<id>' && echo "#$n"; done
 ```
 
-A hit means you link that entry or PR instead of opening your own. Do not rely on `gh search prs`: it
-missed a same-day PR whose title named the model (genai-prices #732).
+A hit means you link that entry or PR instead of opening your own. Do not rely on `gh search prs`:
+its index lags newly opened PRs, and on release day it did not yet return genai-prices #732.
 
 Check the current catalogs of other providers that host the new model before scoping that PR.
 For example, OpenRouter may publish `openai/<id>` and a `YYYYMMDD` canonical slug on release day
