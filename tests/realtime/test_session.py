@@ -83,6 +83,7 @@ from pydantic_ai.realtime import (
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
+    _session as realtime_session_module,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
@@ -11315,3 +11316,104 @@ async def test_user_turn_anchored_to_refused_content_is_still_recorded() -> None
         assert session.all_messages() == snapshot(
             [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')], timestamp=IsDatetime())]
         )
+
+
+# --- ending the provider session on close ---------------------------------------------------------
+
+
+class _EndingConnection(BlockingRealtimeConnection):
+    """A connection that stays open, and reports usage only as `end_session()` ends the provider session."""
+
+    transport_errors = (ConnectionError,)
+
+    def __init__(
+        self,
+        reports: Sequence[SessionUsage] = (),
+        *,
+        fails: bool = False,
+        hangs: bool = False,
+        events: Sequence[RealtimeCodecEvent] = (),
+    ) -> None:
+        super().__init__(list(events))
+        self._reports = list(reports)
+        self._fails = fails
+        self._hangs = hangs
+        self.ended = 0
+
+    async def end_session(self) -> list[SessionUsage]:
+        self.ended += 1
+        if self._fails:
+            raise ConnectionError('the link went away')
+        if self._hangs:
+            await asyncio.Event().wait()
+        return self._reports
+
+
+async def test_closing_records_the_usage_the_provider_reports_as_its_session_ends() -> None:
+    """A provider that bills by the session (GPT-Live) reports its last seconds only when the session ends."""
+    conn = _EndingConnection(
+        [SessionUsage(RequestUsage(audio_seconds=5), response_scoped=False, context_window_used=0.25)]
+    )
+    async with RealtimeSession(conn, _noop_runner) as session:
+        # Reading the connection, as a session that is used does.
+        stream = asyncio.ensure_future(anext(aiter(session)))
+        await asyncio.sleep(0)
+    stream.cancel()
+
+    assert conn.ended == 1
+    assert session.usage.audio_seconds == 5
+    assert session.context_window_used == 0.25
+
+
+async def test_a_session_that_never_read_still_ends_the_provider_session() -> None:
+    conn = _EndingConnection([SessionUsage(RequestUsage(audio_seconds=2), response_scoped=False)])
+    async with RealtimeSession(conn, _noop_runner) as session:
+        pass
+
+    assert conn.ended == 1
+    assert session.usage.audio_seconds == 2
+
+
+async def test_a_sideband_does_not_end_the_provider_session() -> None:
+    """Ending it would end the browser's WebRTC call, which closing a sideband only detaches from."""
+    conn = _EndingConnection([SessionUsage(RequestUsage(audio_seconds=2), response_scoped=False)])
+    async with RealtimeSession(conn, _noop_runner, owns_media=False):
+        pass
+
+    assert conn.ended == 0
+
+
+async def test_a_session_whose_provider_went_away_does_not_end_it_again() -> None:
+    conn = FakeRealtimeConnection([])
+    ended: list[bool] = []
+
+    async def end_session() -> list[SessionUsage]:  # pragma: no cover
+        ended.append(True)
+        return []
+
+    conn.end_session = end_session
+    async with RealtimeSession(conn, _noop_runner) as session:
+        async for _ in session:  # the connection ends at once, as a provider hanging up does
+            pass
+
+    assert ended == []
+
+
+@pytest.mark.parametrize('failure', ['fails', 'hangs'])
+async def test_a_provider_that_does_not_end_its_session_cleanly_leaves_usage_as_it_was(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(realtime_session_module, '_END_SESSION_TIMEOUT', 0.01)
+    conn = _EndingConnection(fails=failure == 'fails', hangs=failure == 'hangs')
+    async with RealtimeSession(conn, _noop_runner) as session:
+        pass
+
+    assert conn.ended == 1
+    assert session.usage == RunUsage()
+
+
+async def test_usage_reported_as_the_session_ends_counts_against_the_limits() -> None:
+    conn = _EndingConnection([SessionUsage(RequestUsage(input_tokens=10), response_scoped=False)])
+    with pytest.raises(UsageLimitExceeded):
+        async with RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(input_tokens_limit=5)):
+            pass

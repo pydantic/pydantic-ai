@@ -498,6 +498,20 @@ class RealtimeConnection(ABC):
         """
         return aiter(self)
 
+    async def end_session(self) -> Sequence[SessionUsage]:
+        """End the provider session, and return the usage the provider reports only as it ends.
+
+        A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] calls this once while closing, after it
+        has stopped reading the connection and before it reports the session's usage, when the connection
+        is still healthy and the session owns it (not a WebRTC sideband, where ending the provider session
+        would end the browser's call). Only session-scoped usage belongs here: there is no response left
+        to attribute anything else to. The session bounds how long it waits.
+
+        The default does nothing, for providers that report all usage as it happens or that end the
+        session by closing the transport.
+        """
+        return []
+
     @property
     def model_name(self) -> str | None:
         """The model id the server reported serving this session, when the provider reports one.

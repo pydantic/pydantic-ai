@@ -8,6 +8,7 @@ translation rules that only show up under conditions a recorded call doesn't rel
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
 import json
 from contextlib import contextmanager
@@ -356,7 +357,11 @@ async def test_an_image_needs_respond_true(model: OpenAILiveModel) -> None:
             # Without manual turn control, which Live doesn't have.
             await session.send(image, respond=True)
 
-    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['response.item.create', 'response.create']
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [
+        'response.item.create',
+        'response.create',
+        'session.close',
+    ]
 
 
 def test_seeding_projects_history_to_text() -> None:
@@ -937,24 +942,32 @@ async def test_agent_rejects_text_output(model: OpenAILiveModel) -> None:
 
 
 class _FakeWebSocket:
-    """A socket that yields queued frames and then goes quiet, so the turn clock can run out."""
+    """A socket that yields queued frames and then goes quiet, so the turn clock can run out.
 
-    def __init__(self, frames: list[str], *, delay: float = 0.0) -> None:
+    Like Live, it answers `session.close` with `session.closed`, reporting `closed_seconds` of usage.
+    """
+
+    def __init__(self, frames: list[str], *, delay: float = 0.0, closed_seconds: float = 0) -> None:
         self._frames = list(frames)
         self._delay = delay
+        self._closed_seconds = closed_seconds
+        self._arrived = asyncio.Event()
         self.sent: list[str] = []
         self.closed = False
 
     async def recv(self) -> str:
-        if self._frames:
-            if self._delay:
-                await anyio.sleep(self._delay)
-            return self._frames.pop(0)
-        await anyio.sleep_forever()
-        raise AssertionError('unreachable')  # pragma: no cover
+        while not self._frames:
+            self._arrived.clear()
+            await self._arrived.wait()
+        if self._delay:
+            await anyio.sleep(self._delay)
+        return self._frames.pop(0)
 
     async def send(self, data: str) -> None:
         self.sent.append(data)
+        if json.loads(data)['type'] == 'session.close':
+            self._frames.append(json.dumps(_session_closed('close_requested', seconds=self._closed_seconds)))
+            self._arrived.set()
 
 
 def _transcript_frame(delta: str, *, speaker: str = 'output') -> str:
@@ -1742,7 +1755,8 @@ async def test_context_text_over_the_cap_is_refused_before_sending(respond: bool
             await session.send(_text_of(500), respond=respond)
 
     assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [
-        'session.commentary.append' if respond else 'session.thinking.append'
+        'session.commentary.append' if respond else 'session.thinking.append',
+        'session.close',
     ]
 
 
@@ -2254,3 +2268,59 @@ async def test_a_sideband_cannot_seed_history(model: OpenAILiveModel) -> None:
             model_request_parameters=ModelRequestParameters(),
         ):
             pass  # pragma: no cover
+
+
+async def test_closing_a_session_records_the_seconds_live_reports_as_it_ends(model: OpenAILiveModel) -> None:
+    """Live reports its billed seconds only now and then, and last in `session.closed`, which `session.close` asks for.
+
+    A short call gets no periodic report at all (checked live: six seconds of audio, none), so without
+    this the call would record no seconds.
+    """
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started], closed_seconds=5)
+    with _patched_connect(ws):
+        async with Agent().realtime(model).session() as session:
+            pass
+
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.close']
+    assert session.usage.audio_seconds == 5
+
+
+class _LiveSink(OpenAILiveConnection):
+    def __init__(self, ws: _FakeWebSocket) -> None:
+        super().__init__(ws)  # pyright: ignore[reportArgumentType]
+
+
+async def test_ending_the_session_reads_every_frame_until_session_closed() -> None:
+    """Frames still arriving are handled as ever; only session-scoped usage is returned, the backend's has no reply left."""
+    usage_frame = json.dumps({'type': 'session.usage.updated', 'event_id': 'e', 'usage': {'seconds': 3}})
+    ws = _FakeWebSocket([usage_frame], closed_seconds=4)
+    connection = _LiveSink(ws)
+
+    reports = await connection.end_session()
+
+    assert [report.usage.audio_seconds for report in reports] == [3, 1]
+    # Only once: the provider session is over.
+    assert await connection.end_session() == []
+    assert len(ws.sent) == 1
+
+
+async def test_ending_a_closed_connection_sends_nothing() -> None:
+    ws = _FakeWebSocket([])
+    connection = _LiveSink(ws)
+    await connection.aclose()
+
+    assert await connection.end_session() == []
+    assert ws.sent == []
+
+
+async def test_ending_the_session_stops_when_the_socket_closes() -> None:
+    """A Live that closes the socket without `session.closed` leaves nothing more to read."""
+
+    class _ClosingSocket(_FakeWebSocket):
+        async def recv(self) -> str:
+            raise websockets.ConnectionClosedOK(Close(1000, ''), Close(1000, ''), True)
+
+    connection = _LiveSink(_ClosingSocket([]))
+
+    assert await connection.end_session() == []

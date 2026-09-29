@@ -267,6 +267,8 @@ _MAX_TRUNCATABLE_AUDIO_ITEMS = 32
 # a second of the user starting to speak; past this, the turn is recorded where history stands instead of
 # staying out of `all_messages()` for as long as a provider keeps talking.
 _BARGE_IN_TURN_HOLD_SECONDS = 5.0
+#: How long closing waits for the provider to end its session and report the usage it only reports then.
+_END_SESSION_TIMEOUT = 2.0
 # The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
 # also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
 _AUDIO_TAP_MAX_CHUNKS = 30_000
@@ -982,6 +984,8 @@ class RealtimeSession:
         self._pump_task: asyncio.Task[None] | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
+        # Whether closing ends the provider session through the still-healthy connection; see `close()`.
+        self._end_provider_session = False
         self._receive_ending = False
         self._iterator_active = False
         self._stream_exhausted = False
@@ -1051,6 +1055,10 @@ class RealtimeSession:
             self._closed = True
             self._finish_taps(discard_pending=True)
             self._release_exchange()
+            # Decided before the pump is cancelled, while a pump that stopped on its own (the provider
+            # went away) still tells apart from one this close stops. A WebRTC sideband doesn't own the
+            # provider session: ending it would end the browser's call.
+            self._end_provider_session = self._owns_media and (self._pump_task is None or not self._pump_task.done())
             # A session closed without ever sending, subscribing, or iterating never started one.
             # Cancelled before state is settled below so it can't mutate state mid-settlement; the
             # task is awaited together with the rest afterwards.
@@ -1098,6 +1106,8 @@ class RealtimeSession:
         # may be nothing here but the background tasks.
         pump_tasks = (self._pump_task,) if self._pump_task is not None else ()
         await cancel_and_drain(*self._background_tasks, *pump_tasks, msg='Realtime session exited')
+        if self._end_provider_session:
+            await self._record_final_usage()
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.
@@ -1130,6 +1140,25 @@ class RealtimeSession:
         if self._closing_error is None and (error := self._first_undelivered_error()) is not None:
             self._delivered_errors.append(error)
             self._close_error = error
+
+    async def _record_final_usage(self) -> None:
+        """End the provider session, recording the usage it reports only as it ends.
+
+        Runs once nothing reads the connection any more and before the session span reports its usage, so
+        what a provider bills at the very end (GPT-Live's last seconds of audio) is counted. Bounded, and
+        best-effort: a provider that doesn't answer in time, or a link that fails now, leaves the usage as
+        it was, as it would have been without this.
+        """
+        try:
+            reports = await asyncio.wait_for(self._connection.end_session(), _END_SESSION_TIMEOUT)
+        except (asyncio.TimeoutError, *self._connection.transport_errors):
+            return
+        for report in reports:
+            if report.context_window_used is not None:
+                self._reported_context_window_used = report.context_window_used
+            self.usage.incr(report.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
+        # The session is closed, so an exceeded limit is parked for `close()` to raise.
+        self._check_response_boundary_limits()
 
     def _queue_put(self, item: RealtimeEvent | object) -> None:
         """Append an item, bounding the queue while no session iterator is active."""

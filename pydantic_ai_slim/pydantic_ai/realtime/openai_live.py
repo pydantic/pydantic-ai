@@ -509,6 +509,8 @@ class OpenAILiveConnection(RealtimeConnection):
         # continuations go out from the receive loop, which is where that terminal is seen.
         self._continuations_due: list[_Delegation] = []
         self._reported_seconds = 0.0
+        # Set once `session.closed` arrives: the last frame Live sends, carrying its final usage.
+        self._session_ended = False
 
     @property
     def model_name(self) -> str | None:
@@ -619,6 +621,29 @@ class OpenAILiveConnection(RealtimeConnection):
 
     async def _send_event(self, event: dict[str, Any]) -> None:
         await self._ws.send(to_json(event).decode())
+
+    async def end_session(self) -> list[SessionUsage]:
+        """Send `session.close`, and read on until `session.closed` reports the session's final usage.
+
+        Live reports its billed seconds only periodically while a session runs, so without this the seconds
+        since the last report, all of them on a short call, would never be recorded. Called once the session
+        has stopped iterating: the read left in flight then is picked up here, so no frame is lost.
+        """
+        if self._closed or self._session_ended:
+            return []
+        await self._send_event({'type': 'session.close'})
+        usage: list[SessionUsage] = []
+        while not self._session_ended:
+            read = self._recv_task if self._recv_task is not None else self._start_read()
+            self._recv_task = None
+            try:
+                raw = await read
+            except websockets.ConnectionClosedOK:
+                break
+            usage.extend(
+                event for event in self._map_frame(raw) if isinstance(event, SessionUsage) and not event.response_scoped
+            )
+        return usage
 
     async def aclose(self) -> None:
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
@@ -840,6 +865,7 @@ class OpenAILiveConnection(RealtimeConnection):
         The WebSocket close that follows is clean either way, so without this a reply cut off by the
         safety filter or the duration limit would be settled as though the model had finished it.
         """
+        self._session_ended = True
         events = self._map_usage(event.usage.seconds)
         if event.reason not in _ABNORMAL_CLOSE_REASONS:
             return events
