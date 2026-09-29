@@ -26,6 +26,7 @@ try:
         HTTPClientError,
     )
     from botocore.model import StructureShape
+    from urllib3.exceptions import HTTPError as Urllib3HTTPError
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock model, '
@@ -163,6 +164,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
     except (HTTPClientError, BotocoreConnectionError) as e:
         # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except Urllib3HTTPError as e:
+        # botocore reads an event stream straight from the urllib3 response, so a connection that breaks off or
+        # times out mid-stream raises the raw urllib3 error rather than a botocore one.
+        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
 
 
 class _BotocoreRequestParams(TypedDict):

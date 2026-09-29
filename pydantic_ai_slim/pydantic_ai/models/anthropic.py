@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 
+import httpx2
 import pydantic_core
 from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
@@ -360,6 +361,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx2.TransportError as e:
+        # `anthropic` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
+        # off a stream mid-way surfaces as the raw `httpx2` error.
+        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
 
 
 LatestAnthropicModelNames = ModelParam

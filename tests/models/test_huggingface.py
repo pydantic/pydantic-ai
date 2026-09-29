@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -19,6 +19,7 @@ from pydantic_ai import (
     CachePoint,
     DocumentUrl,
     ImageUrl,
+    ModelAPIError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -46,6 +47,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, message, raise_if_e
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
+    import huggingface_hub.utils._http
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -60,7 +62,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputUsage,
     )
-    from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -644,6 +646,79 @@ async def test_image_as_binary_content_input(
     assert result.output == snapshot(
         'The fruit in the image is a kiwi. The distinctive green flesh, small black seeds arranged in a circular pattern, and the fuzzy brown skin are characteristic features of a kiwi.'
     )
+
+
+class _StreamBreakingOff(httpx.AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+_TEXT_CHUNK = {
+    'id': '1',
+    'object': 'chat.completion.chunk',
+    'created': 0,
+    'model': 'm',
+    'system_fingerprint': 'x',
+    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'Hello'}, 'finish_reason': None}],
+}
+
+
+def _connect_error(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError('connection refused', request=request)
+
+
+def _timeout(request: httpx.Request) -> httpx.Response:
+    raise TimeoutError
+
+
+def _stream_breaking_off(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        headers={'content-type': 'text/event-stream'},
+        stream=_StreamBreakingOff(f'data: {json.dumps(_TEXT_CHUNK)}\n\n'.encode(), httpx.ReadError('connection reset')),
+    )
+
+
+@pytest.mark.parametrize(
+    ('handler', 'stream', 'cause'),
+    [
+        pytest.param(_connect_error, False, httpx.ConnectError, id='connect'),
+        pytest.param(_connect_error, True, httpx.ConnectError, id='stream-connect'),
+        pytest.param(_timeout, False, InferenceTimeoutError, id='timeout'),
+        pytest.param(_stream_breaking_off, True, httpx.ReadError, id='mid-stream'),
+    ],
+)
+async def test_model_transport_error(
+    allow_model_requests: None,
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+    stream: bool,
+    cause: type[Exception],
+) -> None:
+    """`huggingface_hub` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+    with pytest.raises(ModelAPIError) as exc_info:
+        if stream:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert isinstance(exc_info.value.__cause__, cause)
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

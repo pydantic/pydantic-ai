@@ -4,7 +4,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+import httpx2
+
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
@@ -38,6 +40,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             ) from e
 
         raise
+    except httpx2.TransportError as e:
+        # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
+        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
 
 
 LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview', 'gemini-embedding-2']

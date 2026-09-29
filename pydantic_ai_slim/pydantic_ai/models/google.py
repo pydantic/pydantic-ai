@@ -11,6 +11,7 @@ from functools import cached_property
 from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
 
+import httpx2
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
@@ -399,8 +400,13 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     return 'pt_then_on_demand'
 
 
-def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str = 'google') -> ModelAPIError:
-    """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
+def _map_api_error(
+    e: errors.APIError | httpx2.TransportError, model_name: str, model_id_namespace: str = 'google'
+) -> ModelAPIError:
+    """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
+    if isinstance(e, httpx2.TransportError):
+        # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
+        return ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -922,7 +928,7 @@ class GoogleModel(Model[Client]):
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
-        except errors.APIError as e:
+        except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
     def _translate_thinking(
@@ -1141,7 +1147,7 @@ class GoogleModel(Model[Client]):
         # `_generate_content`'s try/except and need the same mapping.
         try:
             first_chunk = await peekable_response.peek()
-        except errors.APIError as e:
+        except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
@@ -1667,7 +1673,7 @@ class GeminiStreamedResponse(StreamedResponse):
             for pending in self._pending_file_search_returns:
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
-        except errors.APIError as e:
+        except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._model_id_namespace) from e
 
     def _handle_file_search_grounding_metadata_streaming(

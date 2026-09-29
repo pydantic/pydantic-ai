@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -55,6 +56,8 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
+    from cohere import AsyncClientV2
+
     from pydantic_ai.embeddings.cohere import (
         CohereEmbeddingModel,
         CohereEmbeddingSettings,
@@ -607,6 +610,24 @@ class TestCohere:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='not found,'):
             await embedder.embed_query('Hello, world!')
+
+    async def test_embed_connect_error(self):
+        """`cohere` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError('connection refused', request=request)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            cohere_client = AsyncClientV2(api_key='test-key', base_url='http://localhost', httpx_client=http_client)
+            embedder = Embedder(
+                CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(cohere_client=cohere_client))
+            )
+            with pytest.raises(ModelAPIError) as exc_info:
+                await embedder.embed_query('Hello, world!')
+
+        assert type(exc_info.value) is ModelAPIError
+        assert exc_info.value.message == 'connection refused'
+        assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
 
     async def test_query_with_cohere_truncate(self, co_api_key: str):
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
@@ -1744,6 +1765,22 @@ class TestGoogle:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='not found'):
             await embedder.embed_query('Hello, world!')
+
+    async def test_embed_connect_error(self):
+        """`google.genai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            raise httpx2.ConnectError('connection refused', request=request)
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+            provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+            embedder = Embedder(GoogleEmbeddingModel('gemini-embedding-001', provider=provider))
+            with pytest.raises(ModelAPIError) as exc_info:
+                await embedder.embed_query('Hello, world!')
+
+        assert type(exc_info.value) is ModelAPIError
+        assert exc_info.value.message == 'connection refused'
+        assert isinstance(exc_info.value.__cause__, httpx2.ConnectError)
 
     async def test_count_tokens_error(self, gemini_api_key: str):
         model = GoogleEmbeddingModel('nonexistent-model', provider=GoogleProvider(api_key=gemini_api_key))

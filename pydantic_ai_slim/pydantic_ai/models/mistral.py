@@ -114,6 +114,7 @@ except ImportError as e:  # pragma: lax no cover
 
 # Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
 # is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx2
 from httpx import Timeout
 
 
@@ -127,6 +128,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+    except httpx2.TransportError as e:
+        # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
+        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
 
 
 LatestMistralModelNames = Literal[
