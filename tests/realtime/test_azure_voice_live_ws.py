@@ -26,14 +26,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.realtime import RealtimeModelProfile, RealtimeSessionErrorEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteMessage, RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.realtime import WebRTCSession
-    from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
+    from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings, SemanticVAD
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
 
@@ -403,6 +403,146 @@ async def test_message_history_seeding(
     assert isinstance(reply_part, TextPart)
     content = reply_part.content.lower()
     assert 'alice' in content and 'teal' in content
+
+
+async def test_cascade_reasoning_model_settings_are_adapted(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """Settings that behave differently on a reasoning cascade model are adapted, so the turn succeeds.
+
+    Voice Live serves `gpt-5` behind Azure speech-to-text and text-to-speech. `thinking` is applied to
+    the chat model as `reasoning_effort` and it reports its reasoning tokens; OpenAI's semantic VAD,
+    which cascade models reject, is sent as Voice Live's `azure_semantic_vad`; and a temperature, which
+    would fail every response while the model reasons, is dropped with a warning.
+    """
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-5',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(
+            output_modality='text',
+            thinking='high',
+            openai_turn_detection=SemanticVAD(type='semantic_vad'),
+            azure_voice_live_temperature=0.5,
+        ),
+    )
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    events: list[Any] = []
+    with pytest.warns(UserWarning, match='`azure_voice_live_temperature` is not supported while'):
+        async with agent.realtime(model).session() as session:
+            await session.send(
+                'A bat and a ball cost 1.10 in total, and the bat costs 1.00 more than the ball. How much is the ball?'
+            )
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                    events.append(event)
+                    if isinstance(event, RealtimeTurnCompleteEvent):
+                        break
+
+    [session_update] = sent_frames_containing(cassette, 'Answer in one short sentence.')
+    assert session_update['session']['reasoning_effort'] == 'high'
+    assert session_update['session']['turn_detection']['type'] == 'azure_semantic_vad'
+    assert 'temperature' not in session_update['session']
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    assert session.usage.details['reasoning_tokens'] == snapshot(320)
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, TextPart)
+    assert part.content == snapshot('The ball costs 5 cents.')
+
+
+async def test_openai_audio_settings_apply_on_voice_live(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """Semantic VAD, noise reduction, and temperature are applied, not dropped, on Voice Live."""
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(
+            azure_voice_live=True,
+            output_modality='text',
+            openai_turn_detection=SemanticVAD(type='semantic_vad', eagerness='high'),
+            openai_input_noise_reduction='far_field',
+            azure_voice_live_temperature=0.7,
+        ),
+    )
+    agent = Agent(instructions='Answer in two or three words.')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    # The server echoes each setting back as applied.
+    [updated] = [
+        message.data
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage)
+        and message.direction == 'received'
+        and message.data.get('type') == 'session.updated'
+    ]
+    applied = updated['session']
+    assert applied['turn_detection']['type'] == 'semantic_vad'
+    assert applied['turn_detection']['eagerness'] == 'high'
+    assert applied['input_audio_noise_reduction'] == {'type': 'far_field'}
+    assert applied['temperature'] == 0.7
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert isinstance(response.parts[0], TextPart)
+
+
+async def test_cascade_model_speaks_with_azure_voice(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """A cascade model speaks with the Azure voice chosen by `azure_voice_live_voice`.
+
+    Cascade models like `gpt-5` reject an OpenAI voice ("Only Azure voice is supported"), so before this
+    setting their voice couldn't be chosen, and setting `openai_voice` failed the session at startup.
+    """
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-5',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(azure_voice_live_voice='en-US-AvaMultilingualNeural'),
+    )
+    agent = Agent(instructions='Answer in two or three words.')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [session_update] = sent_frames_containing(cassette, 'Answer in two or three words.')
+    assert session_update['session']['voice'] == snapshot(
+        {'type': 'azure-standard', 'name': 'en-US-AvaMultilingualNeural'}
+    )
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    # The server echoes the voice it will speak with.
+    [updated] = [
+        message.data
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage)
+        and message.direction == 'received'
+        and message.data.get('type') == 'session.updated'
+    ]
+    assert updated['session']['voice']['name'] == 'en-US-AvaMultilingualNeural'
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart)
+    assert part.transcript == snapshot('Hello there!')
 
 
 async def test_gpt_realtime_2_is_served_by_voice_live(

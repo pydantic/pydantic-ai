@@ -12,6 +12,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import httpx2
 import pytest
 from cassetter import Cassette
 from pydantic import BaseModel
@@ -49,7 +50,7 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from mistralai.client import Mistral
-    from mistralai.client.errors import SDKError
+    from mistralai.client.errors import HTTPValidationError, ResponseValidationError, SDKError
     from mistralai.client.models import (
         AssistantMessage as MistralAssistantMessage,
         ChatCompletionChoice as MistralChatCompletionChoice,
@@ -3018,6 +3019,65 @@ def test_model_non_http_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelAPIError) as exc_info:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'mistral-large-latest'
+
+
+_MISTRAL_422_BODY: dict[str, Any] = {
+    'detail': [{'type': 'missing', 'loc': ['body', 'messages'], 'msg': 'Field required', 'input': None}]
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['mistral.example'])
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+async def test_model_validation_error_raises_model_http_error(allow_model_requests: None, stream: bool) -> None:
+    """A 422 raises the SDK's `HTTPValidationError`, not `SDKError`, and still surfaces as `ModelHTTPError`.
+
+    A mock transport stands in for a cassette so the test pins the error class, not which fields the live API rejects.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(422, json=_MISTRAL_422_BODY, headers={'x-request-id': 'rid-1'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        m = MistralModel(
+            'mistral-large-latest',
+            provider=MistralProvider(api_key='test', base_url='https://mistral.example', http_client=client),
+        )
+        with pytest.raises(ModelHTTPError) as exc_info:
+            if stream:
+                async with Agent(m).run_stream('hello') as result:
+                    await result.get_output()  # pragma: no cover — the error raises while the stream opens
+            else:
+                await Agent(m).run('hello')
+
+    exc = exc_info.value
+    assert exc.status_code == 422
+    assert json.loads(cast(str, exc.body)) == _MISTRAL_422_BODY
+    assert exc.headers is not None
+    assert exc.headers.get('x-request-id') == 'rid-1'
+    assert isinstance(exc.__cause__, HTTPValidationError)
+
+
+@pytest.mark.vcr(ignore_hosts=['mistral.example'])
+async def test_model_unparseable_response_body_raises_model_api_error(allow_model_requests: None) -> None:
+    """A 200 body the SDK can't parse raises its `ResponseValidationError`, which surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        m = MistralModel(
+            'mistral-large-latest',
+            provider=MistralProvider(api_key='test', base_url='https://mistral.example', http_client=client),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            await Agent(m).run('hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.model_name == 'mistral-large-latest'
+    assert isinstance(exc_info.value.__cause__, ResponseValidationError)
 
 
 async def test_mistral_model_instructions(allow_model_requests: None, mistral_api_key: str):

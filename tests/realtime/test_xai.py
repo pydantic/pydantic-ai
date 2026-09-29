@@ -978,12 +978,10 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
 
 
 async def test_reconnect_handshake_error_is_retryable() -> None:
-    conn = XaiRealtimeConnection.__new__(XaiRealtimeConnection)
-
     async def dial() -> rt_xai.ClientConnection:
         raise rt_xai.RealtimeHandshakeError('expired conversation')
 
-    conn._dial = dial  # pyright: ignore[reportPrivateUsage]
+    conn = XaiRealtimeConnection(FakeWebSocket([]), dial=dial)  # type: ignore[arg-type]
 
     assert await conn._attempt_reconnect() is False  # pyright: ignore[reportPrivateUsage]
 

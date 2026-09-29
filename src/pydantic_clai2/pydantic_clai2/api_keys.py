@@ -65,7 +65,9 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     """Validate references and save atomically with respect to key renames and deletions."""
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again.')
+            raise UserError(
+                f'The selected API key no longer exists. Select a saved key again through {_KEY_CONSUMERS[account]}.'
+            )
         save_codex_credentials(account=account, value=value)
 
 
@@ -151,24 +153,31 @@ def _save_keys(*, keys: dict[str, SecretStr]) -> None:
     )
 
 
+_KEY_CONSUMERS = {
+    'vllm': '/add_model',
+    'openrouter': '/add_model',
+    'google-workspace': '/google_workspace',
+    'pylon': '/pylon',
+    'ordinal': '/ordinal',
+    'notion': '/plugins configure notion',
+}
+"""Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
+
+
 class _Credential(BaseModel):
     token: SecretStr | KeyReference = Field(default_factory=lambda: SecretStr(''))
-
-
-_KEY_ACCOUNTS = ('vllm', 'openrouter', 'pylon')
-"""Credential accounts whose `token` may name a saved key, so a rename cannot strand them."""
 
 
 def key_users(*, name: str) -> list[str]:
     """Find saved provider and plugin references without exposing their inline credentials."""
     users: list[str] = []
-    for account in _KEY_ACCOUNTS:
+    for account, command in _KEY_CONSUMERS.items():
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
                 credential = _Credential.model_validate_json(raw)
             except ValidationError:
-                raise UserError(f'Reconfigure the invalid {account} connection first.') from None
+                raise UserError(f'Reconfigure the invalid {account} connection through {command} first.') from None
             if isinstance(credential.token, KeyReference) and credential.token.name == name:
                 users.append(account)
     return users
