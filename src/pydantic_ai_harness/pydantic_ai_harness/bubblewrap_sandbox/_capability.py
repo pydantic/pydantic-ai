@@ -29,7 +29,7 @@ class BubblewrapSandbox(WrapperCapability[AgentDepsT]):
     _: KW_ONLY
 
     network: bool = False
-    """Whether commands can reach the network."""
+    """Whether commands share the host's network; without it, a seccomp filter also blocks every socket connection."""
 
     bwrap_args: Sequence[str] = ()
     """Extra `bwrap` arguments, placed after the defaults so they can override them."""
