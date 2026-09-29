@@ -77,9 +77,10 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     read_only_patterns: Sequence[str] = _DEFAULT_READ_ONLY
     """Paths matching these patterns are read-only (writes are rejected).
 
-    Defaults to `.git/`, `.env`, key files, secrets, and `.pydantic-ai-harness/`, where
-    capabilities keep files such as spilled tool output and background job status.
-    Set to an empty list to make every path writable.
+    Defaults to protecting `.git/`, `.env` files, key files, secrets, and
+    `.pydantic-ai-harness/` at any depth. Protected paths stay readable; use
+    `denied_patterns` to block reads too. Set to an empty list to make every
+    path writable.
     """
 
     max_read_lines: int = 2000

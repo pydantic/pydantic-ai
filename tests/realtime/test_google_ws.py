@@ -632,6 +632,69 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     assert 'alice' in transcript and 'teal' in transcript
 
 
+async def test_message_history_function_part_seeding(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Seeded tool calls and results go in as native function parts on 3.8, and the model reads them.
+
+    The tool result carries a detail the model can't guess, so a correct answer shows it read the
+    `function_response` rather than the text around it.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_weather', content='Hailing, wind code ZEBRA-7', tool_call_id='call_1')]
+        ),
+        ModelResponse(parts=[TextPart(content='It is hailing in Paris.')]),
+    ]
+
+    async with agent.realtime(model, message_history=history).session() as session:
+        await session.send('What wind code did the weather tool return?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, '"setup"')
+    # `google-genai` sends the field in snake case, which the API accepts.
+    assert setup['setup']['historyConfig'] == {'initial_history_in_client_content': True}
+    [seeded] = sent_frames_containing(cassette, 'wind code ZEBRA-7')
+    assert seeded == snapshot(
+        {
+            'client_content': {
+                'turns': [
+                    {'parts': [{'text': 'What is the weather in Paris?'}], 'role': 'user'},
+                    {
+                        'parts': [{'functionCall': {'id': 'call_1', 'args': {'city': 'Paris'}, 'name': 'get_weather'}}],
+                        'role': 'model',
+                    },
+                    {
+                        'parts': [
+                            {
+                                'functionResponse': {
+                                    'id': 'call_1',
+                                    'name': 'get_weather',
+                                    'response': {'output': 'Hailing, wind code ZEBRA-7'},
+                                }
+                            }
+                        ],
+                        'role': 'user',
+                    },
+                    {'parts': [{'text': 'It is hailing in Paris.'}], 'role': 'model'},
+                ],
+                'turnComplete': True,
+            }
+        }
+    )
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse) and isinstance(reply.parts[0], SpeechPart)
+    assert 'zebra' in (reply.parts[0].transcript or '').lower()
+
+
 async def test_message_history_audio_seeding(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
@@ -716,6 +779,8 @@ def test_profile_allow_seeding() -> None:
         google_supports_affective_dialog=True,
         # A typed turn doesn't see an image sent just before it as a video frame (verified live).
         google_text_turns_see_video_frames=False,
+        # 2.5 rejects function parts in seeded turns, so seeded tool calls go in as text.
+        google_supports_seeding_function_parts=False,
         google_closes_tool_call_turn_separately=False,
     )
 

@@ -238,8 +238,6 @@ drop cut off an exchange the resumed session no longer has (see
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
-- [Seeded](history.md#seeding-a-session) function calls/results are represented as readable text
-  because Live cannot accept function parts in seeded turns.
 - `send()` sends an [image](audio.md#images) as a live video frame. Spoken turns see video frames,
   but typed turns don't on the Live models. So a typed turn (`send('...')`) also carries the most
   recent image sent in the last 10 seconds in its own content, ahead of the text. That image is sent,
