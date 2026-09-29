@@ -405,6 +405,40 @@ async def test_message_history_seeding(
     assert 'alice' in content and 'teal' in content
 
 
+async def test_gpt_realtime_2_is_served_by_voice_live(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """`gpt-realtime-2` is served by both Azure APIs, so `azure_voice_live=True` reaches Voice Live.
+
+    Recorded against the live Voice Live resource, which serves the model under its
+    `-global-standard` deployment; it used to be classed as GA-only, which raised before connecting.
+    """
+    provider, _ = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-realtime-2',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(azure_voice_live=True, output_modality='text'),
+    )
+    agent = Agent(instructions='Answer in two or three words.')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == snapshot('gpt-realtime-2-global-standard')
+    part = response.parts[0]
+    assert isinstance(part, TextPart)
+    assert part.content == snapshot('Hey there!')
+
+
 async def test_voice_live_rejects_webrtc_signaling() -> None:
     """Browser WebRTC signaling is not supported for Voice Live yet, so it raises rather than using the GA path.
 
