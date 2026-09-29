@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import RunContext
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
@@ -359,3 +360,28 @@ def test_unsupported_tool_history(file_in_result: bool):
     else:
         with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: FilePart'):
             agent.run_sync('Continue', message_history=history)
+
+
+@pytest.mark.anyio
+async def test_append_instruction_baseline_is_tagged_like_its_updates():
+    """MCP sampling reads the prefix from each request's `instructions`, so it must carry the same tags as the updates."""
+    create_message = AsyncMock(
+        return_value=CreateMessageResult(role='assistant', content=TextContent(type='text', text='ok'), model='test')
+    )
+    agent = Agent(MCPSamplingModel(fake_session(create_message)), deps_type=str)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[str]) -> str:
+        return ctx.deps
+
+    first = await agent.run('Continue.', deps='A')
+    await agent.run('Continue.', deps='B', message_history=first.all_messages())
+    assert create_message.call_args.kwargs['system_prompt'] == snapshot("""\
+<context id="agent:state">
+A
+</context>
+A later <context> element with the same id replaces this one and stays in effect until replaced again.<context id="agent:state">
+A
+</context>
+A later <context> element with the same id replaces this one and stays in effect until replaced again.\
+""")

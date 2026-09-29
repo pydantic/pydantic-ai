@@ -2387,13 +2387,18 @@ def _render_append_blocks(params: ModelRequestParameters, *, inline_system: bool
     """
     if not (parts := params.instruction_parts):
         return params
-    rendered = [
+    rendered = _render_append_parts(parts, inline_system=inline_system)
+    return replace(params, instruction_parts=rendered) if rendered != parts else params
+
+
+def _render_append_parts(parts: list[InstructionPart], *, inline_system: bool) -> list[InstructionPart]:
+    """Render each addressable append-mode part's prefix statement, leaving other parts as written."""
+    return [
         _render_instruction_baseline(part, inline_system=inline_system)
         if part.on_change == 'append' and part.id is not None
         else part
         for part in parts
     ]
-    return replace(params, instruction_parts=rendered) if rendered != parts else params
 
 
 def _unprojected_instruction_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
