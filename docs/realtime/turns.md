@@ -265,8 +265,8 @@ Disable automatic detection with `turn_detection=False` on models whose profile 
 [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]. The explicit
 `create_response()` call is needed because with turn detection off, committing the buffer only
 finalizes the user's input; nothing triggers a reply until you ask for one. xAI is the exception:
-it replies as soon as audio is committed, and a following `create_response()` doesn't add a second
-reply. Use
+it replies as soon as audio is committed, and currently drops a `create_response()` sent after that
+reply has finished, so `wait_for_reply()` doesn't return. Use
 [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio] to discard uncommitted input.
 
 ```python
