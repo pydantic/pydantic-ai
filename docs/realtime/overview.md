@@ -267,7 +267,7 @@ fit for a product, two alternatives sit outside it:
 | --- | --- |
 | SIP is not built in; bridge telephony through a provider such as Twilio. | [Connecting a frontend](deployment.md#siptelephony-bridge) |
 | Pydantic AI fixes a session's tools when it connects (OpenAI and xAI accept mid-session tool updates), so `defer_loading=True` tools and tool-contributing capabilities are [rejected](capabilities.md#deferred-capability-loading). | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
-| Realtime-specific exchange hooks are not yet available; use [run and tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190), [#7191](https://github.com/pydantic/pydantic-ai/issues/7191) |
+| Realtime-specific exchange hooks are not yet available; use [run and tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |
 | Dynamic instructions are resolved once when the session connects. | [#7303](https://github.com/pydantic/pydantic-ai/issues/7303) |
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
