@@ -33,19 +33,26 @@ _STREAM_START = (
 
 
 class _BrokenStream(httpx2.AsyncByteStream):
+    def __init__(self, sent: bytes) -> None:
+        self._sent = sent
+
     async def __aiter__(self):
-        yield _STREAM_START
+        if self._sent:
+            yield self._sent
         raise httpx2.ReadError('connection reset')
 
 
-async def test_stream_that_breaks_raises_model_api_error(allow_model_requests: None) -> None:
-    """A transport failure after the streamed response started raises a `ModelAPIError`, like one before it.
+@pytest.mark.parametrize(
+    'sent', [pytest.param(b'', id='before-the-first-event'), pytest.param(_STREAM_START, id='mid-response')]
+)
+async def test_stream_that_breaks_raises_model_api_error(allow_model_requests: None, sent: bytes) -> None:
+    """A transport failure in the streamed response raises a `ModelAPIError`, like one that stops the request.
 
     Mocked because a connection can't be broken mid-response on demand.
     """
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=_BrokenStream())
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=_BrokenStream(sent))
 
     client = AsyncAnthropic(api_key='test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
     agent = Agent(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))

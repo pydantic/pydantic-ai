@@ -1,9 +1,8 @@
 """Every recorded streamed Anthropic response builds the same `ModelResponse` as the message the SDK accumulates from it.
 
 `run()` streams a request whose `max_tokens` is above the SDK's non-streaming limit, which is the default for current
-models, and builds its response with `AnthropicStreamedResponse`, like `run_stream()`. Before that it got a complete
-`BetaMessage`, mapped by `AnthropicModel._process_response`. This replays each recorded stream through both, so the
-streamed response can't drift from the complete one.
+models, so `AnthropicStreamedResponse` must build the same response as `AnthropicModel._process_response` does for a
+complete `BetaMessage`. This replays each recorded stream through both.
 """
 
 from __future__ import annotations as _annotations
