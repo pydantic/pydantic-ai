@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
+from pydantic import ValidationError
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.settings import ThinkingLevel
@@ -522,6 +523,9 @@ def test_voice_live_warning_event_is_surfaced() -> None:
         assert _map_voice_live_event(event) is None
     with pytest.warns(UserWarning, match=r'^Azure AI Voice Live warning: Heads up$'):
         assert _map_voice_live_event({'type': 'warning', 'warning': {'message': 'Heads up'}}) is None
+    # A malformed one is reported like any other malformed frame, rather than warning with no message.
+    with pytest.raises(ValidationError):
+        _map_voice_live_event({'type': 'warning', 'warning': {}})
 
 
 def test_voice_live_text_events_keep_item_id() -> None:

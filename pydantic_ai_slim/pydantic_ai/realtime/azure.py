@@ -349,7 +349,7 @@ class _VoiceLiveSessionCreated(BaseModel):
 
 
 class _VoiceLiveWarning(BaseModel):
-    message: str = ''
+    message: str
     code: str | None = None
     param: str | None = None
 
@@ -373,7 +373,6 @@ def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         warnings.warn(
             f'Azure AI Voice Live warning: {warning.message}' + (f' ({details})' if details else ''),
             UserWarning,
-            stacklevel=2,
         )
         return None
     if event_type in ('response.text.delta', 'response.text.done'):
