@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from anyio import CancelScope
 from rich.console import Console
 
+from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.usage import UsageLimits
 
 from ._app import DEFAULT_PLUGINS, create_agent, create_shell
@@ -25,11 +26,21 @@ async def no_screen() -> AsyncGenerator[None]:
 
 
 async def run_headless(
-    *, text: str, settings: Settings, store: SettingsStore, project: ProjectSettings, resume: str | None = None
+    *,
+    text: str,
+    settings: Settings,
+    store: SettingsStore,
+    project: ProjectSettings,
+    resume: str | None = None,
+    agent: AbstractAgent[None, object] | None = None,
 ) -> int:
-    """Print only the final answer; preserve sessions and report failures on stderr."""
-    agent = create_agent()
-    if settings.model is None:
+    """Print only the final answer; preserve sessions and report failures on stderr.
+
+    A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
+    """
+    load_plugins = agent is None
+    agent = create_agent() if agent is None else agent
+    if settings.model is None and agent.model is None:
         raise ValueError('Choose a model with -m PROVIDER:NAME')
     reason: SessionEndReason = 'error'
     with open(os.devnull, 'w', encoding='utf-8') as sink:
@@ -44,6 +55,7 @@ async def run_headless(
             builtin_plugins=DEFAULT_PLUGINS,
             project=project,
             headless=True,
+            load_plugins=load_plugins,
         )
         async with agent:
             with shell.screen.bound(no_screen):  # pragma: no branch -- bound never suppresses exceptions.
