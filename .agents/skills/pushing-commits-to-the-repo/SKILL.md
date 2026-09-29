@@ -239,7 +239,7 @@ These gates catch different failures; none replaces another:
 
 - **Independent pre-push review** catches semantic and design defects before they consume a CI or
   hosted-review round.
-- **CI** executes the complete test matrix and coverage checks.
+- **CI** runs the repository-wide type check, test, and coverage gates.
 - **Hosted reviewers** inspect the pushed diff with different models, instructions, and context.
 
 Capture the PR head SHA after the push. Every post-push gate below must prove it covered that SHA;
@@ -451,4 +451,3 @@ When the check applies:
 5. Recheck corrected metadata once with another fresh subagent. Immediately before handoff, compare
    the live title and body with the reviewed snapshot; any difference restarts this gate. Escalate
    repeated or discretionary rewrites instead of looping.
-6. Report the human-only AI-code checkbox separately.
