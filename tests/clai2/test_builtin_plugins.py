@@ -18,9 +18,24 @@ from pydantic_clai2.plugin_menu import PluginMenu
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.settings_store import SettingsStore
 
-CURATED = {'coder', 'ask_user', 'repo_context', 'compaction', 'persistence', 'logfire', 'notifications', 'mcp'}
-OPT_IN = {'linear'}
-"""Built-ins that need a credential first, so they start disabled."""
+CURATED = {
+    'coder',
+    'ask_user',
+    'repo_context',
+    'compaction',
+    'persistence',
+    'logfire',
+    'notifications',
+    'mcp',
+    'day_ai',
+    'ordinal',
+    'github',
+    'google_workspace',
+    'pylon',
+    'notion',
+    'linear',
+}
+OPT_IN = {'day_ai', 'github', 'google_workspace', 'notion', 'linear', 'ordinal', 'pylon'}
 
 
 class Menu:
@@ -42,9 +57,9 @@ def _apply(action: Coroutine[object, object, object]) -> None:
     asyncio.run(action)
 
 
-def test_builtins_are_the_curated_enabled_set() -> None:
-    assert sorted(plugin.id for plugin in DEFAULT_PLUGINS) == sorted(CURATED | OPT_IN)
-    assert {plugin.id for plugin in DEFAULT_PLUGINS if plugin.enabled} == CURATED
+def test_builtins_are_the_curated_set_with_opt_in_integrations_off() -> None:
+    assert sorted(plugin.id for plugin in DEFAULT_PLUGINS) == sorted(CURATED)
+    assert {plugin.id for plugin in DEFAULT_PLUGINS if not plugin.enabled} == OPT_IN
 
 
 def test_menu_offers_no_uncurated_harness_capabilities(tmp_path: Path) -> None:

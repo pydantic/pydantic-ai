@@ -8,6 +8,8 @@
         - JsonSchemaTransformer
         - InlineDefsJsonSchemaTransformer
         - merge_profile
+        - prompt_cache_outlook
+        - PromptCacheOutlook
         - DEFAULT_PROFILE
         - DEFAULT_PROMPTED_OUTPUT_TEMPLATE
         - DEFAULT_THINKING_TAGS

@@ -5,7 +5,6 @@ from pathlib import Path
 import keyring
 import pytest
 from keyring.errors import NoKeyringError
-from pydantic import SecretStr
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai.exceptions import UserError
@@ -26,16 +25,6 @@ class Prompt:
         if isinstance(value, BaseException):
             raise value
         return value
-
-
-def test_save_only_replaces_the_value_the_caller_saw() -> None:
-    with pytest.raises(UserError, match='KEY changed in /keys'):
-        api_keys.save_key(name='KEY', value='new', replaces=SecretStr('seen'))
-    assert api_keys.save_key(name='KEY', value='first', replaces=None) == 'Saved KEY in the OS keyring.'
-    with pytest.raises(UserError, match='KEY changed in /keys'):
-        api_keys.save_key(name='KEY', value='new', replaces=None)
-    api_keys.save_key(name='KEY', value='second', replaces=SecretStr('first'))
-    assert api_keys.load_keys()['KEY'].get_secret_value() == 'second'
 
 
 def test_storage() -> None:

@@ -2206,8 +2206,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
-                # Check for content filter on a response with no content
-                if (is_empty or is_blank_text_only) and self.model_response.finish_reason == 'content_filter':
+                # A refusal can arrive after the model has already emitted thinking (e.g. Anthropic's
+                # `stop_reason: 'refusal'`), so a thinking-only response is filtered too. Re-prompting it
+                # would only repeat the refused request.
+                if self.model_response.finish_reason == 'content_filter':
                     details = self.model_response.provider_details or {}
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
 

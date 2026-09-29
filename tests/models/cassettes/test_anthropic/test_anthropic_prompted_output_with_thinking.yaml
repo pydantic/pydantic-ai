@@ -1,0 +1,90 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "501"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 16384
+        messages:
+        - role: user
+          content:
+          - text: What is 3 + 3?
+            type: text
+        model: claude-sonnet-4-6
+        stream: false
+        system:
+        - type: text
+          text: |
+
+            Always respond with a JSON object that's compatible with this schema:
+
+            {"properties": {"response": {"type": "integer"}}, "required": ["response"], "type": "object", "title": "int"}
+
+            Don't include any text or Markdown fencing before or after.
+        thinking:
+          type: enabled
+          budget_tokens: 3000
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-fc75672450d152939fc85ed142bce470-77c42bc18c248764-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-4-6
+        id: msg_011CfXs8L7CVGLZ3ER1A7cSD
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: "6"
+          signature: >-
+            EvYBCpIBCBIYAipAjTItSwLZ/PsFvHDkhkBuU8PPm5eiUr9kdSyvxcKq+Vuu9/bjDQpkgmkhrQHsnYwBCAU2cHjltZY6tL4+/Y9KeDIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJGYwMjI0OGY4LWNlYmEtNGU2Yy1iZTcwLTIwZmQ3MjllYzhhMagB3I3v1QYSDBFCfXQ3DLqdwVwHXBoM7c6fUu5JNtHzWOhGIjCT+u2OWQTj11GU6dNvJ8ujYU3mL7Xzl7gJdd2gh82mpAJPqUcan3MzEBYlbj2y+0AqEa8ajUbo9fd881681RZ85RPSGAE=
+        - type: text
+          text: "{\"response\": 6}"
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 106
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 18
+          output_tokens_details:
+            thinking_tokens: 7
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-29T14:10:36.895934+00:00

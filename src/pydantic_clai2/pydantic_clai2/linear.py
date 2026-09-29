@@ -22,9 +22,19 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.linear import Linear
 
 from . import theme
-from .api_keys import KeyReference, SecretPrompt, load_keys, prompt_api_key, resolve_key, save_key, save_key_connection
+from .api_keys import (
+    KeyExistsError,
+    KeyReference,
+    SavedKey,
+    SecretPrompt,
+    forget_connection,
+    load_keys,
+    prompt_api_key,
+    save_key,
+    save_key_connection,
+)
 from .commands import Command
-from .credential_store import delete_credentials, load_codex_credentials
+from .credential_store import load_codex_credentials
 from .field_menu import FieldMenu, FieldRow, run_flow_async, shown
 from .mcp import HTTPServer, TokenStore, http_client, oauth
 from .plugins import DepsT, PluginHost, SessionStart
@@ -87,8 +97,8 @@ def activate(host: PluginHost[DepsT]) -> None:
         )
         return
 
-    def token(_: RunContext[DepsT]) -> str:
-        return resolve_key(token=reference(), reconfigure=_RECONFIGURE)
+    def token(ctx: RunContext[DepsT]) -> str:
+        return saved_key()(ctx)
 
     host.add(
         Linear[DepsT](auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions)
@@ -97,7 +107,7 @@ def activate(host: PluginHost[DepsT]) -> None:
     @host.on('session_start')
     async def check(_: SessionStart) -> None:
         try:
-            await to_thread.run_sync(lambda: resolve_key(token=reference(), reconfigure=_RECONFIGURE))
+            await to_thread.run_sync(lambda: saved_key()(None))
         except UserError as exc:
             host.console.print(f'Linear: {exc}', style=theme.color(theme.WARNING), markup=False)
 
@@ -191,7 +201,7 @@ class _Settings(Generic[DepsT]):
 
     def reset(self, row: FieldRow) -> str:
         if row.key == 'api_key':
-            delete_credentials(account=ACCOUNT)
+            forget_connection(account=ACCOUNT)
             return f'Linear uses {KEY_NAME} from /keys from the next run.'
         self._host.save_settings(self._validated(row, row.default))
         return f'Linear {row.label}: {row.display(row.default)} (default).'
@@ -224,6 +234,11 @@ def reference() -> KeyReference:
         raise UserError(f'The saved Linear key choice is invalid. Choose again with {_RECONFIGURE}.') from None
 
 
+def saved_key() -> SavedKey:
+    """The chosen key, read again on each call so a new choice in the menu reaches the next run."""
+    return SavedKey(name=reference().name, setup=f'Restore it in /keys or reconfigure through {_RECONFIGURE}.')
+
+
 async def choose_key(prompt: SecretPrompt) -> str:
     """Pick a `/keys` entry or enter a new key masked; save the name, and the value only in `/keys`."""
     choice = await prompt_api_key(prompt=prompt, label=f'Linear API key (saved in /keys as {KEY_NAME}): ')
@@ -236,20 +251,21 @@ async def choose_key(prompt: SecretPrompt) -> str:
         value = choice.strip()
         if not value:
             raise ValueError('A Linear API key is required.')
-        previous = (await to_thread.run_sync(load_keys)).get(KEY_NAME)
-        if previous is not None:
+        # Checked and saved under one lock, so a key another process just saved is never replaced unasked.
+        try:
+            saved = await to_thread.run_sync(partial(save_key, name=KEY_NAME, value=value, replace=False))
+        except KeyExistsError:
             try:
                 answer = await prompt.prompt_async(f'Replace {KEY_NAME} in /keys for every plugin using it? [y/N]: ')
             except (EOFError, KeyboardInterrupt):
                 answer = ''
             if answer.strip().lower() != 'y':
                 return 'Linear key unchanged.'
-        saved = await to_thread.run_sync(lambda: save_key(name=KEY_NAME, value=value, replaces=previous)) + ' '
+            saved = await to_thread.run_sync(partial(save_key, name=KEY_NAME, value=value))
+        saved += ' '
         key = KeyReference(name=KEY_NAME)
     value_json = _Connection(token=key).model_dump_json()
-    await to_thread.run_sync(
-        lambda: save_key_connection(account=ACCOUNT, token=key, value=value_json, reconfigure=_RECONFIGURE)
-    )
+    await to_thread.run_sync(partial(save_key_connection, account=ACCOUNT, token=key, value=value_json))
     return f'{saved}Linear uses {key.name} from /keys from the next run.'
 
 

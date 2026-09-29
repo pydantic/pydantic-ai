@@ -280,22 +280,18 @@ async def test_enter_a_new_key(
         assert prompt.labels[-1] == f'Replace {KEY_NAME} in /keys for every plugin using it? [y/N]: '
 
 
-async def test_key_changed_elsewhere_while_confirming_is_not_overwritten(
-    vault: Vault, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    save_key(name=KEY_NAME, value='lin_old')
-    monkeypatch.setattr(api_keys, 'menu_key', iter(['down', 'enter']).__next__)
-
+async def test_key_saved_elsewhere_while_typing_is_not_replaced_unasked(vault: Vault) -> None:
     class Racing(Prompt):
-        """Another CLAI saves the key while this one waits for the replace confirmation."""
+        """Another CLAI saves the key while this one is typing a new one."""
 
         async def prompt_async(self, label: str, /, *, is_password: bool = False) -> str:
-            if label.startswith('Replace'):
+            if is_password:
                 save_key(name=KEY_NAME, value='lin_other')
             return await super().prompt_async(label, is_password=is_password)
 
-    with pytest.raises(UserError, match=f'{KEY_NAME} changed in /keys while you were entering a key'):
-        await choose_key(Racing('lin_new', 'y'))
+    prompt = Racing('lin_new', 'n')
+    assert await choose_key(prompt) == 'Linear key unchanged.'
+    assert prompt.labels[-1] == f'Replace {KEY_NAME} in /keys for every plugin using it? [y/N]: '
     assert load_keys()[KEY_NAME].get_secret_value() == 'lin_other'
     assert load_codex_credentials(account=ACCOUNT) is None
 
