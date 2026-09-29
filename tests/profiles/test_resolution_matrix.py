@@ -44,7 +44,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -1398,8 +1398,6 @@ def test_github_copilot_openai_family_prefix_arms(model_name: str):
     `oswe` arms, its reasoning support too; asserting each prefix resolves to the same-id
     `openai_model_profile` (plus the Copilot overlay) makes any future reroute fail loudly.
     """
-    from pydantic_ai.profiles.openai import openai_model_profile
-
     expected = _normalize(openai_model_profile(model_name))
     assert expected is not None
     expected['openai_chat_supports_max_completion_tokens'] = True
@@ -2480,8 +2478,6 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
     the same API hasn't been, and sending an item it doesn't implement would drop an availability change
     silently rather than loudly.
     """
-    from pydantic_ai.profiles.openai import openai_model_profile
-
     profile = openai_model_profile('gpt-5.6')
     assert profile.get('tool_addition_mode') is None
 
