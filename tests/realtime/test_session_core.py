@@ -38,6 +38,7 @@ from pydantic_ai.realtime._core import (
     Owed,
     ReceiveEnded,
     SessionCore,
+    ToolCallRefused,
     ToolReturned,
 )
 from pydantic_ai.realtime._lifecycle import (
@@ -318,6 +319,38 @@ def test_spoken_turns_without_transcripts() -> None:
     assert summary(session_core.all_messages()) == snapshot(['{user:None+audio}', '{user:None}'])
 
 
+def test_a_turn_that_joins_while_it_is_still_spoken_ends_with_the_speech() -> None:
+    """xAI adds a spoken turn's item at speech start: the audio the user says after that is still the turn's."""
+    session_core = feed(
+        core(input_transcription_enabled=False, retain_input_audio=True),
+        AudioSent(data=b'\x01\x00'),
+        UserTurnStarted(turn_id='u1'),
+        RealtimeInputSpeechStartEvent(item_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+        AudioSent(data=b'\x02\x00' * 4),
+    )
+    assert session_core.all_messages() == []
+    feed(session_core, RealtimeInputSpeechEndEvent(item_id='u1'))
+    [request] = session_core.all_messages()
+    part = request.parts[0]
+    assert isinstance(part, SpeechPart) and part.audio is not None
+    assert len(part.audio.data) == 44 + 10  # a WAV header, and every byte sent before the speech ended
+
+    # One cleared while it was spoken, and one still spoken at close, end there with what they have.
+    feed(
+        session_core,
+        RealtimeInputSpeechStartEvent(item_id='u2'),
+        UserTurnStarted(turn_id='u2'),
+        UserTurnEnded(turn_id='u2'),
+        UserTurnDiscarded(turn_id='u2'),
+        RealtimeInputSpeechStartEvent(item_id='u3'),
+        UserTurnStarted(turn_id='u3'),
+        UserTurnEnded(turn_id='u3'),
+        Closed(),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['{user:None+audio}', '{user:None}', '{user:None}'])
+
+
 def test_failed_and_discarded_turns() -> None:
     session_core = feed(
         core(),
@@ -408,3 +441,33 @@ def test_a_call_that_settles_without_a_result_owes_nothing() -> None:
     failure = ModelRequest(parts=[ToolReturnPart(tool_name='boom', content='failed', tool_call_id='call_1')])
     feed(session_core, ToolReturned(tool_call_id='call_1', request=failure))
     assert session_core.still_owed(wait) == snapshot(frozenset())
+
+
+def test_a_call_the_session_refused_is_left_out() -> None:
+    session_core = feed(
+        core(),
+        started('r1'),
+        ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1'),
+        ToolCall('call_2', tool_name='lookup', args='{}', response_id='r1'),
+        ToolCallRefused(tool_call_id='call_2'),
+        ToolCallRefused(tool_call_id='unknown'),
+        ended('r1'),
+        ToolCallRefused(tool_call_id='call_1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop'])
+
+
+def test_a_turn_whose_transcript_can_no_longer_be_read_ends_with_what_it_has() -> None:
+    session_core = feed(
+        core(),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+        InputTranscript('Good', item_id='u1'),
+        UserTurnStarted(turn_id='u2'),
+        started('r1'),
+        said('r1', 'Hm.'),
+        ended('r1'),
+    )
+    assert session_core.all_messages() == []
+    feed(session_core, ReceiveEnded())
+    assert summary(session_core.all_messages()) == snapshot(['{user:Good}', 'r1 [assistant:Hm.] complete stop'])

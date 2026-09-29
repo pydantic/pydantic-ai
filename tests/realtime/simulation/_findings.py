@@ -773,6 +773,44 @@ FRAME_CUT_OFF_BY_CLOSE = Finding(
 )
 
 
+def _provider_reply_before_any_echo(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A response the provider started on its own was read after the input went out, before any of ours was."""
+    key = violation.context.get('input')
+    if not isinstance(key, str) or (input_ := sim.truth.input(key)) is None:
+        return False
+    issued = min((operation.issued for operation in sim.operations if operation.key == key), default=input_.seq)
+    responses = sim.truth.responses.values()
+    first_echo = min(
+        (r.started_read for r in responses if r.trigger == 'create' and r.started_read is not None), default=None
+    )
+    return any(
+        response.trigger != 'create'
+        and response.started_read is not None
+        and response.started_read > issued
+        and (first_echo is None or response.started_read < first_echo)
+        for response in responses
+    )
+
+
+PROVIDER_REPLY_BEFORE_ANY_ECHO = Finding(
+    id='SIM-24',
+    title=(
+        'until the server has echoed the metadata of one of our `response.create`s, the connection takes a response '
+        'it started on its own (server VAD) for the one we asked for, if ours is outstanding: it answers our input, '
+        "so the input is recorded before it and a wait for the input's reply ends with it"
+    ),
+    tracked_by=(
+        "the OpenAI-protocol lifecycle tracker's documented inference: whether a server echoes request metadata is "
+        'learned from its first echo, not assumed per provider'
+    ),
+    evidence='simulated',
+    codes=frozenset({'history.order', 'wait.early'}),
+    providers=OPENAI_PROTOCOL,
+    matches=_provider_reply_before_any_echo,
+    accepted=True,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
         FRAME_CUT_OFF_BY_CLOSE,
@@ -795,6 +833,7 @@ KNOWN_FINDINGS.extend(
         CUT_OFF_TURN_COMPLETE,
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,
+        PROVIDER_REPLY_BEFORE_ANY_ECHO,
     ]
 )
 

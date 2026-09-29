@@ -602,6 +602,40 @@ async def test_a_reconnect_settles_what_the_new_socket_will_never_answer() -> No
     )
 
 
+@pytest.mark.parametrize('transcribes', [True, False])
+async def test_a_reconnect_ends_the_spoken_turns_whose_transcript_it_loses(transcribes: bool) -> None:
+    """A committed turn stays in the conversation, but its transcript will never come on the new socket."""
+
+    async def dial() -> Any:
+        return FakeWebSocket([])
+
+    def committed(item_id: str) -> dict[str, Any]:
+        return {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None}
+
+    kwargs: dict[str, Any] = {} if transcribes else {'input_transcription_enabled': False}
+    stream = Stream(
+        committed('item_u1'),
+        # xAI's and Azure's interim snapshot of a transcript still to be completed.
+        {
+            'type': 'conversation.item.input_audio_transcription.completed',
+            'item_id': 'item_u1',
+            'transcript': 'So',
+            'status': 'in_progress',
+        },
+        committed('item_u2'),
+        {'type': 'conversation.item.input_audio_transcription.delta', 'item_id': 'item_u2', 'delta': 'Good'},
+        committed('item_u3'),
+        {'type': 'conversation.item.input_audio_transcription.completed', 'item_id': 'item_u3', 'transcript': 'Hi.'},
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
+        **kwargs,
+    )
+    events = [event for event in await stream.rest() if isinstance(event, UserTurnDiscarded)]
+    assert events == (
+        [UserTurnDiscarded(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u2')] if transcribes else []
+    )
+
+
 async def test_a_reconnect_loses_an_unstarted_request_the_caller_cancelled() -> None:
     replacement = FakeWebSocket([])
 
@@ -735,3 +769,56 @@ async def test_a_request_refused_for_a_response_the_provider_started_is_answered
             'RealtimeSessionErrorEvent',
         ]
     )
+
+
+async def test_a_request_refused_for_a_response_the_provider_never_reports_stays_refused() -> None:
+    """The next response is ours after all, or no response comes before the connection is gone."""
+    refused = refusal('pydantic_ai.response.0')
+    refused['error']['code'] = 'conversation_already_has_active_response'
+    stream = Stream(refused, created('resp_1', answers='1'))
+    await stream.connection.send('Hello?')
+    await stream.connection.send('Again?')
+    events = await stream.rest()
+    assert [event for event in events if isinstance(event, (ResponseRequestRefused, ResponseStarted))] == snapshot(
+        [ResponseRequestRefused(input_ids=(0,)), ResponseStarted(response_id='resp_1', answers=(1,))]
+    )
+
+    async def dial() -> Any:
+        return FakeWebSocket([])
+
+    for reconnect in (None, {'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1}):
+        stream = Stream(refused, dial=dial, reconnect=reconnect)
+        await stream.connection.send('Hello?')
+        events = await stream.rest()
+        assert [event for event in events if isinstance(event, ResponseRequestRefused)] == [
+            ResponseRequestRefused(input_ids=(0,))
+        ]
+
+
+async def test_a_reconnect_loses_a_request_the_connection_no_longer_counts_as_active() -> None:
+    """The old socket neither started nor refused it, and the new one isn't asked again: it is lost."""
+
+    async def dial() -> Any:
+        return FakeWebSocket([])
+
+    # A stray `response.done` for an earlier response ends what the connection thought was active.
+    stream = Stream(
+        created('resp_1', answers='0'),
+        done('resp_1'),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
+    )
+    await stream.connection.send(CreateResponse())
+    assert await stream.take(3) == snapshot(
+        [
+            ResponseStarted(response_id='resp_1', answers=(0,)),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+        ]
+    )
+    await stream.connection.send(CreateResponse())
+    stream.feed(done('resp_1'))
+    events = await stream.rest()
+    assert [event for event in events if isinstance(event, InputLost)] == snapshot([InputLost(input_ids=(1,))])

@@ -94,6 +94,7 @@ from ._core import (
     Interrupted,
     ReceiveEnded,
     SessionCore,
+    ToolCallRefused,
     ToolReturned,
 )
 from ._instrumentation import (
@@ -2102,7 +2103,9 @@ class RealtimeSession:
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index
 
-    async def _send_frame(self, *contents: RealtimeInput, request: ModelRequest | None = None) -> None:
+    async def _send_frame(
+        self, *contents: RealtimeInput, request: ModelRequest | None = None, reply_asked: bool = True
+    ) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
 
         A single input can expand to several protocol frames (a `ToolResult` creates the conversation
@@ -2111,7 +2114,8 @@ class RealtimeSession:
         the cases where an interleaved frame would change what they mean.
 
         `request` is the history entry recording the first input, taken back if the provider later
-        reports that input's content as refused (see `_handle_input_rejected`).
+        reports that input's content as refused (see `_handle_input_rejected`). `reply_asked=False` says no
+        reply will be asked for them, as for a result of a tool batch that will get none.
         """
         self._ensure_not_closed()
         self._start_pump()
@@ -2137,7 +2141,7 @@ class RealtimeSession:
                             InputSent(
                                 input_id=input_index,
                                 request=request if position == 0 else None,
-                                solicits=isinstance(content, (str, CreateResponse, ToolResult)),
+                                solicits=reply_asked and isinstance(content, (str, CreateResponse, ToolResult)),
                                 tool_call_id=content.tool_call_id if isinstance(content, ToolResult) else None,
                             )
                         )
@@ -3386,7 +3390,7 @@ class RealtimeSession:
             self._check_request_limit()
         batch.sending += 1
         try:
-            await self._send_frame(result)
+            await self._send_frame(result, reply_asked=not batch.abandoned)
         except BaseException:
             # A provider missing one of the batch's results won't answer it.
             batch.abandoned = True
@@ -3682,7 +3686,13 @@ class RealtimeSession:
             # The tool call a held response was waiting for joins it, so the hold is spent.
             self._deferred_response_finish_reason = None
             if self._accept_item(event.item_id, event.tool_call_id):
-                await self._dispatch_tool_call(event)
+                try:
+                    await self._dispatch_tool_call(event)
+                except UsageLimitExceeded:
+                    # Tripped before the call joined the response, so it never runs or reaches history.
+                    if self._core is not None:
+                        self._core.apply(ToolCallRefused(tool_call_id=event.tool_call_id))
+                    raise
             return False
         return await self._handle_non_tool_pump_event(event)
 
@@ -3871,7 +3881,7 @@ class RealtimeSession:
 
     async def _shadowed_events(self, core: SessionCore) -> AsyncIterator[RealtimeCodecEvent]:
         """The connection's codec events, feeding the shadow core its lifecycle stream on the way."""
-        async for frame in self._connection._tagged_frames():  # pyright: ignore[reportPrivateUsage]
+        async for frame in self._connection._tagged_frames():  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
             # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
             # to one of its events (and closing, say) must find the shadow core as far along as this one.
             for event, stale in frame:
@@ -3893,8 +3903,10 @@ class RealtimeSession:
                 lineterm='',
             )
             self._shadow_divergences.append('history differs:\n' + '\n'.join(diff))
-        for name in ('input_tokens', 'output_tokens', 'requests'):
-            if (theirs := getattr(core.usage, name)) != (ours := getattr(self.usage, name)):
+        # Everything but the tool calls, which the session counts as it runs them, not the core.
+        for usage_field in dataclasses.fields(self.usage):
+            name = usage_field.name
+            if name != 'tool_calls' and (theirs := getattr(core.usage, name)) != (ours := getattr(self.usage, name)):
                 self._shadow_divergences.append(f'usage.{name} differs: legacy {ours}, shadow {theirs}')
 
     def _ensure_streamable(self) -> None:

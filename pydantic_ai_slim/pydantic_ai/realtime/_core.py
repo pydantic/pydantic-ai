@@ -130,6 +130,16 @@ class ToolReturned:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ToolCallRefused:
+    """The session refused a tool call the model made, before running it (a usage limit tripped on it).
+
+    It leaves the call out of history, as it never ran.
+    """
+
+    tool_call_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class Interrupted:
     """The caller interrupted the response being spoken, having heard `played_ms` of it."""
 
@@ -160,6 +170,7 @@ Command: TypeAlias = (
     | AudioSent
     | AudioCleared
     | ToolReturned
+    | ToolCallRefused
     | Interrupted
     | ExchangeAbandoned
     | ReceiveEnded
@@ -201,6 +212,9 @@ class _UserTurn:
     """Whether a transcript arrived at all (an item transcription never reports stays audio-only)."""
     audio: bytes | None = None
     ended: bool = False
+    speaking: bool = False
+    """Joined the conversation while the user was still saying it (xAI adds its item at speech start), so its
+    audio, and with it the turn, ends at the speech end."""
     message: ModelRequest | None = None
     """Built once the turn is final: transcribed (or known never to be) and joined to the conversation."""
 
@@ -208,8 +222,7 @@ class _UserTurn:
 @dataclass(eq=False)
 class _Input:
     id: InputId
-    request: ModelRequest | None
-    placed: bool = False
+    request: ModelRequest
     withdrawn: bool = False
 
 
@@ -267,6 +280,9 @@ class SessionCore:
         self._responses: dict[str, _Response] = {}
         self._turns: dict[str, _UserTurn] = {}
         self._inputs: dict[InputId, _Input] = {}
+        """The inputs history records (not audio chunks, say, or a bare request for a response), by id."""
+        self._unplaced: dict[InputId, _Input] = {}
+        """Those not in the conversation yet, in the order they were sent."""
         self._obligations: dict[InputId, _Obligation] = {}
         self._answered_by: dict[InputId, str] = {}
         self._call_response: dict[str, _Response] = {}
@@ -278,6 +294,7 @@ class SessionCore:
         """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
         self._input_audio = bytearray()
         self._user_speaking = False
+        self._speaking_item: str | None = None
         self._speech_segmented = False
         """Whether the provider draws speech-end boundaries, so the retained audio is cut into turns at them."""
         self._closed = False
@@ -313,6 +330,7 @@ class SessionCore:
                 self._transcribed(turn, failed=True)
         elif isinstance(item, RealtimeInputSpeechStartEvent):
             self._user_speaking = True
+            self._speaking_item = item.item_id
         elif isinstance(item, RealtimeInputSpeechEndEvent):
             self._speech_ended(item.item_id)
         elif isinstance(item, InputAdded):
@@ -345,11 +363,7 @@ class SessionCore:
 
     def _command(self, command: Command) -> None:
         if isinstance(command, InputSent):
-            self._inputs[command.input_id] = _Input(command.input_id, command.request)
-            if command.solicits:
-                self._obligations[command.input_id] = 'pending'
-            if command.tool_call_id is not None:
-                self._result_input[command.tool_call_id] = command.input_id
+            self._input_sent(command)
         elif isinstance(command, InputWithdrawn):
             self._withdraw(command.input_ids)
         elif isinstance(command, AudioSent):
@@ -360,6 +374,8 @@ class SessionCore:
         elif isinstance(command, ToolReturned):
             self._returns[command.tool_call_id] = command.request
             self._settled_calls.add(command.tool_call_id)
+        elif isinstance(command, ToolCallRefused):
+            self._refuse_call(command.tool_call_id)
         elif isinstance(command, Interrupted):
             if (response := self._speaking_response()) is not None:
                 response.interrupted_at_ms = command.played_ms
@@ -367,11 +383,29 @@ class SessionCore:
             self._abandoned.update((token.kind, token.key) for token in self.wait_tokens())
             self._epoch += 1
         elif isinstance(command, ReceiveEnded):
-            self._receiving = False
+            self._receive_ended()
         elif isinstance(command, Closed):
             self._close()
         else:
             assert_never(command)
+
+    def _input_sent(self, command: InputSent) -> None:
+        if command.request is not None:
+            self._inputs[command.input_id] = self._unplaced[command.input_id] = _Input(
+                command.input_id, command.request
+            )
+        if command.solicits:
+            self._obligations[command.input_id] = 'pending'
+        if command.tool_call_id is not None:
+            self._result_input[command.tool_call_id] = command.input_id
+
+    def _receive_ended(self) -> None:
+        self._receiving = False
+        for turn in self._turns.values():
+            if turn.ended:
+                # Nothing more of a turn that joined will be read: not the rest of it, nor its transcript.
+                turn.speaking = False
+                self._transcribed(turn, failed=False)
 
     # --- responses ----------------------------------------------------------------------------------
 
@@ -379,9 +413,9 @@ class SessionCore:
         if event.answers:
             # The provider handles a connection's frames in order, so everything sent before the request this
             # response answers was in its conversation before the response started, acknowledged or not.
-            for input_id in sorted(self._inputs):
-                if input_id <= max(event.answers):
-                    self._place_input(input_id)
+            last = max(event.answers)
+            for input_id in [input_id for input_id in self._unplaced if input_id <= last]:
+                self._place_input(input_id)
         response = _Response(event.response_id, event.answers, self._model_name())
         self._responses[event.response_id] = response
         self._placed.append(response)
@@ -449,6 +483,15 @@ class SessionCore:
         response.parts.append(ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id))
         response.tool_calls.append(event.tool_call_id)
         self._call_response[event.tool_call_id] = response
+
+    def _refuse_call(self, call_id: str) -> None:
+        if (response := self._call_response.get(call_id)) is None or response.status is not None:
+            return
+        del self._call_response[call_id]
+        response.tool_calls.remove(call_id)
+        response.parts = [
+            part for part in response.parts if not (isinstance(part, ToolCallPart) and part.tool_call_id == call_id)
+        ]
 
     def _usage(self, event: SessionUsage) -> None:
         self.usage.incr(event.usage)
@@ -536,6 +579,9 @@ class SessionCore:
             if turn.audio is None:
                 turn.audio = bytes(self._input_audio)
                 self._input_audio.clear()
+        if turn.speaking:
+            turn.speaking = False
+            self._turn_said(turn)
 
     def _end_turn(self, turn_id: str) -> None:
         turn = self._turn(turn_id)
@@ -543,10 +589,17 @@ class SessionCore:
             return
         turn.ended = True
         self._placed.append(turn)
+        if self._user_speaking and turn_id == self._speaking_item:
+            turn.speaking = True
+            return
         if turn.audio is None and self._retain_input and self._input_audio:
             # Committed by hand, with no speech end to cut it at: the whole buffer is this turn's.
             turn.audio = bytes(self._input_audio)
             self._input_audio.clear()
+        self._turn_said(turn)
+
+    def _turn_said(self, turn: _UserTurn) -> None:
+        """All of a joined turn's audio is in: it is final once transcribed, or at once if nothing transcribes it."""
         if not self._transcription:
             self._transcribed(turn, failed=True)
         elif turn.transcribed:
@@ -556,8 +609,9 @@ class SessionCore:
         if (turn := self._turns.get(turn_id)) is None:
             return
         if turn.ended:
-            # It joined the conversation, but no more of it is coming: no transcript either.
-            self._transcribed(turn, failed=True)
+            # It joined the conversation, but no more of it is coming: it keeps what transcript it has.
+            turn.speaking = False
+            self._transcribed(turn, failed=False)
         else:
             del self._turns[turn_id]
 
@@ -577,7 +631,7 @@ class SessionCore:
         if failed:
             turn.transcript = ''
         turn.transcribed = True
-        if turn.ended:
+        if turn.ended and not turn.speaking:
             self._build_turn(turn)
 
     def _build_turn(self, turn: _UserTurn) -> None:
@@ -594,9 +648,7 @@ class SessionCore:
     # --- inputs and obligations --------------------------------------------------------------------
 
     def _place_input(self, input_id: InputId) -> None:
-        input_ = self._inputs.get(input_id)
-        if input_ is not None and not input_.placed:
-            input_.placed = True
+        if (input_ := self._unplaced.pop(input_id, None)) is not None:
             self._placed.append(input_)
 
     def _withdraw(self, input_ids: Sequence[InputId]) -> None:
@@ -621,10 +673,10 @@ class SessionCore:
                 if not turn.ended:
                     turn.ended = True
                     self._placed.append(turn)
+                turn.speaking = False
                 self._transcribed(turn, failed=False)
-        for input_ in self._inputs.values():
-            if input_.request is not None:
-                self._place_input(input_.id)
+        for input_id in list(self._unplaced):
+            self._place_input(input_id)
         for input_id, outcome in self._obligations.items():
             if outcome == 'pending':
                 self._obligations[input_id] = 'void'
@@ -651,7 +703,7 @@ class SessionCore:
                 if entry.message is None:
                     return
                 yield entry.message
-            elif not entry.withdrawn and entry.request is not None:
+            elif not entry.withdrawn:
                 yield entry.request
 
     def _returns_of(self, response: _Response) -> Iterator[ModelRequest]:

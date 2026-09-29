@@ -51,6 +51,15 @@ from ._openai_protocol import (
 )
 
 _CONVERSATION_ITEM_ADDED_FRAMES = frozenset({'conversation.item.added', 'conversation.item.created'})
+_TRANSCRIPTION_SETTLED_FRAMES = frozenset(
+    {'conversation.item.input_audio_transcription.completed', 'conversation.item.input_audio_transcription.failed'}
+)
+
+
+def _is_final_transcription(data: dict[str, Any]) -> bool:
+    """Whether a transcription frame settles its item, as in `_map_input_transcription_event`: xAI and Azure send interim `completed` snapshots too."""
+    status = data.get('status')
+    return status is None or status == 'completed'
 
 
 def frame_response_id(event_type: str | None, data: dict[str, Any]) -> str | None:
@@ -68,7 +77,8 @@ def frame_response_id(event_type: str | None, data: dict[str, Any]) -> str | Non
 class OpenAILifecycle:
     """Turns an OpenAI-protocol connection's frames and sends into lifecycle events."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, transcribes: bool = True) -> None:
+        self._transcribes = transcribes
         self._leading: list[LifecycleEvent] = []
         """Events that precede the codec events of the frame being decoded: a response it starts."""
         self._pending: list[LifecycleEvent] = []
@@ -108,6 +118,8 @@ class OpenAILifecycle:
         self._refused_while_active: tuple[InputId, ...] = ()
         """Inputs whose request the provider refused because a response it started on its own was active, which
         answers them instead, once it is reported started."""
+        self._untranscribed: set[str] = set()
+        """Spoken turns that joined the conversation and are waiting for their transcript."""
         self._committed: set[str] = set()
         """Spoken turns already committed, so a repeated commit doesn't make a second turn of one."""
 
@@ -194,8 +206,15 @@ class OpenAILifecycle:
             user_turn_id, self._unclaimed_turn = self._unclaimed_turn, None
             if self._refused_while_active:
                 answers, basis = self._refused_while_active, 'inferred'
-        self._refused_while_active = ()
-        return [self._start(response_id, answers=self._settle(answers), basis=basis, user_turn_id=user_turn_id)]
+                self._refused_while_active = ()
+        events = self._refusals_unanswered()
+        events.append(self._start(response_id, answers=self._settle(answers), basis=basis, user_turn_id=user_turn_id))
+        return events
+
+    def _refusals_unanswered(self) -> list[LifecycleEvent]:
+        """The inputs refused for a response the provider started on its own, which the next one wasn't after all."""
+        refused, self._refused_while_active = self._settle(self._refused_while_active), ()
+        return [ResponseRequestRefused(input_ids=refused)] if refused else []
 
     def response_done(
         self,
@@ -230,6 +249,9 @@ class OpenAILifecycle:
             return self.speech_stopped(data)
         if event_type == 'input_audio_buffer.cleared':
             return self.audio_cleared()
+        if event_type in _TRANSCRIPTION_SETTLED_FRAMES and _is_final_transcription(data):
+            self._untranscribed.discard(str(data.get('item_id')))
+            return []
         if event_type == 'input_audio_buffer.timeout_triggered':
             self._idle_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
             return []
@@ -280,6 +302,8 @@ class OpenAILifecycle:
         events: list[LifecycleEvent] = [] if item_id in self._speaking else [UserTurnStarted(turn_id=item_id)]
         events.append(UserTurnEnded(turn_id=item_id))
         self._unclaimed_turn = item_id
+        if self._transcribes:
+            self._untranscribed.add(item_id)
         return events
 
     def audio_cleared(self) -> list[LifecycleEvent]:
@@ -354,14 +378,33 @@ class OpenAILifecycle:
         self._messages.clear()
         self._tool_outputs.clear()
 
-    def reconnected(self, *, restores_in_flight: bool, lost_inputs: Sequence[InputId]) -> None:
-        """A reconnect succeeded: settle what it did not carry over, before it is reported."""
+    def reconnected(
+        self, *, restores_in_flight: bool, lost_inputs: Sequence[InputId], asked_again: Sequence[InputId]
+    ) -> None:
+        """A reconnect succeeded: settle what it did not carry over, before it is reported.
+
+        `asked_again` are the inputs whose request the connection is about to send again on the new socket.
+        """
         self._pending.extend(InputAdded(input_id=input_id) for input_id in sorted(self._carried_over))
         self._carried_over.clear()
         self.requests_dropped(lost_inputs)
+        self._pending.extend(self._refusals_unanswered())
         if not restores_in_flight:
+            # Whatever the connection still thought of it, a request the old socket neither started nor
+            # refused, and that isn't asked for again, will never be answered.
+            self.requests_dropped(
+                [
+                    input_id
+                    for answers, _ in self._requests.values()
+                    for input_id in answers
+                    if input_id not in asked_again
+                ]
+            )
             self._requests.clear()
             self._lose_everything_open()
+            # A transcript still to come for a turn of the old connection never will.
+            self._pending.extend(UserTurnDiscarded(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
+            self._untranscribed.clear()
 
     def closed(self, unanswered: Sequence[InputId]) -> None:
         """The connection is gone for good: nothing still open will ever end on its own, or be answered."""
@@ -370,6 +413,7 @@ class OpenAILifecycle:
         )
         self._requests.clear()
         self._carried_over.clear()
+        self._pending.extend(self._refusals_unanswered())
         self._lose_everything_open()
 
     def _lose_everything_open(self) -> None:

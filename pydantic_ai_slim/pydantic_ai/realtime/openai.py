@@ -470,7 +470,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._deferred_response_answers: list[InputId] = []
         self._response_request_answers: tuple[InputId, ...] = ()
         # Which response, user turn, and input each frame is about (see `_lifecycle_events()`).
-        self._lifecycle = OpenAILifecycle()
+        self._lifecycle = OpenAILifecycle(transcribes=input_transcription_enabled)
         # Inputs that shared a `response.create` with an earlier one and so get no response of their own,
         # reported to the session through `_take_merged_response_requests`.
         self._merged_response_requests = 0
@@ -1212,7 +1212,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._tool_call_batches.clear()
                 self._tool_call_responses.clear()
             self._lifecycle.reconnected(
-                restores_in_flight=self.reconnect_restores_in_flight_state, lost_inputs=lost_inputs
+                restores_in_flight=self.reconnect_restores_in_flight_state,
+                lost_inputs=lost_inputs,
+                asked_again=tuple(replayed),
             )
             if replay_response:
                 await self._create_response(replay_inputs, replay_answers)
