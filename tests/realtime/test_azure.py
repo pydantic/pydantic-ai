@@ -256,6 +256,19 @@ def test_voice_live_azure_turn_detection() -> None:
         'speech_duration_ms': 300,
         'end_of_utterance_detection': eou,
     }
+    # OpenAI's semantic VAD through the Azure setting still becomes Voice Live's own on a cascade.
+    semantic_vad = SemanticVAD(type='semantic_vad', eagerness='high', interrupt_response=False)
+    assert _voice_live_config('gpt-4.1', azure_voice_live_turn_detection=semantic_vad)['turn_detection'] == {
+        'type': 'azure_semantic_vad',
+        'create_response': True,
+        'interrupt_response': False,
+    }
+    assert (
+        _voice_live_config('gpt-realtime', azure_voice_live_turn_detection=semantic_vad)['turn_detection']['eagerness']
+        == 'high'
+    )
+    # `None` isn't in the type, but disables VAD like it does for the sibling settings.
+    assert _voice_live_config('gpt-realtime', azure_voice_live_turn_detection=None)['turn_detection'] is None
     # A cascade deployed under another name opts in through its profile.
     cascade = AzureRealtimeModelProfile(azure_voice_live_cascade=True)
     config = _voice_live_config(
@@ -289,6 +302,7 @@ def test_voice_live_rejects_end_of_utterance_detection_on_native_models(model_na
             },
             'azure_deep_noise_suppression',
         ),
+        # The Azure setting is sent as given, even where Microsoft documents it as unsupported.
         ('gpt-5', {'azure_voice_live_noise_reduction': 'far_field'}, 'far_field'),
         # OpenAI's near/far field is for the native-audio models; a cascade gets Azure's instead.
         ('gpt-realtime', {'openai_input_noise_reduction': 'near_field'}, 'near_field'),

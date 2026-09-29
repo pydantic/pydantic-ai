@@ -343,9 +343,9 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     azure_voice_live_noise_reduction: Literal['azure_deep_noise_suppression', 'near_field', 'far_field']
     """Input noise reduction on Voice Live; only applies when the session uses Voice Live.
 
-    `'azure_deep_noise_suppression'` is Azure's own and works on every model. It overrides
-    `openai_input_noise_reduction`, whose `near_field`/`far_field` are for the native-audio `gpt-realtime`
-    models, so on a cascade model it's sent as `azure_deep_noise_suppression` instead.
+    `'azure_deep_noise_suppression'` is Azure's own and works on every model; this setting is sent as
+    given. It overrides `openai_input_noise_reduction`, which is sent as `azure_deep_noise_suppression`
+    on a cascade model because its `near_field`/`far_field` are for the native-audio `gpt-realtime` models.
     """
     azure_voice_live_echo_cancellation: bool
     """Whether Voice Live removes the model's own voice from the input audio; only applies when the session uses Voice Live.
@@ -381,6 +381,9 @@ def _voice_live_turn_detection(
     turn_detection: ServerVAD | SemanticVAD | AzureServerVAD | AzureSemanticVAD | None
     if 'azure_voice_live_turn_detection' in settings:
         turn_detection = settings['azure_voice_live_turn_detection']
+        if turn_detection is None:  # pyright: ignore[reportUnnecessaryComparison]
+            # Not in the type, but `None` disables VAD for the sibling settings, and did for this one too.
+            return None
         if 'end_of_utterance_detection' in turn_detection and not cascade:
             # Voice Live rejects it for any other model, and then refuses every later frame of the session.
             raise UserError(
