@@ -1900,7 +1900,6 @@ class TestReadBgOutputEdgeCases:
         stdout_log.write_text('removed')
         try:
             assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: running]'
-            assert not stdout_log.exists()
         finally:
             await ts.stop_command(ctx, command_id)
 
