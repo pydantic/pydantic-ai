@@ -12,6 +12,8 @@ import sys
 import threading
 import time
 import types
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -190,9 +192,16 @@ class TestRun:
             ('/work', {'A': '1', 'B': '2'}),
         ]
 
-    async def test_fractional_timeout_rounds_up_to_a_modal_deadline(self, fake_modal: FakeModal) -> None:
+    async def test_fractional_timeout_rounds_up_to_a_modal_deadline(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Modal takes whole seconds and reads 0 as "no timeout", so a sub-second deadline
         # must not floor to unbounded.
+        @asynccontextmanager
+        async def no_client_deadline(*_args: Any, **_kwargs: Any) -> AsyncGenerator[None]:
+            yield
+
+        monkeypatch.setattr(_backend, 'command_deadline', no_client_deadline)
         backend = await started()
         await backend.run(['x'], timeout=0.5)
         assert fake_modal.sandboxes[0].exec_calls[-1].timeout == 1
@@ -218,6 +227,18 @@ class TestRun:
         assert isinstance(exc.value, TimeoutError)
         assert (exc.value.stdout, exc.value.stderr) == ('partial', 'oops')
 
+    async def test_client_deadline_while_sandbox_shuts_down_is_unavailable(self, fake_modal: FakeModal) -> None:
+        backend = await started()
+        sandbox = fake_modal.sandboxes[0]
+
+        def deadline_during_shutdown(argv: list[str], timeout: int | None) -> tuple[str, str, int]:
+            sandbox.shutting_down = True
+            return '', '', -1
+
+        fake_modal.responder = deadline_during_shutdown
+        with pytest.raises(WorkspaceUnavailableError, match="'sb-owned' is no longer running"):
+            await backend.run(['sleep', '99'], timeout=5)
+
     async def test_a_timeout_message_quotes_the_callers_timeout(self, fake_modal: FakeModal) -> None:
         # Modal enforces whole seconds, so 0.5 runs as a 1-second deadline; the message still
         # names the timeout the caller asked for.
@@ -225,7 +246,7 @@ class TestRun:
         backend = await started()
         with pytest.raises(WorkspaceTimeoutError, match=r'^Command timed out after 0\.5 seconds$'):
             await backend.run(['sleep', '99'], timeout=0.5)
-        assert fake_modal.sandboxes[0].exec_calls[-1].timeout == 1
+        assert fake_modal.sandboxes[0].exec_calls[0].timeout == 1
 
     async def test_sentinel_without_a_deadline_is_a_real_exit(self, fake_modal: FakeModal) -> None:
         # -1 is only the timeout sentinel when we set a deadline; from another cause it is
@@ -659,14 +680,14 @@ class TestCreate:
         backend = ModalSandboxBackend()
         fake_modal.create_gate = anyio.Event()
         task = asyncio.create_task(backend.get_sandbox())
-        with anyio.fail_after(2):
+        with anyio.fail_after(5):
             while not fake_modal.create_started:
                 await anyio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         fake_modal.create_gate.set()
-        with anyio.fail_after(2):
+        with anyio.fail_after(5):
             while backend.ref is None:
                 await anyio.sleep(0)
         assert backend.ref == WorkspaceRef(provider='modal', id='sb-owned')

@@ -63,6 +63,7 @@ from pydantic_ai_harness import (
     Planning,
     Researcher,
     SpendLimits,
+    SSHWorkspace,
     StepPersistence,
     SubAgent,
     SubAgents,
@@ -201,6 +202,10 @@ def _check_sub_agents(merged: Any) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
+def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
+    assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
+
+
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
     'Skills': Combines(
@@ -265,6 +270,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
         _check_advisor,
     ),
+    'SSHWorkspace': Combines(
+        'the later configuration replaces the earlier one whole, so an `env` (and its secrets) never carries over',
+        lambda: (SSHWorkspace[Any]('first', env={'FIRST_SECRET': 'x'}, read_only=True), SSHWorkspace[Any]('second')),
+        _check_ssh_workspace,
+    ),
     'BackgroundTools': Combines(
         'one background scheduler per agent; selectors combine without wrapping a tool twice',
         lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
@@ -278,6 +288,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),

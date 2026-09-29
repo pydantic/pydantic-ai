@@ -61,7 +61,10 @@ class GrokModelProfile(ModelProfile, total=False):
     """Whether the model supports builtin tools (web_search, x_search, code_execution, mcp). Default: `False`."""
 
     grok_supports_tool_choice_required: bool
-    """Whether the provider accepts the value `tool_choice='required'` in the request payload. Default: `True`."""
+    """Deprecated: use [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] instead.
+
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
 
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     """Native `reasoning_effort` values supported by the Grok model. Default: empty (`frozenset()`)."""
@@ -123,6 +126,10 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # that rather than pinning versions: `grok-voice-think-fast-2.0` shipped a week after 1.0,
         # and a pinned list would have silently dropped reasoning for anyone who moved to it.
         'supports_thinking': model_name == 'grok-voice-latest' or model_name.startswith('grok-voice-think-'),
+        # Like the OpenAI Realtime API it mirrors, Grok Voice answers the user while a tool call is
+        # outstanding: verified live 2026-09-25, a question sent 3 seconds into a 15-second tool was
+        # answered right away. The protocol has no setting that makes it wait.
+        'async_tool_call_mode': 'always',
         'emits_input_speech_events': True,
         # A response's `input_tokens` counts only the input added since the previous response, not the
         # whole conversation, so it can't measure how full the context window is.

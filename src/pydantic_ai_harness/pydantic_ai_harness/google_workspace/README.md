@@ -2,7 +2,7 @@
 
 Let an agent use Gmail, Calendar, Drive, and other Google Workspace products. `GoogleWorkspace` gives the agent every tool Google's hosted MCP servers offer for the products you select, including tools that send, change, and delete. The token you connect with decides what those tools can reach.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 ## Install and connect
 

@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import pickle
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, Field, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BoolCriteria, RunContext, Tool, ToolOutput
+from pydantic_ai import Agent, BoolCriteria, ModelRetry, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -18,6 +19,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -42,6 +44,7 @@ from pydantic_ai.models.decision import (
     UnsureRoute,
 )
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -1805,6 +1808,229 @@ async def test_a_tool_result_with_no_prompt_before_it_is_all_history(allow_model
             'history': [
                 {'tool_call': {'name': 'look_up_order', 'args': {}}},
                 {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+            ]
+        }
+    )
+
+
+class HandsOffFirstDecisionModel(InMemoryDecisionModel):
+    """Fails its first request, so a `FallbackModel` hands that step to the model behind it."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        if not self.requests:
+            self.requests.append(request)
+            raise ModelAPIError(self.model_name, 'The backend is busy.')
+        return await super().decide(request, model_settings)
+
+
+def an_output_validator_retry() -> tuple[InMemoryDecisionModel, Agent[None, Any]]:
+    model = InMemoryDecisionModel()
+    agent = Agent(model, output_type=Triage)
+
+    @agent.output_validator
+    def be_sure(output: Triage) -> Triage:
+        if len(model.requests) == 1:
+            raise ModelRetry('Be sure.')
+        return output
+
+    return model, agent
+
+
+def an_output_field_that_fails_validation() -> tuple[InMemoryDecisionModel, Agent[None, Any]]:
+    checked = 0
+
+    class Checked(BaseModel):
+        """Triage a support ticket."""
+
+        urgent: bool = Field(description='Does this need an immediate response?')
+
+        @field_validator('urgent')
+        @classmethod
+        def check_once(cls, urgent: bool) -> bool:
+            nonlocal checked
+            checked += 1
+            if checked == 1:
+                raise ValueError('Check again.')
+            return urgent
+
+    model = InMemoryDecisionModel()
+    return model, Agent(model, output_type=Checked)
+
+
+def a_tool_retry() -> tuple[InMemoryDecisionModel, Agent[None, Any]]:
+    def look_up_charges() -> str:
+        """Look up the customer's charges."""
+        if len(model.requests) == 1:
+            raise ModelRetry('The billing system is busy.')
+        return 'Charged once.'
+
+    model = RoutingDecisionModel({'Triage': 0.1, 'look_up_charges': 0.9})
+    return model, Agent(model, output_type=Triage, tools=[look_up_charges])
+
+
+def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, Any]]:
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Sorry about that, refunding now.')])
+
+    model = HandsOffFirstDecisionModel()
+    return model, Agent(FallbackModel(model, FunctionModel(reply)), output_type=Triage)
+
+
+@pytest.mark.parametrize(
+    'setup,expected',
+    [
+        pytest.param(
+            an_output_validator_retry,
+            snapshot(
+                {
+                    'text': 'I was charged twice this month.',
+                    'done': [
+                        {'tool_call': {'name': 'final_result', 'args': {'urgent': True, 'action': 'review'}}},
+                        {
+                            'retry': """\
+Be sure.
+
+Fix the errors and try again.\
+"""
+                        },
+                    ],
+                }
+            ),
+            id='output-validator',
+        ),
+        pytest.param(
+            an_output_field_that_fails_validation,
+            snapshot(
+                {
+                    'text': 'I was charged twice this month.',
+                    'done': [
+                        {'tool_call': {'name': 'final_result', 'args': {'urgent': True}}},
+                        {
+                            'retry': """\
+1 validation error:
+```json
+[
+  {
+    "type": "value_error",
+    "loc": [
+      "urgent"
+    ],
+    "msg": "Value error, Check again.",
+    "input": true
+  }
+]
+```
+
+Fix the errors and try again.\
+"""
+                        },
+                    ],
+                }
+            ),
+            id='output-field-validation',
+        ),
+        pytest.param(
+            a_tool_retry,
+            snapshot(
+                {
+                    'text': 'I was charged twice this month.',
+                    'done': [
+                        {'tool_call': {'name': 'look_up_charges', 'args': {}}},
+                        {
+                            'retry': """\
+The billing system is busy.
+
+Fix the errors and try again.\
+"""
+                        },
+                    ],
+                }
+            ),
+            id='tool',
+        ),
+        pytest.param(
+            a_language_model_step_retried,
+            snapshot(
+                {
+                    'text': 'I was charged twice this month.',
+                    'done': [
+                        {'assistant': 'Sorry about that, refunding now.'},
+                        {
+                            'retry': """\
+1 validation error:
+```json
+[
+  {
+    "type": "json_invalid",
+    "loc": [],
+    "msg": "Invalid JSON: expected value at line 1 column 1"
+  }
+]
+```
+
+Fix the errors and try again.\
+"""
+                        },
+                    ],
+                }
+            ),
+            id='fallback-language-model',
+        ),
+    ],
+)
+async def test_a_retry_keeps_the_prompt_as_the_text(
+    allow_model_requests: None,
+    setup: Callable[[], tuple[InMemoryDecisionModel, Agent[None, Any]]],
+    expected: Any,
+):
+    """A retry is a step taken for the prompt: the prompt stays the text, and the retry goes in `done`."""
+    model, agent = setup()
+    await agent.run('I was charged twice this month.')
+    assert model.requests[1].state == expected
+
+
+async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_model_requests: None):
+    """A `message_history` whose latest turn holds a retry is split at its prompt, as one holding a tool result is."""
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Delete everything.')]),
+        ModelResponse(parts=[TextPart('Deleting.')]),
+        ModelRequest(parts=[RetryPromptPart('Answer with a tool call.')]),
+    ]
+    await Agent(model, output_type=Triage).run(message_history=history)
+    assert model.requests[0].state == snapshot(
+        {
+            'text': 'Delete everything.',
+            'done': [
+                {'assistant': 'Deleting.'},
+                {
+                    'retry': """\
+Validation feedback:
+Answer with a tool call.
+
+Fix the errors and try again.\
+"""
+                },
+            ],
+        }
+    )
+
+
+async def test_a_system_prompt_is_a_system_entry_on_any_backend(allow_model_requests: None):
+    """A system prompt partway through the conversation is judged as one, not folded into the text to judge."""
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Where is order 1?')]),
+        ModelResponse(parts=[TextPart('It shipped yesterday.')]),
+        ModelRequest(parts=[SystemPromptPart('Be terse from now on.')]),
+    ]
+    await Agent(model, output_type=Triage).run(message_history=history)
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'user': 'Where is order 1?'},
+                {'assistant': 'It shipped yesterday.'},
+                {'system': 'Be terse from now on.'},
             ]
         }
     )

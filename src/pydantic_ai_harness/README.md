@@ -1,8 +1,8 @@
 # Pydantic AI Harness
 
-[![CI](https://github.com/pydantic/pydantic-ai-harness/actions/workflows/main.yml/badge.svg?event=push)](https://github.com/pydantic/pydantic-ai-harness/actions/workflows/main.yml?query=branch%3Amain)
+[![CI](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain)
 [![PyPI](https://img.shields.io/pypi/v/pydantic-ai-harness.svg)](https://pypi.python.org/pypi/pydantic-ai-harness)
-[![versions](https://img.shields.io/pypi/pyversions/pydantic-ai-harness.svg)](https://github.com/pydantic/pydantic-ai-harness)
+[![versions](https://img.shields.io/pypi/pyversions/pydantic-ai-harness.svg)](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness)
 [![license](https://img.shields.io/github/license/pydantic/pydantic-ai-harness.svg)](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/LICENSE)
 [![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
 
@@ -150,6 +150,8 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Modal Sandbox](pydantic_ai_harness/modal_sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](pydantic_ai_harness/e2b_sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
 | [Sprites Sandbox](pydantic_ai_harness/sprites_sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
+| [SSH Workspace](pydantic_ai_harness/ssh_workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
+| [Bubblewrap Sandbox](pydantic_ai_harness/bubblewrap_sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
 
 ### Tools & native abilities
 
@@ -333,11 +335,10 @@ This installs [`pydantic-ai-slim`](https://ai.pydantic.dev/install/) with it, so
 
 We welcome capability contributions:
 
-1. **Start with an issue.** [Open a capability request](https://github.com/pydantic/pydantic-ai-harness/issues/new?template=capability-request.yml) so we can discuss approach and priority before code is written.
+1. **Start with an issue.** [Open a feature request](https://github.com/pydantic/pydantic-ai/issues/new?template=feature-request.yaml) so we can discuss approach and priority before code is written.
 2. **Then open a PR** and link the issue. We review based on community interest; upvotes on both count.
 3. **Don't chase green CI.** Get the approach working and let us know; we may push to your branch or follow up, and you'll be credited as the original author. (See the [Pydantic AI contributing guide](https://github.com/pydantic/pydantic-ai/blob/main/CONTRIBUTING.md).)
 
-> **Note**: PRs that modify `pyproject.toml` or `uv.lock` from non-team members are auto-closed by CI to prevent supply chain risk. If you need a new dependency, [open an issue](https://github.com/pydantic/pydantic-ai-harness/issues/new).
 
 ### Development
 

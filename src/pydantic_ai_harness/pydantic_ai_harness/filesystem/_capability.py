@@ -129,6 +129,13 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     `read_only` further narrows the selection to `READ_ONLY_TOOL_NAMES`.
     """
 
+    max_retries: int | None = field(default=None, kw_only=True)
+    """How many consecutive retries each file tool allows before the run fails.
+
+    A denied path, a missing parent, or an edit whose `old_text` no longer matches asks the model
+    to retry; a success resets the count. `None` (the default) uses the agent's tool retry budget.
+    """
+
     protected_patterns: Sequence[str] | None = field(default=None, kw_only=True)
     """Deprecated: renamed to `read_only_patterns`."""
 
@@ -157,6 +164,8 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         for name, value in values.items():
             if not isinstance(value, int) or value <= 0:
                 raise ValueError(f'{name} must be a positive integer, got {value!r}')
+        if self.max_retries is not None and (not isinstance(self.max_retries, int) or self.max_retries < 0):
+            raise ValueError(f'max_retries must be a non-negative integer, got {self.max_retries!r}')
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""
@@ -184,5 +193,6 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 id=self.id or 'file_system',
                 content_hashes=self.content_hashes,
                 tools=self.tools,
+                max_retries=self.max_retries,
             )
         return self._toolset

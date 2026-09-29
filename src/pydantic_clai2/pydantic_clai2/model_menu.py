@@ -87,7 +87,7 @@ class ModelSettingsSource:
         try:
             self._validated(row, text)
         except (ValidationError, ValueError) as exc:
-            return first_error(exc) if isinstance(exc, ValidationError) else str(exc)
+            return first_error(exc)
         return None
 
     def apply(self, row: FieldRow, raw: str) -> str:
@@ -95,7 +95,7 @@ class ModelSettingsSource:
         try:
             form = self._validated(row, raw)
         except (ValidationError, ValueError) as exc:
-            return f'{row.key}: {first_error(exc) if isinstance(exc, ValidationError) else str(exc)}'
+            return f'{row.key}: {first_error(exc)}'
         saved = {
             key: value
             for key, value in self._store.model_settings(self.model).items()

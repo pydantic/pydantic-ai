@@ -516,8 +516,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         tools: Sequence[str] = DEFAULT_TOOL_NAMES,
         protected_patterns: Sequence[str] | None = None,
         cwd: Path | None = None,
+        max_retries: int | None = None,
     ) -> None:
-        super().__init__(id=id)
+        super().__init__(id=id, max_retries=max_retries)
         if cwd is not None:
             warn_argument_ignored('FileSystemToolset', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE, stacklevel=3)
         if protected_patterns is not None:
