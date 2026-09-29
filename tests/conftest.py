@@ -404,6 +404,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     ('io.TextIOWrapper.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     ('io.BufferedReader.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    # Decoding the first stream from an Anthropic Bedrock client loads botocore's `bedrock-runtime` service model
+    # from disk, once per process (`lru_cache`).
+    ('os.stat', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('os.listdir', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('io.BufferedReader.read', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
     # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
