@@ -4,8 +4,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import gc
+import io
 import random
 import re
+import wave
 import weakref
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -852,6 +854,22 @@ def test_profile() -> None:
     assert profile.get('supports_tool_return_schema') is True
     assert profile.get('audio_input_sample_rate') == 16000
     assert profile.get('audio_output_sample_rate') == 24000
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'seeds_audio'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False),  # closes the session on seeded audio
+        ('gemini-3.1-flash-live-preview', True),
+        ('gemini-3.8-live', True),
+        ('models/gemini-3.8-live', True),
+        ('gemini-3.8-live-extended-thinking', False),  # accepts it, but recalled it 1 time in 4
+        ('gemini-live-2.5-flash', False),  # not probed
+    ],
+)
+def test_profile_supports_seeding_audio(model_name: str, seeds_audio: bool) -> None:
+    # Verified live by seeding a spoken fact as audio and asking about it.
+    assert GoogleRealtimeModel(model_name).profile.get('supports_seeding_audio') is seeds_audio
 
 
 @pytest.mark.parametrize(
@@ -1834,7 +1852,7 @@ async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
 
 
 async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
-    # The connection never came up at all (DNS, refused, reset, dial timeout). The SDK doesn't wrap
+    # The connection never came up at all (DNS, refused, reset). The SDK doesn't wrap
     # these, so without mapping the caller would get a bare `OSError` from what looks like an ordinary
     # model call; there is no HTTP status, so it becomes a `ModelAPIError`.
     client = _rejecting_client(ConnectionRefusedError('connection refused'))
@@ -1843,6 +1861,48 @@ async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
         async with _connect(model, 'x'):
             pass  # pragma: no cover
     assert exc_info.value.message == snapshot('Could not reach the realtime API: connection refused')
+
+
+@pytest.mark.parametrize('on_model', [False, True], ids=['session_settings', 'model_settings'])
+async def test_connect_bounds_handshake_with_handshake_timeout(on_model: bool) -> None:
+    # `google-genai` waits for the server's `setup_complete` with no deadline of its own, so a server that
+    # accepts the socket and never answers the setup would hang `connect` forever. `handshake_timeout`
+    # bounds the dial, like it bounds the OpenAI-protocol handshake, and the timeout surfaces as a
+    # `RealtimeError` naming the model. Not a VCR test: a recording can't hold a server that never answers.
+    abandoned = anyio.Event()
+
+    class _HangingConnect:
+        async def __aenter__(self) -> Any:
+            try:
+                await anyio.sleep_forever()
+            finally:
+                # The SDK closes the socket it opened here, which takes an await: the timeout must let
+                # that cleanup run rather than cancel it too and leak the socket.
+                await anyio.sleep(0)
+                abandoned.set()
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _HangingConnect:
+            return _HangingConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    settings = RealtimeModelSettings(handshake_timeout=0.01)
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=client),
+        settings=settings if on_model else None,
+    )
+    with pytest.raises(RealtimeError) as exc_info:
+        async with _connect(model, 'x', model_settings=None if on_model else settings):
+            pass  # pragma: no cover
+    assert abandoned.is_set()
+    assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
+    assert exc_info.value.message == snapshot(
+        'Timed out opening the Gemini Live session: no setup_complete within 0.01 seconds'
+    )
 
 
 async def test_connect_continues_after_empty_server_turn() -> None:
@@ -1973,6 +2033,50 @@ async def test_connect_rejects_audio_only_user_turn() -> None:
 
     with pytest.raises(UserError, match='google realtime history seeding does not support retained user audio'):
         async with _connect(_model(session), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+def _wav(pcm: bytes, sample_rate: int) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm)
+    return buffer.getvalue()
+
+
+async def test_connect_seeds_retained_user_audio_where_supported() -> None:
+    # Unit-level because the cassette truncates audio payloads, so only this pins the bytes and the
+    # mime type that reach the wire: the WAV's PCM frames at the live input rate. The flag-off side
+    # (2.5 rejects audio in seeded turns) is `test_connect_rejects_audio_only_user_turn`.
+    session = _RecordingSession()
+    history = [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', audio=BinaryContent(data=_wav(b'pcm-', 16000), media_type='audio/wav'))]
+        )
+    ]
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session)))
+    async with _connect(model, 'x', messages=history) as conn:
+        _ = [e async for e in conn]
+
+    [turn] = session.client_content[0]['turns']
+    assert turn.role == 'user'
+    assert [p.inline_data for p in turn.parts] == [genai_types.Blob(data=b'pcm-', mime_type='audio/pcm;rate=16000')]
+
+
+async def test_connect_rejects_retained_user_audio_at_another_rate() -> None:
+    # Gemini closes the session on seeded audio that isn't at its 16 kHz input rate (verified live with
+    # 24 kHz), so audio retained by a 24 kHz provider's session is refused before connecting.
+    session = _RecordingSession()
+    history = [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', audio=BinaryContent(data=_wav(b'pcm-', 24000), media_type='audio/wav'))]
+        )
+    ]
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session)))
+    with pytest.raises(UserError, match='recorded at 24000 Hz into a google realtime session expecting 16000 Hz'):
+        async with _connect(model, 'x', messages=history):
             pass  # pragma: no cover
 
 
@@ -2984,6 +3088,51 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     assert isinstance(events[-1], RealtimeSessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.
     assert closed == [0, 1]
+
+
+async def test_connect_reconnect_retries_a_redial_that_exceeds_handshake_timeout() -> None:
+    # A re-dial that never completes its handshake is bounded by `handshake_timeout` too, and counts as a
+    # failed attempt the reconnect policy retries, rather than hanging the receive loop.
+    dials: list[str] = []
+
+    class _Connect:
+        def __init__(self, session: _RecordingSession | None) -> None:
+            self._session = session
+
+        async def __aenter__(self) -> _RecordingSession:
+            if self._session is None:
+                dials.append('hung')
+                await anyio.sleep_forever()
+            dials.append('opened')
+            assert self._session is not None
+            return self._session
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    connects = iter([_RecordingSession([]), None, _RecordingSession([[_turn('back')]])])
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _Connect:
+            try:
+                return _Connect(next(connects))
+            except StopIteration:
+                raise ConnectionClosed(None, None)
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=client),
+        settings=GoogleRealtimeModelSettings(
+            handshake_timeout=0.01, reconnect={'base_delay': 0.0, 'max_attempts': 2, 'jitter': False}
+        ),
+    )
+    async with _connect(model, 'x') as conn:
+        events = [e async for e in conn]
+
+    assert dials == ['opened', 'hung', 'opened']
+    assert isinstance(events[0], RealtimeSessionReconnectEvent)
+    assert events[1:3] == [OutputTranscript(text='back', is_final=True), ResponseDone(interrupted=False)]
 
 
 @pytest.mark.parametrize(

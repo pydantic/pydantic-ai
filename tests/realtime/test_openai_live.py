@@ -23,7 +23,7 @@ from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
@@ -47,6 +47,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeSession,
     RealtimeTurnCompleteEvent,
+    WebRTCSession,
     infer_realtime_model,
 )
 from pydantic_ai.realtime.codec import (
@@ -71,6 +72,7 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import httpx2
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import ServerEvent, SessionConfig
@@ -143,7 +145,8 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_session_seeding=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
-        supports_webrtc=False,
+        # A server relays the offer and attaches a sideband; there are no client secrets.
+        supports_webrtc=True,
         async_tool_call_mode='always',
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_thinking=False,
@@ -2001,3 +2004,207 @@ async def test_special_token_text_is_counted_as_live_counts_it() -> None:
     with pytest.raises(UserError, match='and this is 501'):
         await connection.send(_text_of(500) + '<|endoftext|>')
     assert len(sent) == 1
+
+
+# --- browser WebRTC ---------------------------------------------------------------------------------
+
+
+def _webrtc_model(handler: Any, *, settings: OpenAILiveModelSettings | None = None) -> OpenAILiveModel:
+    """A Live model whose signaling request is served by `handler` instead of the network."""
+    provider = OpenAIProvider(
+        api_key='sk-test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    )
+    return OpenAILiveModel('gpt-live-1', provider=provider, settings=settings)
+
+
+def _created(session_id: str = 'live_test') -> httpx2.Response:
+    return httpx2.Response(
+        200, json={'session': {'id': session_id}, 'transport': {'type': 'webrtc', 'sdp': 'v=0\r\nanswer'}}
+    )
+
+
+async def test_answering_an_offer_starts_the_whole_session() -> None:
+    """Live can't be reconfigured once started, so the offer carries the complete configuration.
+
+    WebRTC negotiates the audio format, so none is sent, and the browser's data channel is closed.
+    """
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.url.path == '/v1/live/sessions'
+        sent.append(json.loads(request.content))
+        return _created()
+
+    model = _webrtc_model(handler, settings=OpenAILiveModelSettings(openai_voice='cedar'))
+    tool = ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'})
+    answer = await model.answer_webrtc_offer('v=0\r\noffer', instructions='You look things up.', tools=[tool])
+
+    assert answer.sdp == 'v=0\r\nanswer'
+    assert answer.session == WebRTCSession(provider_name='openai', session_id='live_test')
+    assert sent == snapshot(
+        [
+            {
+                'session': {
+                    'model': 'gpt-live-1',
+                    'instructions': 'You are a voice assistant. Keep replies short and conversational. When the user asks for something you cannot answer from this conversation alone, delegate the task and tell them you are looking it up.',
+                    'audio': {'output': {'voice': 'cedar'}},
+                    'delegation': {
+                        'type': 'responses',
+                        'responses': {
+                            'model': AUTO_BACKEND_MODEL,
+                            'instructions': 'You look things up.',
+                            'tools': [{'type': 'function', 'name': 'lookup', 'parameters': {'type': 'object'}}],
+                        },
+                    },
+                    'client': {'data_channel': {'allowed_client_events': [], 'allowed_server_events': []}},
+                },
+                'transport': {'type': 'webrtc', 'sdp': 'v=0\r\noffer'},
+            }
+        ]
+    )
+
+
+async def test_the_browsers_data_channel_can_be_opened() -> None:
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    captions = OpenAILiveModelSettings(
+        openai_live_data_channel={
+            'allowed_client_events': [],
+            'allowed_server_events': [{'type': 'session.output_transcript.delta'}],
+        }
+    )
+    await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=captions)
+
+    session = sent[0]['session']
+    assert session['client'] == {
+        'data_channel': {
+            'allowed_client_events': [],
+            'allowed_server_events': [{'type': 'session.output_transcript.delta'}],
+        }
+    }
+    # With no voice set there is nothing left to say about audio.
+    assert 'audio' not in session
+
+
+async def test_answering_an_offer_uses_the_agents_model_as_the_backend() -> None:
+    """As when a WebSocket session connects, the backend defaults to the agent's own model."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    agent = Agent(OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='sk-test')))
+    await agent.realtime(_webrtc_model(handler)).answer_webrtc_offer('v=0')
+
+    assert sent[0]['session']['delegation']['responses']['model'] == 'gpt-5.6-sol'
+
+
+async def test_a_rejected_offer_is_an_http_error() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, json={'error': {'message': 'bad sdp', 'type': 'invalid_request_error'}})
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await _webrtc_model(handler).answer_webrtc_offer('v=0')
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == 'gpt-live-1'
+
+
+async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise AssertionError('no HTTP request expected')  # pragma: no cover
+
+    with pytest.raises(UserError, match='`max_tokens` cannot be set'):
+        await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(max_tokens=10))
+
+
+async def test_there_are_no_client_secrets(model: OpenAILiveModel) -> None:
+    with pytest.raises(UserError, match=r'has no ephemeral client secrets.*answer_webrtc_offer'):
+        await model.create_client_secret()
+
+
+def test_the_sideband_attaches_to_the_session(model: OpenAILiveModel) -> None:
+    assert model._sideband_url('live_u1/x') == snapshot(  # pyright: ignore[reportPrivateUsage]
+        'wss://api.openai.com/v1/live/sessions/live_u1%2Fx/attach'
+    )
+
+
+def _started_frame(**session: Any) -> str:
+    return json.dumps(
+        {
+            'type': 'session.started',
+            'event_id': 'e',
+            'session': {'id': 'live_test', 'expires_at': 0, 'model': 'gpt-live-1', 'status': 'active', **session},
+        }
+    )
+
+
+async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveModel) -> None:
+    """The sideband sends nothing to set up: Live replays `session.started`, which names the backend."""
+    ws = _FakeWebSocket(
+        [_started_frame(delegation={'type': 'responses', 'responses': {'model': 'gpt-5.6-luna', 'tools': []}})]
+    )
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            assert connection.model_name == 'gpt-live-1'
+            assert connection._backend_model == 'gpt-5.6-luna'  # pyright: ignore[reportPrivateUsage]
+            # The browser plays the call's audio, so the sideband's copy only drives the turn clock.
+            assert connection._map_output_audio(b'\x7f\x7f' * 240) == []  # pyright: ignore[reportPrivateUsage]
+            assert connection._response_open  # pyright: ignore[reportPrivateUsage]
+            assert connection._map_output_audio(bytes(480)) == []  # pyright: ignore[reportPrivateUsage]
+    assert ws.sent == []
+
+
+async def test_a_sideband_on_a_client_delegated_session_has_no_backend(model: OpenAILiveModel) -> None:
+    with _patched_connect(_FakeWebSocket([_started_frame(delegation={'type': 'client'})])):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            assert connection._backend_model is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_malformed_started_event_on_the_sideband_raises(model: OpenAILiveModel) -> None:
+    with _patched_connect(_FakeWebSocket([json.dumps({'type': 'session.started', 'session': {}})])):
+        with pytest.raises(RealtimeError, match=r'Malformed `session\.started`'):
+            async with model.connect_webrtc(
+                WebRTCSession(provider_name='openai', session_id='live_test'),
+                messages=[],
+                model_settings=None,
+                model_request_parameters=ModelRequestParameters(),
+            ):
+                pass  # pragma: no cover
+
+
+async def test_a_sideband_must_attach_through_the_same_provider(model: OpenAILiveModel) -> None:
+    with pytest.raises(UserError, match="negotiated by provider 'azure'"):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='azure', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass  # pragma: no cover
+
+
+async def test_a_sideband_cannot_seed_history(model: OpenAILiveModel) -> None:
+    """Live takes its history when the session starts, which the offer already did."""
+    with pytest.raises(UserError, match='cannot seed `message_history`'):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass  # pragma: no cover

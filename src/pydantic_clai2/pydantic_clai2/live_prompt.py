@@ -166,6 +166,7 @@ class LivePrompt:
         self.paint()
 
     def _route(self, key: str, data: str) -> None:
+        cycles = key in ('up', 'down') and self._arrows_cycle_completions()
         if key == 'ctrl-c':
             self.interrupt()
         elif key == 'escape' and self.interrupts.active:
@@ -187,7 +188,7 @@ class LivePrompt:
             self.steer_queued()
         elif key in ('shift-enter', 'ctrl-j'):
             self.buffer.insert('\n')
-        elif key in ('up', 'down') and self._completions:
+        elif cycles:
             self.complete(backwards=key == 'up', accept_single=False)
         elif key == 'escape':
             self.dismiss_completions()
@@ -195,8 +196,17 @@ class LivePrompt:
             self.recall(backwards=key == 'up')
         else:
             self.buffer.edit(key)
-        if key not in ('tab', 'backtab', 'escape') and (key not in ('up', 'down') or not self._completions):
+        if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
+
+    def _arrows_cycle_completions(self) -> bool:
+        """Whether Up/Down move through the popup rather than the draft and history.
+
+        A history walk owns the arrows, so recalling a `/command` shows its suggestions
+        without trapping the walk on them. Tab picks a suggestion and hands the arrows to
+        the popup; editing the recalled text ends the walk, as does typing a fresh draft.
+        """
+        return bool(self._completions) and (self.buffer.history_index is None or self._selection >= 0)
 
     def search(self, key: str) -> None:
         """Search history; a picked match is a new prompt, not an edit of a recalled queued one."""
@@ -293,10 +303,13 @@ class LivePrompt:
         self._discard(head)
 
     def complete(self, *, backwards: bool, accept_single: bool = True) -> None:
-        """Cycle suggestions, accepting a sole candidate immediately."""
+        """Cycle suggestions, accepting a sole candidate immediately, or look them up if none are shown."""
         if self._completion_pending:
             return
-        if len(self._completions) == 1 and accept_single:
+        if not self._completions:
+            # Escape dismissed the popup (or nothing was looked up yet): Tab asks again.
+            self.refresh_completions()
+        elif len(self._completions) == 1 and accept_single:
             self._selection = 0
             self.accept_completion()
         elif self._completions:
