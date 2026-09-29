@@ -255,6 +255,9 @@ Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 
+Without installing, run `uvx pydantic-clai2`. The package also installs a
+`pydantic-clai2` command that is an alias for `clai2`.
+
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
 For API-key providers, set the provider's API key environment variable before starting.

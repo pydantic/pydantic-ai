@@ -359,6 +359,9 @@ Key facts for building realtime agents:
   the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely:
   cancelling the watchdog does not interrupt teardown, and the session context waits for teardown
   before exiting. While iteration is running the loop ends cleanly and `session.result` is settled.
+- **Approval**: approval-gated and deferred tools are resolved inline by a `HandleDeferredToolCalls`
+  handler (and refused without one); as in a run, `DeferredToolRequestsEvent` is emitted before the
+  handler runs, and `DeferredToolResultsEvent` once it has resolved the call.
 - **Late event consumption is bounded**: while nothing is iterating the session, it retains only the
   most recent 512 `PartDeltaEvent`s and the most recent 512 structural events, so a long call that
   nobody iterates cannot grow without bound. Parts are dropped whole, so a late iterator never sees a
