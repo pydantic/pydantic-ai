@@ -11,86 +11,64 @@ interactions:
         - TEXT
       systemInstruction:
         parts:
-        - text: Answer in one short sentence.
+        - text: Answer in one word.
         role: user
       inputAudioTranscription: {}
       outputAudioTranscription: {}
 - kind: message
   direction: received
-  at: 0.313
+  at: 0.822
   data:
     setupComplete:
-      sessionId: e2dc9887-374a-4d81-bc74-76098bcf43b5
+      sessionId: c297f8cb-2a5a-4c99-83ef-8c9bbe203542
 - kind: message
   direction: sent
-  at: 0.324
+  at: 0.832
   data:
     client_content:
       turns:
       - parts:
-        - text: My name is Alice and my favorite color is teal.
-        role: user
-      - parts:
-        - text: Nice to meet you, Alice!
-        role: model
-      turnComplete: false
-- kind: message
-  direction: sent
-  at: 0.324
-  data:
-    client_content:
-      turns:
-      - parts:
-        - text: What is my name and favorite color?
+        - text: What is two plus two?
         role: user
       turnComplete: true
 - kind: message
   direction: received
-  at: 0.724
+  at: 1.28
   data:
     serverContent:
       modelTurn:
         role: model
         parts:
-        - text: Your
+        - text: Four
 - kind: message
   direction: received
-  at: 0.731
+  at: 1.283
   data:
     serverContent:
       modelTurn:
         role: model
         parts:
-        - text: ' name is Alice and your'
+        - text: .
 - kind: message
   direction: received
-  at: 0.743
-  data:
-    serverContent:
-      modelTurn:
-        role: model
-        parts:
-        - text: ' favorite color is teal.'
-- kind: message
-  direction: received
-  at: 0.743
+  at: 1.284
   data:
     serverContent:
       generationComplete: true
 - kind: message
   direction: received
-  at: 0.756
+  at: 1.292
   data:
     serverContent:
       turnComplete: true
       groundingMetadata: {}
     usageMetadata:
-      promptTokenCount: 32
-      candidatesTokenCount: 11
-      totalTokenCount: 43
+      promptTokenCount: 11
+      candidatesTokenCount: 2
+      totalTokenCount: 13
       promptTokensDetails:
       - modality: TEXT
-        tokenCount: 32
+        tokenCount: 11
       candidatesTokensDetails:
       - modality: TEXT
-        tokenCount: 11
+        tokenCount: 2
