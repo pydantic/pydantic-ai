@@ -456,10 +456,14 @@ jobs:
     env:
       CI: true
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
-      # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
-      # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
-      # collects it on 3.10: `tests/clai2` has 3.10-only branches that `all-extras` covers otherwise.
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.10' }}
+      # on 3.14, where coverage uses the faster sys.monitoring core, and every install shape on
+      # 3.10, the other version endpoint, whose version-specific branches nothing else reaches.
+      # 3.10 collects here rather than in `test-all-extras` because the legacy tracer costs ~250s
+      # per shard there (645s against 392s for the same shard without it) on the matrix's slowest
+      # cells, while these lighter shapes have the slack to absorb it. Between them they run the
+      # whole suite, and the `sys.version_info` branches are all in core modules that need no
+      # extras. The versions in between still run every applicable test without duplicate coverage.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.10' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
     steps:
@@ -545,11 +549,12 @@ jobs:
         shard: [1, 2]
     env:
       CI: true
-      # Collect every shard on 3.14, where coverage uses the faster sys.monitoring core, plus
-      # every shard on 3.10 for version-specific branches -- both are combined across shards
-      # and install shapes in the `coverage` job. The other versions run without duplicate
-      # coverage.
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.10' }}
+      # Collect every shard on 3.14, where coverage uses the faster sys.monitoring core, and
+      # combine them across shards and install shapes in the `coverage` job. 3.10, the other
+      # version endpoint, collects in the `test` job instead: the legacy tracer costs these
+      # cells ~250s a shard, and they are the matrix's slowest. The other versions run without
+      # duplicate coverage.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
