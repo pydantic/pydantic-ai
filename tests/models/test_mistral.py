@@ -3031,7 +3031,7 @@ _MISTRAL_422_BODY: dict[str, Any] = {
 async def test_model_validation_error_raises_model_http_error(allow_model_requests: None, stream: bool) -> None:
     """A 422 raises the SDK's `HTTPValidationError`, not `SDKError`, and still surfaces as `ModelHTTPError`.
 
-    A mock transport stands in for a cassette because a well-formed request never gets a 422.
+    A mock transport stands in for a cassette so the test pins the error class, not which fields the live API rejects.
     """
 
     def handler(request: httpx2.Request) -> httpx2.Response:
