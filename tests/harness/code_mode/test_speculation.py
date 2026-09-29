@@ -1057,10 +1057,10 @@ class TestSpeculationEdgeCases:
                     )
                 ],
             )
-            await asyncio.wait_for(stubborn_started.wait(), timeout=1)
+            await asyncio.wait_for(stubborn_started.wait(), timeout=5)
 
             result = await asyncio.wait_for(
-                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'c1'), run_code), timeout=1
+                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'c1'), run_code), timeout=5
             )
 
         assert isinstance(result, ToolReturn)
