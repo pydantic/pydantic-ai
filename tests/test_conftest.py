@@ -80,8 +80,7 @@ async def test_blockbuster_exemption_contract(
         with pytest.raises(BlockingError):
             _blocking_stat()
 
-        assert ('os.stat', 'coverage/python.py', 'get_python_source') in BLOCKBUSTER_EXEMPTIONS
-        assert ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source') in BLOCKBUSTER_EXEMPTIONS
+        # `blockbuster` exempts coverage's source reads itself, so this read must not raise.
         assert get_python_source(__file__) is not None
     finally:
         bb.deactivate()
