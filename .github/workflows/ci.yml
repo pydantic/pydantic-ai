@@ -107,7 +107,7 @@ jobs:
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
             case "$1" in
-              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.github/workflows/ci.yml) ;;
               *) return 1 ;;
             esac
           }
@@ -160,6 +160,7 @@ jobs:
       # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
       # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
+        id: install
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
       - name: Test GitHub agentic workflow policy
@@ -179,8 +180,8 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
 
-      # The pre-commit `typecheck` hook narrows Pyright to the files a change reaches, so
-      # a wrong answer here silently stops type errors reaching a developer's terminal.
+      # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
+      # answer here silently stops type errors reaching a developer's terminal.
       # It lives outside `testpaths`, in the job that installs Pyright, because one of its
       # tests runs Pyright for real.
       - name: Test the incremental typecheck script
@@ -265,26 +266,36 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: ${{ needs.classify.outputs.pyright_changed == 'true' && 'no-commit-to-branch' || 'no-commit-to-branch,typecheck' }}
+          SKIP: no-commit-to-branch
+          # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
+          # down to the root package and drop the `--all-packages` install above.
+          UV_NO_SYNC: "1"
+
+      # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
+      # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
+      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
+      # policy check does not hide type errors.
+      - name: Type-check with Pyright
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
           # CI opts back in.
           PYRIGHT_THREADS: auto
           # Fail a passing pyright run that outlasts this many seconds, so a change that makes
           # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
-          # nothing caught it (see #8177): the hook ran 328 to 490 s over the five `main` runs
+          # nothing caught it (see #8177): pyright ran 328 to 490 s over the five `main` runs
           # between those two. The budget was 110 (1.1x the p99 of 60 main runs, derived in
           # https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259), but by
-          # 2026-09-23 the hook ran 66 to 111 s on the same day's main runs (runner variance alone
+          # 2026-09-23 pyright ran 66 to 111 s on the same day's main runs (runner variance alone
           # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
           # 156 s, so 200 keeps the same headroom.
           PYRIGHT_TIME_BUDGET: "200"
-          # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
-          # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
+        run: make typecheck-changed
 
       # Run inside `quality checks`, which finishes several minutes before the test/coverage critical path.
       - name: Check public API compatibility with the latest release
@@ -394,7 +405,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,format,lint,typecheck,check-cassettes
+          SKIP: no-commit-to-branch,format,lint,check-cassettes
           UV_NO_SYNC: "1"
 
       - name: Test documentation snippets
@@ -471,10 +482,10 @@ jobs:
       # runners want. `psutil` is not in `uv.lock` and `UV_FROZEN` pins CI to it, so both
       # spellings resolve to the same count today; the flag is here for when that stops
       # being true.
-      # Everything under `tests/durable_exec` is ignored here and runs in `test-durable-exec`
-      # instead: most of those tests pin xdist groups around real local servers, so the chains
-      # they form would otherwise be the critical-path floor of the all-extras cells -- the
-      # other install variants skip the suites at module level, for want of the engine packages.
+      # Everything under `tests/durable_exec` and every test marked `temporal` runs in
+      # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
+      # the chains they form would otherwise be the critical-path floor of the all-extras cells --
+      # the other install variants skip the suites at module level, for want of the engine packages.
       # Its `lowest` leg proves the minimum `temporalio`/`dbos`/`prefect` bounds.
       - name: run tests
         shell: bash
@@ -491,7 +502,7 @@ jobs:
             runner=(pytest)
           fi
           uv run ${{ matrix.install.command }} "${extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec ${{ matrix.install.paths }}
+            --ignore=tests/durable_exec -m "not temporal" ${{ matrix.install.paths }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -613,9 +624,9 @@ jobs:
       # by test count, not measured duration -- no `.test_durations` file is committed -- so
       # rebalance with `--store-durations` if `ci_duration.py`'s report shows the shards
       # drifting apart.
-      # Everything under `tests/durable_exec` is ignored here and runs in `test-durable-exec`
-      # instead: most of those tests pin xdist groups around real local servers, so the chains
-      # they form would otherwise be this job's critical-path floor.
+      # Everything under `tests/durable_exec` and every test marked `temporal` runs in
+      # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
+      # the chains they form would otherwise be this job's critical-path floor.
       - name: run tests
         shell: bash
         run: |
@@ -629,7 +640,7 @@ jobs:
           # `--all-packages` so the extras of every workspace member are installed, not just the
           # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
           uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec --splits 2 --group ${{ matrix.shard }}
+            --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
@@ -649,15 +660,15 @@ jobs:
           include-hidden-files: true
 
   # The durable-execution suites pin their tests to xdist groups sharing a real local server --
-  # one group per Temporal test module, one for DBOS, one for Prefect -- so inside the main
-  # matrix those groups dominate its critical path. Running the whole directory in its own job
-  # takes them off that path entirely; `--dist=loadgroup` still spreads the groups across this
-  # job's workers, and only the tests within one group run in sequence.
+  # one group per core Temporal test module, one shared harness Temporal group, one for DBOS, and
+  # one for Prefect -- so inside the main matrix those groups dominate its critical path. Running
+  # them in their own job takes them off that path entirely; `--dist=loadgroup` still spreads the
+  # groups across this job's workers, and only the tests within one group run in sequence.
   # New durable-exec tests land anywhere under `tests/durable_exec` and are picked up
-  # automatically. That whole directory is excluded from the main `test` and `test-all-extras`
-  # matrices, so a test placed there runs only in this job, which sets `BLOCKBUSTER_ENABLED:
-  # false`. A test that needs blocking detection belongs elsewhere under `tests/`, where the
-  # `test` job turns it on for the 3.13 cells (`test-all-extras` leaves it off).
+  # automatically. Harness tests that start or connect to a Temporal dev server use the
+  # registered `temporal` marker. Both sets run only in this job, which sets
+  # `BLOCKBUSTER_ENABLED: false`. A test that needs blocking detection belongs elsewhere under
+  # `tests/`, where the `test` job turns it on for the 3.13 cells (`test-all-extras` leaves it off).
   # The `lowest` resolution leg is the only place the declared minimum bounds
   # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
   test-durable-exec:
@@ -681,11 +692,14 @@ jobs:
         }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
-      # Disables Temporal's workflow deadlock detector (temporalio reads this to set the
-      # per-activation budget to `None` instead of 2s). That budget is wall-clock, so it
-      # measures runner contention as readily as a blocking call, and a descheduled workflow
-      # thread trips it as `TMPRL1101`. The cost: a genuine in-workflow blocking call now
-      # hangs to the job timeout instead of failing in 2s.
+      # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
+      # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
+      # wall-clock, so it measures runner contention as readily as a blocking call, and a
+      # descheduled workflow thread trips it as `TMPRL1101`. The cost: a genuine in-workflow
+      # blocking call now hangs to the job timeout instead of failing in 2s. Since `temporalio`
+      # 1.29, debug mode also runs every workflow activation inline on the worker's event loop
+      # instead of in the executor thread a production worker uses, so on the `locked` legs only a
+      # test that unsets this variable runs workflow code on that thread.
       TEMPORAL_DEBUG: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -701,12 +715,12 @@ jobs:
       - run: mkdir .coverage
 
       # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
-      # tests/durable_exec/temporal/conftest.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
+      # tests/durable_exec/temporal/conftest.py and the harness `temporal` tests); cache it so a
+      # CDN hiccup can't fail the suite at setup (#5399).
       # Separate key per resolution: the lowest leg may resolve a different temporalio version
       # wanting a different binary. A stale restored dir is safe because the SDK names the
       # binary by its own version and re-downloads on a miss.
       - name: cache Temporal dev-server binary
-        if: matrix.python-version != '3.14'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/temporal-dev-server
@@ -716,7 +730,7 @@ jobs:
 
       - name: install lowest resolution
         if: matrix.resolution == 'lowest'
-        run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
+        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -734,8 +748,10 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }} \
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
@@ -743,7 +759,7 @@ jobs:
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: >-
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }}
           coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -832,8 +848,9 @@ jobs:
 
       # `-n logical` (see note on the `test` job). Split into 2 shards with `pytest-split`
       # (see the matching note in `test-all-extras` for why, and for the rebalancing caveat).
-      # The durable-execution suites run in `test-durable-exec` (its `lowest` leg covers
-      # this resolution), keeping their grouped xdist chains off this job's critical path.
+      # The durable-execution suites and harness `temporal` tests run in `test-durable-exec`
+      # (its `lowest` leg covers this resolution), keeping their grouped xdist chains off this
+      # job's critical path.
       - name: run tests
         shell: bash
         run: |
@@ -845,7 +862,7 @@ jobs:
             runner=(pytest)
           fi
           uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec --splits 2 --group ${{ matrix.shard }}
+            --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
 

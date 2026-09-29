@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse HTTP cassette files (cassetter or vcrpy format) and pretty-print request/response bodies."""
+"""Parse cassette files and pretty-print request/response bodies."""
 
 import argparse
 import json
@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
+from cassetter import Body, Cassette, CassetteLoadError, RecordMode
 
 
 def truncate_base64(obj: object, max_len: int = 100) -> object:
@@ -25,44 +25,40 @@ def truncate_base64(obj: object, max_len: int = 100) -> object:
     return obj
 
 
-def _extract_body(part: dict[str, object]) -> object | None:
-    """Extract the body from a request/response in either on-disk cassette format.
-
-    Cassettes recorded under vcrpy carry the parsed JSON as `parsed_body` and the raw text as `body.string`
-    (or as a bare `body` string); cassetter writes a typed `body: {type: json | text | binary | none, content: ...}`.
-    """
-    if 'parsed_body' in part:
-        return part['parsed_body']
-    body = part.get('body')
-    if isinstance(body, dict):
-        if 'type' in body:
-            return body.get('content')
-        if 'string' not in body:
-            return body
-        body = body['string']
-    if isinstance(body, str) and body:
+def _extract_body(body: Body) -> object | None:
+    """Decode a recorded body: JSON as an object, text as a string (parsed if it is JSON), binary as a size note."""
+    if body.body_type == 'json':
+        return body.content
+    if body.body_type == 'text':
         try:
-            return json.loads(body)
+            return json.loads(body.content)
         except json.JSONDecodeError:
-            return body
+            return body.content
+    if body.body_type == 'binary':
+        return f'<{len(body.content)} bytes of binary data>'
     return None
 
 
-def _format_status(status: object) -> str:
-    """Format vcrpy's `{code, message}` mapping or cassetter's bare integer status."""
-    if isinstance(status, dict):
-        return f'{status.get("code", "N/A")} {status.get("message", "")}'
-    return 'N/A' if status is None else str(status)
+def _print_body(body: Body) -> None:
+    content = _extract_body(body)
+    if content is None:
+        return
+    truncated = truncate_base64(content)
+    print(f'Body:\n{truncated if isinstance(truncated, str) else json.dumps(truncated, indent=2)}')
 
 
 def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
-    """Parse and print cassette contents."""
-    with open(path) as f:
-        data = yaml.safe_load(f)
+    """Parse and print cassette contents, in cassetter's format or the older VCR.py one."""
+    cassette = Cassette(path, record_mode=RecordMode.NONE)
+    try:
+        cassette.load()
+    except CassetteLoadError as exc:
+        print(f'Not an HTTP cassette cassetter can read: {exc}', file=sys.stderr)
+        sys.exit(1)
 
-    interactions = data.get('interactions', [])
+    interactions = cassette.interactions
     if not interactions:
-        print('No interactions found in cassette')
+        print('No HTTP interactions found in cassette')
         return
 
     indices = [interaction_idx] if interaction_idx is not None else range(len(interactions))
@@ -73,31 +69,26 @@ def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
             continue
 
         interaction = interactions[i]
-        req = interaction.get('request', {})
-        resp = interaction.get('response', {})
+        req = interaction.request
+        resp = interaction.response
 
-        print(f'\n{"="*60}')
+        print(f'\n{"=" * 60}')
         print(f'INTERACTION {i}')
-        print('='*60)
+        print('=' * 60)
 
-        print(f'\n--- REQUEST ---')
-        print(f'Method: {req.get("method", "N/A")}')
-        print(f'URI: {req.get("uri", "N/A")}')
-        req_body = _extract_body(req)
-        if req_body is not None:
-            truncated = truncate_base64(req_body)
-            print(f'Body:\n{json.dumps(truncated, indent=2)}')
+        print('\n--- REQUEST ---')
+        print(f'Method: {req.method}')
+        print(f'URI: {req.uri}')
+        _print_body(req.body)
 
-        print(f'\n--- RESPONSE ---')
-        print(f'Status: {_format_status(resp.get("status"))}')
-        resp_body = _extract_body(resp)
-        if resp_body is not None:
-            truncated = truncate_base64(resp_body)
-            print(f'Body:\n{json.dumps(truncated, indent=2)}')
+        print('\n--- RESPONSE ---')
+        print(f'Status: {resp.status}')
+        _print_body(resp.body)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    """Print the interactions of the cassette named on the command line."""
+    parser = argparse.ArgumentParser(description='Parse cassette files')
     parser.add_argument('cassette', type=Path, help='Path to cassette YAML file')
     parser.add_argument('--interaction', '-i', type=int, help='Specific interaction index (0-based)')
     args = parser.parse_args()

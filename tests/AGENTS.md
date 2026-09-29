@@ -215,7 +215,6 @@ async def test_something(model: Model):
 
 #### SSRF protection for URL downloads
 - `disable_ssrf_protection_for_vcr` - required for VCR tests that download URL content (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl` with `force_download=True`)
-- An autouse guard raises a `RuntimeError` if a VCR test triggers SSRF validation without this fixture
 
 #### Asserting the outbound request
 - `request_capture` - a `RequestCapture` whose `client` records every outbound request; read bodies with `.body(path_suffix)` / `.bodies(path_suffix)` and headers off `.headers`. See "Asserting what goes out on the wire" for when to reach for it

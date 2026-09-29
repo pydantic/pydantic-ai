@@ -613,7 +613,7 @@ def test_a_failing_run_over_the_time_budget_reports_the_failure_not_the_time(
 def test_ci_over_the_time_budget_fails_and_records_nothing(
     project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
-    # The pre-commit step that sets `PYRIGHT_TIME_BUDGET` sets `CI` too, so the full run handed
+    # The CI step that sets `PYRIGHT_TIME_BUDGET` sets `CI` too, so the full run handed
     # to the Makefile is the only one production measures.
     monkeypatch.setenv('CI', 'true')
     monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')

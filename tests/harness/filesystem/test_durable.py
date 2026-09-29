@@ -27,7 +27,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from tests.harness.conftest import skip_temporal_sandbox_on_314
 
-pytestmark = skip_temporal_sandbox_on_314
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), skip_temporal_sandbox_on_314]
 
 
 @workflow.defn

@@ -35,7 +35,7 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
-pytestmark = pytest.mark.xdist_group(name='harness-temporal')
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
 
 TEMPORAL_PORT = 7259  # avoid conflict with the other Temporal suites
 TASK_QUEUE = 'pydantic-ai-harness-coder-queue'
