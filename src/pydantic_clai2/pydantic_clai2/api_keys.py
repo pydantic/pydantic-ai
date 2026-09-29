@@ -159,6 +159,7 @@ _KEY_CONSUMERS = {
     'google-workspace': '/google_workspace',
     'pylon': '/pylon',
     'ordinal': '/ordinal',
+    'notion': '/plugins configure notion',
 }
 """Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
 
