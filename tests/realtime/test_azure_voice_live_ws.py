@@ -433,7 +433,7 @@ async def test_thinking_sets_cascade_reasoning_effort(
     [session_update] = sent_frames_containing(cassette, 'Answer in one short sentence.')
     assert session_update['session']['reasoning_effort'] == 'high'
     assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
-    assert session.usage.output_reasoning_tokens == snapshot(128)
+    assert session.usage.details['reasoning_tokens'] == snapshot(128)
     response = session.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     part = response.parts[0]
