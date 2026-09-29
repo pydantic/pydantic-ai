@@ -125,10 +125,9 @@ class SubAgent(Generic[AgentDepsT]):
     usage_limits: UsageLimits | None = None
     """Request/token budget for one delegation. When set, the child runs with
     its own usage accounting so the budget counts only the child's own requests
-    and tokens (not the parent's or siblings'), even when `forward_usage=True`.
-    The tradeoff: that child's tokens no longer aggregate into the parent's
-    `usage`. Hitting this budget is a soft outcome (steering message), not a
-    run-stopping `UsageLimitExceeded`."""
+    and tokens (not the parent's or siblings'). When `forward_usage=True`, that
+    usage is added to the parent's usage after the delegation. Hitting this budget
+    is a soft outcome (steering message), not a run-stopping `UsageLimitExceeded`."""
 
     timeout_seconds: float | None = None
     """Wall-clock budget for one delegation. When the child exceeds it, the run
@@ -478,6 +477,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget)
         finally:
             _depth.reset(token)
+            if child_usage is not None and self._forward_usage:
+                ctx.usage.incr(child_usage)
         if emits:
             text, truncated = bounded_text(ended.output)
             await ctx.emit(
