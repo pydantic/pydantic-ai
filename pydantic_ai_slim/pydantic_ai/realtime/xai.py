@@ -49,7 +49,7 @@ try:
         RealtimeResponseUsage,
         ResponseFunctionCallArgumentsDoneEvent,
     )
-    from pydantic import BaseModel, ConfigDict, TypeAdapter
+    from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -218,7 +218,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     merely extends and replacing when xAI revises itself. The shared codec still drops interim
     `.completed` snapshots.
     The other exception is xAI's conversation lifecycle events, which are surfaced as codec control
-    events so the connection can capture `conversation.id` and the session can suppress resume replay.
+    events, so the connection can report the provider's `conversation.id`.
     """
     event_type = data.get('type')
     if event_type == 'conversation.item.input_audio_transcription.updated':
@@ -510,16 +510,20 @@ class XaiRealtimeModel(RealtimeModel):
         def session_model(created: dict[str, Any]) -> str | None:
             return _XaiSessionCreatedEvent.model_validate(created).session.model
 
-        def on_unexpected_during_update() -> Callable[[dict[str, Any]], None]:
-            def capture_conversation_id(data: dict[str, Any]) -> None:
-                # xAI names the conversation right after `session.created`, while the session is configured.
-                nonlocal conversation_id
-                if isinstance(event := map_conversation_event(data), ConversationCreated):
-                    conversation_id = event.conversation_id
-                    if connection is not None:
-                        connection.conversation_id = conversation_id
-
-            return capture_conversation_id
+        def capture_conversation_id(data: dict[str, Any]) -> None:
+            # xAI names the conversation right after `session.created`, while the session is configured. Any
+            # other frame here is skipped as it always was, and one that can't be read only leaves the ID unset.
+            nonlocal conversation_id
+            if data.get('type') != _CONVERSATION_CREATED_EVENT:
+                return
+            try:
+                event = map_conversation_event(data)
+            except ValidationError:
+                return
+            if isinstance(event, ConversationCreated):
+                conversation_id = event.conversation_id
+                if connection is not None:
+                    connection.conversation_id = conversation_id
 
         def build_connection(
             ws: ClientConnection,
@@ -551,7 +555,6 @@ class XaiRealtimeModel(RealtimeModel):
             dial_url=dial_url,
             session_model=session_model,
             build_connection=build_connection,
-            on_unexpected_during_update=on_unexpected_during_update,
-            replay_on_redial=True,
+            on_unexpected_during_update=capture_conversation_id,
         ) as connected:
             yield connected

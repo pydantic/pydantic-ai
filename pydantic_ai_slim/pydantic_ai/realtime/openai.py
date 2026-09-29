@@ -1626,6 +1626,5 @@ class OpenAIRealtimeModel(RealtimeModel):
             dial_url=lambda: self._realtime_url(settings),
             session_model=session_model,
             build_connection=build_connection,
-            replay_on_redial=True,
         ) as connection:
             yield connection

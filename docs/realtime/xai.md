@@ -85,7 +85,7 @@ Other Grok Voice models ignore the setting.
 | Native tools | Unsupported | xAI offers web search, X search, file search, and MCP tools, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
-| State-restoring reconnect | Full feature support | With a reconnect policy, [replays local history](lifecycle.md#state-restoration) into the new session |
+| Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new conversation; in-flight media is lost |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.

@@ -132,7 +132,6 @@ class OpenAIServer:
         # inputs for its whole life, across re-dials, so this outlives any one server session.
         self._client_items: dict[int, str] = {}
         self._client_images: dict[int, bool] = {}
-        self._conversation_id = 'conv_simulated'
         # Azure OpenAI speaks the GA event names too (every `test_azure_ws` cassette does); only Voice Live, which
         # has a connection class of its own that isn't simulated, still uses the beta names.
         self._audio_delta = 'response.output_audio.delta'
@@ -163,7 +162,8 @@ class OpenAIServer:
                 {
                     'type': 'conversation.created',
                     'event_id': 'evt_conversation',
-                    'conversation': {'id': self._conversation_id, 'object': 'realtime.conversation'},
+                    # Every dial is a new conversation: a reconnect doesn't resume the dropped one.
+                    'conversation': {'id': f'conv_{socket.index}', 'object': 'realtime.conversation'},
                 },
                 immediately=True,
             )

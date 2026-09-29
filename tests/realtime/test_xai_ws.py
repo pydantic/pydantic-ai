@@ -477,6 +477,68 @@ async def test_reconnect_replays_history_after_drop(xai_ws_cassette: tuple[XaiPr
     final_part = responses[-1].parts[0]
     assert isinstance(final_part, SpeechPart)
     assert 'cobalt' in (final_part.transcript or '').lower()
+    # xAI's billed seconds are a running total per conversation, which the new one starts again: each
+    # conversation's seconds count once.
+    billed = [
+        message.data['usage']['billable_audio_seconds']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.data.get('type') == 'response.done'
+    ]
+    assert session.usage.audio_seconds == sum(billed) == snapshot(2)
+
+
+async def test_reconnect_replays_a_tool_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
+    """A tool call and its result replayed after a drop are still known to the model.
+
+    xAI's own resumption dropped the `function_call` item (checked live); replay sends both.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider, settings={'reconnect': {'base_delay': 0.0, 'jitter': False}})
+    agent = Agent(instructions='Answer in one short sentence. Always use get_weather for weather questions.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'It is foggy and 12 degrees in {city}.'
+
+    disconnected = False
+    sent_followup = False
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the weather in Paris?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent) and not disconnected:
+                    # The turn ends after the answer to the tool's result, so the replay has a tool round to carry.
+                    disconnected = True
+                    await cassette.disconnect()
+                elif isinstance(event, RealtimeSessionReconnectEvent):
+                    await session.send('How many degrees did the weather tool report? Answer with just the number.')
+                    sent_followup = True
+                elif sent_followup and isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    close_index = next(
+        i for i, interaction in enumerate(cassette.interactions) if isinstance(interaction, CassetteClose)
+    )
+    replayed_types = [
+        interaction.data['item']['type']
+        for interaction in cassette.interactions[close_index + 1 :]
+        if isinstance(interaction, CassetteMessage)
+        and interaction.direction == 'sent'
+        and interaction.data.get('type') == 'conversation.item.create'
+    ]
+    assert replayed_types == snapshot(
+        ['message', 'message', 'function_call', 'function_call_output', 'message', 'message']
+    )
+    # No `error` frame refused the replayed tool round.
+    assert not [
+        message
+        for message in cassette.interactions[close_index + 1 :]
+        if isinstance(message, CassetteMessage) and message.data.get('type') == 'error'
+    ]
+    final = [message for message in session.all_messages() if isinstance(message, ModelResponse)][-1].parts[0]
+    assert isinstance(final, SpeechPart)
+    assert '12' in (final.transcript or '')
 
 
 @pytest.mark.usefixtures('no_genai_prices_context_window')

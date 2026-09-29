@@ -1106,14 +1106,13 @@ async def connect_openai_protocol(
         [ClientConnection, Callable[[], Awaitable[ClientConnection]], str | None, Callable[[], str | None]],
         _ConnectionT,
     ],
-    on_unexpected_during_update: Callable[[], Callable[[dict[str, Any]], None] | None] | None = None,
-    replay_on_redial: bool = False,
+    on_unexpected_during_update: Callable[[dict[str, Any]], None] | None = None,
 ) -> AsyncGenerator[_ConnectionT]:
     """Connect an OpenAI-protocol realtime model and own its socket lifecycle.
 
     OpenAI supplies refreshable `dial_headers`, and xAI static ones plus `on_unexpected_during_update`
-    to read the conversation ID from the frames that arrive while the session is configured. Both
-    enable `replay_on_redial`.
+    to read the conversation ID from the frames that arrive while the session is configured. A re-dial
+    replays the message history a session has offered.
     """
     # Normalize history before opening a socket so unsupported content remains a caller `UserError`.
     seed = await seed_items(messages, profile=profile, provider_name=provider_name)
@@ -1133,9 +1132,10 @@ async def connect_openai_protocol(
         if served_model := session_model(created):
             server_model = served_model
         await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
-        on_unexpected = on_unexpected_during_update() if on_unexpected_during_update is not None else None
-        await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout, on_unexpected=on_unexpected)
-        if replay_on_redial and connection is not None and (message_history := connection.message_history) is not None:
+        await expect_event(
+            ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout, on_unexpected=on_unexpected_during_update
+        )
+        if connection is not None and (message_history := connection.message_history) is not None:
             replayed = await replay_items(message_history(), profile=profile, provider_name=provider_name)
             for item in replayed:
                 await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
@@ -1255,7 +1255,7 @@ async def expect_event(
 
     Unrelated events received during the handshake (e.g. rate limit notices) are skipped rather than
     treated as a protocol violation, and passed to `on_unexpected` when supplied (xAI uses this to
-    capture its resumption replay burst). `timeout` bounds the total wait so `connect()` fails
+    read its conversation ID). `timeout` bounds the total wait so `connect()` fails
     predictably instead of hanging if the expected event never arrives.
     """
     deadline = time.monotonic() + timeout

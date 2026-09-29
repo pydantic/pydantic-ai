@@ -227,12 +227,12 @@ def test_map_delegates_audio_and_transcript_and_tool_calls() -> None:
     )
 
 
-def test_map_conversation_resumption_events() -> None:
+def test_map_conversation_events() -> None:
     assert map_event({'type': 'conversation.created', 'conversation': {'id': 'conversation-1'}}) == ConversationCreated(
         'conversation-1'
     )
-    # A live-stream item lifecycle event is never a resumption replay (only the reconnect handshake's
-    # burst-capture marks items `replayed=True`), so it maps with `replayed=False` and is not suppressed.
+    # A live-stream item lifecycle event is never a resumption replay, so it maps with `replayed=False` and
+    # is not suppressed.
     assert map_event(
         {
             'type': 'conversation.item.created',
@@ -949,6 +949,21 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
     with pytest.raises(ModelAPIError, match='Could not reach the realtime API: refused'):
         async with _connect(_model(), 'x'):
             pass  # pragma: no cover
+
+
+async def test_connect_skips_an_unreadable_conversation_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A handshake frame that can't be read leaves the conversation ID unset rather than failing the connect."""
+    frames = [
+        _created(),
+        json.dumps({'type': 'conversation.created'}),
+        json.dumps({'type': 'conversation.created', 'conversation': {}}),
+        json.dumps({'type': 'conversation.item.added', 'item': {'type': 'message'}}),
+        _updated(),
+    ]
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(FakeWebSocket(frames)))
+
+    async with _connect(_model(), 'x') as conn:
+        assert conn.conversation_id is None
 
 
 @pytest.mark.parametrize('after_handshake', [False, True], ids=['during-handshake', 'after-handshake'])

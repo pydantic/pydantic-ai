@@ -296,8 +296,7 @@ class OpenAILifecycle:
     def socket_replaced(self) -> None:
         """A new socket is being dialed: what the old one hadn't acknowledged, it never will.
 
-        Those inputs are in the conversation all the same: a replaying reconnect sends the history that holds
-        them, and a resuming one carries on the conversation they were sent into.
+        Those inputs are in the conversation all the same: the reconnect replays the history that holds them.
         """
         placed = [input_id for input_id in self._messages if input_id is not None]
         placed += self._tool_outputs.values()
