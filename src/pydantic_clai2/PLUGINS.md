@@ -393,7 +393,8 @@ hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
 CLAI plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
-[`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools), and
+[`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
+[`ordinal`](#ordinal-social-posts-in-ordinal), and
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon).
 
 To run any other capability, declare it on purpose under an id of your choice,
@@ -410,8 +411,9 @@ as `filesystem` or `shell` alongside `coder`.
 
 Earlier releases listed every harness capability here, disabled. If you enabled
 one of those, it was saved as your own declaration, so it keeps loading and now
-shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is
-`google_workspace`, which now loads its built-in plugin instead.
+shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is a
+saved copy of an entry that now has its own built-in under the same id, such as
+`google_workspace` or `ordinal`: it becomes that built-in, keeping whether it was enabled.
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
@@ -772,6 +774,55 @@ If you enabled `day_ai` from the earlier harness catalog, your saved
 `pydantic_ai_harness.day_ai:DayAI` declaration still takes precedence and reads
 `DAY_AI_ACCESS_TOKEN` from the environment. `/plugins remove day_ai` switches to
 this plugin.
+
+### `ordinal`: social posts in Ordinal
+
+`ordinal` (`pydantic_clai2.ordinal`) gives the model harness
+[`Ordinal`](../pydantic_ai_harness/pydantic_ai_harness/ordinal/README.md), which drafts, schedules,
+and analyzes social posts through Ordinal's hosted MCP server. It starts disabled;
+`/plugins enable ordinal` turns it on. Ordinal MCP needs the Pro plan or higher.
+If you had enabled or disabled the former `pydantic_ai_harness.ordinal:Ordinal`
+catalog entry, that choice carries over to this plugin.
+
+Set it up in its settings menu. Turning it on (Space in `/plugins`,
+`/plugins enable ordinal`, or `/plugins add`) opens the menu, and so do `/plugins configure ordinal` and `C` in `/plugins`
+later, so you can change anything without reinstalling. It is the same field
+editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
+**Save & close** or Esc closes.
+Each change is saved as soon as you make it, and the plugin loads again when the
+menu closes.
+
+| Row | Default | Does |
+|---|---|---|
+| Sign-in | Automatic | which credential runs use: Automatic (a `/keys` entry, else `ORDINAL_ACCESS_TOKEN`, else the browser), or only a saved key, only the environment variable, or only the browser |
+| `/keys` entry | none | opens the `/keys` picker: choose a saved key, or type a new token masked; `R` stops using the key |
+| Server instructions | Included | pass Ordinal's own server instructions to the model |
+
+Harness `Ordinal` has one endpoint and reaches every workspace the token's user
+belongs to, so there is no base URL or workspace to set.
+
+The token never goes in plugin settings, which are plaintext SQLite; the settings
+hold only the two options above, and a declaration with any other field, such as
+a pasted token, fails to load. A token typed in the menu is saved in `/keys` as
+`ORDINAL_ACCESS_TOKEN`, after asking if that would replace an existing key, since
+other plugins and connections may share it. CLAI keeps only the chosen key's name
+and looks it up on every run. Replacing the key in `/keys` applies to the next
+run, and deleting it makes runs fail instead of connecting without it. `/keys`
+will not rename a key while Ordinal uses it. Several plugins and providers can
+name the same key, as GitHub and Copilot can both use `GITHUB_TOKEN`.
+
+A browser sign-in opens your browser on the first run that uses Ordinal. CLAI
+keeps the OAuth tokens in the OS keyring (the private credential file when no
+keyring exists), as `/mcp` does for OAuth servers, so later launches reuse them.
+It only works on the machine you run CLAI on. With no credential for the chosen
+sign-in and no terminal (a headless run from CI, say), the plugin fails to load
+with a message naming `/plugins configure ordinal`, rather than adding tools that
+cannot connect.
+
+`/ordinal` shows which credential the next run uses. `/ordinal logout` forgets the
+saved browser sign-in and drops the one in use, so the next browser run signs in
+again; it does not touch a `/keys` entry or the environment variable. Disabling
+the plugin does not sign you out.
 
 ## Managing plugins
 
@@ -1245,6 +1296,14 @@ async def configure() -> str:
 
 The built-in `github` and [`pylon`](#configuring-pylon) plugins are complete
 examples; `pylon` also steps out of the menu worker to run the async key picker.
+
+Plugin settings are plaintext SQLite. Never save a token, API key, or client
+secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
+its name as a `KeyReference`, and call `resolve_key` when connecting, so a key
+replaced in `/keys` applies and a deleted one fails closed. Name a new key with
+the conventional environment-style label (`GITHUB_TOKEN`, `ORDINAL_ACCESS_TOKEN`)
+so plugins that need the same credential share it. The label is only a name; it
+does not export or read an environment variable.
 
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 

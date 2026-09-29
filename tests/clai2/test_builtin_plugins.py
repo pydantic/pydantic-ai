@@ -28,11 +28,12 @@ CURATED = {
     'notifications',
     'mcp',
     'day_ai',
+    'ordinal',
     'github',
     'google_workspace',
     'pylon',
 }
-OPT_IN = {'day_ai', 'github', 'google_workspace', 'pylon'}
+OPT_IN = {'day_ai', 'github', 'google_workspace', 'ordinal', 'pylon'}
 
 
 class Menu:
