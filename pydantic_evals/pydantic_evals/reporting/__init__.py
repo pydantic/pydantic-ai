@@ -964,7 +964,7 @@ class _NumberRenderer:
             return None
         if diff > 0:
             return self.diff_increase_style
-        if diff < 0:
+        if diff <= 0:
             return self.diff_decrease_style
         # A `nan` difference has no direction, so it gets neither the increase nor the decrease style.
         return None
