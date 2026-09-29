@@ -1101,6 +1101,32 @@ async def test_setup_failure_runs_cleanup_when_durable_id_validation_would_fail(
     assert cleaned == [exc_info.value]
 
 
+async def test_durable_id_validation_failure_runs_setup_cleanup() -> None:
+    cleaned: list[BaseException] = []
+
+    class IdChangingOperation(Operations):
+        id = 'id_changing_operation'
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            replacement = IdChangingOperation()
+            replacement.id = 'renamed_for_this_run'
+            return replacement
+
+    class Cleanup(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            cleaned.append(error)
+            raise error
+
+    agent = Agent(
+        TestModel(),
+        name='cleanup_after_durable_id_validation',
+        capabilities=[Cleanup(), IdChangingOperation(), RecordingDurability()],
+    )
+    with pytest.raises(UserError, match="No capability with id 'id_changing_operation'") as exc_info:
+        await agent.run('test')
+    assert cleaned == [exc_info.value]
+
+
 async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:
     capability = Operations()
     first_agent = Agent(TestModel(), name='first_agent', capabilities=[capability, RecordingDurability()])

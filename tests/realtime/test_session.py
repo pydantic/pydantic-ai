@@ -7046,6 +7046,26 @@ async def test_agent_realtime_session_dispatches_run_error_for_setup_failure(fai
     assert cleaned == [expected_error]
 
 
+async def test_agent_realtime_session_cleans_up_context_preparation_failure() -> None:
+    cleaned: list[BaseException] = []
+
+    class FailingPreparation(AbstractCapability[None]):
+        def _prepare_run_context(self, ctx: RunContext[None]) -> None:
+            raise UserError('context preparation failed')
+
+    class Cleanup(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+            cleaned.append(error)
+            raise error
+
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[Cleanup(), FailingPreparation()])
+    model = FakeRealtimeModel(FakeRealtimeConnection([]))
+    with pytest.raises(UserError, match='context preparation failed') as exc_info:
+        async with agent.realtime(model).session():
+            pass  # pragma: no cover
+    assert cleaned == [exc_info.value]
+
+
 async def test_agent_realtime_session_seeds_message_history() -> None:
     agent: Agent[None, str] = Agent()
     seed = [

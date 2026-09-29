@@ -277,9 +277,10 @@ async def _run_setup_error_hook(
 
 @asynccontextmanager
 async def _run_lifecycle_hooks(  # noqa: C901
-    run_capability: AbstractCapability[Any],
-    run_ctx: RunContext[Any],
+    run_capability: AbstractCapability[AgentDepsT],
+    run_ctx: RunContext[AgentDepsT],
     *,
+    resolved_layers: Sequence[AbstractCapability[AgentDepsT]],
     build_result: Callable[[], AgentRunResult[Any]],
     finalize: Callable[[AgentRunResult[Any]], Awaitable[None]],
     extract_error: Callable[[BaseException], BaseException] | None = None,
@@ -337,7 +338,11 @@ async def _run_lifecycle_hooks(  # noqa: C901
     # Before `wrap_run`, not inside the handler it wraps: a `wrap_run` implementation may call a
     # durable operation before it awaits the handler, and one that short-circuits never awaits it at
     # all, so dispatch has to be installed by the time the chain is entered.
-    _prepare_run_capability_context(run_capability, run_ctx)
+    try:
+        _prepare_run_capability_context(run_capability, run_ctx)
+    except BaseException as error:
+        await _run_setup_error_hook(resolved_layers, run_ctx, error)
+        raise
 
     outer_context = contextvars.copy_context()
     _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
@@ -2091,6 +2096,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capability_owns_current_model=capability_owns_current_model,
             model_resources=model_resources,
             run_capability=run_capability,
+            resolved_layers=resolved_layers,
             toolset=toolset,
             usage_limits=usage_limits,
             concurrency_limiter=self._concurrency_limiter,
@@ -3908,6 +3914,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     _run_lifecycle_hooks(
                         run_capability,
                         run_context,
+                        resolved_layers=resolved_caps.resolved_layers,
                         build_result=_build_session_result,
                         finalize=_finalize_session_result,
                     )
@@ -4453,6 +4460,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     capability_owns_current_model: bool
     model_resources: _RunModelResources
     run_capability: AbstractCapability[_PreparedDepsT]
+    resolved_layers: list[AbstractCapability[_PreparedDepsT]]
     toolset: AbstractToolset[_PreparedDepsT]
     usage_limits: _usage.UsageLimits
     concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None
@@ -4587,6 +4595,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             async with _run_lifecycle_hooks(
                 self.run_capability,
                 run_ctx,
+                resolved_layers=self.resolved_layers,
                 build_result=_build_result,
                 finalize=_finalize_result,
                 extract_error=_extract_error,
