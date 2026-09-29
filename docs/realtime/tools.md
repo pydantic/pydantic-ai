@@ -198,18 +198,21 @@ This applies to both ways a call is deferred — raising
 tool is still advertised to the model, exactly as in a standard run; calling it opens the approval
 flow rather than running the tool.
 
-!!! warning "The handler answers from policy, not from a person"
-    The handler must return a decision promptly — it is a programmatic policy resolver, not an approval
-    UI. It runs as a background task like the tool itself, so it never blocks the session's events, but
-    what the *conversation* does while it thinks is provider-specific in exactly the way
-    [concurrent tool execution](#concurrent-tool-execution) describes: OpenAI and Azure carry on, while
-    Gemini holds the model's turn until the result arrives. On Gemini a slow handler therefore reads as
-    assistant silence, and if the user speaks into that gap the provider cancels the pending call
-    outright (recorded as [a synthetic cancellation](#function-tools)).
+!!! warning "A slow handler is a pending tool call"
+    The handler runs as a background task like the tool itself, so it never blocks the session's
+    events, and it can take as long as it needs, for example awaiting an answer from a person through
+    your own UI. What the *conversation* does in the meantime depends on the model's
+    [async tool call mode](#concurrent-tool-execution). A model that keeps talking carries on, and may
+    tell the user the action is done before it is, so tell it in the instructions to wait for the
+    result before confirming. A model that waits holds its turn, so a slow handler reads as assistant
+    silence, and on Gemini the user speaking into that gap cancels the pending call outright (recorded
+    as [a synthetic cancellation](#function-tools)).
 
-Asking a human mid-call and resuming on their answer is not supported yet: a realtime session cannot
-pause and return a `DeferredToolRequests` output for an out-of-band result. Resolve the request
-during the call, or move that workflow to a standard agent run.
+What a session can't do is pause and return a `DeferredToolRequests` output for an out-of-band
+result, as a standard run does
+([#7301](https://github.com/pydantic/pydantic-ai/issues/7301)). Resolve the request during the call,
+from policy or by asking a person from inside the handler, or move that workflow to a standard agent
+run.
 
 [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
 informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
@@ -272,8 +275,9 @@ and may reply, call a tool, or move on. To add context without prompting a turn,
 response is in progress. Reach for `enqueue()` for a follow-up that should wait its turn, and for
 `send()` to interject into a gap.
 
-Multimodal content and model responses are rejected because the realtime live-input channel cannot
-preserve their standard-run semantics.
+Model responses are rejected because the realtime live-input channel can't preserve their
+standard-run semantics; multimodal content isn't routed yet
+([#7300](https://github.com/pydantic/pydantic-ai/issues/7300)).
 
 ## Ending the session from a tool
 
