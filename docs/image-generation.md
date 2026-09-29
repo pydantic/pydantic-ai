@@ -167,7 +167,7 @@ export GOOGLE_API_KEY='your-api-key'
 
 The `google-cloud:` prefix uses Google Cloud instead, which authenticates with Application Default Credentials rather
 than an API key. See the [Google image-generation notes](models/google.md#image-generation) for provider-specific
-behavior and [Google Cloud configuration](models/google.md#google-cloud-enterprise) for the credential options.
+behavior and [Google Cloud configuration](models/google-cloud.md#authentication) for the credential options.
 
 ### xAI
 

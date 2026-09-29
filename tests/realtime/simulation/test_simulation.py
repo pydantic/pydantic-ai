@@ -107,6 +107,25 @@ def test_merged_requests_release_their_reservations() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
+def test_a_response_taken_for_ours_before_the_server_echoed_settles_nothing_twice() -> None:
+    """Server VAD answers a spoken turn while our request is outstanding, before the server has echoed metadata.
+
+    The connection takes that response for the one it asked for (it can't tell yet), and the response that
+    really answers the request then settles nothing a second time (`lifecycle.input_settled_twice`).
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.reject_next(kind='response')
+        sim.create_response()
+        sim.create_response()
+        sim.send_audio(chunks=1)
+        sim.speech_start(deliver=False)
+        sim.speech_stop(deliver=False)
+        sim.finish(deliver=False)
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
 def test_raising_tool_ends_the_exchange() -> None:
     """A tool that raises ends the session, and nothing is left waiting (OR8, #8765)."""
 

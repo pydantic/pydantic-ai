@@ -6,6 +6,7 @@ from pathlib import Path
 
 import keyring
 import pytest
+from keyring.errors import PasswordDeleteError
 
 from pydantic_ai import models
 
@@ -92,3 +93,25 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(keyring, 'set_password', set_password)
     monkeypatch.setattr(keyring, 'delete_password', delete_password)
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
+
+
+@pytest.fixture
+def vault(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
+    """A keyring that also deletes, for tests that sign out."""
+    entries: dict[tuple[str, str], str] = {}
+
+    def get(service: str, account: str) -> str | None:
+        return entries.get((service, account))
+
+    def set_value(service: str, account: str, value: str) -> None:
+        entries[service, account] = value
+
+    def delete(service: str, account: str) -> None:
+        if (service, account) not in entries:
+            raise PasswordDeleteError('Not found')  # pragma: no cover
+        del entries[service, account]
+
+    monkeypatch.setattr(keyring, 'get_password', get)
+    monkeypatch.setattr(keyring, 'set_password', set_value)
+    monkeypatch.setattr(keyring, 'delete_password', delete)
+    return entries
