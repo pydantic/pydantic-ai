@@ -725,6 +725,10 @@ host.commands.register(
 ```
 
 The handler gets the arguments as a list of strings and returns the text to show.
+Return `''` when there is nothing to report, such as a menu closed without
+changes: the shell prints nothing rather than blank lines. A one-line result
+ending in ` unchanged.` (for example `GitHub settings unchanged.`) is treated
+the same way, so no-op notices stay out of the transcript.
 Arguments are split like a shell command line, so quotes group words. Pass
 `raw=True` to receive the unsplit argument text as one string instead (an empty
 list when there is none); `/fork` does this so prompts keep their apostrophes.
