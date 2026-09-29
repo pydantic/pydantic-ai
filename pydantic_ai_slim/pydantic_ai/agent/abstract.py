@@ -39,6 +39,7 @@ from .. import (
 from .._cancel import CancellationToken, RunBinding, provide_run_binding
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
+from .._run_context import set_current_run_context
 from ..capabilities import AgentCapability
 from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec
@@ -2204,12 +2205,13 @@ class AgentRealtime(Generic[AgentDepsT]):
         The resolved instructions and tool definitions are baked into the call, so the provider session
         is fully configured before (or without) a server sideband attaching. If a sideband later attaches
         with [`session(provider_session=...)`][pydantic_ai.agent.AgentRealtime.session], it resolves and
-        pushes the same configuration over the control channel again.
+        pushes the same configuration over the control channel again. (OpenAI GPT-Live can't be
+        reconfigured after it starts, so there the offer's configuration is final.)
 
         Resolution uses the same machinery as opening a session: dynamic `@agent.instructions` functions
         and capability `for_run` hooks run, and toolsets are set up (including starting MCP servers) to list
         their tools, then torn down. Bound `message_history` is not baked into the offer; a sideband session
-        seeds it when it attaches.
+        seeds it when it attaches, except on GPT-Live, which only takes history when it starts.
 
         This delegates to
         [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which is implemented
@@ -2231,12 +2233,15 @@ class AgentRealtime(Generic[AgentDepsT]):
             run_id=self._run_id,
             message_history=self._message_history,
         ) as resolved:
-            return await resolved.model.answer_webrtc_offer(
-                sdp_offer,
-                instructions=resolved.instructions,
-                tools=resolved.model_request_parameters.function_tools,
-                model_settings=resolved.model_settings,
-            )
+            # Current while the offer is answered, as while a session connects: a model can consult the
+            # agent it belongs to (GPT-Live delegates to the agent's own model by default).
+            with set_current_run_context(resolved.run_context):
+                return await resolved.model.answer_webrtc_offer(
+                    sdp_offer,
+                    instructions=resolved.instructions,
+                    tools=resolved.model_request_parameters.function_tools,
+                    model_settings=resolved.model_settings,
+                )
 
     async def create_client_secret(self, *, expires_after_seconds: int | None = None) -> RealtimeClientSecret:
         """Resolve this agent's realtime configuration and mint a browser client secret.
@@ -2252,9 +2257,8 @@ class AgentRealtime(Generic[AgentDepsT]):
         seeds it when it attaches.
 
         This delegates to [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret],
-        which is implemented by the OpenAI and Azure OpenAI realtime models. Other models raise
-        [`UserError`][pydantic_ai.exceptions.UserError]; branch on
-        [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] to check up front.
+        which is implemented by the OpenAI and Azure OpenAI realtime models. Other models, including OpenAI
+        GPT-Live, raise [`UserError`][pydantic_ai.exceptions.UserError].
 
         Args:
             expires_after_seconds: Requested lifetime of the client secret in seconds. The provider may

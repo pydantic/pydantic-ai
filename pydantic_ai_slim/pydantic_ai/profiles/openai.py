@@ -502,7 +502,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_session_seeding': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
-        'supports_webrtc': False,
+        # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
+        'supports_webrtc': True,
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
