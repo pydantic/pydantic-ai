@@ -10,8 +10,9 @@ from pydantic_ai.agent import AbstractAgent
 def import_agent(path: str) -> AbstractAgent[None, object]:
     """Import `MODULE:ATTR` and return the agent instance it names.
 
-    The launch directory is appended to `sys.path`, so a module there resolves without installing it,
-    but never shadows an installed module of the same name. The agent runs with `deps=None`.
+    The launch directory is appended to `sys.path`, so a module there resolves without installing it and
+    installed modules keep precedence. (`python -m pydantic_clai2` already puts it first, as for any script.)
+    The agent runs with `deps=None`.
     """
     module_name, _, attr = path.partition(':')
     if not module_name or not attr:

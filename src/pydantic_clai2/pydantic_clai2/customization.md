@@ -436,9 +436,9 @@ https://pydantic.dev/docs/ai/models/overview/ and inspect installed core abstrac
 classes for required methods. Supply that Model instance to Agent as above.
 To chat with an Agent instance you already have, skip the launcher and run
 clai2 --agent MODULE:ATTR (or -a), for example
-clai2 --agent pydantic_ai.main:my_cool_agent. The launch directory is importable
-(after installed packages, which it never shadows), so a module next to where you
-start CLAI resolves without installing it. ATTR must
+clai2 --agent pydantic_ai.main:my_cool_agent. CLAI appends the launch directory to
+sys.path, after installed packages, so a module next to where you start CLAI
+resolves without installing it. ATTR must
 name an Agent instance, not a class or factory; the agent runs with deps=None.
 For that session only, CLAI loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and
