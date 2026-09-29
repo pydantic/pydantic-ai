@@ -222,7 +222,11 @@ class OpenRouterProviderConfig(TypedDict, total=False):
     """List of quantization levels to filter by (e.g. ["int4", "int8"]). [See details](https://openrouter.ai/docs/features/provider-routing#quantization)"""
 
     sort: Literal['price', 'throughput', 'latency', 'exacto']
-    """Sort providers by price or throughput. (e.g. "price" or "throughput"). [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting)"""
+    """Choose 'price', 'throughput', 'latency', or 'exacto' as the provider sorting strategy.
+
+    See [provider sorting](https://openrouter.ai/docs/guides/routing/provider-selection#provider-sorting)
+    and [Exacto](https://openrouter.ai/docs/guides/routing/model-variants/exacto).
+    """
 
     max_price: _OpenRouterMaxPrice
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""

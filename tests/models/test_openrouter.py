@@ -108,22 +108,18 @@ What can I help you with today?\
     assert response.provider_details['finish_reason'] == 'stop'
 
 
-async def test_openrouter_provider_quantization_and_sort(allow_model_requests: None, openrouter_api_key: str) -> None:
-    """`nvfp4` and `exacto` are accepted by OpenRouter's provider routing and must type-check here too.
-
-    Only Modal and CoreWeave serve this model at `nvfp4`, so the downstream provider shows the filter applied.
-    """
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
+async def test_openrouter_provider_quantization_and_sort(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """`nvfp4` and `exacto` are accepted by OpenRouter's provider routing and must type-check here too."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
     model = OpenRouterModel('z-ai/glm-5.3-flash', provider=provider)
     settings = OpenRouterModelSettings(
         max_tokens=300,
         openrouter_provider={'quantizations': ['nvfp4'], 'sort': 'exacto'},
     )
-    response = await model_request(
-        model, [ModelRequest.user_text_prompt('Who are you? One sentence.')], model_settings=settings
-    )
-    assert response.provider_details is not None
-    assert response.provider_details['downstream_provider'] == snapshot('Modal')
+    await model_request(model, [ModelRequest.user_text_prompt('Who are you? One sentence.')], model_settings=settings)
+    assert request_capture.body()['provider'] == {'quantizations': ['nvfp4'], 'sort': 'exacto'}
 
 
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
