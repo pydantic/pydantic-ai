@@ -151,7 +151,8 @@ else:
     @contextmanager
     def logfire_span(*args: Any, **kwargs: Any) -> Generator[logfire_api.LogfireSpan, None, None]:
         """Create a Logfire span without warning if logfire is not configured."""
-        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code
+        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code.
+        # Closest: https://github.com/pydantic/logfire/issues/1331 (does not cover library-code suppress).
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
             with _logfire.span(*args, **kwargs) as span:

@@ -46,8 +46,6 @@ from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts
 
-pytestmark = pytest.mark.anyio
-
 TS = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
@@ -179,6 +177,55 @@ async def test_partially_answered_parallel_tool_calls():
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_empty_interrupted_request_closes_out_every_call():
+    """An interrupted request with no parts still closes out the response's calls.
+
+    A run cancelled before any of its tools produced a result records the interrupted request
+    empty, so the marker is all that says the calls were abandoned. Every unanswered call is
+    closed out, not just one — providers reject a request whose tool calls aren't all answered.
+    """
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Calculate.', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_volume', '{"size": 6}', tool_call_id='call_volume'),
+                ToolCallPart('get_mass', '{"size": 6}', tool_call_id='call_mass'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(parts=[], timestamp=TS, state='interrupted'),
+    ]
+
+    await agent.run('Never mind.', message_history=message_history)
+
+    assert received[0][-1] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_volume',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='call_volume',
+                    metadata={'pydantic_ai_synthesized_tool_return': True},
+                    timestamp=TS,
+                    outcome='interrupted',
+                ),
+                ToolReturnPart(
+                    tool_name='get_mass',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='call_mass',
+                    metadata={'pydantic_ai_synthesized_tool_return': True},
+                    timestamp=TS,
+                    outcome='interrupted',
+                ),
+                UserPromptPart(content='Never mind.', timestamp=IsDatetime()),
+            ],
+            timestamp=IsDatetime(),
+        )
     )
 
 

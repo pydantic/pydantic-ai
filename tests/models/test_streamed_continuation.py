@@ -27,7 +27,7 @@ import pytest
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._agent_graph import _resolve_interrupted_stream_state  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import SkipModelRequest, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -48,8 +48,6 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
-
-pytestmark = pytest.mark.anyio
 
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
@@ -580,6 +578,31 @@ async def test_resume_from_trailing_suspended_history(stream: bool) -> None:
     assert calls == snapshot(['before', 'after'])
 
 
+async def test_resume_hook_rewriting_persistent_history_trims_the_suspended_seed() -> None:
+    class PersistRequestView(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.messages[:] = request_context.messages
+            return request_context
+
+    suspended = _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        suspended,
+    ]
+    result = await Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')], provider_response_id='r2')),
+        capabilities=[PersistRequestView()],
+    ).run(message_history=history)
+
+    assert result.output == 'done'
+    assert (
+        sum(isinstance(message, ModelResponse) and message.state == 'suspended' for message in result.all_messages())
+        == 0
+    )
+
+
 @pytest.mark.parametrize('stream', [False, True])
 async def test_resume_wrap_short_circuit_replaces_suspended_response_in_history(stream: bool) -> None:
     """A `wrap_model_request` short-circuit on a resumed run must not leave the suspended
@@ -893,6 +916,56 @@ async def test_resume_hook_dropping_suspended_response_errors() -> None:
 
     with pytest.raises(UserError, match='must end with a suspended'):
         await agent.run(message_history=history)
+
+
+@pytest.mark.parametrize('hook', ['before', 'wrap'])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_resume_hook_run_context_messages_remain_persistent(
+    hook: Literal['before', 'wrap'], stream: bool
+) -> None:
+    """Resume bookkeeping must not replace persistent history from request-only messages."""
+    hooks = Hooks()
+    marker = ModelRequest(parts=[UserPromptPart(content='persistent marker')])
+
+    def update_history(ctx: RunContext[Any]) -> None:
+        ctx.messages.insert(0, marker)
+
+    if hook == 'before':
+
+        @hooks.on.before_model_request
+        async def _before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            update_history(ctx)
+            return request_context
+
+    else:
+
+        @hooks.on.model_request
+        async def _wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+            update_history(ctx)
+            return await handler(request_context)
+
+    suspended = _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2)
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='go')]), suspended]
+    if stream:
+        model: Model = _ScriptedModel(
+            segments=[
+                _StreamSegment(
+                    texts=['done'], state='complete', provider_response_id='r2', input_tokens=3, output_tokens=4
+                )
+            ]
+        )
+    else:
+        model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]))
+
+    agent = Agent(model, capabilities=[hooks])
+    if stream:
+        async with agent.run_stream(message_history=history) as result:
+            await result.get_output()
+            all_messages = result.all_messages()
+    else:
+        all_messages = (await agent.run(message_history=history)).all_messages()
+
+    assert marker in all_messages
 
 
 async def test_streaming_wrap_error_propagates() -> None:

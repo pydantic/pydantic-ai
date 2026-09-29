@@ -13,10 +13,13 @@ import anyio
 from opentelemetry.trace import get_current_span
 from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
+from pydantic_ai._instrumentation import (
+    model_attributes,
+    model_request_parameters_attributes,
+    span_include_content,
+)
 from pydantic_ai._run_context import RunContext
 
-from .._cost import fill_response_cost
 from .._fallback import (
     ExceptionHandler,
     FallbackOn,
@@ -25,6 +28,7 @@ from .._fallback import (
     ResponseRejected,
     raise_fallback_exception_group,
 )
+from .._genai_prices import fill_response_cost
 from ..exceptions import ModelAPIError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile
@@ -359,6 +363,17 @@ class FallbackModel(Model):
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
 
+    @property
+    def context_window(self) -> int | None:
+        """The smallest known context window among the candidate models, or `None` if none is known.
+
+        Any candidate may end up answering, and history that fits the smallest window fits them all,
+        so compacting against it errs towards compacting early rather than overflowing a fallback.
+        Candidates with an unknown window don't constrain the result.
+        """
+        windows = [window for model in self.models if (window := model.context_window) is not None]
+        return min(windows) if windows else None
+
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         return model_request_parameters  # pragma: no cover
 
@@ -402,7 +417,18 @@ class FallbackModel(Model):
                     # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
                     # it here would leak the attribute the setting is meant to suppress.
                     if 'model_request_parameters' in attributes:
-                        span_attributes.update(model_request_parameters_attributes(model_request_parameters))
+                        span_attributes.update(
+                            model_request_parameters_attributes(
+                                model_request_parameters,
+                                # The settings aren't reachable from here, so the span carries its
+                                # own `include_content` in a context variable, keyed by the span it
+                                # was set for. This refresh serializes the *selected* model's
+                                # parameters, whose instruction parts the outer request may not have
+                                # had at all, so it cannot be inferred from what is already
+                                # recorded. Fails closed on anything but this span's own policy.
+                                include_content=span_include_content(span),
+                            )
+                        )
                     span.set_attributes(span_attributes)
 
 

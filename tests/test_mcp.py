@@ -13,6 +13,8 @@ import asyncio
 import base64
 import json
 import re
+import subprocess
+import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -25,12 +27,23 @@ import anyio
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SpeechPart,
+    TextPart,
+    ToolAvailabilityDeltaPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -42,6 +55,7 @@ with try_import() as imports_successful:
     from fastmcp.client.client import CallToolResult
     from fastmcp.client.transports import (
         SSETransport,
+        StdioTransport,
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import McpError, ToolError
@@ -56,7 +70,8 @@ with try_import() as imports_successful:
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
 
-    from pydantic_ai import mcp as mcp_module
+    from pydantic_ai import _mcp, mcp as mcp_module
+    from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
     # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
     if TYPE_CHECKING:
@@ -92,11 +107,11 @@ with try_import() as imports_successful:
         load_mcp_toolsets,
     )
     from pydantic_ai.messages import TextContent
+    from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
-    pytest.mark.anyio,
 ]
 
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
@@ -149,6 +164,52 @@ def test_is_mcp_sdk_v2_reads_the_installed_distribution_version(
 
     monkeypatch.setattr(_mcp_compat, 'version', fake_package_version)
     assert _mcp_compat.is_mcp_sdk_v2() is expected
+
+
+# A fastmcp 4 install has no legacy `httpx` in it — its client extra requires `httpx2`, as does the
+# MCP SDK v2 under it — so `pydantic_ai.mcp` may not import one. Legacy `httpx` is installed here
+# (the `retries` extra pulls it in), so the subprocess makes it unimportable to stand in for the
+# install a user actually gets; the same stand-in `tests/test_httpx2_sdk_readiness.py` uses for the
+# provider modules, spelled out here because only this file runs in the FastMCP 4 CI job.
+_HTTPX_FREE_MCP = """
+import sys
+
+
+class BlockHttpx:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'httpx' or fullname.startswith('httpx.'):
+            raise ImportError('httpx is not installed')
+
+
+sys.meta_path.insert(0, BlockHttpx())
+
+import httpx2
+
+from pydantic_ai.mcp import MCPToolset
+
+client = httpx2.AsyncClient()
+toolset = MCPToolset(
+    'https://example.com/mcp',
+    auth=httpx2.BasicAuth('user', 'pass'),
+    http_client=client,
+)
+assert toolset.client.transport.httpx_client_factory() is client
+
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), (
+    'the MCP toolset imported httpx'
+)
+"""
+
+
+@pytest.mark.skipif(not MCP_SDK_V2, reason='fastmcp 3 is itself built on legacy httpx')
+def test_mcp_runs_without_legacy_httpx() -> None:
+    result = subprocess.run(
+        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_MCP],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
 
 
 MCP_FIELD_READS = [
@@ -1492,7 +1553,7 @@ class TestMCPToolsetIntegration:
 
         A unit rather than an agent-run test because `ToolsetTool.max_retries` is only observable
         end-to-end as a retry *count*; the durable end-to-end proof lives in
-        `tests/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
+        `tests/durable_exec/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
         """
         toolset = MCPToolset('https://example.com/mcp', max_retries=toolset_max_retries)
         tool = toolset.tool_for_tool_def(
@@ -1564,6 +1625,47 @@ class TestToolResultMapping:
 
 
 class TestSamplingHandler:
+    @pytest.mark.skipif(MCP_SDK_V2, reason='Modern MCP sessions do not support server-initiated sampling')
+    async def test_continue_tool_history_through_sampling(self):
+        def get_weather() -> str:
+            return 'Sunny in London'
+
+        source_agent = Agent(TestModel(), tools=[get_weather])
+        history = (await source_agent.run('What is the weather?')).all_messages()
+        tool_calls = [part for message in history for part in message.parts if isinstance(part, ToolCallPart)]
+        assert len(tool_calls) == 1
+        expected_tool_call = tool_calls[0]
+        received_messages: list[ModelMessage] = []
+
+        def sample(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            received_messages.extend(messages)
+            return ModelResponse(parts=[TextPart('Enjoy the sunshine')])
+
+        server: FastMCP[None] = FastMCP('sampling-history')
+
+        @server.tool()
+        async def continue_conversation(ctx: Context) -> str:
+            result = await Agent(MCPSamplingModel(ctx.session)).run('Thanks', message_history=history)
+            return result.output
+
+        toolset = MCPToolset(server, sampling_model=FunctionModel(sample))
+        async with toolset:
+            assert await toolset.direct_call_tool('continue_conversation', {}) == 'Enjoy the sunshine'
+
+        received_calls = [
+            part for message in received_messages for part in message.parts if isinstance(part, ToolCallPart)
+        ]
+        received_results = [
+            part for message in received_messages for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert received_calls == [expected_tool_call]
+        assert len(received_results) == 1
+        assert (received_results[0].tool_name, received_results[0].tool_call_id, received_results[0].content) == (
+            'get_weather',
+            expected_tool_call.tool_call_id,
+            'Sunny in London',
+        )
+
     async def test_sampling_handler_round_trip(self):
         """Drive the sampling handler built from `sampling_model=` to cover its body."""
         from pydantic_ai.mcp import _build_sampling_handler  # type: ignore[attr-defined]
@@ -1584,6 +1686,12 @@ class TestSamplingHandler:
 class TestSamplingMessageMapping:
     """Cover the mapping helpers in `pydantic_ai._mcp` that translate MCP sampling messages
     to/from PAI message parts. Exercised via the sampling handler that `MCPToolset(sampling_model=...)` installs."""
+
+    async def test_unmapped_request_parts_remain_ignored(self):
+        """Pin mapper behavior for parts the agent normally transforms before model requests."""
+        assert _mcp.map_from_pai_messages(
+            [ModelRequest(parts=[SpeechPart(speaker='user'), ToolAvailabilityDeltaPart(tools_added=['weather'])])]
+        ) == ('', [])
 
     async def test_map_handles_image_audio_and_role_transitions(self):
         from pydantic_ai import _mcp as _mcp_helpers
@@ -1621,16 +1729,7 @@ class TestSamplingMessageMapping:
     async def test_map_rejects_unsupported_content_types(self):
         from pydantic_ai import _mcp as _mcp_helpers
 
-        list_content_params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(role='user', content=[]),
-            ],
-            maxTokens=10,
-        )
-        with pytest.raises(NotImplementedError, match='list content'):
-            _mcp_helpers.map_from_mcp_params(list_content_params)
-
-        # `ToolUseContent` / `ToolResultContent` from the user side aren't legal sampling input.
+        # Tool calls belong to assistant messages.
         tool_use_params = mcp_types.CreateMessageRequestParams(
             messages=[
                 mcp_types.SamplingMessage(
@@ -1659,6 +1758,105 @@ class TestSamplingMessageMapping:
         )
         with pytest.raises(NotImplementedError):
             _mcp_helpers.map_from_sampling_content(audio_response_params.messages[0].content)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize('as_list', [False, True])
+    @pytest.mark.parametrize('is_error', [False, True])
+    async def test_map_tool_history(self, as_list: bool, is_error: bool):
+        """Pin native wire conversion independently of a model provider's history interpretation."""
+        tool_call = mcp_types.ToolUseContent(type='tool_use', id='call-1', name='weather', input={'city': 'London'})
+        tool_result = mcp_types.ToolResultContent(
+            type='tool_result',
+            toolUseId='call-1',
+            content=[mcp_types.TextContent(type='text', text='unavailable' if is_error else 'sunny')],
+            isError=is_error,
+        )
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(role='assistant', content=[tool_call] if as_list else tool_call),
+                mcp_types.SamplingMessage(role='user', content=[tool_result] if as_list else tool_result),
+            ],
+            maxTokens=10,
+        )
+        mapped = _mcp.map_from_mcp_params(params)
+        assert isinstance(mapped[0], ModelResponse)
+        assert mapped[0].parts == [ToolCallPart(tool_name='weather', args={'city': 'London'}, tool_call_id='call-1')]
+        assert isinstance(mapped[1], ModelRequest)
+        result = mapped[1].parts[0]
+        assert isinstance(result, ToolReturnPart)
+        assert (result.tool_name, result.tool_call_id, result.content, result.outcome) == (
+            'weather',
+            'call-1',
+            'unavailable' if is_error else 'sunny',
+            'failed' if is_error else 'success',
+        )
+
+    async def test_map_parallel_tool_history_with_structured_result(self):
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='assistant',
+                    content=[
+                        mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
+                        mcp_types.ToolUseContent(type='tool_use', id='two', name='second', input={}),
+                    ],
+                ),
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=[
+                        mcp_types.ToolResultContent(
+                            type='tool_result', toolUseId='one', content=[], structuredContent={'value': 1}
+                        ),
+                        mcp_types.ToolResultContent(
+                            type='tool_result',
+                            toolUseId='two',
+                            content=[
+                                mcp_types.TextContent(type='text', text='line one'),
+                                mcp_types.TextContent(type='text', text='line two'),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+            maxTokens=10,
+        )
+        mapped = _mcp.map_from_mcp_params(params)
+        assert len(mapped) == 2
+        assert isinstance(mapped[1], ModelRequest)
+        assert [
+            (part.tool_name, part.tool_call_id, part.content)
+            for part in mapped[1].parts
+            if isinstance(part, ToolReturnPart)
+        ] == [
+            ('first', 'one', {'value': 1}),
+            ('second', 'two', ['line one', 'line two']),
+        ]
+
+    @pytest.mark.parametrize('invalid_case', ['orphan', 'assistant-result'])
+    async def test_map_rejects_invalid_tool_history(self, invalid_case: str):
+        tool_result = mcp_types.ToolResultContent(
+            type='tool_result',
+            toolUseId='one',
+            content=[],
+        )
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='assistant',
+                    content=mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
+                ),
+                mcp_types.SamplingMessage(
+                    role='assistant' if invalid_case == 'assistant-result' else 'user', content=tool_result
+                ),
+            ],
+            maxTokens=10,
+        )
+        if invalid_case == 'orphan':
+            params.messages.pop(0)
+            with pytest.raises(UnexpectedModelBehavior, match='no matching tool call'):
+                _mcp.map_from_mcp_params(params)
+        else:
+            with pytest.raises(NotImplementedError, match=r'Unsupported .* content type'):
+                _mcp.map_from_mcp_params(params)
 
     async def test_map_handles_consecutive_assistant_messages(self):
         """Two assistant messages in a row append into the same `ModelResponse` (no intervening request)."""
@@ -1747,8 +1945,6 @@ class TestLoadMCPToolsets:
         # Single server entry, wrapped with `.prefixed('alpha')`.
         assert len(toolsets) == 1
         # The wrapped toolset is a `PrefixedToolset`, not an `MCPToolset` directly.
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
-
         assert isinstance(toolsets[0], PrefixedToolset)
         assert isinstance(toolsets[0].wrapped, MCPToolset)
 
@@ -1757,24 +1953,106 @@ class TestLoadMCPToolsets:
             load_mcp_toolsets('/nonexistent/path/to/config.json')
 
     async def test_load_mcp_toolsets_http_entry(self):
+        """A URL-configured toolset completes a real Streamable HTTP tool call."""
+        process = await anyio.open_process(
+            [
+                sys.executable,
+                '-c',
+                (
+                    'import socket\n'
+                    'import uvicorn\n'
+                    'from fastmcp import FastMCP\n'
+                    "mcp = FastMCP('test_server')\n"
+                    "mcp.tool(name='get_weather_forecast')"
+                    "(lambda location: f'The weather in {location} is sunny and 26 degrees Celsius.')\n"
+                    "server_socket = socket.create_server(('127.0.0.1', 0))\n"
+                    'print(server_socket.getsockname()[1], flush=True)\n'
+                    "uvicorn.run(mcp.http_app(), fd=server_socket.fileno(), lifespan='on', log_level='warning')"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        async def read_stderr() -> str:  # pragma: no cover
+            assert process.stderr is not None
+            try:
+                return (await process.stderr.receive()).decode()
+            except anyio.EndOfStream:  # pragma: no cover
+                return '<no stderr>'
+
+        try:
+            assert process.stdout is not None
+            try:
+                port = int((await process.stdout.receive()).decode().strip())
+            except anyio.EndOfStream:  # pragma: no cover
+                raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
+            config = {
+                'mcpServers': {
+                    'beta': {'url': f'http://127.0.0.1:{port}/mcp', 'headers': {'X-Key': 'foo'}},
+                }
+            }
+            with TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / 'mcp.json'
+                config_path.write_text(json.dumps(config), encoding='utf-8')
+                toolsets = load_mcp_toolsets(config_path)
+
+            assert len(toolsets) == 1
+            assert isinstance(toolsets[0], PrefixedToolset)
+            wrapped = toolsets[0].wrapped
+            assert isinstance(wrapped, MCPToolset)
+            assert isinstance(wrapped.client.transport, StreamableHttpTransport)
+            assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+
+            try:
+                with anyio.fail_after(10):
+                    agent = Agent(TestModel(call_tools=['beta_get_weather_forecast']), toolsets=toolsets)
+                    result = await agent.run('weather')
+            except BaseException:  # pragma: no cover
+                if process.returncode is not None:
+                    raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
+                raise
+        finally:
+            with anyio.CancelScope(shield=True):
+                if process.returncode is None:  # pragma: no branch
+                    process.terminate()
+                    with anyio.move_on_after(5) as graceful_shutdown:
+                        await process.wait()
+                    if graceful_shutdown.cancel_called:  # pragma: lax no cover
+                        process.kill()
+                if process.returncode is None:  # pragma: no branch
+                    await process.wait()  # pragma: lax no cover
+
+        assert result.output == snapshot(
+            '{"beta_get_weather_forecast":"The weather in a is sunny and 26 degrees Celsius."}'
+        )
+
+    async def test_load_mcp_toolsets_accepts_explicit_null_optional_values(self):
+        """Explicit JSON `null` keeps working for optional values used by shared MCP configs."""
         config = {
             'mcpServers': {
-                'beta': {'url': 'http://localhost:8000/mcp', 'headers': {'X-Key': 'foo'}},
+                'stdio': {'command': 'python', 'args': None, 'env': None, 'cwd': None},
+                'http': {'url': 'https://example.com/mcp', 'headers': None},
             }
         }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
-        assert len(toolsets) == 1
+        assert len(toolsets) == snapshot(2)
         assert isinstance(toolsets[0], PrefixedToolset)
-        wrapped = toolsets[0].wrapped
-        assert isinstance(wrapped, MCPToolset)
-        # Headers flowed through to the FastMCP transport.
-        assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+        stdio = toolsets[0].wrapped
+        assert isinstance(stdio, MCPToolset)
+        assert isinstance(stdio.client.transport, StdioTransport)
+        assert stdio.client.transport.args == []
+        assert stdio.client.transport.env is None
+        assert stdio.client.transport.cwd is None
+        assert isinstance(toolsets[1], PrefixedToolset)
+        http = toolsets[1].wrapped
+        assert isinstance(http, MCPToolset)
+        assert isinstance(http.client.transport, StreamableHttpTransport)
+        assert http.client.transport.headers == {}
 
     async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
         """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax
@@ -1784,8 +2062,10 @@ class TestLoadMCPToolsets:
             'mcpServers': {
                 'alpha': {
                     'url': 'https://${MCP_TEST_HOST:-localhost:8000}/mcp',
-                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}', 'X-Extras': ['${MCP_TEST_TOKEN}']},
+                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}'},
                 },
+                # `args` is the list-valued field, so it covers expansion inside a list.
+                'beta': {'command': 'python', 'args': ['-m', '${MCP_TEST_TOKEN}']},
             }
         }
         with TemporaryDirectory() as tmp:
@@ -1796,11 +2076,13 @@ class TestLoadMCPToolsets:
         wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
         assert isinstance(wrapped, MCPToolset)
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {
-            'Authorization': 'Bearer secret-value',
-            'X-Extras': ['secret-value'],
-        }
+        assert wrapped.client.transport.headers == {'Authorization': 'Bearer secret-value'}
         assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
+
+        stdio = toolsets[1].wrapped  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        assert isinstance(stdio, MCPToolset)
+        assert isinstance(stdio.client.transport, StdioTransport)
+        assert stdio.client.transport.args == ['-m', 'secret-value']
 
     async def test_load_mcp_toolsets_undefined_env_var_raises(self):
         """A `${VAR}` reference without a default and not set in the environment raises a clear `ValueError`."""
@@ -1811,24 +2093,88 @@ class TestLoadMCPToolsets:
             with pytest.raises(ValueError, match=r'\$\{MCP_TEST_UNDEFINED\} is not defined'):
                 load_mcp_toolsets(config_path)
 
-    async def test_load_mcp_toolsets_rejects_non_object_root(self):
-        """The config root must be a JSON object; a list / scalar at the root raises a descriptive error."""
+    @pytest.mark.parametrize(
+        'config,loc',
+        [
+            pytest.param(['not an object'], (), id='root-not-an-object'),
+            pytest.param({'someOtherKey': {}}, ('mcpServers',), id='missing-mcp-servers-key'),
+            pytest.param({'mcpServers': {'alpha': None}}, ('mcpServers', 'alpha'), id='entry-not-an-object'),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 123}}}, ('mcpServers', 'alpha', 'command'), id='command-not-a-str'
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'args': 'not-a-list'}}},
+                ('mcpServers', 'alpha', 'args'),
+                id='args-not-a-list',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'env': 'not-a-mapping'}}},
+                ('mcpServers', 'alpha', 'env'),
+                id='env-not-a-mapping',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'url': 'http://localhost:8000/sse', 'headers': 'not-a-mapping'}}},
+                ('mcpServers', 'alpha', 'headers'),
+                id='headers-not-a-mapping',
+            ),
+            # The `Raises:` block and the PR body name these inner types specifically: each used to
+            # load without complaint and only misbehave once the server was contacted.
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'args': ['-p', 8080]}}},
+                ('mcpServers', 'alpha', 'args', 1),
+                id='args-item-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'cwd': 123}}},
+                ('mcpServers', 'alpha', 'cwd'),
+                id='cwd-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'env': {'PORT': 8080}}}},
+                ('mcpServers', 'alpha', 'env', 'PORT'),
+                id='env-value-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'url': 'http://localhost:8000/mcp', 'headers': {'X-Count': 5}}}},
+                ('mcpServers', 'alpha', 'headers', 'X-Count'),
+                id='headers-value-not-a-str',
+            ),
+        ],
+    )
+    async def test_load_mcp_toolsets_rejects_config_not_matching_the_schema(
+        self, config: object, loc: tuple[str | int, ...]
+    ):
+        """A config that doesn't match the `mcpServers` shape raises `ValidationError`, pointing at the field.
+
+        Covers the inner types as well as the fields themselves — an item inside `args`, a `cwd`, and
+        the values inside `env` and `headers`. Those are the shapes that used to load without
+        complaint and only misbehave later, once the server was contacted, so `loc` is asserted down
+        to the offending index or key.
+        """
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(['not an object']), encoding='utf-8')
-            with pytest.raises(ValueError, match='Expected JSON object at root'):
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            with pytest.raises(ValidationError) as exc_info:
                 load_mcp_toolsets(config_path)
 
-    async def test_load_mcp_toolsets_rejects_missing_mcp_servers_key(self):
-        """The config must have an `mcpServers` object."""
+        assert [error['loc'] for error in exc_info.value.errors()] == [loc]
+        # `ValidationError` subclasses `ValueError`, so callers catching `ValueError` still work.
+        assert isinstance(exc_info.value, ValueError)
+
+    async def test_load_mcp_toolsets_ignores_keys_other_mcp_clients_write(self):
+        """A config shared with another MCP client still loads; its extra keys are ignored."""
+        config = {
+            'mcpServers': {
+                'alpha': {'command': 'python', 'args': ['-m', 'x'], 'type': 'stdio', 'disabled': False, 'timeout': 30}
+            }
+        }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps({'someOtherKey': {}}), encoding='utf-8')
-            with pytest.raises(ValueError, match='Expected `mcpServers` object'):
-                load_mcp_toolsets(config_path)
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            assert len(load_mcp_toolsets(config_path)) == 1
 
     async def test_load_mcp_toolsets_rejects_invalid_server_entry(self):
-        """A server entry missing both `command` and `url` raises a clear `ValueError`."""
+        """A server entry with neither `command` nor `url` is a `ValueError`, not a schema problem."""
         config = {'mcpServers': {'alpha': {'something': 'else'}}}
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'

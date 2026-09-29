@@ -30,7 +30,7 @@ time_range_agent = Agent[TimeRangeDeps, TimeRangeResponse](
     # pass the union members directly: a `TimeRangeResponse` type alias isn't yet accepted as a `TypeForm` value (PEP-747)
     output_type=TimeRangeBuilderSuccess | TimeRangeBuilderError,
     deps_type=TimeRangeDeps,
-    system_prompt="Convert the user's request into a structured time range.",
+    instructions="Convert the user's request into a structured time range.",
     retries=1,
 )
 time_range_agent.instrument = True

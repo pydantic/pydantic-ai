@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate Agno to Pydantic AI"
+  short_description: "Migrate Agno applications safely"
+  default_prompt: "Use $migrating-agno-to-pydantic-ai to migrate the smallest complete Agno slice to Pydantic AI while preserving its observed contracts with proportionate tests."

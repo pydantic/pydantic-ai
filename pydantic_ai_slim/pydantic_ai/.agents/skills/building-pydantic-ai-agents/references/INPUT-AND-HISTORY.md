@@ -72,11 +72,21 @@ Rules of thumb:
 - Do **not** pass `run_id=''`, or reuse a `run_id` that already appears on `message_history` — both raise `UserError` because they break `new_messages()` boundary detection. Correlate pause/resume and multi-turn work with `conversation_id` instead. When retrying a failed run with the same `run_id`, rebuild `message_history` without the failed attempt's messages.
 - Pass `conversation_id='new'` to fork a thread off existing history; `'new'` is **not** a sentinel for `run_id`.
 - UI adapters auto-wire protocol thread/chat ids into `conversation_id`. Protocol run ids (e.g. AG-UI `runId`) are **not** mapped into agent `run_id` — pass `run_id=` on the adapter/`Agent.run` if you need them aligned. A `UIEventStream` used standalone (no adapter, e.g. encoding events out of a durable execution workflow or a queue) has no protocol ids to wire: `AGUIEventStream(thread_id=..., run_id=...)` takes them directly, and defaults each to a fresh UUID that matches nothing agent-side, so pass the run's own `conversation_id`/`run_id` to keep them aligned.
-- AG-UI live failed tool outcomes round-trip through a namespaced payload on `ReasoningEncryptedValueEvent.encrypted_value` with `ag-ui-protocol >= 0.1.13`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
+- AG-UI live failed tool outcomes round-trip through a namespaced payload on `ReasoningEncryptedValueEvent.encrypted_value` with `ag-ui-protocol >= 0.1.11`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
 
 ## Manage Context Size
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
+
+In `before_model_request` and `wrap_model_request`, use the two message views deliberately:
+
+- Mutating or assigning `request_context.messages` changes only the current model request.
+- `ctx.messages[:] = rewritten` changes persistent history and later requests, but not the current model request.
+- Use both assignments when both effects are intended.
+
+The separation is only at the outer collection. `request_context.messages` is an independent shallow list, but retained messages and nested parts may be the same objects as those in `ctx.messages`. Appending, filtering, reordering, or replacing the outer list is isolated; mutating a contained message or part in place is not and can affect persistent history. For request-only changes below the message level, use `dataclasses.replace` to construct new messages and parts down to the level being changed.
+
+`ProcessHistory` and compaction intentionally update both contexts. A processor transforms the current request view and makes its complete result persistent, so capability order still matters around processors.
 
 ```python
 from pydantic_ai import Agent, ModelMessage
@@ -97,11 +107,13 @@ Good uses:
 - summarizing old messages
 - applying app-specific history policies
 
+To decide *when* to trim or summarize, a context-aware processor can check `ctx.context_window_used` — the fraction of the model's context window occupied as of the last response. Treat `None` as unknown and leave history unchanged; it means there is no response yet or the window or usage is unknown. The window size itself is `model.context_window`, read from the profile's `context_window` (filled automatically from genai-prices data, or set explicitly via `profile={'context_window': 128_000}` for custom/local models); a `FallbackModel` reports the smallest window among its candidates.
+
 ## Inject Messages Mid-Run
 
-Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqueue(...)` (from external code driving `agent.iter()`) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.
+Use `RunContext.enqueue(...)` (from a tool or capability hook), `AgentRun.enqueue(...)` (from external code driving `agent.iter()`), or `RealtimeSession.enqueue(...)` (from external code driving a realtime session) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.
 
-`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). Both `enqueue` methods return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. The event stream yields an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter run history, so a client can observe when its steering message took effect.
+`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). All three entry points return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. Standard-run and realtime event streams yield an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter history, so a client can observe when its steering message took effect. Realtime sessions accept text and `SystemPromptPart`s only, render system parts as `<system>…</system>`, and record the delivered content as one `UserPromptPart`. A system part marks provenance, not silence: the model still gets a turn on it (use `session.send(text, respond=False)` for context that should not prompt a turn).
 
 An enqueued `SystemPromptPart` is a mid-conversation instruction: it's sent at its position in the history rather than hoisted into the provider's top-level system prompt, so it doesn't invalidate a cached prefix ahead of it. This does not enable caching by itself; configure the model's prompt caching or include a `CachePoint`. On models that honor `CachePoint`, one at the end of an `enqueue(...)` batch covers every preceding item in that batch, including a `SystemPromptPart`; one with more content after it caches up to where you put it and leaves the instruction outside, since the instruction is sent after the content it accompanies. Where the provider's API accepts a system message inline it's sent as one, with real operator authority; elsewhere it's rendered as `<system>`-tagged user content at that position, which a model treats as a strong preference rather than a system-level rule. Support varies by model *and* transport, and Pydantic AI picks the rendering automatically — don't gate your own code on a model list.
 
@@ -116,7 +128,7 @@ agent = Agent('anthropic:claude-opus-4-7', name='alerting_agent')
 
 
 @agent.tool
-def trigger_alert(ctx: RunContext[None]) -> str:
+def trigger_alert(ctx: RunContext) -> str:
     ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
 ```

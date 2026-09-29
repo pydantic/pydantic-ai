@@ -12,7 +12,8 @@ conversion, server-VAD config, and the WebSocket connection itself — and diver
   than OpenAI's incremental `.delta` events (see [`map_event`][pydantic_ai.realtime.xai.map_event]);
 - native conversation resumption when a reconnect policy is configured: the provider-assigned
   `conversation.id` is reused and its replay burst is suppressed from local history;
-- no output truncation (`conversation.item.truncate` is unsupported), so
+- no output truncation at barge-in: xAI's `conversation.item.truncate` only lands once the response
+  has ended, and unreliably even then, so
   [`RealtimeModelProfile.supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation]
   is `False` while cancellation-based interruption still works;
 - no text output — the API has no response-modality control and always speaks — so
@@ -60,11 +61,12 @@ from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import ModelMessage, RealtimeSessionReconnectEvent
 from ..models import ModelRequestParameters
-from ..providers import infer_provider
+from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
     RealtimeHandshakeError,
+    config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
     map_event as _map_openai_event,
@@ -89,6 +91,8 @@ from .profiles import RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings, ReconnectPolicy
 
 if TYPE_CHECKING:
+    from xai_sdk import AsyncClient
+
     from ..providers.xai import XaiProvider
 
 # `input_transcription_model='auto'` resolves to this — xAI's realtime transcription model. Kept behind
@@ -192,9 +196,11 @@ class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Voice used for audio output, e.g. `eve`, or a custom voice ID."""
 
     xai_turn_detection: ServerVAD
-    """xAI-specific server-VAD configuration.
+    """xAI-specific server-VAD configuration, for an exact threshold, prefix padding, or silence duration.
 
-    When present, this fully overrides the cross-provider `turn_detection` setting.
+    When present, this fully overrides the cross-provider `turn_detection` setting. xAI echoes
+    `create_response: False` back but still responds when the user stops speaking; set
+    `turn_detection=False` for push-to-talk instead.
     """
 
 
@@ -255,6 +261,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         dial: Callable[[], Awaitable[ClientConnection]] | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
+        interrupts_response_on_speech: bool = False,
         model_name: str | None = None,
         model_name_getter: Callable[[], str | None] | None = None,
         conversation_id: str | None = None,
@@ -265,12 +272,19 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             dial=dial,
             reconnect=reconnect,
             input_transcription_enabled=input_transcription_enabled,
+            interrupts_response_on_speech=interrupts_response_on_speech,
             model_name=model_name,
             model_name_getter=model_name_getter,
         )
         self._restores_state_on_reconnect = True
         self._conversation_id = conversation_id
         self._replayed_items = replayed_items if replayed_items is not None else []
+        # xAI reports `billable_audio_seconds` as the session's running total, not the response's own
+        # share (live: three turns of 0.71s, 0.71s and 0.87s report 1, 2 and 3), so each response is
+        # credited the increase since the last report. Kept on the connection, which outlives a resumed
+        # session, as does xAI's total. The total restarts only with a new conversation.
+        self._billed_audio_seconds = 0
+        self._billed_conversation_id = conversation_id
 
     def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         mapped = super()._map_response_usage(usage)
@@ -284,11 +298,33 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         for key, raw in (
             ('input_grok_tokens', (inp.model_extra or {}).get('grok_tokens') if inp is not None else None),
             ('output_grok_tokens', (out.model_extra or {}).get('grok_tokens') if out is not None else None),
-            ('billable_audio_seconds', (usage.model_extra or {}).get('billable_audio_seconds')),
+            ('billable_audio_seconds', self._billed_audio_seconds_increase(usage)),
         ):
             if isinstance(raw, int) and not isinstance(raw, bool) and raw:
                 mapped.details[key] = raw
+        # Also reported under the name pricing knows it by. Grok Voice has *no* token prices at all — it
+        # bills per audio hour — so without this the token counts price to a confident `Decimal('0')`
+        # rather than to nothing: `cost_limit` never trips and no unavailable-cost warning is emitted.
+        mapped.audio_seconds = mapped.details.get('billable_audio_seconds', 0)
         return mapped
+
+    def _billed_audio_seconds_increase(self, usage: RealtimeResponseUsage) -> int | None:
+        """This response's share of xAI's running `billable_audio_seconds` total.
+
+        The session sums each response's usage, so passing the running total through would count every
+        earlier second again on each turn. xAI keeps counting across a resumed connection and starts
+        afresh only in a new conversation, so that is the one boundary the baseline resets on; a lower
+        total within the same conversation is not new usage, and adds nothing.
+        """
+        total = (usage.model_extra or {}).get('billable_audio_seconds')
+        if not isinstance(total, int) or isinstance(total, bool):
+            return None
+        if self._conversation_id != self._billed_conversation_id:
+            self._billed_conversation_id = self._conversation_id
+            self._billed_audio_seconds = 0
+        increase = max(total - self._billed_audio_seconds, 0)
+        self._billed_audio_seconds = max(total, self._billed_audio_seconds)
+        return increase
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         """Ignored: xAI restores the conversation itself, so replaying it would say everything twice."""
@@ -339,7 +375,7 @@ class XaiRealtimeModel(RealtimeModel):
         settings: [Model settings][pydantic_ai.realtime.RealtimeModelSettings] used as defaults for
             realtime sessions. A [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect]
             policy enables xAI's native session resumption: prior turns are restored when reconnecting
-            within xAI's resumption window (reportedly ~30 minutes).
+            within xAI's resumption window (30 minutes of inactivity).
         profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
             merged over the provider's — a partial dict, or a callable taking the resolved profile and
             returning the one to use. Mirrors `profile=` on a standard
@@ -360,16 +396,17 @@ class XaiRealtimeModel(RealtimeModel):
         self,
         model: XaiRealtimeModelName,
         *,
-        provider: XaiProvider | str = 'xai',
+        provider: Provider[AsyncClient] | str = 'xai',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
+        super().__init__(settings=settings, profile=profile)
         self.model = model
-        self.settings = settings
-        self._profile = profile
+        from ..providers.xai import XaiProvider
+
         if isinstance(provider, str):
-            provider = cast('XaiProvider', infer_provider(provider))
-        if provider.name != 'xai':
+            provider = infer_provider(provider)
+        if not isinstance(provider, XaiProvider):
             # Reading the xAI-specific `api_key`/`api_host` off a foreign provider below would fail with
             # an `AttributeError` naming a field the user never heard of, instead of the real mistake.
             raise UserError(f"`XaiRealtimeModel` requires an `XaiProvider` or `provider='xai'`; got {provider.name!r}.")
@@ -527,6 +564,7 @@ class XaiRealtimeModel(RealtimeModel):
                 dial=dial,
                 reconnect=reconnect,
                 input_transcription_enabled=transcription_enabled,
+                interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
                 model_name=server_model,
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,

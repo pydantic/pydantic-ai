@@ -76,7 +76,7 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 
 @hooks.on.before_tool_execute(tools=['send_email'])
 async def audit_tool(
-    ctx: RunContext[None],
+    ctx: RunContext,
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,
@@ -100,7 +100,7 @@ Important hook families:
 
 For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
-With `run_stream()`, `before_model_request` runs in the model-wrapper task. Its `ContextVar` writes remain visible inside that request lifecycle but do not propagate back to later tool, output, or run hooks. Set cross-stage values in `wrap_run`, `before_run`, or dependencies.
+In streamed runs, the model request lifecycle runs in a separate asyncio task. `ContextVar` writes made by an async `before_model_request` hook are copied back when the stream opens, so later tool, output, and run hooks observe them as they do in non-streamed runs. Writes made later in the model request task stay task-local; use a mutable attribute on `ctx.deps` for state that must be shared bidirectionally.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 
@@ -109,6 +109,42 @@ An `on_*_error` hook only covers its stage's core operation. `ModelRetry` raised
 For deferrals (`ApprovalRequired`, `CallDeferred`), the rule is that a tool call can only be deferred once its arguments have been validated, since whoever resolves it is shown those arguments. So they are allowed from `after_tool_validate`, from `wrap_tool_validate` after `handler()` returns, and from every tool-execution hook — prefer `before_tool_execute`, since deferring after the tool body ran means its side effects happened and its result is discarded. Raising one from `before_tool_validate`, from `wrap_tool_validate` before `handler()`, or from `on_tool_validate_error` is a `UserError`. An `args_validator` deferral is held until `after_tool_validate` runs, but a `wrap_tool_validate` deferral raised after `handler()` returns happens after that gate has already completed. For a per-tool decision, use the tool's `args_validator` instead of a hook.
 
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
+
+## Publish and React to Capability Events
+
+A capability announces things to other capabilities and to the host application with `CapabilityEvent`, not with the application-owned `CustomEvent` covered in AGENTS-CORE.md. The split is enforced: emitting a `CustomEvent` from a capability raises `UserError`, and so does emitting a `CapabilityEvent` from application code.
+
+Define each event as a dataclass subclass carrying a namespace, and await `ctx.emit(event)` from an async capability hook or a tool the capability contributes. The namespace plus the event name form the serialized `kind` (`workspace.file_read`), which is the wire identifier, so a published capability should pin `name=` on each event. The payload can't reuse the envelope's field names: `data`, `capability_id`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
+
+React with `@on_event(SomeEvent, OtherEvent)` on an async capability method; a bare `@on_event` sees every `AgentStreamEvent`. Listeners run in capability order, then definition order, and the emitting capability receives its own events. This is the way to coordinate two capabilities without a shared object between them.
+
+Always name the classes when you can. They are what lets dispatch skip a capability without descending into it — a bare `@on_event`, or an overridden `on_event()`, opts that capability into every event in the run. Override `listens_to(event)` alongside a custom `on_event()` if you can report something narrower.
+
+Capability events reach the agent run event stream but UI adapters do not forward them, since they are internal signals. To surface one to a frontend, react to it from application code and emit your own `CustomEvent` with the public payload.
+
+For application-level listening, prefer `@agent.on_event(SomeEvent)` — it takes the same event classes, filtering and `timeout=` as `Hooks.on.event` without a separate capability, runs after the capabilities' own listeners, and survives an overridden root capability. Reach for a `Hooks` capability when you also want hook families other than events, or when you need to choose where it sits among the other capabilities.
+
+An event class can declare `dispatch='immediate'` when listeners must act before the emitter continues — a decision event, where a listener mutates a field the emitter then reads. Default dispatch delivers the event at its stream position instead, keeping listener work off the emitter's latency path.
+
+```python
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
+
+
+@dataclass(kw_only=True)
+class FileReadEvent(CapabilityEvent, namespace='workspace', name='file_read'):
+    path: str
+
+
+class Watcher(AbstractCapability[Any]):
+    @on_event(FileReadEvent)
+    async def _on_read(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+        if event.path.endswith('AGENTS.md'):
+            ctx.enqueue('Follow the instructions in the discovered AGENTS.md file.')
+```
 
 ## Build a Custom Capability
 
@@ -121,6 +157,8 @@ Reach for a custom capability when:
 - the behavior should be installable or declarative
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
+
+Give a capability an `id` when its instructions should be addressable. You declare `InstructionPart.name`; the framework issues `InstructionPart.id` as an `InstructionId`, whose source identifies the agent, toolset, or capability and whose optional name identifies one named part. It renders and serializes as `agent`, `toolset:<id>`, `capability:<id>`, or one of those followed by `:<name>`. Compare the structured source and name in Python; use `str(part.id)` only when a persisted string key is required. Naming a part whose source has no `id` of its own leaves `id` as `None`: the name still travels with the part, but nothing addresses it.
 
 ### Isolate Mutable State Per Run
 
@@ -178,7 +216,7 @@ Use `for_agent(agent)` when a capability needs the agent's model, name, or tools
 
 ## Select a Model Dynamically
 
-Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, messages, and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
+Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
 
 Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
 

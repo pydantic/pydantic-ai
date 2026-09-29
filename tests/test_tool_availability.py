@@ -8,6 +8,7 @@ its own module rather than an arbitrary slice.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import replace
 from typing import Any
 
@@ -21,6 +22,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.exceptions import (
     ModelRetry,
+    PydanticAIDeprecationWarning,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -38,11 +40,15 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_TOOL_NAME,
 )
+from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -146,6 +152,78 @@ async def test_capability_tool_call_uses_serving_providers_wire_window(boundary:
     result = await agent.run('go', message_history=history)
 
     assert result.output == 'done'
+
+
+@pytest.mark.parametrize(('boundary', 'provider_name'), _INVALID_WIRE_BOUNDARIES)
+async def test_capability_prepare_tools_governs_a_tool_the_wire_window_admits(
+    boundary: CompactionPart, provider_name: str
+):
+    """A tool admitted on anchored evidence still answers to its owner's `prepare_tools`.
+
+    The mirror of `test_capability_tool_call_uses_serving_providers_wire_window`, which pins that
+    such a call is *not* refused. Admitting it is only half an answer: authorization and filtering
+    have to read the same set. The conservative window drops the load, so `active_capability_ids`
+    alone reports the capability inactive and nothing dispatches to it — while the gate, reading the
+    provider-exact window, admits its tool. A capability using `prepare_tools` as a permission
+    filter would be bypassed, the same fail-open as a processor-injected load reached from the other
+    direction.
+
+    The test explicitly stamps `ModelResponse.provider_name`; a bare `FunctionModel` would exercise
+    the missing-provenance fallback instead, where the two windows agree and nothing is admitted.
+    """
+    prepare_tools_calls: list[list[str]] = []
+    loaded_ids_seen: list[list[str]] = []
+
+    class FilteringGuarded(Capability[Any]):
+        """Uses `prepare_tools` as a permission filter over its own tool."""
+
+        async def prepare_tools(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            prepare_tools_calls.append(sorted(tool_def.name for tool_def in tool_defs))
+            loaded_ids_seen.append(sorted(ctx.loaded_capability_ids))
+            return [tool_def for tool_def in tool_defs if tool_def.name != 'guarded_tool']
+
+    def guarded_tool() -> str:  # pragma: no cover
+        return 'ran'
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(True for _ in iter_message_parts(messages, ModelRequest, RetryPromptPart)):
+            return _provider_response([make_text_response('done').parts[0]], provider_name)
+        return _provider_response([ToolCallPart(tool_name='guarded_tool', args={}, tool_call_id='g1')], provider_name)
+
+    capability = FilteringGuarded(
+        id='guarded', description='Guarded.', toolsets=[FunctionToolset([guarded_tool])], defer_loading=True
+    )
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+    history = [
+        ModelResponse(
+            parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='load')], provider_name=provider_name
+        ),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(content={}, tool_call_id='load'),
+                ToolAvailabilityDeltaPart(tools_added=['guarded_tool']),
+            ]
+        ),
+        ModelResponse(parts=[boundary]),
+    ]
+
+    result = await agent.run('go', message_history=history)
+
+    executed = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'guarded_tool'
+    ]
+    assert executed == []
+    # The filter ran with the capability treated as active, and it removed the tool.
+    assert prepare_tools_calls[0] == snapshot(['guarded_tool'])
+    # And it ran off the retrospective supplement alone: the conservative window legitimately
+    # dropped the load, so the prospective set does not name the capability. That gap is the whole
+    # point — the filter has to follow whatever the gate authorizes from, not the narrower set.
+    assert loaded_ids_seen[0] == snapshot([])
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot(["Unknown tool name: 'guarded_tool'. Available tools: 'load_capability'"])
 
 
 async def test_compaction_inside_serving_response_does_not_reset_tool_evidence():
@@ -610,3 +688,151 @@ async def test_stripped_reveal_marker_survives_a_boundary_the_wire_skipped() -> 
     assert result.output == 'EXECUTED'
     refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
     assert refusals == []
+
+
+async def test_loaded_capability_ids_drops_ids_the_run_no_longer_registers() -> None:
+    """History outlives configuration, so a load record can name a capability that is gone.
+
+    The public sets should not promise something the run has no way to act on: nothing can look
+    such an id up in `capabilities`, and `active_capability_ids` would report a capability that
+    contributes nothing. Inert for the framework's own consumers, which all start from a real
+    capability or a real `ToolDefinition` — which is why it needs asserting directly.
+    """
+    seen: list[tuple[set[str], set[str]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response('DONE')
+
+    def record(ctx: RunContext[Any]) -> str:
+        seen.append((set(ctx.loaded_capability_ids), set(ctx.active_capability_ids)))
+        return ''
+
+    still_here = Capability[Any](id='still-here', description='Still configured.', defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), capabilities=[still_here], instructions=record)
+
+    await agent.run(
+        'go',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='load both')]),
+            ModelResponse(
+                parts=[
+                    LoadCapabilityCallPart(args={'id': 'still-here'}, tool_call_id='l1'),
+                    LoadCapabilityCallPart(args={'id': 'retired'}, tool_call_id='l2'),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(content={}, tool_call_id='l1'),
+                    LoadCapabilityReturnPart(content={}, tool_call_id='l2'),
+                ]
+            ),
+        ],
+    )
+
+    loaded, available = seen[0]
+    assert loaded == {'still-here'}
+    assert 'retired' not in available
+
+
+async def test_revealed_tool_names_drops_names_the_run_no_longer_defines() -> None:
+    """A reveal for a tool this run has no definition for cannot travel as reveal state.
+
+    There is no schema to show for such a name, and every consumer already guards on membership in
+    the definitions — so this asserts the field's own contract, that it is a subset of
+    `function_tools`' names, rather than an observable behaviour change.
+    """
+    seen: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response('DONE')
+
+    class RecordReveals(Capability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            seen.append(set(request_context.model_request_parameters.revealed_tool_names))
+            return request_context
+
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(secret_op, defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), toolsets=[toolset], capabilities=[RecordReveals()])
+
+    await agent.run(
+        'go',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='search')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['secret_op', 'tool_from_a_past_life'])]),
+        ],
+    )
+
+    assert seen[0] == snapshot({'secret_op'})
+
+
+def test_capability_loaded_is_a_deprecated_alias_for_capability_active() -> None:
+    """The old name never meant "loaded" — it is `True` for an always-on capability nothing loaded.
+
+    Both directions are shimmed: reading it, and passing it to the constructor, which stays accepted
+    because it shipped as a real dataclass field.
+    """
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), capability_active=True)
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_active` instead'):
+        assert ctx.capability_loaded is True  # pyright: ignore[reportDeprecated]
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_active` instead'):
+        constructed = RunContext[None](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            capability_loaded=True,  # pyright: ignore[reportCallIssue]
+        )
+    assert constructed.capability_active is True
+
+    # Assignment worked while this was a plain dataclass field, so a read-only property would turn
+    # it into an `AttributeError` rather than a deprecation.
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_active` instead'):
+        ctx.capability_loaded = False  # pyright: ignore[reportDeprecated]
+    assert ctx.capability_active is False
+
+    # `replace()` is on the run's hot path and must not warn: the shim is a non-field keyword, so
+    # `replace()` never round-trips it the way an `InitVar` would.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        assert replace(ctx, capability_active=True).capability_active is True
+
+
+async def test_available_capability_ids_is_a_deprecated_alias_for_active_capability_ids() -> None:
+    """`available` reads as "there for the loading", which is the opposite of what this set holds.
+
+    A deferred capability the model has *not* loaded is the one genuinely available to load; the set
+    holds the ones already contributing. Tools keep `available` because they have no catalog sense to
+    collide with — `is_tool_available` asks "may the model call this now?".
+    """
+    always_on = Capability[Any](id='always-on', description='Always on.')
+    deferred = Capability[Any](id='deferred', description='Deferred.', defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response('done')
+
+    seen: list[tuple[set[str], set[str]]] = []
+    deprecated_reads: list[set[str]] = []
+
+    def record(ctx: RunContext[Any]) -> str:
+        seen.append((set(ctx.active_capability_ids), set(ctx.loaded_capability_ids)))
+        with pytest.warns(PydanticAIDeprecationWarning, match='use `active_capability_ids` instead'):
+            deprecated_reads.append(set(ctx.available_capability_ids))  # pyright: ignore[reportDeprecated]
+        return ''
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[always_on, deferred], instructions=record)
+    await agent.run('go')
+
+    active, loaded = seen[0]
+    # The deferred capability is the one "available to load", and it is deliberately absent here.
+    assert 'always-on' in active
+    assert 'deferred' not in active
+    assert loaded == set()
+
+    # Asserted against a NON-EMPTY set: comparing the alias to the real property on a bare context
+    # compares empty to empty, which a hardcoded `set()` would satisfy.
+    assert deprecated_reads[0] == active
+    assert 'always-on' in deprecated_reads[0]
