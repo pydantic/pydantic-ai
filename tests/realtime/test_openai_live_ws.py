@@ -167,6 +167,50 @@ async def test_audio_in_delegated_tool_round(
     assert 'fourteen' in (answer.transcript or '').lower() or '14' in (answer.transcript or '')
 
 
+async def test_thinking_sets_the_backends_reasoning_effort(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """The shared `thinking` setting reaches the delegated backend, which is the model that reasons.
+
+    Left at its default effort (`medium`, as the backend echoes it), the backend spent 75 reasoning tokens
+    on this request in a control recording made alongside this one; `thinking=False` is sent as `'none'`
+    and it spends none.
+    `parallel_tool_calls` reaches the backend the same way. The recording pins both in the session
+    config, and the backend echoes both on every response.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(thinking=False, parallel_tool_calls=False, openai_live_turn_silence_ms=1000),
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions=(
+            'You answer weather questions. Use the `lookup_forecast` tool, then say whether the temperature '
+            'is above the yearly average for that city, reasoning it out from what you know.'
+        ),
+    )
+
+    @agent.tool_plain
+    async def lookup_forecast(city: str) -> str:
+        """Look up tomorrow's forecast for a city."""
+        return f'{city}: 14 degrees Celsius, light rain.'
+
+    pcm = assets_path.joinpath('weather_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    # Both backend responses (the tool call and the answer after it) reported their usage.
+    assert session.usage.requests == 2
+    assert session.usage.tool_calls == 1
+    assert session.usage.details == {'reasoning_tokens': 0}
+
+
 async def test_text_reaches_the_model_as_context(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:

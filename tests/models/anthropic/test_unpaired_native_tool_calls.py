@@ -776,16 +776,17 @@ async def test_unpaired_native_tool_call_history_is_accepted(
         ]
     )
     assert result.output == snapshot(
-        "Yes, a longer duration means more interest-rate risk because the bond's price will be more sensitive to changes in interest rates."
+        "Yes, longer duration means more interest-rate risk because the bond's price will be more sensitive to changes in interest rates."
     )
 
 
 # The server name on the block has to match a declared MCP server, so the live call names the one
-# `test_anthropic_mcp_servers` already records against.
+# `test_anthropic_mcp_servers` already records against. The tool name has to be one that server
+# currently lists too: an unknown one is rejected as "not available", with no in-flight exemption.
 _LIVE_MCP_CALL = NativeToolCallPart(
     tool_name=f'{MCPServerTool.kind}:deepwiki',
     args={
-        'tool_name': 'ask_question',
+        'tool_name': 'ask_wiki_question',
         'tool_args': {'question': 'What is pydantic-ai?', 'repoName': 'pydantic/pydantic-ai'},
     },
     tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
@@ -840,7 +841,7 @@ async def test_in_flight_mcp_call_history_is_accepted(
                         'id': 'mcptoolu_01SAss3KEwASziHZoMR6HcZU',
                         'type': 'mcp_tool_use',
                         'server_name': 'deepwiki',
-                        'name': 'ask_question',
+                        'name': 'ask_wiki_question',
                         'input': {'question': 'What is pydantic-ai?', 'repoName': 'pydantic/pydantic-ai'},
                     },
                     {
@@ -865,11 +866,19 @@ async def test_in_flight_mcp_call_history_is_accepted(
         ]
     )
     assert result.output == snapshot("""\
-I apologize, but I don't have the ability to look up the 10-year Treasury duration. The tools available to me are limited to asking questions about GitHub repositories and performing basic mathematical operations.
+I apologize, but I need to clarify: I don't have access to financial data tools to look up the 10-year Treasury duration. The tools I have available are for GitHub repository documentation and basic arithmetic.
 
-However, I can tell you that **2 + 2 = 4**.
+However, I can provide the addition you requested: **2 + 2 = 4**
 
-Regarding the 10-year Treasury duration, typically the duration of a 10-year U.S. Treasury bond is approximately 8-9 years (it's less than the maturity because duration accounts for the present value of all cash flows including coupon payments). However, the exact duration varies based on the current yield and coupon rate. You would need to check current financial data sources like Bloomberg, the U.S. Treasury website, or financial news outlets for the most accurate current duration figure.\
+If you need information about the 10-year Treasury duration, I'd recommend checking financial data sources like:
+- Bloomberg
+- Treasury.gov
+- Financial news websites (WSJ, Reuters, etc.)
+- Your brokerage platform
+
+For reference, the duration of a 10-year Treasury bond is typically close to, but slightly less than, 10 years (often around 8-9 years depending on the coupon rate and current yields), as duration measures the weighted average time to receive cash flows.
+
+Is there anything else I can help you with?\
 """)
 
 
@@ -944,9 +953,7 @@ async def test_in_flight_native_tool_call_history_is_accepted(
         ]
     )
     assert result.output == snapshot("""\
-Based on the search results, the duration of a 10-year Treasury note is approximately 8.95 years (this example was given when yields were at 1.30%). However, it's important to note that the exact duration varies depending on current market conditions, coupon rates, and yield levels.
+Based on the search results, the 10-year Treasury note has a modified duration of approximately 7.7 years (as of September 2026 data). \n\
 
-The duration typically ranges between 7 to 9 years for 10-year Treasury securities based on the examples found in the search results.
-
-And 2 + 2 = **4**\
+Also, 2 + 2 = **4**.\
 """)

@@ -582,8 +582,8 @@ remain visible so they can be reset. Choices depend on the model and API: Chat C
 controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
 and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
-1024 and below an explicit `max_tokens`. If classic thinking has no output cap,
-CLAI reserves the thinking budget plus 4096 output tokens. Other unset fields
+1024 and below an explicit `max_tokens`. Without one, Pydantic AI
+leaves room for the answer beyond the budget. Other unset fields
 use the provider default.
 Explicit native thinking settings take precedence over generic `thinking`.
 GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
@@ -1393,6 +1393,12 @@ reload, and remove. Closing the menu returns to the prompt without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
+
+`/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
+settings menu (`/plugins configure notion` reopens it). The token is picked from
+`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
+signs in through the browser. Plugin settings never hold the token. See
+[PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
 ## Questions from the model
 

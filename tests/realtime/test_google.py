@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import gc
 import io
+import json
 import random
 import re
 import wave
@@ -24,6 +25,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, PydanticAIDeprecationWarning, UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryAudio,
     BinaryContent,
     BinaryImage,
@@ -131,6 +133,16 @@ def _connect(
     )
 
 
+class _RecordingWebSocket:
+    """The session's raw socket, which a tool response carrying media is sent over directly."""
+
+    def __init__(self) -> None:
+        self.sent: list[Any] = []
+
+    async def send(self, message: str) -> None:
+        self.sent.append(json.loads(message))
+
+
 class _RecordingSession:
     """A fake `AsyncSession` that records sends and replays messages turn-by-turn.
 
@@ -146,6 +158,7 @@ class _RecordingSession:
         self.realtime: list[dict[str, Any]] = []
         self.tool_responses: list[Any] = []
         self.client_content: list[dict[str, Any]] = []
+        self._ws = _RecordingWebSocket()
 
     async def send_realtime_input(self, **kwargs: Any) -> None:
         self.realtime.append(kwargs)
@@ -857,6 +870,22 @@ def test_profile() -> None:
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'mime_types'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', ()),  # guesses at media in a function response
+        ('gemini-3.1-flash-live-preview', ('image/png', 'image/jpeg', 'image/webp', 'text/plain')),
+        ('gemini-3.8-live', ('image/png', 'image/jpeg', 'image/webp', 'text/plain')),
+        ('models/gemini-3.8-live-extended-thinking', ('image/png', 'image/jpeg', 'image/webp', 'text/plain')),
+        ('gemini-live-2.5-flash', ()),  # not probed
+    ],
+)
+def test_profile_supported_mime_types_in_tool_returns(model_name: str, mime_types: tuple[str, ...]) -> None:
+    # Verified live by returning an image or a secret word from a tool and asking about it.
+    profile = GoogleRealtimeModel(model_name).profile
+    assert profile.get('google_supported_mime_types_in_tool_returns') == mime_types
+
+
+@pytest.mark.parametrize(
     ('model_name', 'seeds_function_parts'),
     [
         ('gemini-2.5-flash-native-audio-latest', False),  # rejects function parts in seeded turns
@@ -1286,7 +1315,7 @@ def _register_call(conn: GoogleRealtimeConnection, tool_call_id: str = 'c1', nam
 
 
 async def test_send_tool_result_text_content_folds_into_output() -> None:
-    """`FunctionResponse.response` is JSON-only, so text attachments are folded into the output."""
+    """Text attachments are folded into the output of the function response's JSON `response`."""
     session = _RecordingSession()
     conn = _conn(session)
     _register_call(conn)
@@ -1301,14 +1330,15 @@ async def test_send_tool_result_text_content_folds_into_output() -> None:
 
 
 async def test_send_tool_result_binary_content_raises_with_nothing_sent() -> None:
-    """Media attached to a tool return raises with the tool result unsent — never a silent
-    placeholder. Gemini Live has no channel that delivers it correctly today (probed live; see
-    https://github.com/pydantic/pydantic-ai/issues/7362), so the loud error is the honest behavior,
+    """Media attached to a tool return raises with the tool result unsent on a model that can't carry it
+    (Gemini 2.5, which guesses at an image in `FunctionResponse.parts`) — never a silent placeholder,
     matching the never-silent rule the OpenAI-protocol codec applies to its unsupported media."""
     session = _RecordingSession()
     conn = _conn(session)
     _register_call(conn)
-    with pytest.raises(UserError, match='tool results are JSON-only, so `BinaryContent` content'):
+    with pytest.raises(
+        UserError, match=re.escape("carry only text, so `BinaryContent` content of type 'image/png' attached")
+    ):
         await conn.send(
             ToolResult(
                 tool_call_id='c1',
@@ -1318,6 +1348,141 @@ async def test_send_tool_result_binary_content_raises_with_nothing_sent() -> Non
         )
     assert session.tool_responses == []
     assert session.client_content == []
+    assert session._ws.sent == []  # pyright: ignore[reportPrivateUsage]
+
+
+def _conn_with_tool_result_media(session: _RecordingSession) -> GoogleRealtimeConnection:
+    return GoogleRealtimeConnection(
+        cast('AsyncSession', session),
+        profile=GoogleRealtimeModel('gemini-3.8-live').profile,
+    )
+
+
+async def test_send_tool_result_media_goes_in_function_response_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On a model that reads media in `FunctionResponse.parts` (Gemini 3.x), attached media is sent there.
+
+    Unit-level because the cassette truncates the bytes, so only this pins the base64 payloads. The
+    message goes over the session's socket rather than through `send_tool_response`, which can't encode
+    the bytes, so this also pins the JSON the SDK would have sent.
+    """
+
+    async def download_image(item: ImageUrl, data_format: str) -> Any:
+        assert (item.url, data_format) == ('https://example.com/chart.webp', 'bytes')
+        return {'data': b'webp', 'data_type': 'image/webp'}
+
+    monkeypatch.setattr(rt_google, 'download_item', download_image)
+    session = _RecordingSession()
+    conn = _conn_with_tool_result_media(session)
+    _register_call(conn)
+    await conn.send(
+        ToolResult(
+            tool_call_id='c1',
+            output='done',
+            content=[
+                'a caption',
+                BinaryImage(data=b'png', media_type='image/png'),
+                ImageUrl(url='https://example.com/chart.webp'),
+                BinaryContent(data=b'notes', media_type='text/plain'),
+            ],
+        )
+    )
+    assert session.tool_responses == []
+    assert session._ws.sent == snapshot(  # pyright: ignore[reportPrivateUsage]
+        [
+            {
+                'toolResponse': {
+                    'functionResponses': [
+                        {
+                            'parts': [
+                                {'inlineData': {'data': 'cG5n', 'mimeType': 'image/png'}},
+                                {'inlineData': {'data': 'd2VicA==', 'mimeType': 'image/webp'}},
+                                {'inlineData': {'data': 'bm90ZXM=', 'mimeType': 'text/plain'}},
+                            ],
+                            'id': 'c1',
+                            'name': 'inspect',
+                            'response': {'output': 'done\n\na caption'},
+                        }
+                    ]
+                }
+            }
+        ]
+    )
+    assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('item', 'message'),
+    [
+        (
+            BinaryContent(data=b'%PDF', media_type='application/pdf'),
+            'carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so '
+            "`BinaryContent` content of type 'application/pdf' attached to a tool return cannot be delivered",
+        ),
+        (AudioUrl(url='https://example.com/a.mp3'), 'so `AudioUrl` content attached to a tool return cannot'),
+    ],
+)
+async def test_send_tool_result_unsupported_media_raises_where_media_is_supported(
+    item: AudioUrl | BinaryContent, message: str
+) -> None:
+    # The 3.x models close the session on a PDF, so media outside the profile's types is refused, unsent.
+    session = _RecordingSession()
+    conn = _conn_with_tool_result_media(session)
+    _register_call(conn)
+    with pytest.raises(UserError, match=re.escape(message)):
+        await conn.send(ToolResult(tool_call_id='c1', output='done', content=[item]))
+    assert session._ws.sent == [] and session.tool_responses == []  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_send_tool_result_image_url_is_not_downloaded_where_images_are_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def download_image(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError('downloaded an image the model cannot carry')  # pragma: no cover
+
+    monkeypatch.setattr(rt_google, 'download_item', download_image)
+    conn = _conn(_RecordingSession())
+    _register_call(conn)
+    with pytest.raises(UserError, match='carry only text, so `ImageUrl` content attached'):
+        await conn.send(
+            ToolResult(tool_call_id='c1', output='done', content=[ImageUrl(url='https://example.com/a.png')])
+        )
+
+
+async def test_send_tool_result_returned_file_goes_in_parts_without_provenance_tags() -> None:
+    # A tool that returns a file itself (rather than attaching it with `ToolReturn`) reaches the codec the
+    # way the session renders it for a user channel: a `See file` reference and the file framed in
+    # provenance tags. In the function response the file is the tool's by construction, so the tags,
+    # which would frame nothing, are dropped, as on a standard Gemini request.
+    session = _RecordingSession()
+    conn = _conn_with_tool_result_media(session)
+    _register_call(conn)
+    image = BinaryImage(data=b'png', media_type='image/png', identifier='chart')
+    output, content = ToolReturnPart(
+        tool_name='inspect', content=image, tool_call_id='c1'
+    ).model_response_str_and_user_content()
+    await conn.send(ToolResult(tool_call_id='c1', output=output, content=content))
+    [message] = session._ws.sent  # pyright: ignore[reportPrivateUsage]
+    [function_response] = message['toolResponse']['functionResponses']
+    assert function_response['response'] == {'output': 'See file chart.'}
+    assert function_response['parts'] == [{'inlineData': {'data': 'cG5n', 'mimeType': 'image/png'}}]
+
+
+async def test_send_tool_result_media_download_failure_forgets_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An `ImageUrl` that can't be fetched leaves the result unsent, like a refused one, so the call is
+    # forgotten and a later drop doesn't count it as lost.
+    async def download_image(*args: Any, **kwargs: Any) -> Any:
+        raise httpx.ConnectError('unreachable')
+
+    monkeypatch.setattr(rt_google, 'download_item', download_image)
+    session = _RecordingSession()
+    conn = _conn_with_tool_result_media(session)
+    _register_call(conn)
+    with pytest.raises(httpx.ConnectError):
+        await conn.send(
+            ToolResult(tool_call_id='c1', output='done', content=[ImageUrl(url='https://example.com/a.png')])
+        )
+    assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
+    assert session._ws.sent == []  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_parallel_id_less_calls_do_not_collide() -> None:
@@ -4024,7 +4189,7 @@ async def test_tool_result_refused_for_its_content_is_forgotten() -> None:
     # later drop doesn't count it as lost.
     conn = _conn(_RecordingSession())
     conn._tool_calls['c1'] = ('get_weather', 'c1')  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(UserError, match='JSON-only'):
+    with pytest.raises(UserError, match='cannot be delivered'):
         await conn.send(
             ToolResult(tool_call_id='c1', output='chart', content=[BinaryContent(data=b'x', media_type='image/png')])
         )

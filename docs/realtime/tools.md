@@ -32,12 +32,9 @@ of the return value — plus, where the provider supports it, multimodal content
 [`ToolReturn`][pydantic_ai.messages.ToolReturn]'s `content` — while local history keeps the full
 structured [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with its `return_value`,
 `content`, and `metadata`. Attached content is delivered for real or refused loudly — never
-silently degraded: OpenAI and Azure OpenAI deliver text and images as a follow-up user message;
-Gemini Live's tool results are JSON-only, so text is folded into the result and any binary
-attachment raises [`UserError`][pydantic_ai.exceptions.UserError]
-([#7362](https://github.com/pydantic/pydantic-ai/issues/7362)); media Pydantic AI can't deliver yet
-(audio and documents everywhere; images also on xAI, which has no image input) likewise raises
-before anything is sent.
+silently degraded: OpenAI and Azure OpenAI deliver text and images as a follow-up user message,
+and Gemini Live inside the tool result, as a standard Gemini 3 request does. Media the model can't
+carry raises [`UserError`][pydantic_ai.exceptions.UserError] before anything is sent.
 If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
