@@ -1,9 +1,15 @@
 """`!command` input runs in the system shell and never starts an agent turn."""
 
+import contextlib
 import io
+import os
+import shlex
+import signal
+import sys
 import time
 from pathlib import Path
 
+import anyio
 import pytest
 from rich.console import Console
 
@@ -83,13 +89,35 @@ class TestShellPassthrough:
         assert 'Interrupted (' in text
         assert (tmp_path / 'marker.txt').read_text() == 'after'
 
+    @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
+    async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Cancelling a shell command must also terminate a background child."""
+        child_code = "import os, pathlib, time; pathlib.Path('child.pid').write_text(str(os.getpid())); time.sleep(30)"
+        python = shlex.quote(sys.executable)
+        command = f'{python} -c {shlex.quote(child_code)} & while [ ! -f child.pid ]; do :; done; kill -INT $PPID; wait'
+
+        text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
+        assert 'Interrupted (' in text
+        child_pid = int((tmp_path / 'child.pid').read_text())
+        try:
+            with anyio.fail_after(2):
+                while True:
+                    try:
+                        os.kill(child_pid, 0)
+                    except ProcessLookupError:
+                        break
+                    await anyio.sleep(0.01)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child_pid, signal.SIGKILL)
+
     async def test_second_ctrl_c_exits(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         text = await shell_session(tmp_path, monkeypatch, [KeyboardInterrupt(), '!kill -INT $PPID; exec sleep 30'])
         assert 'Input cleared' in text
         assert 'Interrupted (' in text
 
     async def test_spawn_failure_is_reported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def unavailable(command: str) -> None:
+        async def unavailable(command: str, **kwargs: object) -> None:
             raise FileNotFoundError('no shell')
 
         monkeypatch.setattr('pydantic_clai2.shell_passthrough.asyncio.create_subprocess_shell', unavailable)

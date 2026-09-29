@@ -2,6 +2,10 @@
 
 import asyncio
 import contextlib
+import os
+import signal
+import subprocess
+import sys
 import time
 
 from rich.console import Console
@@ -14,6 +18,40 @@ HELP = '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Wind
 
 # Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
 _INTERRUPT_GRACE = 0.25
+
+
+def _shell_process_kwargs() -> dict[str, bool | int]:
+    """Create an isolated process group so cancellation reaches shell descendants."""
+    if sys.platform == 'win32':
+        return {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {'start_new_session': True}
+
+
+async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    """Terminate a shell and all of its descendants."""
+    if sys.platform == 'win32':
+        try:
+            killer = await asyncio.create_subprocess_exec(
+                'taskkill',
+                '/PID',
+                str(process.pid),
+                '/T',
+                '/F',
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            await killer.wait()
+        except OSError:
+            killer_succeeded = False
+        else:
+            killer_succeeded = killer.returncode == 0
+        if not killer_succeeded:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
 
 
 def shell_command(text: str) -> str | None:
@@ -30,7 +68,7 @@ def shell_command(text: str) -> str | None:
 async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts) -> None:
     """Run with inherited stdio so interactive programs own the terminal until they exit.
 
-    Ctrl-C reaches the child through the terminal and cancels only this command, not CLAI.
+    Ctrl-C cancels only this command, not CLAI; cancellation terminates the shell's process tree.
     """
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
     console.print('Shell passthrough, not sent to the agent', style=theme.color(theme.MUTED))
@@ -38,14 +76,13 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
 
     async def execute() -> None:
         nonlocal exit_code
-        process = await asyncio.create_subprocess_shell(command)
+        process = await asyncio.create_subprocess_shell(command, **_shell_process_kwargs())
         try:
             exit_code = await process.wait()
         except asyncio.CancelledError:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(process.wait(), _INTERRUPT_GRACE)
-            with contextlib.suppress(ProcessLookupError):
-                process.kill()
+            await _kill_process_tree(process)
             await process.wait()
             raise
 
