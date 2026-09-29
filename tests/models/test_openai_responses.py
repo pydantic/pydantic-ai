@@ -13717,6 +13717,23 @@ _ERROR_EVENT: dict[str, Any] = {
         ),
         pytest.param(
             True,
+            # The nested shape, which the SDK itself raises as `openai.APIError`.
+            _sse(
+                {
+                    'type': 'error',
+                    'sequence_number': 0,
+                    'error': {
+                        'type': 'insufficient_quota',
+                        'code': 'insufficient_quota',
+                        'message': 'You exceeded your current quota',
+                    },
+                }
+            ),
+            'You exceeded your current quota',
+            id='stream-error-event-nested',
+        ),
+        pytest.param(
+            True,
             _sse(
                 {**_CREATED_EVENT, 'response': {**_CREATED_EVENT['response'], 'background': True}},
                 {
