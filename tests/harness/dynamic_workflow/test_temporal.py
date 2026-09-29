@@ -39,7 +39,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 from tests.harness.conftest import ignore_source_reads_left_open
 
-pytestmark = [pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7247  # avoid conflict with the code_mode and spend suites
 TASK_QUEUE = 'pydantic-ai-harness-dynamic-workflow-queue'

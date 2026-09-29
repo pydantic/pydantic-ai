@@ -272,10 +272,10 @@ from pydantic_ai_harness.spend import Budget, RedisSpendStore
 
 limits = SpendLimits(
     budgets=[
-        Budget(usd=Decimal('5'), window='run'),
-        Budget(usd=Decimal('100'), window='day', warn_at=0.8),
-        Budget(usd=Decimal('10'), window='day', scope=lambda ctx: ctx.deps.tenant_id, name='tenant'),
-        Budget(usd=Decimal('20'), window='day', scope=lambda ctx: ctx.model.model_name, name='per-model'),
+        Budget(usd=Decimal(5), window='run'),
+        Budget(usd=Decimal(100), window='day', warn_at=0.8),
+        Budget(usd=Decimal(10), window='day', scope=lambda ctx: ctx.deps.tenant_id, name='tenant'),
+        Budget(usd=Decimal(20), window='day', scope=lambda ctx: ctx.model.model_name, name='per-model'),
     ],
     store=RedisSpendStore(Redis.from_url('redis://localhost')),  # shared across workers
     on_unpriced='raise',
