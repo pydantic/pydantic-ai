@@ -3659,12 +3659,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Regular agent and capability model settings intentionally do not apply to realtime sessions.
         # A future capability hook dedicated to realtime settings can add that behavior deliberately.
-        effective_model_settings: RealtimeModelSettings | None = model.settings.copy() if model.settings else None
-        if model_settings:
-            if effective_model_settings is None:
-                effective_model_settings = model_settings.copy()
-            else:
-                effective_model_settings.update(model_settings)
+        # Merged by the model, so a provider that translates a deprecated setting does so per layer.
+        effective_model_settings = model._merge_model_settings(model_settings)  # pyright: ignore[reportPrivateUsage]
         # Realtime settings are fixed at connect time, so the merged settings hold for the whole
         # session — unlike a classic run, where this is re-stamped before each model request.
         run_context.model_settings = effective_model_settings

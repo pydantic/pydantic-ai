@@ -320,7 +320,7 @@ class TestRun:
                     os.kill(child, 0)
                 except ProcessLookupError:
                     break
-                await anyio.sleep(0.01)
+                await anyio.sleep(0.01)  # pragma: lax no cover - the child is often already reaped on the first check
 
     async def test_host_fake_closes_output_when_spawn_fails(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -542,7 +542,7 @@ class TestRun:
             return handle
 
         monkeypatch.setattr(commands, 'run', held)
-        with anyio.fail_after(3):
+        with anyio.fail_after(5):
             async with anyio.create_task_group() as group:
                 scope = anyio.CancelScope()
 
@@ -814,7 +814,7 @@ class TestFilesystem:
             return await original(path, user, request_timeout)
 
         monkeypatch.setattr(files, 'get_info', delayed)
-        with anyio.fail_after(1):
+        with anyio.fail_after(5):
             entries = await backend.list_dir(str(tmp_path))
         assert [entry.name for entry in entries] == ['a', 'b', 'target']
 

@@ -33,6 +33,9 @@ Each capability package should normally have:
   source module, and -- where the capability exposes a public class -- may end
   with a `::: pydantic_ai_harness.<Class>` autodoc block. The README and this
   page are kept in sync (see `review-checklist.md` "Docs").
+- an entry in the `pydantic-ai-harness` agent skill
+  (`pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`): a row in the
+  `SKILL.md` routing tables and a section in the matching `references/` file
 - mirrored tests under `tests/<capability>/`
 
 The root `pydantic_ai_harness/__init__.py` should re-export stable public

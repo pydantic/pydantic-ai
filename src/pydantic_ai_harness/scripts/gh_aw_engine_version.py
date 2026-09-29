@@ -19,7 +19,7 @@ itself.
 The lint job and the release reminder job both call this, which is why the checks live here
 rather than inlined as shell twice.
 
-Inline dependency metadata, so `uv run --script scripts/gh_aw_engine_version.py` works
+Inline dependency metadata, so `uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py` works
 without a project sync: neither caller needs any other part of the harness.
 """
 

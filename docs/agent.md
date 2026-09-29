@@ -597,7 +597,7 @@ Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic
 
 Here is an example of streaming an agent run in combination with `async for` iteration:
 
-```python {title="streaming_iter.py"}
+```python {title="streaming_iter.py" noqa="C901"}
 import asyncio
 from dataclasses import dataclass
 from datetime import date
