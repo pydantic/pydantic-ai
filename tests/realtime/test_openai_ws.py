@@ -1272,6 +1272,28 @@ def _span_tree(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.vcr
+async def test_webrtc_hang_up_ends_the_call(
+    openai_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`hang_up()` on a sideband ends the browser's call; `close()` alone would only detach from it.
+
+    Hanging up again finds no call to end, which is not an error. The offer and both hangups are an HTTP
+    VCR cassette, the sideband a WebSocket cassette.
+    """
+    provider, _ = openai_ws_sideband_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    realtime = Agent(instructions='Answer in two words.').realtime(model)
+
+    answer = await realtime.answer_webrtc_offer(REAL_SDP_OFFER)
+    async with realtime.session(provider_session=answer.session) as session:
+        await session.hang_up()
+    assert session.closed
+
+    # The call is gone now: hanging it up again, from the model, finds nothing to end.
+    await model.hang_up(answer.session)
+
+
+@pytest.mark.vcr
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_webrtc_sideband_audio_turn(
     openai_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],

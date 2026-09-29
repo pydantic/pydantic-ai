@@ -300,6 +300,10 @@ async def hang_up(ctx: RunContext) -> None:
     await ctx.realtime_session.close()
 ```
 
+On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), `close()` leaves the
+browser's call up; call [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] instead to end
+it. On every other session the two are the same.
+
 The session closes cleanly, and `session.result` and its history are settled before the context
 exits. The tool does not resume after `close()`: there is no provider left to receive its result, so
 the call is recorded locally with an interrupted result. The code that owns the `session()` context

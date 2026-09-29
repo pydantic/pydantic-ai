@@ -9,12 +9,14 @@ unit tests use `httpx2.MockTransport` only for our own guards, error formatting,
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
-from collections.abc import Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
+import anyio
 import httpx2
 import pytest
 from cassetter import RawRequest, RawResponse
@@ -31,7 +33,7 @@ from pydantic_ai.realtime import (
     WebRTCAnswer,
     WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
+from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ToolCall
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import UsageLimits
@@ -50,6 +52,7 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime._openai_webrtc import parse_call_id
     from pydantic_ai.realtime.azure import AzureRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+    from pydantic_ai.realtime.openai_live import OpenAILiveModel
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
@@ -701,6 +704,8 @@ async def test_base_model_rejects_webrtc() -> None:
     with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         await model.create_client_secret()
     with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
+        await model.hang_up(WebRTCSession(provider_name='ws-only', session_id='x'))
+    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         async with model.connect_webrtc(
             WebRTCSession(provider_name='ws-only', session_id='x'),
             messages=[],
@@ -726,3 +731,165 @@ def test_openai_family_webrtc_profiles() -> None:
         'openai': True,
         'azure': True,
     }
+
+
+# --- hanging up -----------------------------------------------------------------------------------
+
+
+class _OpenCall(RealtimeConnection):
+    """A sideband connection that stays open until it is closed, like one attached to a live call."""
+
+    def __init__(self, events: Sequence[RealtimeCodecEvent] = ()) -> None:
+        self._events = events
+
+    async def send(self, content: RealtimeInput) -> None:
+        pass
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        for event in self._events:
+            yield event
+        await asyncio.Event().wait()
+
+
+class _CallModel(RealtimeModel):
+    """A network-free model whose calls can be attached to and hung up, recording each hangup."""
+
+    def __init__(self, *, hang_up_error: Exception | None = None, events: Sequence[RealtimeCodecEvent] = ()) -> None:
+        self.settings = None
+        self.hung_up: list[str] = []
+        self._hang_up_error = hang_up_error
+        self._events = events
+
+    @property
+    def model_name(self) -> str:
+        return 'call-model'
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+    def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AbstractAsyncContextManager[RealtimeConnection]:
+        return self._open()
+
+    @asynccontextmanager
+    async def _open(self) -> AsyncGenerator[RealtimeConnection]:
+        yield _OpenCall(self._events)
+
+    def connect_webrtc(
+        self,
+        session: Any,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AbstractAsyncContextManager[RealtimeConnection]:
+        return self._open()
+
+    async def hang_up(self, session: Any) -> None:
+        self.hung_up.append(session.session_id)
+        if self._hang_up_error is not None:
+            raise self._hang_up_error
+
+
+_CALL = WebRTCSession(provider_name='test', session_id='rtc_call')
+
+
+async def test_hang_up_ends_a_sideband_call_and_closes_the_session() -> None:
+    """`close()` only detaches a sideband; `hang_up()` also ends the browser's call."""
+    model = _CallModel()
+    async with Agent().realtime(model).session(provider_session=_CALL) as session:
+        await session.close()
+        assert model.hung_up == []
+    async with Agent().realtime(model).session(provider_session=_CALL) as session:
+        await session.hang_up()
+        assert model.hung_up == ['rtc_call']
+        # Hanging up again is a no-op, as closing again is.
+        await session.hang_up()
+    assert model.hung_up == ['rtc_call']
+
+
+async def test_hang_up_after_close_still_ends_the_call() -> None:
+    model = _CallModel()
+    async with Agent().realtime(model).session(provider_session=_CALL) as session:
+        await session.close()
+        await session.hang_up()
+    assert model.hung_up == ['rtc_call']
+
+
+async def test_a_tool_can_hang_up() -> None:
+    """The call is ended by the teardown, which the tool that asked for it doesn't outlive."""
+    model = _CallModel(events=[ToolCall(tool_call_id='c1', tool_name='goodbye', args='{}')])
+    agent = Agent()
+
+    @agent.tool
+    async def goodbye(ctx: RunContext[Any]) -> None:
+        assert ctx.realtime_session is not None
+        await ctx.realtime_session.hang_up()
+
+    with anyio.fail_after(5):
+        async with agent.realtime(model).session(provider_session=_CALL) as session:
+            _ = [event async for event in session]
+    assert session.closed
+    assert model.hung_up == ['rtc_call']
+
+
+async def test_a_refused_hang_up_is_raised() -> None:
+    model = _CallModel(hang_up_error=ModelHTTPError(status_code=500, model_name='call-model', body='boom'))
+    with pytest.raises(ModelHTTPError, match='boom'):
+        async with Agent().realtime(model).session(provider_session=_CALL) as session:
+            await session.hang_up()
+
+
+async def test_hang_up_on_a_websocket_session_closes_it() -> None:
+    """A session that owns its connection ends the call by closing it, so there's nothing else to do."""
+    model = _CallModel()
+    async with Agent().realtime(model).session() as session:
+        await session.hang_up()
+        with pytest.raises(UserError):
+            await session.send('hello')
+    assert model.hung_up == []
+
+
+async def test_hang_up_is_refused_where_the_provider_cannot_end_a_call() -> None:
+    call = WebRTCSession(provider_name='openai', session_id='rtc_x')
+    with pytest.raises(UserError, match='negotiated by provider'):
+        await OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(_unused_handler)).hang_up(
+            WebRTCSession(provider_name='azure', session_id='rtc_x')
+        )
+    azure = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=AzureProvider(azure_endpoint='https://example.openai.azure.com', api_version='v', api_key='k'),
+    )
+    with pytest.raises(UserError, match='Azure OpenAI WebRTC call from the server is not supported'):
+        await azure.hang_up(call)
+
+
+async def test_hang_up_of_a_call_that_already_ended_is_not_an_error() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.url.path == '/v1/realtime/calls/rtc_gone/hangup'
+        return httpx2.Response(404, json={'error': {'message': 'Call not found', 'type': 'invalid_request_error'}})
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+    await model.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_gone'))
+
+
+@pytest.mark.parametrize('live', [False, True], ids=['gpt-realtime', 'gpt-live'])
+async def test_a_hang_up_the_provider_refuses_is_an_http_error(live: bool) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(403, json={'error': {'message': 'forbidden', 'type': 'invalid_request_error'}})
+
+    provider = _mock_provider(handler)
+    model = (
+        OpenAILiveModel('gpt-live-1', provider=provider)
+        if live
+        else OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    )
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
+    assert exc_info.value.status_code == 403

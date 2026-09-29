@@ -148,7 +148,9 @@ button, or [a tool](tools.md#ending-the-session-from-a-tool) — await
 completion even if that task is cancelled while it waits, and both a concurrent `close()` and the
 `async with` exit wait for the same teardown, so the session is fully closed by the time the block
 is left. While the session is being iterated the loop ends, leaving the `async with` block does not
-raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled.
+raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled. On a
+[WebRTC sideband](deployment.md#browser-webrtc-server-sideband), `close()` only detaches from the
+browser's call; [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] ends it.
 
 For external policy such as an idle timeout or maximum call duration, run a watchdog task that calls
 `close()`:

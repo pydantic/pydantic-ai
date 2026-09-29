@@ -372,7 +372,8 @@ Key facts for building realtime agents:
   resolved instructions and tools are baked in and the API key stays on the server — then attach a
   control-plane **sideband** with `.session(provider_session=answer.session)`. The browser owns the
   audio; the sideband session runs tools and builds history (its audio methods raise, and
-  `audio_retention` must stay `'transcript_only'`).
+  `audio_retention` must stay `'transcript_only'`). Closing the sideband only detaches it: call
+  `session.hang_up()` (or `model.hang_up(answer.session)`) to end the browser's call (OpenAI only).
 - **Browser WebSocket relays**: `handle_barge_in=True` cannot know browser playback position because
   forwarded chunks count as played. Have the browser report real playback and pass it to
   `interrupt(played_bytes=...)`; `played_ms=` does not flush session-queued audio.

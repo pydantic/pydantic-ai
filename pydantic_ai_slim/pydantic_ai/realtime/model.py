@@ -350,6 +350,28 @@ class RealtimeModel(AbstractModel):
         """
         self._raise_unsupported_webrtc('answer_webrtc_offer')
 
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        """End a provider-side call, such as a browser's WebRTC call, for everyone on it.
+
+        Takes the [`WebRTCAnswer.session`][pydantic_ai.realtime.WebRTCAnswer.session] that
+        [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] returned, so a server
+        can end a call with or without a sideband attached to it; a sideband session can use
+        [`RealtimeSession.hang_up`][pydantic_ai.realtime.RealtimeSession.hang_up] instead. A call that has
+        already ended is not an error. Only implemented by realtime models whose provider can end a WebRTC
+        call from the server (OpenAI gpt-realtime and GPT-Live); the default raises
+        [`UserError`][pydantic_ai.exceptions.UserError].
+        """
+        self._raise_unsupported_webrtc('hang_up')
+
+    def _check_webrtc_session_provider(self, session: RealtimeProviderSession) -> None:
+        """Refuse a call negotiated through another provider, which this model can't address."""
+        if session.provider_name != self.system:
+            raise UserError(
+                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
+                f'model connects through {self.system!r}. Answer the offer, attach the sideband, and hang up '
+                'with the same model/provider.'
+            )
+
     def _raise_unsupported_webrtc(self, method: str) -> NoReturn:
         raise UserError(
             f'Realtime model {self.model_name!r} does not support WebRTC, so `{method}()` is unavailable. '

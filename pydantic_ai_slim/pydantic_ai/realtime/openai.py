@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
 from .._http import AsyncHTTPClient
 from .._instrumentation import get_instructions
-from ..exceptions import UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryAudio,
     BinaryImage,
@@ -62,6 +62,7 @@ from ..messages import (
     RealtimeSessionReconnectEvent,
 )
 from ..models import ModelRequestParameters
+from ..models.openai import _map_api_errors as map_openai_api_errors  # pyright: ignore[reportPrivateUsage]
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
@@ -1346,6 +1347,16 @@ class OpenAIRealtimeModel(RealtimeModel):
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
         )
 
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_webrtc_session_provider(session)
+        try:
+            with map_openai_api_errors(self.model_name):
+                await self.client.realtime.calls.hangup(session.session_id)
+        except ModelHTTPError as e:
+            # A call that has already ended is gone: nothing is left to hang up.
+            if e.status_code != 404:
+                raise
+
     @asynccontextmanager
     async def connect_webrtc(
         self,
@@ -1355,12 +1366,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        if session.provider_name != self.system:
-            raise UserError(
-                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
-                f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
-                'same model/provider.'
-            )
+        self._check_webrtc_session_provider(session)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages, model_request_parameters) or ''
