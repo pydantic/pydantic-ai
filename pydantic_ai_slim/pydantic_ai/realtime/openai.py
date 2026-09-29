@@ -131,6 +131,7 @@ from .codec import (
     RealtimeConnection,
     RealtimeInput,
     SessionUsage,
+    TaggedEvent,
     TextContext,
     ToolCall,
     ToolResult,
@@ -384,8 +385,8 @@ class _DecodedFrame:
     """Whether the frame is about a response that has already ended, so its codec events repeat or trail
     that response's terminal and are left out of the lifecycle stream."""
 
-    def tagged(self) -> list[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
-        """The frame's events in order, each with whether it is stale (see `_all_events`)."""
+    def tagged(self) -> list[TaggedEvent]:
+        """The frame's events in order, each with whether it is stale (see `RealtimeConnection._tagged_frames`)."""
         return [
             *((event, False) for event in self.before),
             *((event, self.stale) for event in self.codec),
@@ -785,22 +786,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return map_event(data)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        async for event, _ in self._all_events():
-            if not isinstance(event, LIFECYCLE_EVENT_TYPES):
-                yield event
+        async for frame in self._tagged_frames():
+            for event, _ in frame:
+                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
+                    yield event
 
-    async def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
-        async for event, stale in self._all_events():
-            if not stale:
-                yield event
-
-    async def _all_events(self) -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
-        """Every event, codec and lifecycle alike, each flagged with whether it is stale.
-
-        A stale event is a codec event from a frame about a response that has already ended: a repeated or
-        late `response.done`, or content trailing it. The codec stream carries it as it always has; the
-        lifecycle stream leaves it out, so nothing reaches a response after its end.
-        """
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
         while True:
             try:
                 async for raw in self._ws:
@@ -812,12 +803,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                         # A malformed frame (bad JSON or audio payload) shouldn't tear down the whole
                         # session; surface it as a recoverable error and keep reading.
                         # The frame may have started a response before it failed: announce it all the same.
-                        for event in [*self._lifecycle.take_leading(), *self._take_pending_lifecycle()]:
-                            yield event, False
-                        yield _frame_error(e), False
+                        leading = [*self._lifecycle.take_leading(), *self._take_pending_lifecycle()]
+                        yield [*((event, False) for event in leading), (_frame_error(e), False)]
                         continue
-                    for tagged in frame.tagged():
-                        yield tagged
+                    yield frame.tagged()
                 # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises
                 # on an abnormal one, but a session the server hung up on is over either way: OpenAI
                 # ends one that reaches its duration cap with `1001 Your session hit the maximum
@@ -826,8 +815,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # stream quietly end.
                 if not self._observes_output_audio:
                     self._lifecycle.closed(self._unanswered_inputs())
-                    for event in self._take_pending_lifecycle():
-                        yield event, False
+                    yield [(event, False) for event in self._take_pending_lifecycle()]
                     return
                 closed = _describe_close(self._ws)
             except self.transport_errors as e:
@@ -837,26 +825,22 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 closed = str(e)
 
             if self._reconnect is not None and self._dial is not None and await self._try_reconnect():
-                for event in self._take_pending_lifecycle():
-                    yield event, False
-                yield RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect), False
+                reconnected = RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
+                yield [*((event, False) for event in self._take_pending_lifecycle()), (reconnected, False)]
                 continue
             reconnects = self._reconnect is not None and self._dial is not None
             if reconnects:
                 # Out of attempts: no reconnect is coming any more.
                 self._gave_up = True
             self._lifecycle.closed(self._unanswered_inputs())
-            for event in self._take_pending_lifecycle():
-                yield event, False
+            settled = [(event, False) for event in self._take_pending_lifecycle()]
             # No reconnect policy, or the reconnect failed: a closed connection is fatal. Surface it as a
             # non-recoverable error and end the stream cleanly, rather than raising.
             reconnect_failed = '; reconnect failed' if reconnects else ''
-            yield (
-                RealtimeSessionErrorEvent(
-                    message=f'{self._provider_label} connection closed{reconnect_failed}: {closed}', recoverable=False
-                ),
-                False,
+            error = RealtimeSessionErrorEvent(
+                message=f'{self._provider_label} connection closed{reconnect_failed}: {closed}', recoverable=False
             )
+            yield [*settled, (error, False)]
             return
 
     def _unanswered_inputs(self) -> list[InputId]:

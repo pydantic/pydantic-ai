@@ -20,6 +20,7 @@ from ..messages import (
     DocumentUrl,
     ImageUrl,
     SpeechPart,
+    SpeechPartDelta,
     TextContent,
     UploadedFile,
     UserContent,
@@ -203,3 +204,66 @@ def require_pcm_audio(audio: BinaryAudio, *, provider_name: str) -> None:
             f'{provider_name} realtime connections require raw PCM audio (`media_type="audio/pcm"`), '
             f'not {audio.media_type!r}. Send WAV audio through `RealtimeSession.send_audio()` so it can be unwrapped.'
         )
+
+
+def pcm_to_wav(data: bytes, sample_rate: int) -> bytes:
+    """Wrap mono 16-bit PCM bytes in a WAV container at `sample_rate`."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(data)
+    return buffer.getvalue()
+
+
+def accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
+    """Fold a transcript event's `text` into the running transcript, returning `(new_accumulated, appended)`.
+
+    Providers deliver transcripts two different ways: as incremental deltas (each event carries a new
+    piece) or as a single final event carrying the full text. Both are handled by one rule: if `text`
+    extends what we already have (the accumulated transcript is a prefix of it), it is a cumulative/full
+    update and only the new suffix is appended; otherwise `text` is an incremental piece appended as-is.
+    The second element is the newly appended text (empty when a final event merely repeats the deltas),
+    suitable for a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent].
+
+    A cumulative/final snapshot can differ from the accumulated deltas by leading/trailing whitespace —
+    OpenAI's input-audio-transcription deltas start with a leading space that the `.completed` snapshot
+    trims — so the prefix check is applied to the stripped text too, adopting the snapshot as
+    authoritative rather than concatenating a near-duplicate.
+    """
+    if accumulated and text.startswith(accumulated):
+        return text, text[len(accumulated) :]
+    stripped = accumulated.strip()
+    if stripped and (stripped_text := text.strip()).startswith(stripped):
+        return text, stripped_text[len(stripped) :]
+    return accumulated + text, text
+
+
+def user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tuple[str, SpeechPartDelta | None]:
+    """Fold a user transcript event into the running text, returning it with the delta to emit.
+
+    An incremental piece is accumulated by [`accumulate_transcript`][pydantic_ai.realtime._utils.accumulate_transcript]
+    and surfaced as an appended delta. A cumulative snapshot is adopted wholesale, because a provider
+    that sends snapshots may revise earlier words rather than only extend them: when it merely extends,
+    the new suffix is still an appended delta (what a live transcript wants), but a revision can't be
+    expressed by appending, so it goes out as a replacement instead. `None` when nothing changed.
+    """
+
+    def delta(transcript: str, added: str) -> SpeechPartDelta:
+        return SpeechPartDelta(speaker='user', transcript_delta=added, transcript=transcript)
+
+    if not cumulative:
+        transcript, appended = accumulate_transcript(previous, text)
+        return transcript, delta(transcript, appended) if appended else None
+    if text == previous:
+        return previous, None
+    if previous and text.startswith(previous):
+        return text, delta(text, text[len(previous) :])
+    stripped = previous.strip()
+    if stripped and (stripped_text := text.strip()).startswith(stripped):
+        return text, delta(text, stripped_text[len(stripped) :])
+    if not previous:
+        return text, delta(text, text)
+    # A revision: nothing was *added*, so only the corrected whole is reported.
+    return text, delta(text, '')

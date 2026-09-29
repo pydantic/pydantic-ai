@@ -64,7 +64,6 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import LifecycleEvent
 from ._openai_protocol import (
     RealtimeHandshakeError,
     config_interrupts_response_on_speech,
@@ -84,6 +83,7 @@ from .codec import (
     ConversationItemCreated,
     InputTranscript,
     RealtimeCodecEvent,
+    TaggedEvent,
     ToolCall,
 )
 from .model import RealtimeModel
@@ -348,14 +348,14 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return map_event(data)
 
-    async def _all_events(self) -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
-        async for event, stale in super()._all_events():
-            yield event, stale
-            if isinstance(event, RealtimeSessionReconnectEvent):
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        async for frame in super()._tagged_frames():
+            yield frame
+            if any(isinstance(event, RealtimeSessionReconnectEvent) for event, _ in frame):
                 replayed_items = self._replayed_items[:]
                 self._replayed_items.clear()
-                for replayed_item in replayed_items:
-                    yield replayed_item, False
+                if replayed_items:
+                    yield [(replayed_item, False) for replayed_item in replayed_items]
 
 
 @dataclass(init=False)
