@@ -246,7 +246,7 @@ class PluginLoader(Generic[DepsT]):
             full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
-            save_settings=lambda settings: self._store.save_plugin(
+            save_settings=lambda settings: self._save(
                 entry.declaration.model_copy(update={'settings': settings, 'enabled': True})
             ),
         )
@@ -270,6 +270,13 @@ class PluginLoader(Generic[DepsT]):
                 raise PluginSettingsError(name, exc) from exc
             raise PluginError(name, exc) from exc
         entry.error = None
+
+    def _save(self, declaration: PluginSettings) -> None:
+        """Persist a host's saved settings, or, while `/plugins add` is trying them, update what it will save."""
+        if declaration.id in self._staged:
+            self._staged[declaration.id] = declaration
+        else:
+            self._store.save_plugin(declaration)
 
     async def _failed_load(self, entry: PluginEntry[DepsT], host: PluginHost[DepsT]) -> None:
         try:

@@ -188,6 +188,27 @@ async def test_add_saves_settings_only_once_activation_accepts_them(
     assert [plugin.settings for plugin in harness.store.plugins()] == [{'fail_on_start': True}]
 
 
+async def test_add_keeps_settings_the_plugin_saves_while_activating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / 'site' / 'clai_migrating'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text(
+        'from pydantic import BaseModel\n'
+        'from pydantic_clai2.plugins import PluginHost\n'
+        'class Settings(BaseModel):\n'
+        '    version: int = 1\n'
+        'def activate(host: PluginHost) -> None:\n'
+        '    host.save_settings(host.settings(Settings).model_copy(update={"version": 2}))\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    assert await harness.loader.command(['add', 'migrating', 'clai_migrating', '{"version": 1}']) == (
+        'Added and loaded migrating.'
+    )
+    assert [plugin.settings for plugin in harness.store.plugins()] == [{'version': 2}]
+
+
 async def test_declared_capability_class_and_activate_function(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     package = tmp_path / 'site' / 'clai_extras'
     package.mkdir(parents=True)
