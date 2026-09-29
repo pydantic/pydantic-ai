@@ -582,8 +582,8 @@ remain visible so they can be reset. Choices depend on the model and API: Chat C
 controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
 and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
-1024 and below an explicit `max_tokens`. If classic thinking has no output cap,
-CLAI reserves the thinking budget plus 4096 output tokens. Other unset fields
+1024 and below an explicit `max_tokens`. Without one, Pydantic AI
+leaves room for the answer beyond the budget. Other unset fields
 use the provider default.
 Explicit native thinking settings take precedence over generic `thinking`.
 GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,

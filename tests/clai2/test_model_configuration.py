@@ -1,5 +1,6 @@
 """Model-aware choices, native request settings, and custom parameter editing."""
 
+import json
 from pathlib import Path
 
 import httpx2 as httpx
@@ -109,7 +110,6 @@ def test_native_settings_conversion() -> None:
         form = ModelSettingsForm(anthropic_thinking_mode='enabled', anthropic_thinking_budget=budget)
         assert form.to_model_settings() == {
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': budget or 10000},
-            'max_tokens': (budget or 10000) + 4096,
         }
         validate_model_options(model='anthropic:claude-sonnet-4-5', form=form)
 
@@ -319,18 +319,32 @@ async def test_claude_native_thinking_reaches_request(name: str, mode: str) -> N
     adapter = TypeAdapter(dict[str, JsonValue])
 
     def respond(request: httpx.Request) -> httpx.Response:
-        bodies.append(adapter.validate_json(request.content))
+        body = adapter.validate_json(request.content)
+        bodies.append(body)
+        # The default `max_tokens` is the model's maximum output, above the SDK's non-streaming limit, so the
+        # request streams.
+        assert body['stream'] is True
+        message: dict[str, JsonValue] = {
+            'id': 'msg_test',
+            'type': 'message',
+            'role': 'assistant',
+            'model': name,
+            'content': [],
+            'stop_reason': None,
+            'usage': {'input_tokens': 1, 'output_tokens': 0},
+        }
+        events: list[dict[str, JsonValue]] = [
+            {'type': 'message_start', 'message': message},
+            {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+            {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'done'}},
+            {'type': 'content_block_stop', 'index': 0},
+            {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}},
+            {'type': 'message_stop'},
+        ]
         return httpx.Response(
             200,
-            json={
-                'id': 'msg_test',
-                'type': 'message',
-                'role': 'assistant',
-                'model': name,
-                'content': [{'type': 'text', 'text': 'done'}],
-                'stop_reason': 'end_turn',
-                'usage': {'input_tokens': 1, 'output_tokens': 1},
-            },
+            headers={'content-type': 'text/event-stream'},
+            content=''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events),
         )
 
     form = model_settings_from_json({'anthropic_thinking_mode': mode})
@@ -342,4 +356,4 @@ async def test_claude_native_thinking_reaches_request(name: str, mode: str) -> N
         {'type': 'adaptive'} if mode == 'adaptive' else {'type': 'enabled', 'budget_tokens': 10000}
     )
     if mode == 'enabled':
-        assert bodies[0]['max_tokens'] == 14096
+        assert bodies[0]['max_tokens'] == 64000
