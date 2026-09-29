@@ -1,6 +1,6 @@
 """Interactive chat demonstrating how to cancel and resume a streaming agent run.
 
-Press Esc while the agent is responding to cancel the current turn. The next message resumes the
+Press Esc (or Ctrl-C) while the agent is responding to cancel the current turn. The next message resumes the
 conversation with the history preserved before cancellation.
 
 Run with:
@@ -55,7 +55,9 @@ async def _run_interactive_turn(
     def cancel_turn(_event: KeyPressEvent) -> None:
         token.cancel()
 
+    # A custom `Application` doesn't get `PromptSession`'s Ctrl-C handling, so bind it here too.
     bindings.add('escape')(cancel_turn)
+    bindings.add('c-c')(cancel_turn)
 
     control = FormattedTextControl(
         lambda: FormattedText([('class:answer', f'Agent: {"".join(chunks)}')])
@@ -90,7 +92,7 @@ async def main() -> None:
     history: list[ModelMessage] = []
 
     print(
-        'Chat with Pydantic AI. Press Esc to cancel a response; Ctrl-C or Ctrl-D to exit.'
+        'Chat with Pydantic AI. Press Esc or Ctrl-C to cancel a response; Ctrl-C or Ctrl-D at the prompt to exit.'
     )
     while True:
         try:
