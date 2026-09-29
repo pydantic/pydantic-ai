@@ -643,10 +643,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         needed — the event is emitted without args-validity.
         """
         # Function calls and their results/executions are matched back by `tool_call_id`, so duplicate
-        # ids would make the binding ambiguous (last write wins). Fail closed before any tool executes.
+        # ids would make the binding ambiguous (last write wins). Fail closed before any call in this batch executes.
         if duplicate_ids := _duplicate_tool_call_ids(calls):
             raise exceptions.UnexpectedModelBehavior(
-                f'Function tool calls must have unique tool_call_id values; duplicate tool_call_ids: {duplicate_ids}'
+                f'Function tool calls must have unique `tool_call_id` values; duplicate `tool_call_id`s: {duplicate_ids}'
             )
         for call in calls:
             deferred_result = self.calls_to_run_results.get(call.tool_call_id)
