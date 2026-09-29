@@ -509,8 +509,10 @@ class OpenAILiveConnection(RealtimeConnection):
         # continuations go out from the receive loop, which is where that terminal is seen.
         self._continuations_due: list[_Delegation] = []
         self._reported_seconds = 0.0
-        # Set once `session.closed` arrives: the last frame Live sends, carrying its final usage.
+        # Set once `session.closed` arrives: the last frame Live sends, carrying its final usage. That usage
+        # is held here until it has been yielded, so a session that stops reading in between still gets it.
         self._session_ended = False
+        self._final_usage: list[SessionUsage] = []
 
     @property
     def model_name(self) -> str | None:
@@ -629,8 +631,12 @@ class OpenAILiveConnection(RealtimeConnection):
         since the last report, all of them on a short call, would never be recorded. Called once the session
         has stopped iterating: the read left in flight then is picked up here, so no frame is lost.
         """
-        if self._closed or self._session_ended:
+        if self._closed:
             return []
+        if self._session_ended:
+            # Live already ended the session; its final usage is returned unless it was already yielded.
+            usage, self._final_usage = self._final_usage, []
+            return usage
         await self._send_event({'type': 'session.close'})
         usage: list[SessionUsage] = []
         while not self._session_ended:
@@ -643,6 +649,7 @@ class OpenAILiveConnection(RealtimeConnection):
             usage.extend(
                 event for event in self._map_frame(raw) if isinstance(event, SessionUsage) and not event.response_scoped
             )
+        self._final_usage = []
         return usage
 
     async def aclose(self) -> None:
@@ -683,6 +690,9 @@ class OpenAILiveConnection(RealtimeConnection):
                         yield event
                     return
                 for event in self._map_frame(raw):
+                    if isinstance(event, SessionUsage) and self._final_usage:
+                        # Handed over now: a session that takes it records it before it can stop reading.
+                        self._final_usage = [usage for usage in self._final_usage if usage is not event]
                     yield event
                 await self._send_due_continuations()
             # Checked after every frame, not just when the socket goes quiet: the idle audio track
@@ -867,6 +877,7 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         self._session_ended = True
         events = self._map_usage(event.usage.seconds)
+        self._final_usage = [usage for usage in events if isinstance(usage, SessionUsage)]
         if event.reason not in _ABNORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))

@@ -2280,10 +2280,36 @@ async def test_closing_a_session_records_the_seconds_live_reports_as_it_ends(mod
     ws = _FakeWebSocket([started], closed_seconds=5)
     with _patched_connect(ws):
         async with Agent().realtime(model).session() as session:
-            pass
+            # The session reads the connection, so a read is in flight when it closes: `session.closed`
+            # arrives on that read, which the closing connection picks up.
+            reading = asyncio.ensure_future(anext(aiter(session)))
+            await asyncio.sleep(0.01)
+    reading.cancel()
 
     assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.close']
     assert session.usage.audio_seconds == 5
+
+
+async def test_final_usage_live_reported_before_the_session_stopped_reading_is_kept() -> None:
+    """A session that stops reading between `session.closed` and taking its usage still gets that usage, once."""
+    ws = _FakeWebSocket([])
+    connection = _LiveSink(ws)
+    connection._map_frame(json.dumps(_session_closed('expired', seconds=7)))  # pyright: ignore[reportPrivateUsage]
+
+    assert [report.usage.audio_seconds for report in await connection.end_session()] == [7]
+    assert await connection.end_session() == []
+    # Live already ended the session, so there is nothing to ask it.
+    assert ws.sent == []
+
+
+async def test_final_usage_already_taken_is_not_returned_again() -> None:
+    ws = _FakeWebSocket([json.dumps(_session_closed('close_requested', seconds=7))])
+    connection = _LiveSink(ws)
+    events = aiter(connection)
+    assert isinstance(await anext(events), SessionUsage)
+
+    assert await connection.end_session() == []
+    assert ws.sent == []
 
 
 class _LiveSink(OpenAILiveConnection):
