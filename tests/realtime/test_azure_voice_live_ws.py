@@ -444,8 +444,7 @@ async def test_voice_live_rejects_webrtc_signaling() -> None:
 
     A unit test (no cassette): the guard fires before any network call. Voice Live negotiates WebRTC over
     its WebSocket control channel, unlike the GA `/realtime/client_secrets` + `/realtime/calls` flow this
-    model inherits, so minting a GA secret for a Voice Live session would hit the wrong endpoint. Tracked
-    in https://github.com/pydantic/pydantic-ai/issues/6702.
+    model inherits, so minting a GA secret for a Voice Live session would hit the wrong endpoint.
     """
     provider = AzureProvider(azure_endpoint='https://mock.openai.azure.com/openai/v1', api_key='mock-api-key')
     model = AzureRealtimeModel(

@@ -373,9 +373,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         if self._resolve_voice_live(settings):
             raise UserError(
                 'Browser WebRTC is not yet supported for Azure AI Voice Live: Voice Live negotiates WebRTC '
-                'over its WebSocket control channel, which this model does not implement yet. Use a WebSocket '
-                'session, or the GA Azure OpenAI realtime model for browser WebRTC. '
-                'See https://github.com/pydantic/pydantic-ai/issues/6702.'
+                'over its WebSocket control channel, which Pydantic AI does not implement yet. Use a WebSocket '
+                'session, or the GA Azure OpenAI realtime model for browser WebRTC.'
             )
 
     @property
