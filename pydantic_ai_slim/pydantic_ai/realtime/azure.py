@@ -291,9 +291,10 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `openai_voice`, which native-audio models like `gpt-realtime` also accept under Voice Live.
     """
     azure_voice_live_temperature: float
-    """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
+    """Sampling temperature for a Voice Live session; only applies when the session uses Voice Live.
 
-    The GA realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
+    Microsoft documents a range of 0.6 to 1.2 (default 0.8), but Voice Live accepts 0 to 2. The GA
+    realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
     warning while a reasoning model like `gpt-5` is reasoning, since those models then accept only the
     default.
     """
