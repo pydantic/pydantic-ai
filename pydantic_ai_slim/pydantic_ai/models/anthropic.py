@@ -156,7 +156,6 @@ try:
         Omit,
         omit as OMIT,
     )
-    from anthropic.lib.streaming import BetaAsyncMessageStream
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaAdvisorTool20260301Param,
@@ -714,43 +713,17 @@ _LEGACY_DEFAULT_MAX_TOKENS = 4096
 _MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
 """The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
 
-
-class _WithoutUntypedEvents:
-    """A stream of Anthropic events that skips the untyped ones Bedrock sends, for the SDK's message accumulator.
-
-    The SDK's Bedrock stream decoder drops event types, so a Bedrock-only chunk like
-    `amazon-bedrock-invocationMetrics` arrives as `BetaRawMessageStartEvent(message=None)`
-    (https://github.com/pydantic/pydantic-ai/issues/5774), which the accumulator rejects. A stream without any
-    event raises `UnexpectedModelBehavior`, as it does when streamed through `AnthropicStreamedResponse`, rather
-    than the accumulator's bare assertion.
-    """
-
-    def __init__(self, stream: AsyncStream[BetaRawMessageStreamEvent]) -> None:
-        self._stream = stream
-
-    @property
-    def response(self) -> httpx2.Response:
-        return self._stream.response
-
-    async def __aiter__(self) -> AsyncIterator[BetaRawMessageStreamEvent]:
-        empty = True
-        async for event in self._stream:
-            if isinstance(event, BetaRawMessageStartEvent) and event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
-                continue
-            empty = False
-            yield event
-        if empty:
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
-
-    async def close(self) -> None:
-        await self._stream.close()
+_AnthropicEventStream: TypeAlias = _utils.PeekableAsyncStream[
+    BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
+]
+"""A streamed response whose first event has been read, so an error that stops it is raised before it's processed."""
 
 
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
     That's the model's maximum output, so responses are only cut off at the model's limit. Above about 21,000 tokens
-    the request is streamed and accumulated into a non-streaming response (see `_messages_create`). Models that reject input
+    the request is streamed behind the scenes (see `_messages_create`). Models that reject input
     plus `max_tokens` beyond the context window keep a lower default, so conversations close to the window still fit.
     Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose `max_tokens`
     isn't greater than the budget, so a large budget raises a lower default to leave room for the answer.
@@ -1094,7 +1067,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-        return self._process_response(response, model_request_parameters, model_settings)
+        if isinstance(response, BetaMessage):
+            return self._process_response(response, model_request_parameters, model_settings)
+        # The request was streamed behind the scenes, see `_messages_create`.
+        async with response.source:
+            streamed_response = await self._process_streamed_response(
+                response, model_request_parameters, model_settings
+            )
+            try:
+                async for _ in streamed_response:
+                    pass
+            except httpx2.TransportError as e:
+                raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        return streamed_response.get()
 
     async def count_tokens(
         self,
@@ -1129,7 +1114,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
-        async with response:
+        async with response.source:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings)
 
     def _request_thinks(
@@ -1235,7 +1220,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: Literal[True],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[BetaRawMessageStreamEvent]:
+    ) -> _AnthropicEventStream:
         pass
 
     @overload
@@ -1245,7 +1230,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: Literal[False],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> BetaMessage:
+    ) -> BetaMessage | _AnthropicEventStream:
         pass
 
     async def _messages_create(
@@ -1254,11 +1239,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: bool,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+    ) -> BetaMessage | _AnthropicEventStream:
         """Calls the Anthropic API to create a message.
 
         This is the last step before sending the request to the API.
         Most preprocessing has happened in `prepare_request()`.
+
+        A non-streaming request is streamed anyway when the SDK requires it for its `max_tokens`, so its response
+        can be a stream too.
         """
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -1307,7 +1295,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             thinking: BetaThinkingConfigParam | Omit,
             betas: set[str],
             thinking_override: dict[str, object] | None,
-        ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+        ) -> BetaMessage | _AnthropicEventStream:
             max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
 
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
@@ -1335,22 +1323,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     extra_body=_build_extra_body(model_settings, thinking_override),
                 )
 
-            async def accumulate() -> BetaMessage:
-                # Stream the request and accumulate the final message, so the response is processed exactly
-                # like a non-streaming one.
-                raw_stream = await send(True)
-                assert isinstance(raw_stream, AsyncStream)
-                async with raw_stream:
-                    try:
-                        return await BetaAsyncMessageStream(
-                            cast(AsyncStream[BetaRawMessageStreamEvent], _WithoutUntypedEvents(raw_stream)),
-                            output_format=NOT_GIVEN,
-                        ).get_final_message()
-                    except httpx2.TransportError as e:
-                        raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+            async def open_stream() -> _AnthropicEventStream:
+                raw_stream = cast(AsyncStream[BetaRawMessageStreamEvent], await send(True))
+                event_stream = _utils.PeekableAsyncStream(raw_stream)
+                try:
+                    # An error that stops the response, like an expired container, arrives as the first event,
+                    # so peek it here to reach the retries below.
+                    await event_stream.peek()
+                except BaseException:
+                    await raw_stream.close()
+                    raise
+                return event_stream
 
             if stream:
-                return await send(True)
+                return await open_stream()
             # The SDK refuses a non-streaming request it expects to take over 10 minutes, but only with its default
             # timeout. A default `max_tokens` above that limit is the model's maximum output, so stream it when a
             # custom timeout is set too, rather than hold one connection open for the whole response.
@@ -1359,13 +1345,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and max_tokens > _MAX_NON_STREAMING_TOKENS
                 and ('timeout' in model_settings or self.client.timeout != DEFAULT_TIMEOUT)
             ):
-                return await accumulate()
+                return await open_stream()
             try:
-                return await send(False)
+                return cast(BetaMessage, await send(False))
             except ValueError as e:
                 if 'Streaming is required' not in str(e):  # pragma: no cover
                     raise
-                return await accumulate()
+                return await open_stream()
 
         retry_container = container
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
@@ -1866,17 +1852,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     async def _process_streamed_response(
         self,
-        response: AsyncStream[BetaRawMessageStreamEvent],
+        response: _AnthropicEventStream,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
-    ) -> StreamedResponse:
-        peekable_response: _utils.PeekableAsyncStream[
-            BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
-        ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            first_chunk = await peekable_response.peek()
+    ) -> AnthropicStreamedResponse:
+        first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, BetaRawMessageStartEvent)
 
@@ -1890,7 +1872,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
-            _response=peekable_response,
+            _response=response,
             _provider_name=self._provider.name,
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
@@ -3376,7 +3358,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
 
     _model_name: AnthropicModelName
-    _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
+    _response: _AnthropicEventStream
     _provider_name: str
     _model_id_namespace: str
     _provider_url: str
@@ -3632,14 +3614,20 @@ class AnthropicStreamedResponse(StreamedResponse):
                                 vendor_part_id=event.index,
                                 part=_finalize_streamed_tool_search_call_part(existing),
                             )
-                    elif isinstance(current_block, BetaServerToolUseBlock):
-                        # An empty input streams as an empty JSON delta, which accumulates as `''`; the
-                        # non-streaming `_map_server_tool_use_block` maps an empty input to `args=None`.
+                    elif isinstance(current_block, BetaToolUseBlock | BetaServerToolUseBlock):
                         existing = self._parts_manager.get_part_by_vendor_id(event.index)
-                        if isinstance(existing, NativeToolCallPart) and existing.args in ('', '{}'):
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=event.index, part=replace(existing, args=None)
+                        assert isinstance(existing, ToolCallPart | NativeToolCallPart)
+                        tool_input = _streamed_tool_input(current_block, existing)
+                        if tool_input is not None:
+                            # Parse the args like a non-streamed response carries them.
+                            args = (
+                                tool_input
+                                if isinstance(current_block, BetaToolUseBlock)
+                                else _map_server_tool_use_block(
+                                    current_block.model_copy(update={'input': tool_input}), self.provider_name
+                                ).args
                             )
+                            self._parts_manager.finalize_tool_call_args(vendor_part_id=event.index, args=args)
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
@@ -4114,6 +4102,23 @@ def _normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str
     raw = (tool_args or {}).get(wire_key, '')
     queries = [raw] if isinstance(raw, str) else []
     return {'queries': queries}
+
+
+def _streamed_tool_input(
+    block: BetaToolUseBlock | BetaServerToolUseBlock, part: ToolCallPart | NativeToolCallPart
+) -> dict[str, Any] | None:
+    """The `input` a non-streamed response would carry for a streamed tool use block, or `None` if it isn't valid JSON.
+
+    The input streams as JSON deltas, which accumulate on the part as a string. A block without deltas, like a server
+    tool call made from code execution, carries its input on the block itself.
+    """
+    if not isinstance(part.args, str) or not part.args:
+        return cast(dict[str, Any], block.input)
+    try:
+        tool_input = pydantic_core.from_json(part.args)
+    except ValueError:
+        return None
+    return cast(dict[str, Any], tool_input) if isinstance(tool_input, dict) else None
 
 
 def _finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> NativeToolSearchCallPart:

@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     ProviderDetailsDelta,
     TextPart,
@@ -148,6 +149,17 @@ class ModelResponsePartsManager:
         if part_index is not None:
             return self._materialize_and_cache_part(part_index)
         return None
+
+    def finalize_tool_call_args(self, *, vendor_part_id: VendorId, args: dict[str, Any] | None) -> None:
+        """Replace a streamed tool call's accumulated args with their parsed form, without emitting an event.
+
+        For providers whose streamed args arrive as JSON string deltas while their non-streamed responses carry parsed
+        args, so both end with the same part. The `PartEndEvent` that follows carries the finalized part.
+        """
+        part_index = self._vendor_id_to_part_index[vendor_part_id]
+        part = self._materialize_and_cache_part(part_index)
+        assert isinstance(part, ToolCallPart | NativeToolCallPart), f'Expected a tool call, got {part!r}'
+        self._parts[part_index] = replace(part, args=args)
 
     def handle_text_delta(
         self,
@@ -798,3 +810,7 @@ class ModelResponsePartsManager:
             assert part is not None
             assert not isinstance(part, ToolCallPartDelta)
             self.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
+        elif isinstance(event, PartEndEvent):
+            # The end event carries the final part, which a stream can finalize without a delta
+            # (see `finalize_tool_call_args`).
+            self.handle_part(vendor_part_id=event.index, part=event.part)
