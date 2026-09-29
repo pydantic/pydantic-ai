@@ -868,6 +868,30 @@ async def test_for_run_cannot_change_the_workspace_selected_before_it(tmp_path: 
     assert cleaned == [True]
 
 
+async def test_model_selection_failure_after_for_run_cleans_resolved_capability() -> None:
+    observed: list[str] = []
+
+    class ChangesModel(AbstractCapability[object]):
+        def __init__(self, resolved: bool = False) -> None:
+            self.resolved = resolved
+
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            observed.append('setup')
+            return ChangesModel(resolved=True)
+
+        def get_model(self) -> str | None:
+            return 'unsupported:foo' if self.resolved else None
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            observed.append('cleanup')
+            raise error
+
+    with pytest.raises(UserError, match='unsupported:foo'):
+        await Agent(TestModel(), capabilities=[ChangesModel()]).run('go')
+
+    assert observed == ['setup', 'cleanup']
+
+
 async def test_failed_run_error_hook_exposes_workspace_ref_for_cleanup() -> None:
     backend = FakeWorkspace('failed-run')
     seen: list[WorkspaceRef | None] = []

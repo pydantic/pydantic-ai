@@ -1946,46 +1946,50 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
-        run_model_contribution = None if model_is_explicit else run_capability.get_model()
-        self._check_dynamic_model_resume(run_model_contribution, message_history)
-        model_selector: ModelSelector[AgentDepsT] | None
-        model_selected_for_step: int | None
-        capability_owns_current_model: bool
-        if model_layers_unchanged:
-            model_selector = (
-                model_contribution if callable(model_contribution) and not _is_model(model_contribution) else None
-            )
-            model_selected_for_step = 1 if model_selector is not None else None
-            capability_owns_current_model = model_contribution is not None
-        elif callable(run_model_contribution) and not _is_model(run_model_contribution):
-            # The bootstrap model was only needed to construct RunContext for `for_run`.
-            # The replacement selector makes the authoritative step-one choice in the graph,
-            # but the discarded bootstrap model still needs its lifecycle managed.
-            model_selector = run_model_contribution
-            model_selected_for_step = None
-            capability_owns_current_model = True
-        elif run_model_contribution is not None:
-            model_used = await self._resolve_model_selection(
-                run_model_contribution,
-                capability=run_capability,
-                deps=deps,
-                resolved_models=resolved_models_by_selection,
-            )
-            model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
-            model_selector = None
-            model_selected_for_step = None
-            capability_owns_current_model = True
-        elif default_model is not None:
-            model_used = default_model
-            # The bootstrap contribution was withdrawn in `for_run`, so provenance reverts to the run's default.
-            model_id = default_model_id
-            model_selector = None
-            model_selected_for_step = None
-            capability_owns_current_model = False
-        else:
-            raise exceptions.UserError(
-                'A capability removed the bootstrap model in `for_run()` but the agent has no default model.'
-            )
+        try:
+            run_model_contribution = None if model_is_explicit else run_capability.get_model()
+            self._check_dynamic_model_resume(run_model_contribution, message_history)
+            model_selector: ModelSelector[AgentDepsT] | None
+            model_selected_for_step: int | None
+            capability_owns_current_model: bool
+            if model_layers_unchanged:
+                model_selector = (
+                    model_contribution if callable(model_contribution) and not _is_model(model_contribution) else None
+                )
+                model_selected_for_step = 1 if model_selector is not None else None
+                capability_owns_current_model = model_contribution is not None
+            elif callable(run_model_contribution) and not _is_model(run_model_contribution):
+                # The bootstrap model was only needed to construct RunContext for `for_run`.
+                # The replacement selector makes the authoritative step-one choice in the graph,
+                # but the discarded bootstrap model still needs its lifecycle managed.
+                model_selector = run_model_contribution
+                model_selected_for_step = None
+                capability_owns_current_model = True
+            elif run_model_contribution is not None:
+                model_used = await self._resolve_model_selection(
+                    run_model_contribution,
+                    capability=run_capability,
+                    deps=deps,
+                    resolved_models=resolved_models_by_selection,
+                )
+                model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
+                model_selector = None
+                model_selected_for_step = None
+                capability_owns_current_model = True
+            elif default_model is not None:
+                model_used = default_model
+                # The bootstrap contribution was withdrawn in `for_run`, so provenance reverts to the run's default.
+                model_id = default_model_id
+                model_selector = None
+                model_selected_for_step = None
+                capability_owns_current_model = False
+            else:
+                raise exceptions.UserError(
+                    'A capability removed the bootstrap model in `for_run()` but the agent has no default model.'
+                )
+        except BaseException as error:
+            await _run_setup_error_hook(resolved_caps.resolved_layers, initial_ctx, error)
+            raise
 
         async def evaluate_model_selector(
             selector: ModelSelector[AgentDepsT], selection_ctx: models.ModelSelectionContext[AgentDepsT]
